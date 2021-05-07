@@ -77,7 +77,9 @@ def load_hsd(filepath, context = None, offset = 0, scene_name = 'scene_data', da
         error_output("Invalid data: Smaller than Header size")
         return
 
-    if data_type == 'BATTLE':
+    fileExtension = filepath[-4]
+
+    if fileExtension == '.pkx':
         battle_header_size = 0xE60
         #Particles?
         additional_section_size = struct.unpack('>I', data[8:8+4])[0]

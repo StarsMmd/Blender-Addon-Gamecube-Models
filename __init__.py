@@ -1,9 +1,9 @@
 bl_info = {
-    "name": "Sysdolphin Scene",
+    "name": "Gamecube Dat Model",
     "author": "M",
     "blender": (2, 80, 0),
     "location": "File > Import-Export",
-    "description": "Import-Export Sysdolphin scene data",
+    "description": "Import-Export Gamecube .dat models",
     "warning": "",
     "category": "Import-Export"}
 
@@ -51,7 +51,6 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
     offset = IntProperty(default = 0, name = 'Offset', description = 'Offset of the Scene data in the file')
     data_type = EnumProperty(
                 items = (('SCENE', 'Scene', 'Import Scene'),
-                         ('BATTLE', 'Battle Model Scene', 'Import Battle Scene'),
                          ('BONE', 'Bone', 'Import Armature')
                         ), name = 'Data Type', description = 'The type of data that is stored in the section')
     import_animation = BoolProperty(default = True, name = 'Import Animation', description = 'Whether to import animation. Off by default while it\'s still very buggy')
@@ -59,8 +58,8 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
     use_max_frame = BoolProperty(default = True, name = 'Use Max Anim Frame', description = 'Limits the sampled animation range to a maximum length')
     max_frame = IntProperty(default = 1000, name = 'Max Anim Frame', description = 'Cutoff frame after which animations aren\'t sampled')
 
-    filename_ext = ".fdat"
-    filter_glob = StringProperty(default="*.fdat;*.dat", options={'HIDDEN'})
+    filename_ext = ".dat"
+    filter_glob = StringProperty(default="*.fdat;*.dat;*.rdat;*.pkx", options={'HIDDEN'})
 
     def execute(self, context):
         paths = [os.path.join(self.directory, name.name)
@@ -178,11 +177,11 @@ class ExportHSD(bpy.types.Operator, ExportHelper):
 
 
 def menu_func_import(self, context):
-    self.layout.operator(ImportHSD.bl_idname, text="Sysdolphin Scene (.fdat)")
+    self.layout.operator(ImportHSD.bl_idname, text="Gamecube Dat Model (.dat)")
 
 
 def menu_func_export(self, context):
-    self.layout.operator(ExportHSD.bl_idname, text="Sysdolphin Scene (.fdat)")
+    self.layout.operator(ExportHSD.bl_idname, text="Gamecube Dat Model (.dat)")
 
 
 classes = (
