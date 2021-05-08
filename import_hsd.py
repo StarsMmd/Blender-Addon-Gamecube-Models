@@ -1,7 +1,6 @@
 import os
 import math
 import struct
-import logging
 
 if "bpy" in locals():
     import importlib
@@ -48,16 +47,12 @@ light_count = 0
 image_count = 0
 anim_max_frame = 1000
 
-logging.basicConfig(filename='./out.txt',level=logging.DEBUG)
-
 def error_output(string):
-    print (string)
-    logging.error(string)
+    print('Error: ' + string)
     return {'CANCELLED'}
 
 def notice_output(string):
     print(string)
-    logging.info(string)
 
 def load_hsd(filepath, context = None, offset = 0, scene_name = 'scene_data', data_type = 'SCENE', import_animation = True):
     data = None
@@ -77,13 +72,17 @@ def load_hsd(filepath, context = None, offset = 0, scene_name = 'scene_data', da
         error_output("Invalid data: Smaller than Header size")
         return
 
-    if data_type == 'BATTLE':
-        battle_header_size = 0xE60
-        #Particles?
-        additional_section_size = struct.unpack('>I', data[8:8+4])[0]
-        if additional_section_size:
-            battle_header_size += additional_section_size + ((0x20 - (additional_section_size % 0x20)) % 0x20)
-        data = data[battle_header_size:]
+    if filepath[-4:] == '.pkx':
+        # check for byte pattern unique to XD pkx models
+        isXDModel = struct.unpack('>I', data[32:32+4])[0] == 0xFFFFFFFF
+
+        pkx_header_size = 0xE60 if isXDModel else 0x40
+        gpt1SizeOffset = 8 if isXDModel else 4
+        gpt1Size = struct.unpack('>I', data[gpt1SizeOffset:gpt1SizeOffset+4])[0]
+
+        if (gpt1Size > 0) and isXDModel:
+            pkx_header_size += gpt1Size + ((0x20 - (gpt1Size % 0x20)) % 0x20)
+        data = data[pkx_header_size:]
 
     #this is where our header should be
     header_data = data[offset:]
