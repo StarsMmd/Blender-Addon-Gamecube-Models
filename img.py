@@ -3,19 +3,11 @@ if "bpy" in locals():
     if "gx" in locals():
         importlib.reload(gx)
 
-
-import logging
-
-logging.basicConfig(filename='./out.txt',level=logging.DEBUG)
-
 def error_output(string):
     print (string)
-    logging.error(string)
     return {'CANCELLED'}
 
 def notice_output(string):
-    print(string)
-    logging.info(string)
     print(string)
 
 from . import gx
