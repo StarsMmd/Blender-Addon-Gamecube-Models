@@ -1,6 +1,6 @@
 bl_info = {
     "name": "Gamecube Dat Model",
-    "author": "M",
+    "author": "Made",
     "blender": (2, 80, 0),
     "location": "File > Import-Export",
     "description": "Import-Export Gamecube .dat models",
@@ -10,13 +10,6 @@ bl_info = {
 
 if "bpy" in locals():
     import importlib
-    if "hsd" in locals():
-        importlib.reload(hsd)
-    if "import_hsd" in locals():
-        importlib.reload(import_hsd)
-    if "util" in locals():
-        importlib.reload(util)
-
 
 import os
 import bpy
@@ -27,13 +20,15 @@ from bpy.props import (
         EnumProperty,
         FloatProperty,
         IntProperty,
-        )
+)
 from bpy_extras.io_utils import (
         ImportHelper,
         ExportHelper,
         axis_conversion,
-        )
+)
 
+from importer import importer
+from exporter import exporter
 
 class ImportHSD(bpy.types.Operator, ImportHelper):
     """Load a HSD scene"""
@@ -67,16 +62,8 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
         if not paths:
             paths.append(self.filepath)
 
-        from . import import_hsd
-
-        #import trace
-        #tracer = trace.Trace(trace=1)
-
         for path in paths:
-            status = import_hsd.load(self, context, path, self.offset, self.section, self.data_type, self.import_animation, self.ik_hack, self.max_frame, self.use_max_frame)
-            #tracer.runctx('import_hsd.load(self, context, path, self.offset, self.section)', globals(), locals())
-            #r = tracer.results()
-            #r.write_results(show_missing=False, coverdir=".")
+            status = Importer.parseDAT(self, context, path, self.offset, self.section, self.data_type, self.import_animation, self.ik_hack, self.max_frame, self.use_max_frame)
             if not 'FINISHED' in status:
                 return status
 
@@ -84,8 +71,6 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
 
 
 class ExportHSD(bpy.types.Operator, ExportHelper):
-    """Export a single object as a Stanford PLY with normals, """ \
-    """colors and texture coordinates"""
     bl_idname = "export_scene.hsd"
     bl_label = "Export HSD"
 
@@ -95,85 +80,6 @@ class ExportHSD(bpy.types.Operator, ExportHelper):
 
     def execute(self, context):
         pass
-
-    def draw(self, context):
-        pass
-    """
-    bl_idname = "export_mesh.ply"
-    bl_label = "Export PLY"
-
-    filename_ext = ".ply"
-    filter_glob = StringProperty(default="*.ply", options={'HIDDEN'})
-
-    use_mesh_modifiers = BoolProperty(
-            name="Apply Modifiers",
-            description="Apply Modifiers to the exported mesh",
-            default=True,
-            )
-    use_normals = BoolProperty(
-            name="Normals",
-            description="Export Normals for smooth and "
-                        "hard shaded faces "
-                        "(hard shaded faces will be exported "
-                        "as individual faces)",
-            default=True,
-            )
-    use_uv_coords = BoolProperty(
-            name="UVs",
-            description="Export the active UV layer",
-            default=True,
-            )
-    use_colors = BoolProperty(
-            name="Vertex Colors",
-            description="Export the active vertex color layer",
-            default=True,
-            )
-
-    global_scale = FloatProperty(
-            name="Scale",
-            min=0.01, max=1000.0,
-            default=1.0,
-            )
-
-    @classmethod
-    def poll(cls, context):
-        return context.active_object is not None
-
-    def execute(self, context):
-        from . import export_ply
-
-        from mathutils import Matrix
-
-        keywords = self.as_keywords(ignore=("axis_forward",
-                                            "axis_up",
-                                            "global_scale",
-                                            "check_existing",
-                                            "filter_glob",
-                                            ))
-        global_matrix = axis_conversion(to_forward=self.axis_forward,
-                                        to_up=self.axis_up,
-                                        ).to_4x4() * Matrix.Scale(self.global_scale, 4)
-        keywords["global_matrix"] = global_matrix
-
-        filepath = self.filepath
-        filepath = bpy.path.ensure_ext(filepath, self.filename_ext)
-
-        return export_ply.save(self, context, **keywords)
-
-    def draw(self, context):
-        layout = self.layout
-
-        row = layout.row()
-        row.prop(self, "use_mesh_modifiers")
-        row.prop(self, "use_normals")
-        row = layout.row()
-        row.prop(self, "use_uv_coords")
-        row.prop(self, "use_colors")
-
-        layout.prop(self, "axis_forward")
-        layout.prop(self, "axis_up")
-        layout.prop(self, "global_scale")
-    """
 
 
 def menu_func_import(self, context):
@@ -187,14 +93,14 @@ def menu_func_export(self, context):
 classes = (
     ImportHSD,
     ExportHSD,
-    )
+)
 
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
 
     bpy.types.TOPBAR_MT_file_import.append(menu_func_import)
-    bpy.types.TOPBAR_MT_file_import.append(menu_func_export)
+    bpy.types.TOPBAR_MT_file_export.append(menu_func_export)
 
 
 def unregister():
@@ -202,7 +108,7 @@ def unregister():
         bpy.utils.unregister_class(cls)
 
     bpy.types.TOPBAR_MT_file_import.remove(menu_func_import)
-    bpy.types.TOPBAR_MT_file_import.remove(menu_func_export)
+    bpy.types.TOPBAR_MT_file_export.remove(menu_func_export)
 
 
 if __name__ == "__main__":
