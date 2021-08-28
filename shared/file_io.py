@@ -1,5 +1,9 @@
 import struct
 
+primitive_field_types = [
+    'uchar', 'ushort', 'uint', 'char', 'short', 'int', 'float', 'double', 'string'
+]
+
 class BinaryReader:
     """
     Wrapper class to simplify reading data of various types
@@ -48,7 +52,7 @@ class BinaryReader:
             nextChar = self.file.read(1)[0]
         return s
 
-    def read_chunk(self, address, size):
+    def read_chunk(self, size, address, offset=0):
         """Reads `size` bytes from `address`"""
         self.seek(address)
         return self.file.read(size)
@@ -68,23 +72,6 @@ class BinaryReader:
     def close(self):
         """Closes the BinaryReader's file"""
         self.file.close()
-
-    @staticmethod
-    def is_primitive(type):
-        """
-        Returns bool indicating whether `type` is a primitive
-        type and can thus be read by a BinaryReader
-        """
-        return type in ['uint8', 'uint16', 'uint32',
-                        'int8', 'int16', 'int32',
-                        'float', 'double', 'string']
-    @staticmethod
-    def is_array(type):
-        return type.endswith('[]')
-    
-    @staticmethod
-    def is_pointer(type):
-        return type.endswith('*')
 
 class BinaryWriter:
     """
@@ -107,6 +94,8 @@ class BinaryWriter:
             self.file.seek(offset)
         elif whence == 'current':
             self.file.seek(offset, 1)
+        elif whence == 'end':
+            self.file.seek(offset, 2)
         else:
             raise ValueError(f'Invalid value for `whence`: {whence}')
 

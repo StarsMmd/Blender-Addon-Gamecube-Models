@@ -43,7 +43,6 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
 
     directory = StringProperty()
     section = StringProperty(default = 'scene_data', name = 'Section Name', description = 'Name of the section that should be imported as a scene')
-    offset = IntProperty(default = 0, name = 'Offset', description = 'Offset of the Scene data in the file')
     data_type = EnumProperty(
                 items = (('SCENE', 'Scene', 'Import Scene'),
                          ('BONE', 'Bone', 'Import Armature')
@@ -63,7 +62,7 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
             paths.append(self.filepath)
 
         for path in paths:
-            status = Importer.parseDAT(self, context, path, self.offset, self.section, self.data_type, self.import_animation, self.ik_hack, self.max_frame, self.use_max_frame)
+            status = Importer.parseDAT(self, context, path, self.section, self.data_type, self.import_animation, self.ik_hack, self.max_frame, self.use_max_frame)
             if not 'FINISHED' in status:
                 return status
 

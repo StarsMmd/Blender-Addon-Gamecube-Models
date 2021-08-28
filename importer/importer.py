@@ -24,18 +24,16 @@ from ..shared.nodes.node_types import SectionInfo
 class Importer():
 
 	@staticmethod
-	def parseDAT(operator, context, filepath="", offset=0, section_name='scene_data', data_type='SCENE', import_animation=True, ik_hack=True, max_frame=1000, use_max_frame=True):
+	def parseDAT(operator, context, filepath="", section_name='scene_data', data_type='SCENE', import_animation=True, ik_hack=True, max_frame=1000, use_max_frame=True):
 	    if use_max_frame:
 	        anim_max_frame = max_frame
 	    else:
 	        anim_max_frame = 1000000000
 
-	    # TODO: handle .pkx files' header offset
-
 	    # We will most likely need to pass the flags and settings into the parser
 	    # When the parser is asked to parse a node which references one of these it can pass the requried
 	    # flags into the constructor
-	    parser = DATParser(path, offset)
+	    parser = DATParser(path)
 	    header = parser.parseNode(ArchiveHeader, 0, 0, False)
 
 	    relocations_size = relocations_count * 4
