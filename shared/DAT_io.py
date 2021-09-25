@@ -11,16 +11,19 @@ def _isBracketedType(field_type):
 	return field_type[0:1] == "(" and field_type[-1:] == ")"
 
 def _isPointerType(field_type):
-	return field_type[0:1] == "*"
+	return !_isArrayType(field_type) and field_type[0:1] == "*" or field_type[0:1] in "ABCDEFGHIJKLMNOPQRSTUVWXYZ" or field_type == "string"
 
 def _isUnboundedArrayType(field_type):
-	return !_isPointerType(field_type) and field_type[-2:] == "[]"
+	return field_type[-2:] == "[]"
 
 def _isBoundedArrayType(field_type):
-	return !_isPointerType(field_type) and !_isUnboundedArrayType(field_type) and "[" in field_type and  field_type[-1:] == "]"
+	return !_isUnboundedArrayType(field_type) and "[" in field_type and  field_type[-1:] == "]"
+
+def _isArrayType(field_type):
+	return _isUnboundedArrayType(field_type) or _isBoundedArrayType(field_type)
 
 def _isNodeClassType(field_type):
-	return _getClassWithName(field_type) != None
+	return !_isArrayType(field_type) and _getClassWithName(field_type) != None
 
 def _getClassWithName(class_name):
 	return globals()[field_type]
@@ -32,7 +35,8 @@ def _getBracketedSubType(field_type):
 	return sub_type
 
 def _getPointerSubType(field_type):
-	return field_type[1:]
+	sub_type = field_type[1:]
+	return _getBracketedSubType(sub_type)
 
 def _getArraySubType(field_type):
 	sub_type = field_type
@@ -71,9 +75,8 @@ def _getTypeLength(field_type):
 		elif field_type == 'ushort' or field_type == 'short':
 			return 2
 		elif field_type == 'string':
-			# This case is tricky since the string length is unspecified.
-			# Better to use a bounded char array if there's a string with a fixed/max length.
-			return None
+			# strings are always pointers to a string elsewhere
+			return 4
 		elif field_type == 'double':
 			return 8
 		else:
@@ -243,8 +246,9 @@ class DATParser(BinaryReader):
 	    	return values
 
 	    elif _isNodeClassType(field_type):
+	    	pointer = read("uint", address, offset, relative_to_header, whence)
 	    	node_class = _getClassWithName(field_type)
-	    	return parseNode(node_class, address, offset, relative_to_header)
+	    	return parseNode(node_class, pointer)
 
 	    else:
 	    	return None
@@ -322,22 +326,24 @@ class DATBuilder(BinaryWriter):
     		if _isPointerType(field_type):
     			sub_type = _getPointerSubType(field_type)
     			pointer = write(field_value, sub_type)
-    			if _isNodeClassType(sub_type):
-    				node.address = pointer
-    			else:
-	    			node.setattr(field_name, pointer)
+    			node.setattr(field_name, pointer)
 
-    		if _isBoundedArrayType(field_type) or _isUnboundedArrayType(field_type):
+	    	elif _isNodeClassType(sub_type):
+	    			pointer = write(field_value, field_type)
+	    			field_value.address = pointer
+    				node.setattr(field_name, pointer)
+
+    		elif _isBoundedArrayType(field_type) or _isUnboundedArrayType(field_type):
     			sub_type = _getArraySubType(field_type)
-    			if _isPointerType(sub_type):
+    			if _isPointerType(sub_type) or _isNodeClassType(sub_type):
     				pointers_array = []
     				for value in field_value:
     					pointer = write(value, sub_type)
-    					if _isNodeClassType(_getPointerSubType(sub_type)):
+
+    					if _isNodeClassType(sub_type):
 		    				value.address = pointer
-		    				pointers_array.append(value)
-		    			else:
-			    			pointers_array.append(pointer)
+
+		    			pointers_array.append(value)
 
     				node.setattr(field_name, pointers_array)
 
@@ -347,6 +353,8 @@ class DATBuilder(BinaryWriter):
     		field_name = field[0]
     		field_type = field[1]
     		field_value = node.getattr(field_name)
+    		if _isNodeClassType(field_type):
+    			field_type = 'uint'
     		
     		_ = write(field_value, field_type)
 
@@ -363,7 +371,7 @@ class DATBuilder(BinaryWriter):
 		padding = _alignmentForTypeAtAddress(field_type, currentAddress())
 		address += padding
 		for i in range(padding):
-			_ = write(0, "uchar")
+			_ = write(0, 'uchar')
 
     	if _isBracketedType(field_type):
     		return write(value, _getBracketedSubType(field_type), address, relative_to_header, whence)
@@ -376,7 +384,7 @@ class DATBuilder(BinaryWriter):
 	    elif _isPointerType(field_type):
 	    	# If that node is still being written then find out its address at the end
 	    	if value == None:
-	    		deferPointerWriteForNode(currentAddress(), )
+	    		# deferPointerWriteForNode(currentAddress(), )
 	    		return 0
 	    	else:
 	    		return write(value, 'uint', address, relative_to_header, whence)

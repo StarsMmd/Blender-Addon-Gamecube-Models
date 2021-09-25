@@ -5,10 +5,10 @@ class ModelSet(Node):
     class_name = "Model Set"
     length = 16
     fields = [
-        ('joint', '*Joint'),
-        ('animated_joint', '*AnimatedJoint'),
-        ('animated_material_joint', '*AnimatedMaterialJoint'),
-        ('animated_shape_joint', '*AnimatedShapeJoint')
+        ('joint', 'Joint'),
+        ('animated_joint', 'AnimatedJoint'),
+        ('animated_material_joint', 'AnimatedMaterialJoint'),
+        ('animated_shape_joint', 'AnimatedShapeJoint')
     ]
 
     # Parse struct from binary file.

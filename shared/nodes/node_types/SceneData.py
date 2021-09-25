@@ -5,10 +5,10 @@ class SceneData(Node):
     class_name = "Scene Data"
     length = 16
     fields = [
-        ('model_sets', '*(*ModelSet)[]'),
-        ('camera_set', '*CameraSet'),
-        ('light_sets', '*(*LightSet)[]'),
-        ('fog', '*Fog')
+        ('model_sets', '*(ModelSet[])'),
+        ('camera_set', 'CameraSet'),
+        ('light_sets', '*(LightSet[])'),
+        ('fog', 'Fog')
     ]
 
     # Parse struct from binary file.
