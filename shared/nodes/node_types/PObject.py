@@ -22,6 +22,7 @@ class PObject(Node):
     # Tells the builder how to write this node's data to the binary file.
     # Returns the offset the builder was at before it started writing its own data.
     def writeBinary(self, builder):
+        disp_list_count = disp_list.length
         return builder.writeStruct(self)
 
     # Make approximation HSD struct from blender data.
