@@ -6,7 +6,7 @@ class SectionInfo(Node):
     length = 8
     fields = [
         ("root_node_pointer", "uint"), # the type of node to parse depends on the section name
-        ("section_name", "*string")
+        ("section_name", "string")
     ]
 
     # Parse struct from binary file.

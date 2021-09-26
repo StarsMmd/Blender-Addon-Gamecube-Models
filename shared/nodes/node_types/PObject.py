@@ -1,14 +1,17 @@
 from .. import Node
 
-# Scene Data
-class SceneData(Node):
-    class_name = "Scene Data"
-    length = 16
+# PObject
+class PObject(Node):
+    class_name = "P Object"
+    length = 24
     fields = [
-        ('model_sets', '*ModelSet[]'),
-        ('camera_set', 'CameraSet'),
-        ('light_sets', '*LightSet[]'),
-        ('fog', 'Fog')
+        ('name', 'string'),
+        ('next', 'PObject'),
+        ('vertex_list', '*Vertex[]'),
+        ('flags', 'ushort'),
+        ('disp_list_count', 'ushort'),
+        ('disp_list', '*uint[]'), #TODO: Confirm what type this is
+        ('u', 'uint')
     ]
 
     # Parse struct from binary file.
@@ -28,17 +31,4 @@ class SceneData(Node):
 
     # Make approximation Blender object from HSD data.
     def toBlender(self, context):
-        model_sets.toBlender(context)
-        camera_set.toBlender(context)
-        light_sets.toBlender(context)
-        fog.toBlender(context)
-
-        # TODO: each of these sub nodes should now have their .blender_obj field set
-        # Use this to set up the blender object for the scene and assign the result to this node's
-        # blender_obj field
-
-
-
-
-
-
+        pass
