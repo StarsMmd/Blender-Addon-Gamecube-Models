@@ -1,9 +1,8 @@
-from .. import Node
+from ..Node import Node
 
 # Archive Header
 class ArchiveHeader(Node):
     class_name = "Archive Header"
-    length = 20
     fields = [
         ('file_size', 'uint'),
         ('data_size', 'uint'),
@@ -15,7 +14,7 @@ class ArchiveHeader(Node):
     # Parse struct from binary file.
     @classmethod
     def fromBinary(cls, parser, address):
-        return parser.parseStruct(cls, address)
+        return parser.parseStruct(cls, address, None, False)
 
     # Tells the builder how to write this node's data to the binary file.
     # Returns the offset the builder was at before it started writing its own data.

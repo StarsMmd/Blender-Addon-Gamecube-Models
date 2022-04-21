@@ -1,33 +1,24 @@
 from ..Node import Node
 
-# PObject
-class PObject(Node):
-    class_name = "P Object"
-    fields = [
-        ('name', 'string'),
-        ('next', 'PObject'),
-        ('vertex_list', 'Vertex[]'),
-        ('flags', 'ushort'),
-        ('disp_list_count', 'ushort'),
-        ('disp_list', 'uint[]'), #TODO: Confirm what type this is
-        ('u', 'uint')
-    ]
+# Dummy Node
+class Dummy(Node):
+    class_name = "Dummy"
+    fields = []
 
     # Parse struct from binary file.
     @classmethod
     def fromBinary(cls, parser, address):
-        return parser.parseStruct(cls, address)
+        return Dummy(address, None)
 
     # Tells the builder how to write this node's data to the binary file.
     # Returns the offset the builder was at before it started writing its own data.
     def writeBinary(self, builder):
-        disp_list_count = disp_list.length
-        return builder.writeStruct(self)
+        return
 
     # Make approximation HSD struct from blender data.
     @classmethod
     def fromBlender(cls, blender_obj):
-        pass
+        return Dummy(0, None)
 
     # Make approximation Blender object from HSD data.
     def toBlender(self, context):

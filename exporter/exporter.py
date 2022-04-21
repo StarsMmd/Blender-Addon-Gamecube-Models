@@ -1,7 +1,7 @@
-from ..shared import DAT_io
-from ..shared.nodes import SectionInfo
+from shared import DAT_io
+from shared.nodes import SectionInfo
 
-from ..shared.nodes.node_types import ArchiveHeader
+from shared.nodes.node_types import ArchiveHeader
 #TODO: add imports for any root node types or header info this function needs to know about
 
 class Exporter():

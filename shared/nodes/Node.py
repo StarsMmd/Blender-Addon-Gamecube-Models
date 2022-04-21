@@ -1,7 +1,7 @@
 import bpy
 
 # Abstract node class
-class Node:
+class Node(object):
     # The name of this type of Node
     class_name = "Node"
     # The number of bytes to represent this node, treating sub nodes as pointers
@@ -48,3 +48,51 @@ class Node:
     def toBlender(self, context):
         #Override this in sub classes
         pass
+
+    # This recursively creates a textual representation of the tree starting at this node
+    def __str__(self):
+        text = "-> " + self.class_name + " @" + hex(self.address) + " (" + str(self.length) + " bytes)\n"
+
+        for (field_name, _) in self.fields:
+            attr = getattr(self, field_name)
+
+            if isinstance(attr, list):
+                text += "  " + field_name.replace("_", " ") + ": \n"
+                for index, sub_attr in enumerate(attr):
+                    substring = str(sub_attr)
+                    sublines = substring.split("\n")
+                    
+                    field_name_prefix = "    " + str(index + 1) + " "
+                    spacing = "    "
+
+                    for i, line in enumerate(sublines):
+                        if i == 0:
+                            text += field_name_prefix
+                        else:
+                            text += spacing
+                        text += line + "\n"
+            else:
+                substring = str(attr)
+                sublines = substring.split("\n")
+                
+                field_name_prefix = "  " + field_name.replace("_", " ") + ": "
+                spacing = "    "
+
+                for i, line in enumerate(sublines):
+                    if i == 0:
+                        text += field_name_prefix
+                    else:
+                        text += spacing
+                    text += line + "\n"
+
+        return text
+
+
+
+
+
+
+
+
+
+

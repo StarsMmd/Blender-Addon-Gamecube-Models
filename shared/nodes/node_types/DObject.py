@@ -1,9 +1,8 @@
-from .. import Node
+from ..Node import Node
 
 # DObject
 class DObject(Node):
     class_name = "D Object"
-    length = 16
     fields = [
         ('name', 'string'),
         ('next', 'DObject'),

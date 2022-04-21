@@ -1,4 +1,5 @@
 import struct
+import os
 
 primitive_field_types = [
     'uchar', 'ushort', 'uint', 'char', 'short', 'int', 'float', 'double', 'string'
@@ -10,8 +11,10 @@ class BinaryReader:
     from a binary file (assumes big-endian byte order)
     """
     
-    def __init__(self, path):
-        self.file = open(path, 'rb')
+    def __init__(self, filepath):
+        self.filepath = filepath
+        self.file = open(filepath, 'rb')
+        self.filesize = os.path.getsize(filepath)
 
     def read(self, type, address, offset=0, whence='start'):
         """
@@ -54,7 +57,7 @@ class BinaryReader:
 
     def read_chunk(self, size, address, offset=0):
         """Reads `size` bytes from `address`"""
-        self.seek(address)
+        self.seek(address + offset)
         return self.file.read(size)
 
     def seek(self, offset, whence='start'):
@@ -79,8 +82,9 @@ class BinaryWriter:
     to a binary file (uses big-endian byte order)
     """
     
-    def __init__(self, path):
-        self.file = open(path, 'wb+')
+    def __init__(self, filepath):
+        self.filepath = filepath
+        self.file = open(filepath, 'wb+')
 
     def currentAddress(self):
     	return self.file.tell()
@@ -104,7 +108,7 @@ class BinaryWriter:
         Writes `data` as type `type` to `offset`
         relative to `whence` ('start' or 'current')
         """
-        if offset != None
+        if offset != None:
         	self.seek(offset, whence)
         
         if type == 'uint8':

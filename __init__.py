@@ -1,7 +1,9 @@
+# metadata about the addon which blender requires
+# https://wiki.blender.org/wiki/Process/Addons/Guidelines/metainfo
 bl_info = {
     "name": "Gamecube Dat Model",
-    "author": "Made",
-    "blender": (2, 80, 0),
+    "author": "Made, StarsMmd",
+    "blender": (2, 81, 0),
     "location": "File > Import-Export",
     "description": "Import-Export Gamecube .dat models",
     "warning": "",
@@ -30,6 +32,9 @@ from bpy_extras.io_utils import (
 from importer import importer
 from exporter import exporter
 
+# This class declares global properties which blender uses to add toggles and fields to the file open browser
+# allowing more options to be selected along with the filepath being opened.
+# When a file is selected the execute() function runs.
 class ImportHSD(bpy.types.Operator, ImportHelper):
     """Load a HSD scene"""
     bl_idname = "import_scene.hsd"
@@ -41,7 +46,7 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
                                       "the HSD file",
                           type=bpy.types.OperatorFileListElement)
 
-    directory = StringProperty()
+    directory = StringProperty(subtype='DIR_PATH')
     section = StringProperty(default = 'scene_data', name = 'Section Name', description = 'Name of the section that should be imported as a scene')
     data_type = EnumProperty(
                 items = (('SCENE', 'Scene', 'Import Scene'),
@@ -49,8 +54,7 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
                         ), name = 'Data Type', description = 'The type of data that is stored in the section')
     import_animation = BoolProperty(default = True, name = 'Import Animation', description = 'Whether to import animation. Off by default while it\'s still very buggy')
     ik_hack = BoolProperty(default = True, name = 'IK Hack', description = 'Shrinks Bones down to 1e-3 to make IK work properly')
-    use_max_frame = BoolProperty(default = True, name = 'Use Max Anim Frame', description = 'Limits the sampled animation range to a maximum length')
-    max_frame = IntProperty(default = 1000, name = 'Max Anim Frame', description = 'Cutoff frame after which animations aren\'t sampled')
+    max_frame = IntProperty(default = 1000, name = 'Max Anim Frame', description = 'Cutoff frame after which animations aren\'t sampled. Use 0 For no limit.')
 
     filename_ext = ".dat"
     filter_glob = StringProperty(default="*.fdat;*.dat;*.rdat;*.pkx", options={'HIDDEN'})
@@ -62,7 +66,7 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
             paths.append(self.filepath)
 
         for path in paths:
-            status = Importer.parseDAT(self, context, path, self.section, self.data_type, self.import_animation, self.ik_hack, self.max_frame, self.use_max_frame)
+            status = Importer.parseDAT(self, context, path, self.section, self.data_type, self.import_animation, self.ik_hack, self.max_frame, False)
             if not 'FINISHED' in status:
                 return status
 
@@ -94,6 +98,7 @@ classes = (
     ExportHSD,
 )
 
+# This function is called when the addon is installed by the user. The classes are registered and added to the blender menus.
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
@@ -101,7 +106,7 @@ def register():
     bpy.types.TOPBAR_MT_file_import.append(menu_func_import)
     bpy.types.TOPBAR_MT_file_export.append(menu_func_export)
 
-
+# This function is called when the addon is uninstalled by the user. The classes are unregistered and removed from the blender menus.
 def unregister():
     for cls in classes:
         bpy.utils.unregister_class(cls)
@@ -109,6 +114,6 @@ def unregister():
     bpy.types.TOPBAR_MT_file_import.remove(menu_func_import)
     bpy.types.TOPBAR_MT_file_export.remove(menu_func_export)
 
-
+# This function is called when the addon is run as a script from within blender's scripting window
 if __name__ == "__main__":
     register()

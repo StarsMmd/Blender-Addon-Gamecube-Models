@@ -1,9 +1,8 @@
-from .. import Node
+from ..Node import Node
 
 # Model Set
 class ModelSet(Node):
     class_name = "Model Set"
-    length = 16
     fields = [
         ('joint', 'Joint'),
         ('animated_joint', 'AnimatedJoint'),

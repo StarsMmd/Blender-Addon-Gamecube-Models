@@ -1,9 +1,8 @@
-from .. import Node
+from ..Node import Node
 
 # Joint
 class Joint(Node):
     class_name = "Joint"
-    length = 64
     fields = [
         ('name', 'string'),
         ('flags', 'uint'),

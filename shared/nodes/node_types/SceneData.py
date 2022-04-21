@@ -1,13 +1,12 @@
-from .. import Node
+from ..Node import Node
 
 # Scene Data
 class SceneData(Node):
     class_name = "Scene Data"
-    length = 16
     fields = [
-        ('model_sets', '*ModelSet[]'),
+        ('model_sets', 'ModelSet[]'),
         ('camera_set', 'CameraSet'),
-        ('light_sets', '*LightSet[]'),
+        ('light_sets', 'LightSet[]'),
         ('fog', 'Fog')
     ]
 
