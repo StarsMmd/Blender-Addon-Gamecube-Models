@@ -2,7 +2,7 @@ import struct
 import os
 
 primitive_field_types = [
-    'uchar', 'ushort', 'uint', 'char', 'short', 'int', 'float', 'double', 'string'
+    'uchar', 'ushort', 'uint', 'char', 'short', 'int', 'float', 'double', 'string', 'matrix'
 ]
 
 class BinaryReader:
@@ -41,6 +41,13 @@ class BinaryReader:
             return struct.unpack('>d', self.file.read(8))[0]
         if type == 'string':
             return self._read_string()
+        if type == 'matrix':
+            rows = []
+            for i in range(3):
+                self.seek(address + offset + (i * 16))
+                rows.append(list(struct.unpack('>4f', self.file.read(16))))
+            rows.append([0,0,0,1])
+            return rows
         raise ValueError(f'Invalid value for arg `type`: {type}')
 
     def _read_string(self):

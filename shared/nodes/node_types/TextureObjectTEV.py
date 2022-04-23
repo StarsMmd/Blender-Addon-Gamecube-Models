@@ -1,13 +1,10 @@
 from ..Node import Node
 
-# DObject
-class DObject(Node):
-    class_name = "D Object"
+# Texture Object TEV
+class TextureObjectTEV(Node):
+    class_name = "Texture Object TEV"
     fields = [
-        ('name', 'string'),
-        ('next', 'DObject'),
-        ('mobject', 'MObject'),
-        ('pobject', 'PObject')
+        ('', ''),
     ]
 
     # Parse struct from binary file.

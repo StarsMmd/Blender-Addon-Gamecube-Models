@@ -49,11 +49,13 @@ class Node(object):
         #Override this in sub classes
         pass
 
-    # This recursively creates a textual representation of the tree starting at this node
+    # This recursively creates a textual representation of the tree starting at this node.
+    # This implementation may lead to an infinite cycle if there are nodes with cyclic references.
+    # We'll cross that bridge when we get to it. 
     def __str__(self):
         text = "-> " + self.class_name + " @" + hex(self.address) + " (" + str(self.length) + " bytes)\n"
 
-        for (field_name, _) in self.fields:
+        for (field_name, field_type) in self.fields:
             attr = getattr(self, field_name)
 
             if isinstance(attr, list):
@@ -63,6 +65,8 @@ class Node(object):
                     sublines = substring.split("\n")
                     
                     field_name_prefix = "    " + str(index + 1) + " "
+                    if field_type == 'matrix':
+                        field_name_prefix = "    "
                     spacing = "    "
 
                     for i, line in enumerate(sublines):

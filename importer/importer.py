@@ -3,7 +3,6 @@ from shared.nodes import Node
 
 from shared.nodes.node_types.ArchiveHeader import ArchiveHeader
 from shared.nodes.node_types.SectionInfo import SectionInfo
-#TODO: add imports for any root node types or header info this function needs to know about
 
 #TODO list
 #features:
@@ -39,32 +38,11 @@ class Importer:
 		parser = DATParser(filepath, parser_options)
 		header = parser.parseNode(ArchiveHeader, 0, 0, False)
 
-		relocations_size = header.relocations_count * 4
-		header_size = 32
-		sections_start = header.data_size + relocations_size
-		section_size = 8
-		section_count = header.public_nodes_count + header.external_nodes_count
-		section_names_offset = sections_start + (section_size * section_count)
-
-		parser.registerRelocationTable(header.data_size, header.relocations_count)
-
-		# Parse sections info
-		section_addresses = []
-
-		current_offset = sections_start
-		for i in range(header.public_nodes_count):
-			section_addresses.append( (current_offset, True) )
-			current_offset += section_size
-
-		for i in range(header.external_nodes_count):
-			section_addresses.append( (current_offset, False) )
-			current_offset += section_size
-
-		for (address, is_public) in section_addresses:
+		for (address, is_public) in header.section_addresses:
 			
 			# Recursively parse Node tree based on the section info
 		    # The top level node will recursively call parseNode() on any leaves
-			section = SectionInfo.fromBinary(parser, address, is_public, section_names_offset)
+			section = SectionInfo.fromBinary(parser, address, is_public, header.section_names_offset)
 			print(section)
 
 			# Gives the flexibility to either import all sections or filter to just one

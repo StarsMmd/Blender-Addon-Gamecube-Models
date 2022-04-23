@@ -18,9 +18,6 @@ def _isPrimitiveType(field_type):
 def _isBracketedType(field_type):
 	return field_type[0:1] == "(" and field_type[-1:] == ")"
 
-def _isStringPointerType(field_type):
-	return field_type == "string"
-
 def _isVectorType(field_type):
 	return field_type == "vec3"
 
@@ -107,10 +104,13 @@ def _getTypeLength(field_type):
 		elif field_type == 'ushort' or field_type == 'short':
 			return 2
 		elif field_type == 'string':
-			# strings are always pointers to a string elsewhere
-			return 4
+			# These should never be the sub type of another field other than pointer
+			# so we should never need to stride by their length
+			return 0
 		elif field_type == 'double':
 			return 8
+		elif field_type == 'matrix':
+			return 48
 		else:
 			return 4
 
@@ -139,11 +139,16 @@ def _alignmentForTypeAtAddress(field_type, address):
 		return _alignmentForTypeAtAddress(_getBracketedSubType(field_type), address)
 
 	elif _isPrimitiveType(field_type):
-		length = _getTypeLength(field_type)
-		return address % length
+		if field_type == 'matrix':
+			return address % 4
+		if field_type == 'string':
+			return 0
+		else:
+			length = _getTypeLength(field_type)
+			return address % length
 
 	elif _isVectorType(field_type):
-		return 4
+		return address % 4
 
 	elif _isPointerType(field_type):
 		return address % 4
@@ -176,12 +181,18 @@ def _byteChunkIsNull(chunk):
 # recurisve call is for the pointer and which one is for the struct.
 # Unbounded array types will also be assumed to be a pointer to the unbounded array.
 # In order to clarify any precedence between * and [] types, the result will be bracketed
-# e.g. `Joint[]` becomes `(*((*Joint)[]))`
+# e.g. `Joint[]` becomes `*((*Joint)[])`
 # In scenarios where there's a pointer to pointer or pointer to an array the additional *s should still be 
 # added to the type signature in the Node class.
+# The @ symbol can be added before a Node class type to prevent it from being treated as a pointer to the node class.
+# A * won't be added and the @ will be removed from the final type output.
+# e.g. `@Joint[]` becomes `(Joint)[]`
 def _markUpFieldType(type_string):
 
-	if _isNodeClassType(type_string):
+	if type_string[0] == "@":
+		return "(" + type_string[1:] + ")"
+
+	if _isNodeClassType(type_string) or (type_string == 'string') or (type_string == 'matrix'):
 		return "(*" + type_string + ")"
 
 	if _isUnboundedArrayType(type_string):
@@ -253,10 +264,11 @@ class DATParser(BinaryReader):
 		# add the node to the nodes cache before returning it. If node is already cached for this offset, return that instead
 
 		final_offset = address + offset + self._startOffset(relative_to_header)
-		cached = self.nodes_cache_by_offset.get(final_offset) if relative_to_header else None
+		cached = self.nodes_cache_by_offset.get(final_offset)
 		if cached != None:
 			return cached
 
+		# The new node is cached in parseStruct() so it can be cached before the leaves are recursively parsed
 		new_node = node_class.fromBinary(self, address + offset)
 
 		for field in new_node.fields:
@@ -302,10 +314,6 @@ class DATParser(BinaryReader):
 		if address + offset + self._startOffset(relative_to_header) + _getTypeLength(field_type) > self.filesize:
 			return None
 
-		if field_type == 'raw_string':
-			final_offset = offset + self._startOffset(relative_to_header)
-			return super().read('string', address, final_offset, whence)
-
 		if _isBracketedType(field_type):
 			return self.read(_getBracketedSubType(field_type), address, offset, relative_to_header, whence)
 
@@ -317,15 +325,8 @@ class DATParser(BinaryReader):
 			return (vx, vy, vz)
 
 		elif _isPrimitiveType(field_type):
-			if _isStringPointerType(field_type):
-				pointer = self.read('uint', address, offset, relative_to_header, whence)
-				if pointer == 0:
-					return ""
-				final_offset = offset + self._startOffset(relative_to_header)
-				return super().read(field_type, pointer, final_offset, whence)
-			else:
-				final_offset = offset + self._startOffset(relative_to_header)
-				return super().read(field_type, address, final_offset, whence)
+			final_offset = offset + self._startOffset(relative_to_header)
+			return super().read(field_type, address, final_offset, whence)
 
 		elif _isPointerType(field_type):
 			pointer = self.read('uint', address, offset, relative_to_header, whence)
@@ -368,7 +369,15 @@ class DATParser(BinaryReader):
 		elif _isNodeClassType(field_type):
 
 			node_class = _getClassWithName(field_type)
-			return self.parseNode(node_class, address, offset)
+			node = self.parseNode(node_class, address, offset)
+
+			# If the class hasn't been implemented it is replaced with a Dummy implementation.
+			# We can set the class name to the intended type so when reading the tree structure
+			# we can see what it's supposed to be in future.
+			if node.class_name == "Dummy":
+				node.class_name = field_type
+
+			return node
 
 		else:
 			return None
@@ -459,14 +468,10 @@ class DATBuilder(BinaryWriter):
 			    pointer = self.write(field_value, field_type)
 			    field_value.address = pointer
 			    setattr(node, field_name, pointer)
-			    
-			elif _isStringPointerType(field_type):
-			    pointer = self.write(field_value, field_type)
-			    setattr(node, field_name, pointer)
 
 			elif _isBoundedArrayType(field_type) or _isUnboundedArrayType(field_type):
 				sub_type = _getArraySubType(field_type)
-				if _isPointerType(sub_type) or _isNodeClassType(sub_type) or _isStringPointerType(sub_type):
+				if _isPointerType(sub_type) or _isNodeClassType(sub_type):
 					pointers_array = []
 					for value in field_value:
 						pointer = self.write(value, sub_type)
@@ -484,7 +489,7 @@ class DATBuilder(BinaryWriter):
 			field_name = field[0]
 			field_type = field[1]
 			field_value = node.getattr(field_name)
-			if _isNodeClassType(field_type) or _isStringPointerType(field_type) or _isPointerType(field_type):
+			if _isNodeClassType(field_type) or _isPointerType(field_type):
 				field_type = 'uint'
 			
 			_ = self.write(field_value, field_type)

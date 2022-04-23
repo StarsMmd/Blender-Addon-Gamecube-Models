@@ -1,4 +1,4 @@
-HSD constants
+# HSD constants
 TEX_COORD_UV =                    0
 TEX_COORD_REFLECTION =            1
 TEX_COORD_HILIGHT =               2
@@ -92,7 +92,7 @@ JOBJ_SKELETON_ROOT =			  (1<<1)
 JOBJ_ENVELOPE_MODEL =			  (1<<2)
 JOBJ_CLASSICAL_SCALING =		  (1<<3)
 JOBJ_HIDDEN =					  (1<<4)
-JOBJ_PTCL =						  (1<<5)
+JOBJ_PARTICLE =					  (1<<5)
 JOBJ_MTX_DIRTY =				  (1<<6)
 JOBJ_LIGHTING =					  (1<<7)
 JOBJ_TEXGEN =					  (1<<8)

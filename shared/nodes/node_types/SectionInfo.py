@@ -4,6 +4,9 @@ from .SceneData import SceneData
 # Section Info
 class SectionInfo(Node):
     class_name = "Section Info"
+
+    length = 8
+
     fields = [
         ("root_node", "uint"), # the type of node to parse depends on the section name
         ("section_name", "uint")
@@ -14,8 +17,7 @@ class SectionInfo(Node):
     def fromBinary(cls, parser, address, is_public, strings_offset):
         node = parser.parseStruct(cls, address)
         node.is_public = is_public
-        node.section_name = parser.read("raw_string", strings_offset, node.section_name)
-        print("Found section:", node.section_name)
+        node.section_name = parser.read('string', strings_offset, node.section_name)
 
         # We initially parse the root node as the raw pointer, then based on the section name
         # we can now decide what type of node to parse from that address
