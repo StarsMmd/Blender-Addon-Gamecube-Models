@@ -67,13 +67,15 @@ def _getArraySubType(field_type):
 # Gets the lowest level type from a compound type which is either a Node class or primitive (i.e. without * () or [])
 def _getSubType(field_type):
 	sub_type = field_type
-	if _isBracketedType(sub_type) or _isArrayType(sub_type) or _isPointerType(sub_type):
-		if _isBracketedType(sub_type):
-			sub_type = _getBracketedSubType(sub_type)
-		if _isArrayType(sub_type):
-			sub_type = _getArraySubType(sub_type)
-		if _isPointerType(sub_type):
-			sub_type = _getPointerSubType(sub_type)
+	if _isBracketedType(sub_type):
+		sub_type = _getBracketedSubType(sub_type)
+		return _getSubType(sub_type)
+	if _isArrayType(sub_type):
+		sub_type = _getArraySubType(sub_type)
+		return _getSubType(sub_type)
+	if _isPointerType(sub_type):
+		sub_type = _getPointerSubType(sub_type)
+		return _getSubType(sub_type)
 
 	return sub_type
 
@@ -178,7 +180,7 @@ def _byteChunkIsNull(chunk):
 # e.g. 'Joint' becomes '*Joint'. This means the Node classes can have cleaner type signatures but the *
 # is useful so the parser can recursively read the value by first treating it as a pointer when it reads the *
 # and then reading the actual struct at that address. If we omit the * then it's hard to tell which
-# recurisve call is for the pointer and which one is for the struct.
+# recursive call is for the pointer and which one is for the struct.
 # Unbounded array types will also be assumed to be a pointer to the unbounded array.
 # In order to clarify any precedence between * and [] types, the result will be bracketed
 # e.g. `Joint[]` becomes `*((*Joint)[])`
@@ -217,24 +219,23 @@ class DATParser(BinaryReader):
 	# Length of the Header data of a DAT model. Pointers in the data are relative to the end of this header
 	DAT_header_length = 32
 
-	# Where in the file the dat model itself starts. E.g. .pkx files have extra metadata before the model
-	file_start_offset = 0
-
-	# The relocation data section of the model. It's parsed after the calling class provides the offset
-	relocation_table = {}
-
-	# Nodes that have already been parsed. If a node is in the cache then return the cached
-	# one when that offset is parsed again
-	nodes_cache_by_offset = {}
-
-	# Settings chosen for the parser
-	# - "ik_hack"   : A boolean for whether or not to scale down bones so ik works correctly
-	# - "max_frame" : An integer for the maximum number of frames to read from an animation, 0 for no limit
-	options = {} 
-
 	def __init__(self, filepath, options):
 		super().__init__(filepath)
 
+		# Where in the file the dat model itself starts. E.g. .pkx files have extra metadata before the model
+		self.file_start_offset = 0
+
+		# The relocation data section of the model. It's parsed after the calling class provides the offset
+		self.relocation_table = {}
+
+		# Nodes that have already been parsed. If a node is in the cache then return the cached
+		# one when that offset is parsed again
+		self.nodes_cache_by_offset = {}
+
+		# Settings chosen for the parser
+		# - "ik_hack"   : A boolean for whether or not to scale down bones so ik works correctly
+		# - "max_frame" : An integer for the maximum number of frames to read from an animation, 0 for no limit
+		# - "verbose"   : Prints more output for debugging purposes
 		self.options = options
 
 		if filepath[-4:] == '.pkx':
@@ -259,57 +260,9 @@ class DATParser(BinaryReader):
 	def _startOffset(self, relative_to_header):
 		return self.file_start_offset + (self.DAT_header_length if relative_to_header else 0)
 
-	def parseNode(self, node_class, address, offset=0, relative_to_header=True):
-		# Call the fromBinary class method on the specified Node class to instantiate the Node
-		# add the node to the nodes cache before returning it. If node is already cached for this offset, return that instead
-
-		final_offset = address + offset + self._startOffset(relative_to_header)
-		cached = self.nodes_cache_by_offset.get(final_offset)
-		if cached != None:
-			return cached
-
-		# The new node is cached in parseStruct() so it can be cached before the leaves are recursively parsed
-		new_node = node_class.fromBinary(self, address + offset)
-
-		for field in new_node.fields:
-			field_type = _markUpFieldType(field[1])
-			field_length = _getTypeLength(field_type)
-			new_node.length += field_length
-
-		return new_node
-
-	def parseStruct(self, node_class, address, fields=None, relative_to_header=True):
-		if self.options["verbose"]:
-			print("parsing struct:", node_class.class_name)
-
-		if fields == None:
-			fields = node_class.fields
-
-		new_node = node_class(address + self._startOffset(relative_to_header), None)
-		self.nodes_cache_by_offset[new_node.address] = new_node
-
-		if self.options["verbose"]:
-			print("at:", new_node.address)
-
-		current_offset = 0
-		for field in fields:
-			field_name = field[0]
-			field_type = _markUpFieldType(field[1])
-			field_length = _getTypeLength(field_type)
-
-			current_offset += _alignmentForTypeAtAddress(field_type, new_node.address + current_offset)
-			if self.options["verbose"]:
-				print("reading field:", field_name, " at:", new_node.address + current_offset)
-
-			value = self.read(field_type, address, current_offset, relative_to_header)
-			setattr(new_node, field_name, value)
-			current_offset += field_length
-
-		return new_node
-
 	def read(self, field_type, address, offset=0, relative_to_header=True, whence='start'):
 		if self.options["verbose"]:
-			print("reading field type:", field_type, " at:", address + offset + self._startOffset(relative_to_header))
+			print("reading field type:", field_type, " at:", hex(address + offset + self._startOffset(relative_to_header)))
 
 		if address + offset + self._startOffset(relative_to_header) + _getTypeLength(field_type) > self.filesize:
 			return None
@@ -367,9 +320,26 @@ class DATParser(BinaryReader):
 			return values
 
 		elif _isNodeClassType(field_type):
+			# Instantiate a node of the specified class then call fromBinary() on it to load its fields.
+			# Add the node to the nodes cache before returning it. If node is already cached for this offset, return that instead
+
+			final_offset = address + offset
+			cached = self.nodes_cache_by_offset.get(final_offset)
+			if cached != None:
+				return cached
 
 			node_class = _getClassWithName(field_type)
-			node = self.parseNode(node_class, address, offset)
+			node = node_class(final_offset, None)
+			# Cache the node before parsing its sub nodes
+			self.nodes_cache_by_offset[final_offset] = node
+			node.loadFromBinary(self)
+
+			# For debugging purposes
+			node.length = 0
+			for field in node.fields:
+				field_type = _markUpFieldType(field[1])
+				field_length = _getTypeLength(field_type) + _alignmentForTypeAtAddress(field_type, node.length)
+				node.length += field_length
 
 			# If the class hasn't been implemented it is replaced with a Dummy implementation.
 			# We can set the class name to the intended type so when reading the tree structure
@@ -382,6 +352,31 @@ class DATParser(BinaryReader):
 		else:
 			return None
 
+	# Used by node objects to read their fields and set the properties on the node.
+	# Pass in a set of fields to the fields argument to use those instead of the ones set on the node.
+	def parseNode(self, node, fields=None, relative_to_header=True):
+		if self.options["verbose"]:
+			print("parsing struct:", node.class_name)
+
+		if fields == None:
+			fields = node.fields
+
+		if self.options["verbose"]:
+			print("at:", node.address)
+
+		current_offset = 0
+		for field in fields:
+			field_name = field[0]
+			field_type = _markUpFieldType(field[1])
+			field_length = _getTypeLength(field_type)
+
+			current_offset += _alignmentForTypeAtAddress(field_type, node.address + current_offset)
+			if self.options["verbose"]:
+				print("reading field:", field_name, " at:", node.address + current_offset)
+
+			value = self.read(field_type, node.address, current_offset, relative_to_header)
+			setattr(node, field_name, value)
+			current_offset += field_length
 
 	# TODO: maybe rewrite the builder to write the output in two phases. First calculate the address to write each value.
 	# since we know the number of bytes each struct or value requires, we can allocate the space in advance, figure out
@@ -404,8 +399,8 @@ class DATBuilder(BinaryWriter):
 	# if trying to write a node that is already being written, return 0 for now but keep track
 	# that the value. Make sure to loop through this when the node tree has finished writing, before
 	# writing the file header, so the remaining offsets can be set properly
-	nodes_still_processing = []
-	nodes_to_write_pointers_by_offset = []
+	# nodes_still_processing = []
+	# nodes_to_write_pointers_by_offset = []
 
 	def _startOffset(self, relative_to_header):
 		return DAT_header_length if relative_to_header else 0

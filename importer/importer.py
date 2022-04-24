@@ -36,13 +36,13 @@ class Importer:
 		# When the parser is asked to parse a node which references one of these it can pass the requried
 		# flags into the constructor
 		parser = DATParser(filepath, parser_options)
-		header = parser.parseNode(ArchiveHeader, 0, 0, False)
+		header = parser.read('ArchiveHeader', 0, 0, False)
 
 		for (address, is_public) in header.section_addresses:
 			
 			# Recursively parse Node tree based on the section info
 		    # The top level node will recursively call parseNode() on any leaves
-			section = SectionInfo.fromBinary(parser, address, is_public, header.section_names_offset)
+			section = SectionInfo.readFromBinary(parser, address, is_public, header.section_names_offset)
 			print(section)
 
 			# Gives the flexibility to either import all sections or filter to just one

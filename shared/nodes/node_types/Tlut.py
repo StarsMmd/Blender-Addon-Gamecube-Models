@@ -1,6 +1,6 @@
 from ..Node import Node
 
-# Tlut
+# Texture Lookup Table
 class Tlut(Node):
     class_name = "Tlut"
     fields = [
@@ -8,9 +8,8 @@ class Tlut(Node):
     ]
 
     # Parse struct from binary file.
-    @classmethod
-    def fromBinary(cls, parser, address):
-        return parser.parseStruct(cls, address)
+    def loadFromBinary(self, parser):
+        parser.parseNode(self)
 
     # Tells the builder how to write this node's data to the binary file.
     # Returns the offset the builder was at before it started writing its own data.

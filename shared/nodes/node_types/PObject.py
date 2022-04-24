@@ -11,37 +11,28 @@ class PObject(Node):
         ('next', 'PObject'),
         ('vertex_list', 'Vertex[]'),
         ('flags', 'ushort'),
-        ('disp_list_count', 'ushort'),
-        ('disp_list', 'uint'),
+        ('display_list_chunk_count', 'ushort'),
+        ('display_list', 'uint'),
         ('property', 'uint')
     ]
 
     # Parse struct from binary file.
-    @classmethod
-    def fromBinary(cls, parser, address):
-        disp_list_count = parser.read('ushort', address + 14)
-        disp_list_type = 'uint[{count}]'.format(
-            count = disp_list_count
+    def loadFromBinary(self, parser):
+        parser.parseNode(self)
+
+        display_list_length = self.display_list_chunk_count * 32
+        display_list_type = 'uchar[{count}]'.format(
+            count = display_list_length
         )
+        self.display_list = parser.read(display_list_type, self.display_list)
 
-        flags = parser.read('uint', address + 12)
-        property_type = flags & POBJ_TYPE_MASK
-        property_type_string = 'Envelope[]'
+        property_type = self.flags & POBJ_TYPE_MASK
         if property_type == POBJ_SKIN:
-            property_type_string = 'Joint'
-        if property_type == POBJ_SHAPEANIM:
-            property_type = 'ShapeSet'
-
-        fields = [
-            ('name', 'string'),
-            ('next', 'PObject'),
-            ('vertex_list', 'Vertex[]'),
-            ('flags', 'ushort'),
-            ('disp_list_count', 'ushort'),
-            ('disp_list', disp_list_type), 
-            ('property', property_type_string)
-        ]
-        return parser.parseStruct(cls, address, fields)
+            self.property = parser.read('Joint', self.property)
+        elif property_type == POBJ_SHAPEANIM:
+            self.property = parser.read('ShapeSet', self.property)
+        else:
+            self.property = parser.read('Envelope[]', self.property)
 
     # Tells the builder how to write this node's data to the binary file.
     # Returns the offset the builder was at before it started writing its own data.

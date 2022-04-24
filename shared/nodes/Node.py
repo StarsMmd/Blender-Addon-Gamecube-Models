@@ -25,8 +25,7 @@ class Node(object):
     # Parse struct from binary file.
     # Use the parser to read the binary for the fields and then do any conversions or calculations
     # required to update those values or set extra meta data
-    @classmethod
-    def fromBinary(cls, parser, address):
+    def loadFromBinary(self, parser):
         #Override this in sub classes
         pass
 

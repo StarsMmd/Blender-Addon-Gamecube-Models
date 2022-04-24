@@ -1,5 +1,5 @@
 from ..Node import Node
-from ...hsd import JOBJ_PARTICLE
+from ...hsd import JOBJ_PTCL
 from ...hsd import JOBJ_SPLINE
 
 # Joint
@@ -19,31 +19,16 @@ class Joint(Node):
     ]
 
     # Parse struct from binary file.
-    @classmethod
-    def fromBinary(cls, parser, address):
-        flags = parser.read('uint', address + 4)
+    def loadFromBinary(self, parser):
+        parser.parseNode(self)
 
         property_type = 'Mesh'
-
-        if flags & JOBJ_PARTICLE:
+        if self.flags & JOBJ_PTCL:
             property_type = 'Particle'
-        elif flags & JOBJ_SPLINE:
+        elif self.flags & JOBJ_SPLINE:
             property_type = 'Spline'
 
-        fields = [
-            ('name', 'string'),
-            ('flags', 'uint'),
-            ('child', 'Joint'),
-            ('next', 'Joint'),
-            ('property', property_type),
-            ('rotation', 'vec3'),
-            ('scale', 'vec3'),
-            ('position', 'vec3'),
-            ('inverse_bind', 'matrix'),
-            ('robject', 'RObject')
-        ]
-
-        return parser.parseStruct(cls, address, fields)
+        self.property = parser.read(property_type, self.property)
 
     # Tells the builder how to write this node's data to the binary file.
     # Returns the offset the builder was at before it started writing its own data.

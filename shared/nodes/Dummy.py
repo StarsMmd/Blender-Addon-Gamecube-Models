@@ -6,9 +6,8 @@ class Dummy(Node):
     fields = []
 
     # Parse struct from binary file.
-    @classmethod
-    def fromBinary(cls, parser, address):
-        return Dummy(address, None)
+    def loadFromBinary(self, parser):
+        return
 
     # Tells the builder how to write this node's data to the binary file.
     # Returns the offset the builder was at before it started writing its own data.

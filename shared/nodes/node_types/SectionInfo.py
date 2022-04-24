@@ -3,7 +3,7 @@ from .SceneData import SceneData
 
 # Section Info
 class SectionInfo(Node):
-    class_name = "Section Info"
+    class_name = "Section"
 
     length = 8
 
@@ -12,20 +12,22 @@ class SectionInfo(Node):
         ("section_name", "uint")
     ]
 
-    # Parse struct from binary file.
     @classmethod
-    def fromBinary(cls, parser, address, is_public, strings_offset):
-        node = parser.parseStruct(cls, address)
+    def readFromBinary(cls, parser, address, is_public, strings_offset):
+        node = parser.read('SectionInfo', address)
         node.is_public = is_public
         node.section_name = parser.read('string', strings_offset, node.section_name)
 
         # We initially parse the root node as the raw pointer, then based on the section name
         # we can now decide what type of node to parse from that address
         if node.section_name == "scene_data":
-            node.root_node = parser.parseNode(SceneData, node.root_node)
+            node.root_node = parser.read('SceneData', node.root_node)
         # TODO: parse bound box and any other section types that may be present in other games
 
         return node
+
+    def loadFromBinary(self, parser):
+        parser.parseNode(self)
 
     # Tells the builder how to write this node's data to the binary file.
     # Returns the offset the builder was at before it started writing its own data.
