@@ -12,4 +12,6 @@ from .node_types.PObject import PObject
 from .node_types.SceneData import SceneData
 from .node_types.ShapeIndexTri import ShapeIndexTri
 from .node_types.ShapeSet import ShapeSet
+from .node_types.Vertex import Vertex
+from .node_types.VertexList import VertexList
 # from .node_types.TextureObject import TextureObject

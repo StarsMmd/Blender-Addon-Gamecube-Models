@@ -9,7 +9,7 @@ class PObject(Node):
     fields = [
         ('name', 'string'),
         ('next', 'PObject'),
-        ('vertex_list', 'Vertex[]'),
+        ('vertex_list', 'VertexList'),
         ('flags', 'ushort'),
         ('display_list_chunk_count', 'ushort'),
         ('display_list', 'uint'),
@@ -26,13 +26,16 @@ class PObject(Node):
         )
         self.display_list = parser.read(display_list_type, self.display_list)
 
-        property_type = self.flags & POBJ_TYPE_MASK
-        if property_type == POBJ_SKIN:
-            self.property = parser.read('Joint', self.property)
-        elif property_type == POBJ_SHAPEANIM:
-            self.property = parser.read('ShapeSet', self.property)
+        if self.property > 0:
+            property_type = self.flags & POBJ_TYPE_MASK
+            if property_type == POBJ_SKIN:
+                self.property = parser.read('Joint', self.property)
+            elif property_type == POBJ_SHAPEANIM:
+                self.property = parser.read('ShapeSet', self.property)
+            else:
+                self.property = parser.read('(*Envelope)[]', self.property)
         else:
-            self.property = parser.read('Envelope[]', self.property)
+            self.property = None
 
     # Tells the builder how to write this node's data to the binary file.
     # Returns the offset the builder was at before it started writing its own data.

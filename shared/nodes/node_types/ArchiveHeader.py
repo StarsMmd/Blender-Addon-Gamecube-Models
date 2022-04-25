@@ -3,6 +3,7 @@ from ..Node import Node
 # Archive Header
 class ArchiveHeader(Node):
     class_name = "Archive Header"
+    is_cachable = False
     fields = [
         ('file_size', 'uint'),
         ('data_size', 'uint'),
@@ -10,6 +11,10 @@ class ArchiveHeader(Node):
         ('public_nodes_count', 'uint'),
         ('external_nodes_count', 'uint')
     ]
+
+    def __init__(self, address, blender_obj):
+        super().__init__(address, blender_obj)
+        self.length = 32
 
     # Parse struct from binary file.
     def loadFromBinary(self, parser):

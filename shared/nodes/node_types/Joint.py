@@ -28,7 +28,10 @@ class Joint(Node):
         elif self.flags & JOBJ_SPLINE:
             property_type = 'Spline'
 
-        self.property = parser.read(property_type, self.property)
+        if self.property > 0:
+            self.property = parser.read(property_type, self.property)
+        else:
+            self.property = None
 
     # Tells the builder how to write this node's data to the binary file.
     # Returns the offset the builder was at before it started writing its own data.

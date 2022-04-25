@@ -131,7 +131,13 @@ def _getTypeLength(field_type):
 		return _getTypeLength(_getArraySubType(field_type)) * _getArrayTypeBound(field_type)
 
 	elif _isNodeClassType(field_type):
-		return _getClassWithName(field_type).length
+		class_ref = _getClassWithName(field_type)
+		length = 0
+		for field in class_ref.fields:
+			field_type = _markUpFieldType(field[1])
+			field_length = _getTypeLength(field_type) + _alignmentForTypeAtAddress(field_type, length)
+			length += field_length
+		return length
 
 	else:
 		return 0
@@ -141,19 +147,24 @@ def _alignmentForTypeAtAddress(field_type, address):
 		return _alignmentForTypeAtAddress(_getBracketedSubType(field_type), address)
 
 	elif _isPrimitiveType(field_type):
-		if field_type == 'matrix':
-			return address % 4
 		if field_type == 'string':
-			return 0
+			return _alignmentForTypeAtAddress('uchar', address)
+		if field_type == 'vec3':
+			return _alignmentForTypeAtAddress('float', address)
+		if field_type == 'matrix':
+			return _alignmentForTypeAtAddress('float', address)
 		else:
 			length = _getTypeLength(field_type)
-			return address % length
+			if length <= 0:
+				return 0
 
-	elif _isVectorType(field_type):
-		return address % 4
+			alignment = length - (address % length)
+			if alignment == length:
+				alignment = 0
+			return alignment
 
 	elif _isPointerType(field_type):
-		return address % 4
+		return _alignmentForTypeAtAddress('uint', address)
 
 	elif _isUnboundedArrayType(field_type):
 		return _alignmentForTypeAtAddress(_getArraySubType(field_type), address)
@@ -167,7 +178,7 @@ def _alignmentForTypeAtAddress(field_type, address):
 		return _alignmentForTypeAtAddress(first_field_type, address)
 
 	else:
-		return None
+		return 0
 
 def _byteChunkIsNull(chunk):
 	for byte in chunk:
@@ -260,6 +271,9 @@ class DATParser(BinaryReader):
 	def _startOffset(self, relative_to_header):
 		return self.file_start_offset + (self.DAT_header_length if relative_to_header else 0)
 
+	def getTypeLength(self, field_type):
+		return _getTypeLength(field_type)
+
 	def read(self, field_type, address, offset=0, relative_to_header=True, whence='start'):
 		if self.options["verbose"]:
 			print("reading field type:", field_type, " at:", hex(address + offset + self._startOffset(relative_to_header)))
@@ -271,10 +285,9 @@ class DATParser(BinaryReader):
 			return self.read(_getBracketedSubType(field_type), address, offset, relative_to_header, whence)
 
 		elif _isVectorType(field_type):
-			adjusted_offset = offset + self._startOffset(relative_to_header)
-			vx = self.read('float', address + adjusted_offset, 0, relative_to_header)
-			vy = self.read('float', address + adjusted_offset, 4, relative_to_header)
-			vz = self.read('float', address + adjusted_offset, 8, relative_to_header)
+			vx = self.read('float', address + offset, 0, relative_to_header, whence)
+			vy = self.read('float', address + offset, 4, relative_to_header, whence)
+			vz = self.read('float', address + offset, 8, relative_to_header, whence)
 			return (vx, vy, vz)
 
 		elif _isPrimitiveType(field_type):
@@ -330,8 +343,10 @@ class DATParser(BinaryReader):
 
 			node_class = _getClassWithName(field_type)
 			node = node_class(final_offset, None)
-			# Cache the node before parsing its sub nodes
-			self.nodes_cache_by_offset[final_offset] = node
+			# Cache the node before parsing its sub nodes.
+			if node.is_cachable:
+				self.nodes_cache_by_offset[final_offset] = node
+
 			node.loadFromBinary(self)
 
 			# For debugging purposes
@@ -378,118 +393,61 @@ class DATParser(BinaryReader):
 			setattr(node, field_name, value)
 			current_offset += field_length
 
-	# TODO: maybe rewrite the builder to write the output in two phases. First calculate the address to write each value.
-	# since we know the number of bytes each struct or value requires, we can allocate the space in advance, figure out
-	# where everything will go and then recurse through a second time to write the data into those spaces. 
-	# This will mean we don't have to have fully written the leaves yet to get their pointers and can avoid weird deferred logic
-	# when two nodes have pointers to each other.
-
-
-	# A class for managing the recursive writing of the Node tree. It handles checking if the node
-	# already has an offset assigned, in which case it just returns the offset
-	# or calling the node's write method and returning the newly written to offset
-	# It also inherits all the BinaryWriter methods for writing individual fields.
+	# A class for managing the recursive writing of the Node tree. 
+	# This happens in 3 steps:
+	# 1) Convert the node tree into an ordered array of nodes.
+	#    The order of the array should match the write order of the nodes.
+	#    To match the conventions of official models append nodes to the list in a breadth/depth first order
+	#    and then reverse the list so the nodes towards the top of the tree are written towards the end of the file.
+	# 2) For each node in the list, allocate an address range of the output to that node.
+	#    Each node is allocated the address following the preceding node, adjusting for alignment.
+	# 3) Write each node's data to the pre allocated address. For fields which are a pointer to a sub node,
+	#    write the pre allocated address of the sub node.
 class DATBuilder(BinaryWriter):
 
 	# Length of the Header data of a DAT model. Pointers in the data are relative to the end of this header.
 	DAT_header_length = 32
 
-	# Some nodes keep a reference to the previous node.
-	# To handle this we'll need to keep track of nodes which have started their write process
-	# if trying to write a node that is already being written, return 0 for now but keep track
-	# that the value. Make sure to loop through this when the node tree has finished writing, before
-	# writing the file header, so the remaining offsets can be set properly
-	# nodes_still_processing = []
-	# nodes_to_write_pointers_by_offset = []
-
-	def _startOffset(self, relative_to_header):
-		return DAT_header_length if relative_to_header else 0
-
-	def __init__(self, path):
+	def __init__(self, path, root_nodes):
 		super().__init__(path)
 		self.seek(DAT_header_length) # leave some padding bytes to be overwritten with the header at the end
 
-	def currentRelativeAddress(self, relative_to_header):
+		self.root_nodes = root_nodes
+		self.relocations = []
+		self.node_list = []
+		for root_node in root_nodes:
+			self.node_list += root_node.toList().reverse()
+
+
+	def _currentRelativeAddress(self, relative_to_header=True):
 		return super().currentAddress() - (DAT_header_length if relative_to_header else 0)
 
-	# A node can call this to say that the value at this address should be updated with the node it needs' address
-	# later, once that node has been completed
-	def deferPointerWriteForNode(self, address, node):
-		nodes_to_write_pointers_by_offset.append( (address + DAT_header_length, node) )
+	def buildDAT():
+		# Write primitive pointers for each node
+		for node in self.node_list:
+			node.writePrimitivePointers(self)
 
-	def writeDeferredPointers(self):
-		for address, node in nodes_to_write_pointers_by_offset:
-			if node.offset != None:
-				self.write('uint', node.offset, address)
+		# Allocate address for each node
+		self.seek(0, 'end')
+		for node in self.node_list:
+			first_field = node.fields[0]
+			alignment = _alignmentForTypeAtAddress(first_field[1], self.currentRelativeAddress())
+			for i in range(alignment):
+				_ = self.write(0, 'uchar')
 
+			node.address = self.currentRelativeAddress()
+			node_length = node.alocationSize()
+			for i in range(node_length):
+				_ = self.write(0, 'uchar')
 
-	# Returns the offset where this node's data was written
-	# Returns None if the offset calculation should be deferred due to the node still being processed
-	# and the calling node can write 0 for now but mark that address to be overwritten at the end
-	def writeNode(self, node, relative_to_header=True):
+		# Write each node
+		for node in self.node_list:
+			node.writeBinary(self)
 
-		if node.address != None:
-			return node.address
-	    
-		if node in nodes_still_processing:
-			return None
-
-		self.nodes_still_processing.append(node)
-
-		address = node.writeBinary(self)
-		node.address = address
-
-		self.nodes_still_processing.remove(node)
-
-		return address
-
-	def writeStruct(self, node, fields=None, relative_to_header=True):
-		if fields == None:
-			fields = node.fields
-
-		for field in fields:
-			field_name = field[0]
-			field_type = _markUpFieldType(field[1])
-			field_value = node.getattr(field_name)
-			field_length = _getTypeLength(field_type)
-
-			# Dump values that are pointed to first and replace them with their pointers
-			if _isPointerType(field_type):
-				sub_type = _getPointerSubType(field_type)
-				pointer = self.write(field_value, sub_type)
-				setattr(node, field_name, pointer)
-
-			elif _isNodeClassType(field_type):
-			    pointer = self.write(field_value, field_type)
-			    field_value.address = pointer
-			    setattr(node, field_name, pointer)
-
-			elif _isBoundedArrayType(field_type) or _isUnboundedArrayType(field_type):
-				sub_type = _getArraySubType(field_type)
-				if _isPointerType(sub_type) or _isNodeClassType(sub_type):
-					pointers_array = []
-					for value in field_value:
-						pointer = self.write(value, sub_type)
-
-						if _isNodeClassType(sub_type):
-							value.address = pointer
-
-						pointers_array.append(value)
-
-					setattr(node, field_name, pointers_array)
-
-			write_address = (self.currentRelativeAddress() if relative_to_header else self.currentAddress())
-
-		for field in fields:
-			field_name = field[0]
-			field_type = field[1]
-			field_value = node.getattr(field_name)
-			if _isNodeClassType(field_type) or _isPointerType(field_type):
-				field_type = 'uint'
-			
-			_ = self.write(field_value, field_type)
-
-		return write_address
+		# Write relocation list
+		self.seek(0, 'end')
+		for relocation in relocations:
+			_ = self.write(relocation, 'uint')
 
 	# If no address is specified then append to end of file
 	def write(self, value, field_type, address=None, relative_to_header=True, whence='start'):
@@ -497,7 +455,7 @@ class DATBuilder(BinaryWriter):
 			final_address = address + self._startOffset(relative_to_header)
 			self.seek(final_address)
 		else:
-			seek(0, 'end')
+			self.seek(0, 'end')
 
 		padding = _alignmentForTypeAtAddress(field_type, currentAddress())
 		address += padding
@@ -553,12 +511,61 @@ class DATBuilder(BinaryWriter):
 			return write_address
 
 		elif _isNodeClassType(field_type):
-			return self.writeNode(value, relative_to_header)
+			address = self.writeNode(value, relative_to_header)
+			self.relocations.append(address)
+			return address
 
-		else:
-			return None
+		else: 
+			return 0
 
 
+	def writeNode(self, node):
+		if fields == None:
+			fields = node.fields
+
+		for field in fields:
+			field_name = field[0]
+			field_type = _markUpFieldType(field[1])
+			field_value = node.getattr(field_name)
+			field_length = _getTypeLength(field_type)
+
+			# Dump values that are pointed to first and replace them with their pointers
+			if _isPointerType(field_type):
+				sub_type = _getPointerSubType(field_type)
+				pointer = self.write(field_value, sub_type)
+				setattr(node, field_name, pointer)
+
+			elif _isNodeClassType(field_type):
+			    pointer = self.write(field_value, field_type)
+			    field_value.address = pointer
+			    setattr(node, field_name, pointer)
+
+			elif _isBoundedArrayType(field_type) or _isUnboundedArrayType(field_type):
+				sub_type = _getArraySubType(field_type)
+				if _isPointerType(sub_type) or _isNodeClassType(sub_type):
+					pointers_array = []
+					for value in field_value:
+						pointer = self.write(value, sub_type)
+
+						if _isNodeClassType(sub_type):
+							value.address = pointer
+
+						pointers_array.append(value)
+
+					setattr(node, field_name, pointers_array)
+
+			write_address = (self.currentRelativeAddress() if relative_to_header else self.currentAddress())
+
+		for field in fields:
+			field_name = field[0]
+			field_type = field[1]
+			field_value = node.getattr(field_name)
+			if _isNodeClassType(field_type) or _isPointerType(field_type):
+				field_type = 'uint'
+			
+			_ = self.write(field_value, field_type)
+
+		return write_address
 
 
 

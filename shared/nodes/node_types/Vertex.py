@@ -4,12 +4,14 @@ from ..Node import Node
 class Vertex(Node):
     class_name = "Vertex"
     fields = [
-        ('', ''),
+        ('attribute', 'uint'),
+        ('attribute_type', 'uint'),
+        ('component_count', 'uint'),
+        ('component_type', 'uint'),
+        ('component_frac', 'uchar'),
+        ('stride', 'ushort'),
+        ('base_pointer', 'uint'),
     ]
-
-    # Parse struct from binary file.
-    def loadFromBinary(self, parser):
-        parser.parseNode(self)
 
     # Tells the builder how to write this node's data to the binary file.
     # Returns the offset the builder was at before it started writing its own data.
