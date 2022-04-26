@@ -1,9 +1,14 @@
 from ..Node import Node
 
-# Particle
-class Particle(Node):
-    class_name = "Particle"
-    fields = []
+# Animation
+class Animation(Node):
+    class_name = "Animation"
+    fields = [
+        ('flags', 'uint'),
+        ('end_frame', 'float'),
+        ('frame', 'Frame'),
+        ('joint', 'Joint'),
+    ]
 
     # Make approximation HSD struct from blender data.
     @classmethod

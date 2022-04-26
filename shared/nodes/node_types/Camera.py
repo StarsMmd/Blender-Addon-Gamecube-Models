@@ -4,17 +4,20 @@ from ..Node import Node
 class Camera(Node):
     class_name = "Camera"
     fields = [
-        ('', ''),
+        ('name', 'string'),
+        ('flags', 'ushort'),
+        ('perspective_flags', 'ushort'),
+        ('viewport', 'ushort[4]'),
+        ('scissor', 'ushort[4]'),
+        ('position', 'WObject'),
+        ('interest', 'WObject'),
+        ('roll', 'float'),
+        ('up_vector', '*vec3'),
+        ('near', 'float'),
+        ('far', 'float'),
+        ('field_of_view', 'float'),
+        ('aspect', 'float'),
     ]
-
-    # Parse struct from binary file.
-    def loadFromBinary(self, parser):
-        parser.parseNode(self)
-
-    # Tells the builder how to write this node's data to the binary file.
-    # Returns the offset the builder was at before it started writing its own data.
-    def writeBinary(self, builder):
-        return builder.writeStruct(self)
 
     # Make approximation HSD struct from blender data.
     @classmethod

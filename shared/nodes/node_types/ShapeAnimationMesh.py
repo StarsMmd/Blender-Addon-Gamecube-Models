@@ -1,9 +1,11 @@
 from ..Node import Node
 
-# Particle
-class Particle(Node):
-    class_name = "Particle"
-    fields = []
+# Shape Animation Mesh
+class ShapeAnimationMesh(Node):
+    class_name = "Shape Animation Mesh"
+    fields = [
+        ('', ''),
+    ]
 
     # Make approximation HSD struct from blender data.
     @classmethod

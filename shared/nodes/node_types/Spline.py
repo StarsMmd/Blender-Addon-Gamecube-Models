@@ -4,17 +4,18 @@ from ..Node import Node
 class Spline(Node):
     class_name = "Spline"
     fields = [
-        ('', ''),
+        ('flags', 'ushort'),
+        ('n', 'ushort'),
+        ('f0', 'float'),
+        ('s1', 'uint'),
+        ('f1', 'float'),
+        ('s2', 'uint'),
+        ('s3', 'uint'),
     ]
 
-    # Parse struct from binary file.
     def loadFromBinary(self, parser):
-        parser.parseNode(self)
-
-    # Tells the builder how to write this node's data to the binary file.
-    # Returns the offset the builder was at before it started writing its own data.
-    def writeBinary(self, builder):
-        return builder.writeStruct(self)
+        super().loadFromBinary(parser)
+        # TODO: complete spline implememtation
 
     # Make approximation HSD struct from blender data.
     @classmethod

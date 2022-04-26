@@ -2,6 +2,8 @@ from ..Node import Node
 from ...hsd import POBJ_TYPE_MASK
 from ...hsd import POBJ_SKIN
 from ...hsd import POBJ_SHAPEANIM
+from .Joint import Joint
+from .ShapeSet import ShapeSet
 
 # PObject
 class PObject(Node):
@@ -18,7 +20,7 @@ class PObject(Node):
 
     # Parse struct from binary file.
     def loadFromBinary(self, parser):
-        parser.parseNode(self)
+        super().loadFromBinary(parser)
 
         display_list_length = self.display_list_chunk_count * 32
         display_list_type = 'uchar[{count}]'.format(
@@ -37,11 +39,36 @@ class PObject(Node):
         else:
             self.property = None
 
+    def allocationSize(self):
+        # If the property is an Envelope list then allocate space for
+        # the list of pointers.
+        size = super().allocationSize()
+        if isinstance(self.property, list):
+            size += len(self.property) * 4
+        return size
+
+    def allocationOffset(self):
+        offset = super().allocationOffset()
+        if isinstance(self.property, list):
+            offset += len(self.property) * 4
+        return offset
+
     # Tells the builder how to write this node's data to the binary file.
     # Returns the offset the builder was at before it started writing its own data.
     def writeBinary(self, builder):
         self.disp_list_count = disp_list.length
-        return builder.writeStruct(self)
+        if isinstance(self.property, Joint):
+            self.flags = POBJ_SKIN
+            self.property = self.property.address
+
+        elif isinstance(self.property, ShapeSet):
+            self.flags = POBJ_SHAPEANIM
+            self.property = self.property.address
+            
+        else:
+            self.flags = 0
+
+        super().writeBinary(builder)
 
     # Make approximation HSD struct from blender data.
     @classmethod

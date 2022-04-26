@@ -15,12 +15,12 @@ class Joint(Node):
         ('scale', 'vec3'),
         ('position', 'vec3'),
         ('inverse_bind', 'matrix'),
-        ('robject', 'RObject')
+        ('reference', 'Reference')
     ]
 
     # Parse struct from binary file.
     def loadFromBinary(self, parser):
-        parser.parseNode(self)
+        super().loadFromBinary(parser)
 
         property_type = 'Mesh'
         if self.flags & JOBJ_PTCL:
@@ -36,7 +36,19 @@ class Joint(Node):
     # Tells the builder how to write this node's data to the binary file.
     # Returns the offset the builder was at before it started writing its own data.
     def writeBinary(self, builder):
-        return builder.writeStruct(self)
+        if isinstance(self.property, Particle):
+            self.flags = JOBJ_PTCL
+            self.property = self.property.address
+
+        elif isinstance(self.property, Spline):
+            self.flags = JOBJ_SPLINE
+            self.property = self.property.address
+
+        else:
+            self.flags = 0
+            self.property = self.property.address
+
+        super().writeBinary(builder)
 
     # Make approximation HSD struct from blender data.
     @classmethod

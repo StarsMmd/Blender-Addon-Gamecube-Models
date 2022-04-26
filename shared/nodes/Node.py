@@ -8,6 +8,8 @@ class Node(object):
     fields = []
     # Most nodes can be cached by some like convenience nodes for handling lists may not be good to cache
     is_cachable = True
+    # Determines if the struct is contained within another and can read from that offset even if cached
+    is_sub_struct = False
 
     # When initialised in fromBinary(), blender_obj should be None. It will be filled in when the tree
     # is parsed to import into blender.
@@ -21,6 +23,8 @@ class Node(object):
         # Reference to corresponding blender object, should only be set to persistent objects (e.g not edit bones).
         # When reading the file this won't have been created yet but it can be updated later.
         self.blender_obj = blender_obj
+        # Prevent reference cycles when printing tree
+        self.is_being_printed = False
 
     # Parse struct from binary file.
     # Use the parser to read the binary for the fields and then do any conversions or calculations
@@ -34,14 +38,21 @@ class Node(object):
         pass
 
     # Tells the builder how many bytes to reserve for this node.
-    def alocationSize(self):
+    def allocationSize(self):
         pass
+
+    # Tells the builder how far into the reserved region the node itself should start.
+    # Some nodes may need to output some data within that region so pointers to the node need to
+    # be offset to the point in the allocated region where the node's own data starts.
+    def allocationOffset(self):
+        return 0
 
     # Tells the builder how to write this node's data to the binary file.
     # The node should have had its write address allocated by the builder by the time this is called.
     def writeBinary(self, builder):
         if self.address == None:
             return
+        parser.writeNode(self)
         
 
     # Make approximation HSD struct from blender data.
@@ -70,6 +81,11 @@ class Node(object):
     # This implementation may lead to an infinite cycle if there are nodes with cyclic references.
     # We'll cross that bridge when we get to it. 
     def __str__(self):
+
+        if self.is_being_printed:
+            return "-> " + self.class_name + " @" + hex(self.address) + " (already printed)\n"
+
+        self.is_being_printed = True
 
         def fieldWeight(field):
             field_name = field[0]
@@ -117,6 +133,8 @@ class Node(object):
                     else:
                         text += spacing
                     text += line + "\n"
+
+        self.is_being_printed = False
 
         return text
 

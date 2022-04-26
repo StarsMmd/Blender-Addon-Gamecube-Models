@@ -337,15 +337,18 @@ class DATParser(BinaryReader):
 			# Add the node to the nodes cache before returning it. If node is already cached for this offset, return that instead
 
 			final_offset = address + offset
+			node_class = _getClassWithName(field_type)
+
 			cached = self.nodes_cache_by_offset.get(final_offset)
 			if cached != None:
-				return cached
-
-			node_class = _getClassWithName(field_type)
+				if not node_class.is_sub_struct:
+					return cached
+			
 			node = node_class(final_offset, None)
 			# Cache the node before parsing its sub nodes.
 			if node.is_cachable:
-				self.nodes_cache_by_offset[final_offset] = node
+				if not node_class.is_sub_struct:
+					self.nodes_cache_by_offset[final_offset] = node
 
 			node.loadFromBinary(self)
 
@@ -431,14 +434,19 @@ class DATBuilder(BinaryWriter):
 		self.seek(0, 'end')
 		for node in self.node_list:
 			first_field = node.fields[0]
-			alignment = _alignmentForTypeAtAddress(first_field[1], self.currentRelativeAddress())
+			alignment = _alignmentForTypeAtAddress(first_field[1], self._currentRelativeAddress())
 			for i in range(alignment):
 				_ = self.write(0, 'uchar')
 
-			node.address = self.currentRelativeAddress()
-			node_length = node.alocationSize()
+			node.address = self._currentRelativeAddress() + node.allocationOffset()
+			node_length = node.allocationSize()
 			for i in range(node_length):
 				_ = self.write(0, 'uchar')
+
+		# Tidy up alignment and record data section size
+		while (self._currentRelativeAddress()) % 16 != 0:
+			_ = self.write(0, 'uchar')
+		data_section_length = self._currentRelativeAddress()
 
 		# Write each node
 		for node in self.node_list:
@@ -446,8 +454,36 @@ class DATBuilder(BinaryWriter):
 
 		# Write relocation list
 		self.seek(0, 'end')
-		for relocation in relocations:
+		for relocation in self.relocations:
 			_ = self.write(relocation, 'uint')
+
+		# Write Section Info
+		section_names_offset = 0
+		section_names = []
+		for root_node in self.root_nodes:
+			self.write(root_node.address, 'uint')
+			if isinstance(root_node, SceneData):
+				section_names.append("scene_data")
+				self.write(section_names_offset, 'uint')
+				section_names_offset += 11
+			elif isinstance(root_node, BoundBox):
+				section_names.append("bound_box")
+				self.write(section_names_offset, 'uint')
+				section_names_offset += 10
+
+		# Write strings section
+		for section_name in section_names:
+			self.write(section_name, 'string')
+
+		# Write Archive Header
+		while (self._currentRelativeAddress()) % 16 != 0:
+			_ = self.write(0, 'uchar')
+		file_size = self._currentRelativeAddress()
+		relocations_count = len(self.relocations)
+		self.write(file_size, 'uint', 0, False)
+		self.write(data_size, 'uint', 4, False)
+		self.write(relocations_count, 'uint', 8, False)
+		self.write(len(self.root_nodes), 'uint', 12, False)
 
 	# If no address is specified then append to end of file
 	def write(self, value, field_type, address=None, relative_to_header=True, whence='start'):
@@ -479,12 +515,9 @@ class DATBuilder(BinaryWriter):
 
 
 		elif _isPointerType(field_type):
-			# If that node is still being written then find out its address at the end
-			if value == None:
-				# deferPointerWriteForNode(currentAddress(), )
-				return 0
-			else:
-				return self.write(value, 'uint', address, relative_to_header, whence)
+			if relative_to_header:
+				self.relocations.append(address)
+			return self.write(value, 'uint', address, relative_to_header, whence)
 
 		elif _isUnboundedArrayType(field_type) or _isBoundedArrayType(field_type):
 			sub_type = _getArraySubType(field_type)
@@ -512,14 +545,13 @@ class DATBuilder(BinaryWriter):
 
 		elif _isNodeClassType(field_type):
 			address = self.writeNode(value, relative_to_header)
-			self.relocations.append(address)
 			return address
 
 		else: 
 			return 0
 
 
-	def writeNode(self, node):
+	def writeNode(self, node, fields=None):
 		if fields == None:
 			fields = node.fields
 

@@ -119,24 +119,26 @@ class BinaryWriter:
         	self.seek(offset, whence)
         
         if type == 'uint8':
-            return self.file.write(struct.pack('>B', data))
-        if type == 'uint16':
-            return self.file.write(struct.pack('>H', data))
-        if type == 'uint32':
-            return self.file.write(struct.pack('>I', data))
-        if type == 'int8':
-            return self.file.write(struct.pack('>b', data))
-        if type == 'int16':
-            return self.file.write(struct.pack('>h', data))
-        if type == 'int32':
-            return self.file.write(struct.pack('>i', data))
-        if type == 'float':
-            return self.file.write(struct.pack('>f', data))
-        if type == 'double':
-            return self.file.write(struct.pack('>d', data))
-        if type == 'string':
-            return self.file.write(bytes(data, 'ascii'))
-        raise ValueError(f'Invalid value for arg `type`: {type}')
+            self.file.write(struct.pack('>B', data))
+        elif type == 'uint16':
+            self.file.write(struct.pack('>H', data))
+        elif type == 'uint32':
+            self.file.write(struct.pack('>I', data))
+        elif type == 'int8':
+            self.file.write(struct.pack('>b', data))
+        elif type == 'int16':
+            self.file.write(struct.pack('>h', data))
+        elif type == 'int32':
+            self.file.write(struct.pack('>i', data))
+        elif type == 'float':
+            self.file.write(struct.pack('>f', data))
+        elif type == 'double':
+            self.file.write(struct.pack('>d', data))
+        elif type == 'string':
+            # TODO: confirm if this includes null terminator byte
+            self.file.write(bytes(data, 'utf-8'))
+        else:
+            raise ValueError(f'Invalid value for arg `type`: {type}')
 
     def close(self):
         """Closes the BinaryWriter's file"""

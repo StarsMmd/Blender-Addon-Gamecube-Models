@@ -4,17 +4,9 @@ from ..Node import Node
 class WObjectAnimation(Node):
     class_name = "W Object Animation"
     fields = [
-        ('', ''),
+        ('animation', 'Animation'),
+        ('render_animation', 'RenderAnimation'),
     ]
-
-    # Parse struct from binary file.
-    def loadFromBinary(self, parser):
-        parser.parseNode(self)
-
-    # Tells the builder how to write this node's data to the binary file.
-    # Returns the offset the builder was at before it started writing its own data.
-    def writeBinary(self, builder):
-        return builder.writeStruct(self)
 
     # Make approximation HSD struct from blender data.
     @classmethod

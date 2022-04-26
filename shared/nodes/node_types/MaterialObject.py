@@ -4,17 +4,13 @@ from ..Node import Node
 class MaterialObject(Node):
     class_name = "Material Object"
     fields = [
-        ('', ''),
+        ('class_type', 'string'),
+        ('render_mode', 'uint'),
+        ('texture', 'Texture'),
+        ('material', 'Material'),
+        ('render_data', 'Render'),
+        ('pe_data', 'PixelEngine'),
     ]
-
-    # Parse struct from binary file.
-    def loadFromBinary(self, parser):
-        parser.parseNode(self)
-
-    # Tells the builder how to write this node's data to the binary file.
-    # Returns the offset the builder was at before it started writing its own data.
-    def writeBinary(self, builder):
-        return builder.writeStruct(self)
 
     # Make approximation HSD struct from blender data.
     @classmethod

@@ -1,20 +1,15 @@
 from ..Node import Node
 
-# RGBA Color
+# RGBA Color (aka GBAColor)
 class RGBAColor(Node):
     class_name = "RGBA Color"
+    is_sub_struct = True
     fields = [
-        ('', ''),
+        ('red', 'uchar'),
+        ('green', 'uchar'),
+        ('blue', 'uchar'),
+        ('alpha', 'uchar'),
     ]
-
-    # Parse struct from binary file.
-    def loadFromBinary(self, parser):
-        parser.parseNode(self)
-
-    # Tells the builder how to write this node's data to the binary file.
-    # Returns the offset the builder was at before it started writing its own data.
-    def writeBinary(self, builder):
-        return builder.writeStruct(self)
 
     # Make approximation HSD struct from blender data.
     @classmethod

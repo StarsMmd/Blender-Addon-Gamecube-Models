@@ -1,8 +1,8 @@
 from ..Node import Node
 
-# Particle
-class Particle(Node):
-    class_name = "Particle"
+# Animation Reference (aka RObject Animation)
+class AnimationReference(Node):
+    class_name = "Animation Reference"
     fields = []
 
     # Make approximation HSD struct from blender data.

@@ -16,7 +16,7 @@ class ShapeSet(Node):
 
     # Parse struct from binary file.
     def loadFromBinary(self, parser):
-        parser.parseNode(self)
+        super().loadFromBinary(parser)
 
         shape_vertices_type = "(@ShapeIndexTri)[{vi_count}]".format(
             vi_count = self.vertex_index_count
@@ -39,7 +39,7 @@ class ShapeSet(Node):
     # Tells the builder how to write this node's data to the binary file.
     # Returns the offset the builder was at before it started writing its own data.
     def writeBinary(self, builder):
-        return builder.writeStruct(self)
+        super().writeBinary(builder)
 
     # Make approximation HSD struct from blender data.
     @classmethod
