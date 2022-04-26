@@ -139,11 +139,12 @@ class Node(object):
                     spacing = "    "
 
                     for i, line in enumerate(sublines):
-                        if i == 0:
-                            text += field_name_prefix
-                        else:
-                            text += spacing
-                        text += line + "\n"
+                        if len(line) > 0:
+                            if i == 0:
+                                text += field_name_prefix
+                            else:
+                                text += spacing
+                            text += line + "\n"
             else:
                 substring = str(attr)
                 sublines = substring.split("\n")
@@ -152,11 +153,12 @@ class Node(object):
                 spacing = "    "
 
                 for i, line in enumerate(sublines):
-                    if i == 0:
-                        text += field_name_prefix
-                    else:
-                        text += spacing
-                    text += line + "\n"
+                    if len(line) > 0:
+                        if i == 0:
+                            text += field_name_prefix
+                        else:
+                            text += spacing
+                        text += line + "\n"
 
         self.is_being_printed = False
 
