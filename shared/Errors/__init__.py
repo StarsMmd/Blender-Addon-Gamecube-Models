@@ -1,0 +1,3 @@
+from .ArrayBoundsUnknownVariableError import ArrayBoundsUnknownVariableError
+from .ShapeSetDimensionMismatchError import ShapeSetDimensionMismatchError
+from .VertexListTerminatorError import VertexListTerminatorError

@@ -1,15 +1,16 @@
-import bpy
-
 # Abstract node class
 class Node(object):
     # The name of this type of Node
     class_name = "Node"
+
     # A list of the field names and field types for each field in this array
     fields = []
-    # Most nodes can be cached by some like convenience nodes for handling lists may not be good to cache
+
+    # Most nodes can be cached but some need to skip the caching logic
+    # Such as some which are sub structs which don't represent their own individual node.
+    # If they are the first field of the containing node then that address would already be cached
+    # as the container but we'd still need to read the sub struct at that address.
     is_cachable = True
-    # Determines if the struct is contained within another and can read from that offset even if cached
-    is_sub_struct = False
 
     # When initialised in fromBinary(), blender_obj should be None. It will be filled in when the tree
     # is parsed to import into blender.
@@ -23,8 +24,9 @@ class Node(object):
         # Reference to corresponding blender object, should only be set to persistent objects (e.g not edit bones).
         # When reading the file this won't have been created yet but it can be updated later.
         self.blender_obj = blender_obj
-        # Prevent reference cycles when printing tree
+        # Prevent reference cycles when traversing tree
         self.is_being_printed = False
+        self.is_being_listed = False
 
     # Parse struct from binary file.
     # Use the parser to read the binary for the fields and then do any conversions or calculations
@@ -52,36 +54,58 @@ class Node(object):
     def writeBinary(self, builder):
         if self.address == None:
             return
-        parser.writeNode(self)
-        
+        builder.writeNode(self)
 
-    # Make approximation HSD struct from blender data.
-    @classmethod
-    def fromBlender(cls, blender_obj):
-        #Override this in sub classes
-        pass
-
-    # Make approximation Blender object from HSD data.
-    def toBlender(self, context):
-        #Override this in sub classes
-        pass
-
-    # TODO: confirm if the convention is depth first or breadth first write
+    # TODO: confirm if the convention is depth first or breadth first write.
+    # Converts the node tree into an list of every node present in the tree.
     def toList(self):
+        # Prevent infinite cycles
+        if self.is_being_listed:
+            return []
+
+        self.is_being_listed = True
+
         node_list = [self]
 
+        def isNodeAlreadyInList(new_node):
+            for node in node_list:
+                if new_node.address == node.address:
+                    return True
+            return False
+
+        def addToListUniquely(nodes):
+            for node in nodes:
+                if not isNodeAlreadyInList(node):
+                    node_list.append(node)
+
+        # Recursively get the lists for any sub nodes. If a field is a list then
+        # get the node lists of each node in that list.
         for field in self.fields:
-            value = getattr(self, field)
+            field_name = field[0]
+            value = getattr(self, field_name)
+
             if isinstance(value, Node):
-                node_list += value.toList()
+                addToListUniquely(value.toList())
+
+            elif isinstance(value, list):
+                for element in value:
+                    if isinstance(element, Node):
+                        addToListUniquely(element.toList())
+
+                    elif isinstance(element, list):
+                        # We should never have deeper than a 2-dimensional list
+                        for sub_element in element:
+                            if isinstance(sub_element, Node):
+                                addToListUniquely(sub_element.toList())
+
+        self.is_being_listed = False
 
         return node_list
 
     # This recursively creates a textual representation of the tree starting at this node.
-    # This implementation may lead to an infinite cycle if there are nodes with cyclic references.
-    # We'll cross that bridge when we get to it. 
     def __str__(self):
 
+        # Prevent infinite cycles
         if self.is_being_printed:
             return "-> " + self.class_name + " @" + hex(self.address) + " (already printed)\n"
 

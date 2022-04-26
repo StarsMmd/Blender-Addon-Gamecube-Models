@@ -1,0 +1,2 @@
+class ShapeSetDimensionMismatchError(Exception):
+	pass

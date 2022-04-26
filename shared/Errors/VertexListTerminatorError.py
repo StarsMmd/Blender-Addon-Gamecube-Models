@@ -1,0 +1,2 @@
+class VertexListTerminatorError(Exception):
+	pass

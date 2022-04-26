@@ -14,14 +14,5 @@ class Dummy(Node):
     def writeBinary(self, builder):
         return
 
-    # Make approximation HSD struct from blender data.
-    @classmethod
-    def fromBlender(cls, blender_obj):
-        return Dummy(0, None)
-
-    # Make approximation Blender object from HSD data.
-    def toBlender(self, context):
-        pass
-
     def __str__(self):
-        return "-> " + self.class_name + " @" + hex(self.address) + " (Not yet implemented)\n"
+        return "-> " + self.class_name + " @" + hex(self.address) + " (Node class not found)\n"

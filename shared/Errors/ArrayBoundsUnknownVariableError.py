@@ -1,0 +1,2 @@
+class ArrayBoundsUnknownVariableError(Exception):
+	pass

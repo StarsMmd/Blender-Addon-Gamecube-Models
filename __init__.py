@@ -47,13 +47,8 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
                           type=bpy.types.OperatorFileListElement)
 
     directory = StringProperty(subtype='DIR_PATH')
-    section = StringProperty(default = 'scene_data', name = 'Section Name', description = 'Name of the section that should be imported as a scene')
-    data_type = EnumProperty(
-                items = (('SCENE', 'Scene', 'Import Scene'),
-                         ('BONE', 'Bone', 'Import Armature')
-                        ), name = 'Data Type', description = 'The type of data that is stored in the section')
-    import_animation = BoolProperty(default = True, name = 'Import Animation', description = 'Whether to import animation. Off by default while it\'s still very buggy')
-    ik_hack = BoolProperty(default = True, name = 'IK Hack', description = 'Shrinks Bones down to 1e-3 to make IK work properly')
+    section = StringProperty(default = '', name = 'Section Name', description = 'Name of the section that should be imported. Leave blank to import all.')
+    ik_hack = BoolProperty(default = True, name = 'IK Hack', description = 'Shrinks Bones down to 1e-3 to make IK work properly.')
     max_frame = IntProperty(default = 1000, name = 'Max Anim Frame', description = 'Cutoff frame after which animations aren\'t sampled. Use 0 For no limit.')
 
     filename_ext = ".dat"
@@ -66,7 +61,7 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
             paths.append(self.filepath)
 
         for path in paths:
-            status = Importer.parseDAT(self, context, path, self.section, self.data_type, self.import_animation, self.ik_hack, self.max_frame, False)
+            status = Importer.parseDAT(context, path, self.section, self.ik_hack, self.max_frame, False)
             if not 'FINISHED' in status:
                 return status
 
@@ -82,7 +77,11 @@ class ExportHSD(bpy.types.Operator, ExportHelper):
         return context.active_object is not None
 
     def execute(self, context):
-        pass
+        status = Exporter.writeDAT(context, path)
+        if not 'FINISHED' in status:
+            return status
+
+        return {'FINISHED'}
 
 
 def menu_func_import(self, context):

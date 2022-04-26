@@ -1,5 +1,6 @@
 import sys
 from importer.importer import Importer
+import bpy
 
 # This function is called when the addon is run through the command line.
 # To do this first install bpy (`pip install bpy`)
@@ -17,5 +18,5 @@ if __name__ == "__main__":
             else:
                 filepath = arg
                 print("importing: " + filepath)
-                status = Importer.parseDAT(None, None, filepath, verbose=verbose)
+                status = Importer.parseDAT(bpy.context, filepath, verbose=verbose, print_tree=True)
                 print(status)
