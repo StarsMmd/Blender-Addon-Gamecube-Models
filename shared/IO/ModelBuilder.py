@@ -1,11 +1,13 @@
 import bpy
+import math
 
-from ..Nodes import *
+from ..Constants import *
 from ..Errors import *
+from ..Nodes import *
 
 class ModelBuilder(object):
 
-	def __init__(self, context, section, options):
+	def __init__(self, context, sections, options):
 		# Settings chosen for the parser
 		# - "ik_hack"   : A boolean for whether or not to scale down bones so ik works correctly
 		# - "max_frame" : An integer for the maximum number of frames to read from an animation, 0 for no limit
@@ -13,55 +15,100 @@ class ModelBuilder(object):
 		self.options = options
 
 		self.context = context
-		self.section = section
+		self.sections = sections
+
+		self.armature_count = 0
+		self.bone_count = 0
 
 		self.models = []
 		self.lights = []
-		self.camera = None
-		self.fog = None
+		self.cameras = []
+		self.fogs = []
 
+		# Create lookup tables for textures, materials and meshes
+		# so we can easily reference them from other nodes later.
 		self.textures = {}
 		self.materials = {}
 		self.meshes = {}
 
-		if self.section.root_node == None:
-			return
+		# Sometimes there are sets which are separated across multiple sections.
+		# In this scenario we can build up the model set bit by bit.
+		disjoint_modelset = ModelSet.emptySet()
+		disjoint_cameraset = CameraSet.emptySet()
+		disjoint_lightset = LightSet.emptySet()
 
-		all_nodes = section.root_node.toList()
 
-		texture_nodes = list(filter(lambda node: isinstance(node, Texture), all_nodes))
-		for texture in texture_nodes:
-			self.textures[texture.id] = texture.image_data
+		for section in sections:
+			if section.root_node == None:
+				continue
 
-		material_nodes = list(filter(lambda node: isinstance(node, MaterialObject), all_nodes))
-		for mobject in material_nodes:
-			#TODO: uncomment once implementation is ready
-			continue
-			#self.materials[mobject.id] = self.approximateCyclesMaterial(mobject)
+			if isinstance(section.root_node, Joint):
+				disjoint_modelset.root_joint = section.root_node
 
-		mesh_nodes = list(filter(lambda node: isinstance(node, Mesh), all_nodes))
-		for mesh in mesh_nodes:
-			pobject = mesh.pobject
-			while pobject:
-				#TODO: uncomment once implementation is ready
-				# blender_mesh = make_mesh(pobject)
-				# # Add material
-				# material = materials.get(mesh.mobject.id)
-				# blender_mesh.data.materials.append(material)
-				pobject = pobject.next
-				# self.meshes[mesh.id] = blender_mesh
+			elif isinstance(section.root_node, AnimationJoint):
+				disjoint_modelset.animated_joints.append(section.root_node)
 
-		if isinstance(self.section.root_node, Joint):
-			model = ModelSet.fromRootJoint(self.section.root_node)
-			self.models.append(model)
+			elif isinstance(section.root_node, MaterialAnimationJoint):
+				disjoint_modelset.animated_material_joints.append(section.root_node)
 
-		elif isinstance(self.section.root_node, SceneData):
-			scene_data = self.section.root_node
+			elif isinstance(section.root_node, ShapeAnimationJoint):
+				disjoint_modelset.animated_shape_joints.append(section.root_node)
 
-			self.camera = scene_data.camera
-			self.fog = scene_data.fog
-			self.lights = scene_data.lights
-			self.models = scene_data.models
+			elif isinstance(section.root_node, Camera):
+				disjoint_cameraset.camera = section.root_node
+
+			elif isinstance(section.root_node, CameraAnimation):
+				disjoint_cameraset.animations.append(section.root_node)
+
+			elif isinstance(section.root_node, CameraSet):
+				self.cameras.append(section.root_node)
+
+			elif isinstance(section.root_node, Light):
+				disjoint_lightset.light = section.root_node
+
+			elif isinstance(section.root_node, LightAnimation):
+				disjoint_lightset.animations.append(section.root_node)
+
+			elif isinstance(section.root_node, LightSet):
+				self.lights.append(section.root_node)
+
+			elif isinstance(section.root_node, SceneData):
+				scene_data = section.root_node
+				self.cameras.append(scene_data.camera)
+				self.fogs.append(scene_data.fog)
+				self.lights += scene_data.lights
+				self.models += scene_data.models
+			
+			# Add certain node types to the look up tables for future reference
+			all_nodes = section.root_node.toList()
+			texture_nodes = list(filter(lambda node: isinstance(node, Texture), all_nodes))
+			for texture in texture_nodes:
+				self.textures[texture.id] = texture.image_data
+
+			material_nodes = list(filter(lambda node: isinstance(node, MaterialObject), all_nodes))
+			for mobject in material_nodes:
+				self.materials[mobject.id] = self.make_material(mobject)
+
+			mesh_nodes = list(filter(lambda node: isinstance(node, Mesh), all_nodes))
+			for mesh in mesh_nodes:
+				pobject = mesh.pobject
+				while pobject:
+					mesh_object = self.make_mesh(pobject)
+					# Add material
+					material = self.materials.get(mesh.mobject.id)
+					mesh_object.data.materials.append(material)
+					self.meshes[pobject.id] = mesh_object
+					pobject = pobject.next
+					
+
+		if disjoint_modelset.root_joint != None:
+			self.modelsets.append(disjoint_modelset)
+
+		if disjoint_cameraset.camera != None:
+			self.cameras.append(disjoint_cameraset)
+
+		if disjoint_lightset.light != None:
+			self.lightsets.append(disjoint_lightset)
 
 	def build(self):
 		if self.options.get("verbose"):
@@ -71,17 +118,23 @@ class ModelBuilder(object):
 			self.importModel(model)
 
 		for light in self.lights:
-			self.importModel(model)
+			self.importLight(light)
 
-		if self.camera != None:
-			self.importCamera(self.camera)
+		for camera in self.cameras:
+			self.importCamera(camera)
 
-		if self.fog != None:
-			self.importFog(self.fog)
+		for fog in self.fogs:
+			self.importFog(fog)
 
 
 	# TODO: complete implementation
 	def importModel(self, model):
+		if model == None:
+			return
+
+		root_joint = model.root_joint
+		armature = self.createArmature()
+
 		n_a = len(model.animated_joints) if model.animated_joints else 0
 		n_m = len(model.animated_material_joints) if model.animated_material_joints else 0
 		n_s = len(model.animated_shape_joints) if model.animated_shape_joints else 0
@@ -99,95 +152,254 @@ class ModelBuilder(object):
 	def importFog(self, fog):
 		pass
 
-	# TODO: fix up implementation
+	def createArmature(self, root_joint):
+		if root_joint == None:
+			return None
+
+		armature_name = None
+		if root_joint.name:
+		    armature_name = 'Armature_' + root_joint.name
+		else:
+		    armature_name = 'Armature_' + str(self.armature_count)
+
+		self.armature_count += 1
+
+		armature_data = bpy.data.armatures.new(name = armature_name)
+		armature = bpy.data.objects.new(name = armature_name, object_data = armature_data)
+
+		#TODO: Seperate Object hierarchy from armatures via Skeleton flags
+		#rotate armature into proper orientation
+		#needed due to different coordinate systems
+		armature.matrix_basis = Matrix.Translation(Vector((0,0,0)))
+		self.translate_coordinate_system(armature)
+
+		#make an instance in the scene
+		bpy.context.scene.collection.objects.link(armature)
+		armature_object = armature
+		armature_object.select_set(True)
+
+		# Using the hack. The bones will be too small to see otherwise
+		if self.options.get("ik_hack"):
+		    armature_data.display_type = 'STICK'
+
+		bpy.context.view_layer.objects.active = armature
+
+		#add bones
+		bones = root_joint.build_bone_hierarchy(self, None, None)
+
+		bpy.ops.object.mode_set(mode = 'POSE')
+		self.add_geometry(armature, bones)
+		self.add_contraints(armature, bones)
+		self.add_instances(armature, bones, mesh_dict)
+
+		bpy.context.view_layer.update()
+		bpy.ops.object.mode_set(mode = 'OBJECT')
+
+		return armature
+
+	def translate_coordinate_system(self, obj):
+	    #correct orientation due to coordinate system differences
+	    obj.matrix_basis @= Matrix.Rotation(math.pi / 2, 4, [1.0,0.0,0.0])
+
+	def add_geometry(self, armature, bones):
+	    #TODO: Find out what to do with particles ?
+	    for bone in bones:
+	        if bone.flags & JOBJ_INSTANCE:
+	            # We can't copy objects from other bones here since they may not be parented yet
+	            pass
+	        else:
+	            if not bone.flags & (JOBJ_PTCL | JOBJ_SPLINE):
+	                mesh_object = bone.property
+	                while dobj:
+	                    pobj = mesh_object.pobj
+	                    while pobj:
+	                        mesh = self.meshes[pobj.id]
+	                        mesh.parent = armature
+	                        # Apply deformation and rigid transformations temporarily stored in the hsd_mesh.
+	                        # This is done here because the meshes are created before the object hierarchy exists.
+	                        self.apply_bone_weights(mesh, pobj, bone, armature)
+	                        # Reemove degenerate geometry.
+	                        # Most of the time it's generated from tristrips changing orientation (for example in a plane).
+	                        mesh.data.validate(verbose=False, clean_customdata=False)
+	                        pobj = pobj.next
+	                    mesh_object = mesh_object.next
+
+	def apply_bone_weights(self, mesh, hsd_mesh, hsd_bone, armature):
+		# Apply weights now that the bones actually exist
+		bpy.context.view_layer.objects.active = mesh
+
+		#TODO: This is inefficient, I should probably sort the vertices by the envelope index beforehand
+
+		if hsd_mesh.skin[0]:
+		    #envelope
+		    bpy.ops.object.mode_set(mode = 'EDIT')
+		    joint_groups = {}
+		    matrices = []
+		    envelopes = hsd_mesh.skin[1]
+		    for envelope in envelopes:
+		        matrix = Matrix([[0] * 4] * 4)
+		        coord = envelope_coord_system(hsd_bone)
+		        if envelope[0][0] == 1.0:
+		            joint = envelope[0][1]
+		            if not joint.id in joint_groups:
+		                group = mesh.vertex_groups.new(name=joint.temp_name)
+		                joint_groups[joint.id] = group
+		            if coord:
+		                matrix = joint.temp_matrix @ get_hsd_invbind(joint)
+		            else:
+		                matrix = joint.temp_matrix
+		        else:
+		            for weight, joint in envelope:
+		                if not joint.id in joint_groups:
+		                    group = mesh.vertex_groups.new(name=joint.temp_name)
+		                    joint_groups[joint.id] = group
+		                matrix += (weight * (joint.temp_matrix @ get_hsd_invbind(joint)))
+		        if coord:
+		            matrix = matrix @ coord
+		        matrices.append(matrix)
+
+		    bpy.ops.object.mode_set(mode = 'OBJECT')
+
+		    indices = hsd_mesh.skin[0]
+		    for vertex, index in indices:
+		        mesh.data.vertices[vertex].co = matrices[index] @ mesh.data.vertices[vertex].co
+		        for weight, joint in envelopes[index]:
+		            joint_groups[joint.id].add([vertex], weight, 'REPLACE')
+
+		    for matrix in matrices:
+		        print(matrix)
+
+		    if hsd_mesh.normals:
+		        #XXX: Is this actually needed?
+		        matrix_indices = dict(indices)
+		        normal_matrices = []
+		        for matrix in matrices:
+		            normal_matrix = matrix.to_3x3()
+		            normal_matrix.invert()
+		            normal_matrix.transpose()
+		            normal_matrices.append(normal_matrix.to_4x4())
+
+		        for loop in mesh.data.loops:
+		            hsd_mesh.normals[loop.index] = (normal_matrices[matrix_indices[loop.vertex_index]] @ Vector(hsd_mesh.normals[loop.index])).normalized()[:]
+		        mesh.data.normals_split_custom_set(hsd_mesh.normals)
+
+		else:
+		    if hsd_mesh.skin[1]:
+		        #No idea if this is right, don't have any way to test right now
+		        matrix = Matrix([[0] * 4] * 4)
+		        group0 = mesh.vertex_groups.new(name=hsd_bone.temp_name)
+		        matrix += 0.5 * (hsd_bone.temp_matrix @ get_hsd_invbind(hsd_bone))
+		        joint = hsd_mesh.skin[1]
+		        group1 = mesh.vertex_groups.new(name=hsd_bone.temp_name)
+		        matrix += 0.5 * (joint.temp_matrix @ get_hsd_invbind(hsd_bone))
+
+		        mesh.matrix_global = matrix
+
+		        group0.add([v.index for v in mesh.data.vertices], 0.5, 'REPLACE')
+		        group1.add([v.index for v in mesh.data.vertices], 0.5, 'REPLACE')
+
+		        if hsd_mesh.normals:
+		            for loop in mesh.data.loops:
+		                matrix = matrix.inverted().transposed()
+		                hsd_mesh.normals[loop.index] = (matrix @ Vector(hsd_mesh.normals[loop.index])).normalized()[:]
+		            mesh.data.normals_split_custom_set(hsd_mesh.normals)
+
+		    else:
+		        mesh.matrix_local = hsd_bone.temp_matrix #* get_hsd_invbind(hsd_bone)
+		        #TODO: get matrix relative to parent bone and set parent mode to bone
+		        group = mesh.vertex_groups.new(name=hsd_bone.temp_name)
+		        group.add([v.index for v in mesh.data.vertices], 1.0, 'REPLACE')
+		        if hsd_mesh.normals:
+		            mesh.data.normals_split_custom_set(hsd_mesh.normals)
+
+
+		mod = mesh.modifiers.new('Skinmod', 'ARMATURE')
+		mod.object = armature
+		mod.use_bone_envelopes = False
+		mod.use_vertex_groups = True
+
 	def make_mesh(self, pobj):
 		name = ''
 		if pobj.name:
 			name = pobj.name
 
-		displist = pobj.displist
-		vtxdesclist = pobj.vtxdesclist
-		displistsize = pobj.displistsize
+		display_list = pobj.display_list
+		vertex_list = pobj.vtxdesclist
+		display_list_size = pobj.display_list_chunk_count
 
-		print('POBJ FLAGS: %.8X' % pobj.flags)
+		position_vertex_index = None #index of the vtxdesc that holds vertex position data
+		for i in range(len(vertex_list)):
+			vertex = vertex_list[i]
+			if vertex.attribute == GX_VA_POS:
+			    position_vertex_index = i
 
-		i = 0 #index of the vtxdesc that holds vertex position data
-		for vtxdesc in vtxdesclist:
-		    if vtxdesc.attr == gx.GX_VA_POS:
-		        break
-		    i += 1
-		if not i < len(vtxdesclist):
-		    error_output("Mesh contains no position information")
-		    return None
+		if position_vertex_index == None:
+		    raise MeshWithoutPositionError
+
 		#vertices, faces = read_geometry(vtxdesclist, displist, i)
 		#TODO: move the loop here to avoid redundancy
-		sources, facelists, normdicts = read_geometry(vtxdesclist, displist, displistsize)
-		vertices = sources[i]
-		faces = facelists[i]
+		sources, face_lists, normals = self.read_geometry(vertex_list, display_list, display_list_size)
+		vertices = sources[position_vertex_index]
+		faces = facelists[position_vertex_index]
 
 		# Create mesh and object
-		me = bpy.data.meshes.new(name + 'Mesh')
-		ob = bpy.data.objects.new(name, me)
-		ob.location = Vector((0,0,0))
+		mesh = bpy.data.meshes.new('Mesh_' + name)
+		mesh_object = bpy.data.objects.new(name, mesh)
+		mesh_object.location = Vector((0,0,0))
 		# Link object to scene
-		bpy.context.scene.collection.objects.link(ob)
+		bpy.context.scene.collection.objects.link(mesh_object)
 
 		# Create mesh from given verts, edges, faces. Either edges or
 		# faces should be [], or you ask for problems
+		mesh.from_pydata(vertices, [], faces)
 
-		me.from_pydata(vertices, [], faces)
-
-		if pobj.u:
-		    type = pobj.flags & hsd.POBJ_TYPE_MASK
-		    if type == hsd.POBJ_SHAPEANIM:
-		        shape_set = pobj.u
-		        make_shapeset(ob, shape_set, normdicts[i])
-		        make_rigid_skin(pobj)
-		    elif type == hsd.POBJ_ENVELOPE:
-		        envelope_list = pobj.u
-		        envelope_vtxdesc_idx = -1
-		        for vtxnum, vtxdesc in enumerate(vtxdesclist):
-		            if vtxdesc.attr == gx.GX_VA_PNMTXIDX: #?
-		                envelope_vtxdesc_idx = vtxnum
-		        if not envelope_vtxdesc_idx < 0:
-		            make_deform_skin(pobj, envelope_list, sources[envelope_vtxdesc_idx], facelists[envelope_vtxdesc_idx], faces)
+		if pobj.property:
+		    type = pobj.flags & POBJ_TYPE_MASK
+		    if type == POBJ_SHAPEANIM:
+		        shape_set = pobj.property
+		        self.make_shapeset(mesh_object, shape_set, normdicts[position_vertex_index])
+		        self.make_rigid_skin(pobj)
+		    elif type == POBJ_ENVELOPE:
+		        envelope_list = pobj.property
+		        envelope_vertex_index = None
+		        for index, vertex in enumerate(vertex_list):
+		            if vertex.attribute == GX_VA_PNMTXIDX:
+		                envelope_vertex_index = index
+		        if envelope_vertex_index != None:
+		            self.make_deform_skin(pobj, envelope_list, sources[envelope_vertex_index], face_lists[envelope_vertex_index], faces)
 		        else:
-		            error_output('INVALID ENVELOPE: %.8X' % (pobj.id))
+		            raise InvalidEnvelopeError
 
 		    else:
-		        #skin
-		        #deprecated, probably still used somewhere though
-		        joint = pobj.u
-		        make_skin(pobj, joint)
+		        # Make skin
+		        # Deprecated, probably still used somewhere though
+		        joint = pobj.property
+		        self.make_skin(pobj, joint)
 
 		else:
-		    make_rigid_skin(pobj)
+		    self.make_rigid_skin(pobj)
 
 
-		#me.calc_normals()
-		print(me.name)
-		#print_primitives(pobj.vtxdesclist, pobj.displist, pobj.displistsize)
+		#mesh.calc_normals()
 		pobj.normals = None
-		for vtxnum, vtxdesc in enumerate(vtxdesclist):
-		    if vtxdesc_is_tex(vtxdesc):
-		        uvlayer = make_texture_layer(me, vtxdesc, sources[vtxnum], facelists[vtxnum])
-		    elif vtxdesc.attr == gx.GX_VA_NRM or vtxdesc.attr == gx.GX_VA_NBT:
-		        assign_normals_to_mesh(pobj, me, vtxdesc, sources[vtxnum], facelists[vtxnum])
-		        me.use_auto_smooth = True
-		    elif (vtxdesc.attr == gx.GX_VA_CLR0 or
-		          vtxdesc.attr == gx.GX_VA_CLR1):
-		        add_color_layer(me, vtxdesc, sources[vtxnum], facelists[vtxnum])
+		for index, vertex in enumerate(vertex_list):
+		    if vertex.is_tex():
+		        uvlayer = self.make_texture_layer(mesh, vertex, sources[index], face_lists[index])
+		    elif vertex.attribute == GX_VA_NRM or vertex.attribute == GX_VA_NBT:
+		        self.assign_normals_to_mesh(pobj, mesh, vertex, sources[index], facelists[index])
+		        mesh.use_auto_smooth = True
+		    elif (vertex.attribute == GX_VA_CLR0 or
+		          vertex.attribute == GX_VA_CLR1):
+		        self.add_color_layer(mesh, vertex, sources[index], face_lists[index])
 
 		# Update mesh with new data
-		me.update(calc_edges = True, calc_edges_loose = False)
-		#remove degenerate faces (These mostly occur due to triangle strips creating invisible faces when changing orientation)
+		# Remove degenerate faces (These mostly occur due to triangle strips creating invisible faces when changing orientation)
+		mesh.update(calc_edges = True, calc_edges_loose = False)
 
-		print_primitives(pobj.vtxdesclist, pobj.displist, pobj.displistsize)
+		return mesh_object
 
-		return ob
-
-	# TODO: fix up implementation
-	def approximateCyclesMaterial(self, material_object):
+	# TODO: fix up implementation. Copy from approximateCyclesMaterial.
+	def make_material(self, material_object):
 	    material = material_object.material
 	    mat = bpy.data.materials.new('')
 	    mat.use_nodes = True
@@ -200,16 +412,10 @@ class ModelBuilder(object):
 	    output = nodes.new('ShaderNodeOutputMaterial')
 	    #nodes.remove(diff)
 
-	    mat_diffuse_color = normcolor(material.diffuse)
+	    mat_diffuse_color = material.diffuse
 
-	    #XXX: Print material flags etc
-	    print(mat.name)
-	    notice_output('MOBJ FLAGS:\nrendermode: %.8X' % mobj.rendermode)
 	    if mobj.pedesc:
 	        pedesc = mobj.pedesc
-	        notice_output('PEDESC FLAGS:\nflags: %.2X\nref0: %.2X\nref1: %.2X\ndst_alpha: %.2X\ntype: %.2X\nsrc_factor: %.2X\ndst_factor: %.2X\nlogic_op: %.2X\nz_comp: %.2X\nalpha_comp0: %.2X\nalpha_op: %.2X\nalpha_comp1: %.2X' % \
-	                       (pedesc.flags, pedesc.ref0, pedesc.ref1, pedesc.dst_alpha, pedesc.type, pedesc.src_factor, pedesc.dst_factor, pedesc.logic_op, pedesc.z_comp, pedesc.alpha_comp0, pedesc.alpha_op, pedesc.alpha_comp1))
-
 
 	    textures = []
 	    toon = None
@@ -220,20 +426,8 @@ class ModelBuilder(object):
 	        #    toon = texdesc
 
 	        #XXX:
-	        notice_output('TOBJ FLAGS:\nid: %.8X\nsrc: %.8X\nflag: %.8X' % (texdesc.texid, texdesc.src, texdesc.flag))
 	        if texdesc.tev:
 	            tev = texdesc.tev
-	            notice_output('TEV FLAGS:\ncolor_op: %.2X\nalpha_op: %.2X\ncolor_bias: %.2X\nalpha_bias: %.2X\n\
-	color_scale: %.2X\nalpha_scale: %.2X\ncolor_clamp: %.2X\nalpha_clamp: %.2X\n\
-	color_a: %.2X color_b: %.2X color_c: %.2X color_d: %.2X\n\
-	alpha_a: %.2X alpha_b: %.2X alpha_c: %.2X alpha_d: %.2X\n\
-	konst: %.2X%.2X%.2X%.2X tev0: %.2X%.2X%.2X%.2X tev1: %.2X%.2X%.2X%.2X\n\
-	active: %.8X' % ((tev.color_op, tev.alpha_op, tev.color_bias, tev.alpha_bias,\
-	                                            tev.color_scale, tev.alpha_scale, tev.color_clamp, tev.alpha_clamp, \
-	                                            tev.color_a, tev.color_b, tev.color_c, tev.color_d, \
-	                                            tev.alpha_a, tev.alpha_b, tev.alpha_c, tev.alpha_d) + \
-	                                            tuple(tev.konst) + tuple(tev.tev0) + tuple(tev.tev1) + \
-	                                            (tev.active,)))
 
 	        print('%.8X' % texdesc.flag)
 	        #if texdesc.flag & (hsd.TEX_LIGHTMAP_DIFFUSE | hsd.TEX_LIGHTMAP_AMBIENT):
@@ -655,20 +849,74 @@ class ModelBuilder(object):
 
 	    return mat
 
-#normalize u8 to float
-#only used for color so we can do srgb conversion here
-def normcolor(x):
-    if len(x) > 2:
-        color = [c / 255 for c in x]
-        return tolin(color)
-    else:
-        type = x[1]
-        val = x[0] / 255
-        if type == 'R' or type == 'G' or type == 'B':
-            return tolin([val])[0]
-        elif type == 'A':
-            return val
+	def add_contraints(self, armature, bones):
+		for hsd_joint in bones:
+			if hsd_joint.flags & JOBJ_TYPE_MASK == JOBJ_EFFECTOR:
+			    if not hsd_joint.temp_parent:
+			        raise IKEffectorWithoutParentError
+			        continue
+			    if hsd_joint.temp_parent.flags & hsd.JOBJ_TYPE_MASK == hsd.JOBJ_JOINT2:
+			        chain_length = 3
+			        pole_data_joint = hsd_joint.temp_parent.temp_parent
+			    elif hsd_joint.temp_parent.flags & hsd.JOBJ_TYPE_MASK == hsd.JOBJ_JOINT1:
+			        chain_length = 2
+			        pole_data_joint = hsd_joint.temp_parent
+			    target_robj = robj_get_by_type(hsd_joint, 0x10000000, 1)
+			    poletarget_robj = robj_get_by_type(pole_data_joint, 0x10000000, 0)
+			    length_robj = robj_get_by_type(hsd_joint.temp_parent, 0x40000000, 0)
+			    if not length_robj:
+			        notice_output("No Pole angle and bone length constraint on IK Effector Parent")
+			        continue
+			    bone_length = length_robj.val0
+			    pole_angle = length_robj.val1
+			    if length_robj.flags & 0x4:
+			        pole_angle += math.pi #+180°
+			    #This is a hack needed due to how the IK systems differ
+			    #May break on models using a different exporter than the one used for XD/Colosseum
+			    #(Or just some inconveniently placed children)
+			    effector = armature.data.bones[hsd_joint.temp_name]
+			    effector_pos = Vector(effector.matrix_local.translation)
+			    effector_name = effector.name
+			    bpy.context.view_layer.objects.active = armature
+			    bpy.ops.object.mode_set(mode = 'EDIT')
+			    position = Vector(effector.parent.matrix_local.translation)
+			    direction = Vector(effector.parent.matrix_local.col[0][0:3]).normalized()
+			    direction *= bone_length * effector.parent.matrix_local.to_scale()[0]
+			    position += direction
+			    #XXX contrary to documentation, .translate() doesn't seem to exist on EditBones in 2.81
+			    #Swap this back when this gets fixed
+			    #armature.data.edit_bones[effector_name].translate(position - effector_pos)
+			    headpos = Vector(armature.data.edit_bones[effector_name].head[:]) + (position - effector_pos)
+			    armature.data.edit_bones[effector_name].head[:] = headpos[:]
+			    tailpos = Vector(armature.data.edit_bones[effector_name].tail[:]) + (position - effector_pos)
+			    armature.data.edit_bones[effector_name].tail[:] = tailpos[:]
+			    #
+			    """
+			    true_effector = effector
+			    distance = abs(effector.head.length - bone_length)
+			    for child in armature.data.bones[hsd_joint.temp_parent.temp_name].children:
+			        l = abs(child.head.length - bone_length)
+			        if l < distance:
+			            true_effector = child
+			            distance = l
+			    """
+			    bpy.ops.object.mode_set(mode = 'POSE')
+			    #if hsd_joint.temp_parent.flags & hsd.JOBJ_SKELETON:
+			    #adding the constraint
 
+			    c = armature.pose.bones[effector_name].constraints.new(type = 'IK')
+			    c.chain_count = chain_length
+			    if target_robj:
+			        c.target = armature
+			        c.subtarget = target_robj.u.temp_name
+			        if poletarget_robj:
+			            c.pole_target = armature
+			            c.pole_subtarget = poletarget_robj.u.temp_name
+			            c.pole_angle = pole_angle
+			    #else:
+			    #    notice_output("No Pos constraint RObj on IK Effector")
+			    #else:
+			    #    notice_output("Adding IK contraint to Bone without Bone parents has no effect")
 
 
 

@@ -4,16 +4,16 @@ from ...Node import Node
 class ModelSet(Node):
     class_name = "Model Set"
     fields = [
-        ('joint', 'Joint'),
+        ('root_joint', 'Joint'),
         ('animated_joints', 'AnimationJoint[]'),
-        ('animated_material_joints', 'AnimatedMaterialJoint[]'),
-        ('animated_shape_joints', 'AnimatedShapeJoint[]')
+        ('animated_material_joints', 'MaterialAnimationJoint[]'),
+        ('animated_shape_joints', 'ShapeAnimationJoint[]')
     ]
 
     @classmethod
-    def fromRootJoint(cls, joint):
+    def emptySet(cls):
         new_node = ModelSet(0, None)
-        new_node.joint = joint
+        new_node.root_joint = None
         new_node.animated_joints = []
         new_node.animated_material_joints = []
         new_node.animated_shape_joints = []

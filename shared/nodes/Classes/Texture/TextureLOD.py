@@ -8,5 +8,5 @@ class TextureLOD(Node):
         ('LOD_bias', 'float'),
         ('bias_clamp', 'uchar'),
         ('enable_edge_LOD', 'uchar'),
-        ('max_aniso', 'uint'),
+        ('max_anisotropy', 'uint'),
     ]

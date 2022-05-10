@@ -4,6 +4,7 @@ from ...Node import Node
 class ArchiveHeader(Node):
     class_name = "Archive Header"
     is_cachable = False
+    is_in_data_section = False
     fields = [
         ('file_size', 'uint'),
         ('data_size', 'uint'),
@@ -26,8 +27,6 @@ class ArchiveHeader(Node):
         sections_start = self.data_size + relocations_size
         section_count = self.public_nodes_count + self.external_nodes_count
         self.section_names_offset = sections_start + (section_size * section_count)
-
-        parser.registerRelocationTable(self.data_size, self.relocations_count)
 
         # Parse sections info
         section_addresses = []

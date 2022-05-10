@@ -20,7 +20,7 @@ class ShapeSet(Node):
     def writeBinary(self, builder):
         # TODO: set vt count, nt count, shape count based on dimension of vertex_set and normal_set
         if len(vertex_set) != len(normal_set):
-            raise ShapeSetDimensionMismatchError
+            raise ShapeSetDimensionMismatchError(len(vertex_set), len(normal_set))
 
         if isinstance(vertex_set, list):
             self.shape_count = len(vertex_set)

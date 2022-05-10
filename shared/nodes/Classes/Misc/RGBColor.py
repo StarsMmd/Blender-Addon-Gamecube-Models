@@ -1,22 +1,21 @@
 from ...Node import Node
 from .Color import Color
 
-# RGBA Color
-class RGBAColor(Node, Color):
-    class_name = "RGBA Color"
+# RGB Color
+class RGBColor(Node, Color):
+    class_name = "RGB Color"
     is_cachable = False
     fields = [
         ('red', 'uchar'),
         ('green', 'uchar'),
         ('blue', 'uchar'),
-        ('alpha', 'uchar'),
+        ('padding', 'uchar')
     ]
 
     def loadFromBinary(self, parser):
         super().loadFromBinary(parser)
 
+        self.alpha = 0xFF
+
         self._normalize()
         self._linearize()
-
-
-        

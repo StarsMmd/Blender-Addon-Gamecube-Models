@@ -5,5 +5,12 @@ class CameraSet(Node):
     class_name = "Camera Set"
     fields = [
         ('camera', 'Camera'),
-        ('camera_animations', 'CameraAnimation[]'),
+        ('animations', 'CameraAnimation[]'),
     ]
+
+    @classmethod
+    def emptySet(cls):
+        new_node = CameraSet(0, None)
+        new_node.camera = None
+        new_node.animations = []
+        return new_node

@@ -12,6 +12,12 @@ class Node(object):
     # as the container but we'd still need to read the sub struct at that address.
     is_cachable = True
 
+    # Determines if the node should be in the main data section of the model. The header and section
+    # info nodes are outside of this but for nodes within it we can make sure they're being read
+    # from within the expected range. Attempting to read one from outside the data section tells us
+    # something went wrong.
+    is_in_data_section = True
+
     # When initialised in fromBinary(), blender_obj should be None. It will be filled in when the tree
     # is parsed to import into blender.
     # When initialised in fromBlender(), address should be None. It will be filled in when the tree
@@ -34,9 +40,14 @@ class Node(object):
     def loadFromBinary(self, parser):
         parser.parseNode(self)
 
-    # For any fields which are a pointer where the underlying sub type is a primitive type,
+    # For any fields which are a pointer where the underlying sub type is a primitive type (but not a string),
     # write them to the builder's output and replace the field with the address it was written to
     def writePrimitivePointers(self, builder):
+        pass
+
+    # For any fields which are a pointer to a string, write the string to the builder and replace
+    # the property's value with the address it was written to
+    def writeStringPointers(self, builder):
         pass
 
     # Tells the builder how many bytes to reserve for this node.

@@ -3,7 +3,7 @@ import struct
 from ..Nodes import *
 from ..Errors import *
 
-from .file_io import *
+from .File_io import *
 
 # Helpers
 # Precedence rules:-
@@ -98,7 +98,7 @@ def _getArrayTypeBound(field_type):
 	try:
 		bounds = int(bound_string)
 	except:
-		raise ArrayBoundsUnknownVariableError
+		raise ArrayBoundsUnknownVariableError(bound_string)
 
 	return bounds
 	
@@ -183,9 +183,14 @@ def _alignmentForTypeAtAddress(field_type, address):
 		fields = _getClassWithName(field_type).fields
 		if len(fields) == 0:
 			return 0
-		first_field = fields[0]
-		first_field_type = _markUpFieldType(first_field[1])
-		return _alignmentForTypeAtAddress(first_field_type, address)
+		longest_field = None
+		for field in fields:
+			field_type = _markUpFieldType(field[1])
+			field_alignment = _alignmentForTypeAtAddress(field_type, address)
+			if longest_field == None or longest_field < field_alignment:
+				longest_field = field_alignment
+				
+		return longest_field
 
 	else:
 		return 0
@@ -273,11 +278,12 @@ class DATParser(BinaryReader):
 
 			self.file_start_offset = pkx_header_size
 
-	def registerRelocationTable(self, offset, count):
-		start_address = offset
-		for i in range(count):
-			relocatable_offset = self.read('uint', start_address, i * 4)
+		self.header = self.read('ArchiveHeader', 0, 0, False)
+
+		for i in range(self.header.relocations_count):
+			relocatable_offset = self.read('uint', self.header.data_size, i * 4)
 			self.relocation_table[relocatable_offset] = True
+
 
 	def _startOffset(self, relative_to_header):
 		return self.file_start_offset + (self.DAT_header_length if relative_to_header else 0)
@@ -303,6 +309,10 @@ class DATParser(BinaryReader):
 
 		elif _isPrimitiveType(field_type):
 			final_offset = offset + self._startOffset(relative_to_header)
+
+			if final_offset + _getTypeLength(field_type) > self.filesize:
+				raise InvalidReadAddressError(final_offset, field_type, self.filesize)
+
 			return super().read(field_type, address, final_offset, whence)
 
 		elif _isPointerType(field_type):
