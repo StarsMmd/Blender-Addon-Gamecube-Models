@@ -113,6 +113,74 @@ class Node(object):
 
         return node_list
 
+    # Get a simple representation of just this node
+    def stringRepresentation(self):
+
+        def fieldWeight(field):
+            field_name = field[0]
+            attr = getattr(self, field_name)
+            if isinstance(attr, list):
+                if len(attr) > 0:
+                    if isinstance(attr[0], Node):
+                        return 4
+                return 2
+            elif isinstance(attr, Node):
+                return 3
+            else:
+                return 1
+
+        def stringRep(value):
+            if isinstance(value, Node) and value.is_cachable:
+                return "-> " + value.class_name + " @" + hex(value.address) + " (" + str(value.length) + " bytes)"
+            else:
+                return str(value)
+
+        text = stringRep(self).replace("-> ", "*") + "\n"
+
+        sorted_fields = sorted(self.fields, key=fieldWeight)
+        for (field_name, field_type) in sorted_fields:
+            attr = getattr(self, field_name)
+
+            if isinstance(attr, list):
+                text += "  " + field_name.replace("_", " ") + ": \n"
+                for index, sub_attr in enumerate(attr):
+                    substring = stringRep(sub_attr)
+                    sublines = substring.split("\n")
+                    
+                    field_name_prefix = "    " + str(index + 1) + " "
+                    if field_type == 'matrix':
+                        field_name_prefix = "    "
+                    spacing = "    "
+
+                    for i, line in enumerate(sublines):
+                        if len(line) > 0:
+                            if i == 0:
+                                text += field_name_prefix
+                            else:
+                                text += spacing
+                            text += line + "\n"
+            else:
+                substring = stringRep(attr)
+                sublines = substring.split("\n")
+                
+                field_name_prefix = "  " + field_name.replace("_", " ") + ": "
+                spacing = "    "
+
+                for i, line in enumerate(sublines):
+                    if len(line) > 0:
+                        if i == 0:
+                            text += field_name_prefix
+                        else:
+                            text += spacing
+                        text += line + "\n"
+
+        return text
+
+    # Converts node tree to list format and print each node in order
+    def printListRepresentation(self):
+        for node in self.toList():
+            print(node.stringRepresentation())
+
     # This recursively creates a textual representation of the tree starting at this node.
     def __str__(self):
 

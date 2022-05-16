@@ -58,7 +58,7 @@ class Importer:
 				continue
 
 			if print_tree:
-				print(section)
+				section.printListRepresentation()
 
 			# Gives the flexibility to either import all sections or filter to just one
 			# Could maybe update this in future so we get an array of section names to include

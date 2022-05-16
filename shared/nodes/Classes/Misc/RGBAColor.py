@@ -12,11 +12,5 @@ class RGBAColor(Node, Color):
         ('alpha', 'uchar'),
     ]
 
-    def loadFromBinary(self, parser):
-        super().loadFromBinary(parser)
-
-        self._normalize()
-        self._linearize()
-
 
         

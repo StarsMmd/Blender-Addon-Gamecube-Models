@@ -407,7 +407,7 @@ class DATParser(BinaryReader):
 			return
 
 		# Initial parse to get any fields which are array bounds so the bounded array fields
-		# can have their length inject
+		# can have their length injected
 		current_offset = 0
 		uint_fields = {}
 		for field in fields:

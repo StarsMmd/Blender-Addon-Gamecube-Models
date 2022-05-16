@@ -16,6 +16,3 @@ class RGBColor(Node, Color):
         super().loadFromBinary(parser)
 
         self.alpha = 0xFF
-
-        self._normalize()
-        self._linearize()

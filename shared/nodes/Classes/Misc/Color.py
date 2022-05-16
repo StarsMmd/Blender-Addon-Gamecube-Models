@@ -28,3 +28,13 @@ class Color:
 		self.red = linearize_component(self.red)
 		self.green = linearize_component(self.green)
 		self.blue = linearize_component(self.blue)
+
+	def transform(self):
+		self._normalize()
+		self._linearize()
+
+	def asRGBList(self):
+		return [self.red, self.green, self.blue]
+
+	def asRGBAList(self):
+		return [self.red, self.green, self.blue, self.alpha]

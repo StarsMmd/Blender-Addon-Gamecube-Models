@@ -17,6 +17,8 @@ if __name__ == "__main__":
                 continue
             else:
                 filepath = arg
-                print("importing: " + filepath)
+                if verbose:
+                    print("importing: " + filepath)
+                    
                 status = Importer.parseDAT(bpy.context, filepath, verbose=verbose, print_tree=True)
                 print(status)

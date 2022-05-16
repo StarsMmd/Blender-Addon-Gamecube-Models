@@ -18,6 +18,6 @@ class Palette(Node):
         self.id = self.data
 
         bits_per_color = 32 if self.format == gx.GX_TF_RGBA8 else 16
-        palette_size = entry_count * bits_per_color
+        palette_size = self.entry_count * bits_per_color
         self.data = parser.read_chunk(palette_size, self.data)
 

@@ -9,7 +9,7 @@ class MaterialObject(Node):
         ('texture', 'Texture'),
         ('material', 'Material'),
         ('render_data', 'Render'),
-        ('pe_data', 'PixelEngine'),
+        ('pixel_engine_data', 'PixelEngine'),
     ]
 
     def loadFromBinary(self, parser):

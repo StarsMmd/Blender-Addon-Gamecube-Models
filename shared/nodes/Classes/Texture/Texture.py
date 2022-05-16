@@ -15,7 +15,7 @@ class Texture(Node):
         ('wrap_t', 'uint'),
         ('repeat_s', 'uchar'),
         ('repeat_t', 'uchar'),
-        ('flag', 'uint'),
+        ('flags', 'uint'),
         ('blending', 'float'),
         ('mag_filter', 'uint'),
         ('image', 'Image'),
