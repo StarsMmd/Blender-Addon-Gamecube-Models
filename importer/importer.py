@@ -3,7 +3,6 @@ import sys
 import traceback
 
 from shared.IO import *
-from shared.Nodes.Dummy import Dummy
 
 #TODO list
 #features:
@@ -28,53 +27,33 @@ class Importer:
 		
 		importer_options = {
 			"ik_hack": ik_hack,
-			"verbose": verbose
+			"verbose": verbose,
+			"print_tree": print_tree
 		}
 
 		importer_options["max_frame"] = max_frame if max_frame > 0 else 1000000000
-
-		# We will most likely need to pass the flags and settings into the parser
-		# When the parser is asked to parse a node which references one of these it can pass the requried
-		# flags into the constructor
-		parser = DATParser(filepath, importer_options)
-		header = parser.header
+		importer_options["section_names"] = [section_name] if len(section_name) > 0 else []
 
 		# Make sure the current selection doesn't mess with anything
 		if bpy.ops.object.select_all.poll():
 			bpy.ops.object.select_all(action='DESELECT')
 
-		sections = []
-		for (address, is_public) in header.section_addresses:
-			
-			# Recursively parse Node tree based on the section info
-		    # The top level node will recursively call parseNode() on any leaves
-			section = SectionInfo.readFromBinary(parser, address, is_public, header.section_names_offset)
-			try:
-				section.readNodeTree(parser)
-			except Exception as error:
-				traceback.print_exc()
-				print("\nFailed to read section:", section.section_name, file=sys.stderr)
-				print(error,"\n", file=sys.stderr)
-				continue
-
-			if print_tree:
-				section.printListRepresentation()
-
-			# Gives the flexibility to either import all sections or filter to just one
-			# Could maybe update this in future so we get an array of section names to include
-			if not isinstance(section.root_node, Dummy):
-				if section_name == None or section_name == '' or section_name == section.section_name:
-					sections.append(section)
+		# We will most likely need to pass the flags and settings into the parser
+		# When the parser is asked to parse a node which references one of these it can pass the requried
+		# flags into the constructor
+		parser = DATParser(filepath, importer_options)
+		parser.parseSections()
 
     	# Pass the section objects to the model builder to import them into blender
-		if context != None and len(sections) > 0:
-			builder = ModelBuilder(context, sections, importer_options)
+		if context != None and len(parser.sections) > 0:
+			builder = ModelBuilder(context, parser.sections, importer_options)
 			try:
 				builder.build()
 			except Exception as error:
 				traceback.print_exc()
 				print("\nFailed to build model.", file=sys.stderr)
 				print(error,"\n", file=sys.stderr)
+				return {'CANCELLED'}
 
 		return {'FINISHED'}
 

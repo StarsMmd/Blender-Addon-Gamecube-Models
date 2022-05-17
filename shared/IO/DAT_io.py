@@ -1,4 +1,6 @@
+import sys
 import struct
+import traceback
 
 from ..Nodes import *
 from ..Errors import *
@@ -248,6 +250,12 @@ class DATParser(BinaryReader):
 	def __init__(self, filepath, options):
 		super().__init__(filepath)
 
+		# Settings chosen for the parser
+		# - "verbose"       : Prints more output for debugging purposes
+		# - "print_tree"    : Prints a tree representation of each section parsed
+		# - "section_names" : Only parses sections in this list. If empty, parses all sections possible
+		self.options = options
+
 		# Where in the file the dat model itself starts. E.g. .pkx files have extra metadata before the model
 		self.file_start_offset = 0
 
@@ -260,10 +268,6 @@ class DATParser(BinaryReader):
 
 		# Images that have been loaded from their texture data
 		self.images_cache_by_image_id_and_tlut_id = {}
-
-		# Settings chosen for the parser
-		# - "verbose"   : Prints more output for debugging purposes
-		self.options = options
 
 		if filepath[-4:] == '.pkx':
 	        # check for byte pattern unique to XD pkx models
@@ -283,6 +287,31 @@ class DATParser(BinaryReader):
 		for i in range(self.header.relocations_count):
 			relocatable_offset = self.read('uint', self.header.data_size, i * 4)
 			self.relocation_table[relocatable_offset] = True
+
+
+	def parseSections(self):
+		self.sections = []
+		section_names_to_include = self.options.get("section_names")
+		for (address, is_public) in self.header.section_addresses:
+			
+			# Recursively parse Node tree based on the section info
+		    # The top level node will recursively call parseNode() on any leaves
+			section = SectionInfo.readFromBinary(self, address, is_public, self.header.section_names_offset)
+
+			if (len(section_names_to_include) == 0) or (section.section_name in section_names_to_include):
+				try:
+					section.readNodeTree(self)
+				except Exception as error:
+					traceback.print_exc()
+					print("\nFailed to parse section:", section.section_name, file=sys.stderr)
+					print(error,"\n", file=sys.stderr)
+					continue
+
+				if self.options.get("print_tree"):
+					section.printListRepresentation()
+
+				if not isinstance(section.root_node, Dummy):
+					self.sections.append(section)
 
 
 	def _startOffset(self, relative_to_header):
