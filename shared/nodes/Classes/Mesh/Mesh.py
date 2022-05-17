@@ -13,3 +13,13 @@ class Mesh(Node):
     def loadFromBinary(self, parser):
         super().loadFromBinary(parser)
         self.id = self.address
+
+    def prepareForBlender(self, builder):
+        super().prepareForBlender(builder)
+        
+        # Add material to sub meshes
+        material = self.mobject.blender_material
+        pobject = self.pobject
+        while pobject:
+            pobject.blender_mesh.materials.append(material)
+            pobject = pobject.next

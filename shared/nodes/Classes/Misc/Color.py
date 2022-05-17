@@ -33,6 +33,12 @@ class Color:
 		self._normalize()
 		self._linearize()
 
+	# If some colors need to be normalized and/or linearized but not all then remove this
+	# and handle the transformations as and when they are needed
+	def prepareForBlender(self, builder):
+		super().prepareForBlender(builder)
+		self.transform()
+
 	def asRGBList(self):
 		return [self.red, self.green, self.blue]
 

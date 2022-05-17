@@ -10,3 +10,6 @@ class Fog(Node):
         ('end_z', 'float'),
         ('color', '@RGBAColor'),
     ]
+
+    def build(self, builder):
+        pass

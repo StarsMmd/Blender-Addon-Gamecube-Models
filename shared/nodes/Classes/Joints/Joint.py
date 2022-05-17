@@ -52,7 +52,7 @@ class Joint(Node):
 
         super().writeBinary(builder)
 
-    def build_bone_hierarchy(self, builder, parent, hsd_parent):
+    def buildBoneHierarchy(self, builder, parent, hsd_parent):
         bones = []
 
         bpy.ops.object.mode_set(mode = 'EDIT')
@@ -65,33 +65,33 @@ class Joint(Node):
         else:
             bone.tail = Vector((0.0, 1.0, 0.0))
 
-        scale_x = Matrix.Scale(hsd_bone.scale[0], 4, [1.0,0.0,0.0])
-        scale_y = Matrix.Scale(hsd_bone.scale[1], 4, [0.0,1.0,0.0])
-        scale_z = Matrix.Scale(hsd_bone.scale[2], 4, [0.0,0.0,1.0])
-        rotation_x = Matrix.Rotation(hsd_bone.rotation[0], 4, 'X')
-        rotation_y = Matrix.Rotation(hsd_bone.rotation[1], 4, 'Y')
-        rotation_z = Matrix.Rotation(hsd_bone.rotation[2], 4, 'Z')
-        translation = Matrix.Translation(Vector(hsd_bone.position))
+        scale_x = Matrix.Scale(self.scale[0], 4, [1.0,0.0,0.0])
+        scale_y = Matrix.Scale(self.scale[1], 4, [0.0,1.0,0.0])
+        scale_z = Matrix.Scale(self.scale[2], 4, [0.0,0.0,1.0])
+        rotation_x = Matrix.Rotation(self.rotation[0], 4, 'X')
+        rotation_y = Matrix.Rotation(self.rotation[1], 4, 'Y')
+        rotation_z = Matrix.Rotation(self.rotation[2], 4, 'Z')
+        translation = Matrix.Translation(Vector(self.position))
         # Parent * T * R * S
         #bone_matrix = translation * rotation_z * rotation_y * rotation_x * scale_z * scale_y * scale_x
-        bone_matrix = self.compileSRTMatrix(hsd_bone.scale, hsd_bone.rotation, hsd_bone.position)
+        bone_matrix = self.compileSRTMatrix(self.scale, self.rotation, self.position)
         #bone_matrix = Matrix()
-        hsd_bone.temp_matrix_local = bone_matrix
+        self.temp_matrix_local = bone_matrix
         if parent:
             bone_matrix = hsd_parent.temp_matrix @ bone_matrix
             bone.parent = parent
         bone.matrix = bone_matrix
-        hsd_bone.temp_matrix = bone_matrix
-        hsd_bone.temp_name = bone.name
-        hsd_bone.temp_parent = hsd_parent
+        self.temp_matrix = bone_matrix
+        self.temp_name = bone.name
+        self.temp_parent = hsd_parent
 
         #bone.use_relative_parent = True
-        if hsd_bone.child and not hsd_bone.flags & JOBJ_INSTANCE:
-            bones += hsd_bone.child.build_bone_hierarchy(builder, bone, hsd_bone)
-        if hsd_bone.next:
-            bones += hsd_bone.next.build_bone_hierarchy(builder, parent, hsd_parent)
+        if self.child and not self.flags & JOBJ_INSTANCE:
+            bones += self.child.buildBoneHierarchy(builder, bone, hsd_bone)
+        if self.next:
+            bones += self.next.buildBoneHierarchy(builder, parent, hsd_parent)
 
-        bones.append(hsd_bone)
+        bones.append(self)
         return bones
 
     def compileSRTMatrix(self, scale, rotation, position):

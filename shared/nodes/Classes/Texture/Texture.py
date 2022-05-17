@@ -28,6 +28,9 @@ class Texture(Node):
         super().loadFromBinary(parser)
         self.id = self.address
 
+    def prepareForBlender(self, builder):
+        super().prepareForBlender(builder)
+        
         if self.image:
             image_id = self.image.id
             palette_id = 0

@@ -14,3 +14,6 @@ class CameraSet(Node):
         new_node.camera = None
         new_node.animations = []
         return new_node
+
+    def build(self, builder):
+        pass

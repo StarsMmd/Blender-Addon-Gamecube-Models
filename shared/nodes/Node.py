@@ -33,12 +33,30 @@ class Node(object):
         # Prevent reference cycles when traversing tree
         self.is_being_printed = False
         self.is_being_listed = False
+        self.is_prepared_for_build = False
 
     # Parse struct from binary file.
     # Use the parser to read the binary for the fields and then do any conversions or calculations
     # required to update those values or set extra meta data
     def loadFromBinary(self, parser):
         parser.parseNode(self)
+
+    # Do any set up required to convert the node into a suitable representation in blender
+    def prepareForBlender(self, builder):
+        if self.is_prepared_for_build:
+            return
+        self.is_prepared_for_build = True
+
+        for field_info in self.fields:
+            field_name = field_info[0]
+            field = getattr(self, field_name)
+            if isinstance(field, Node):
+                field.prepareForBlender(builder)
+            elif isinstance(field, list) and len(field) > 0:
+                first_sub_field = field[0]
+                if isinstance(first_sub_field, Node):
+                    for sub_field in field:
+                        sub_field.prepareForBlender(builder)
 
     # For any fields which are a pointer where the underlying sub type is a primitive type (but not a string),
     # write them to the builder's output and replace the field with the address it was written to

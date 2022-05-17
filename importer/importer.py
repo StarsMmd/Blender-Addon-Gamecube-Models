@@ -69,7 +69,12 @@ class Importer:
     	# Pass the section objects to the model builder to import them into blender
 		if context != None and len(sections) > 0:
 			builder = ModelBuilder(context, sections, importer_options)
-			builder.build()
+			try:
+				builder.build()
+			except Exception as error:
+				traceback.print_exc()
+				print("\nFailed to build model.", file=sys.stderr)
+				print(error,"\n", file=sys.stderr)
 
 		return {'FINISHED'}
 

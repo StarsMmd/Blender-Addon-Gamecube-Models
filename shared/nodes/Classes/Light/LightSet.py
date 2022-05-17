@@ -14,3 +14,6 @@ class LightSet(Node):
         new_node.light = None
         new_node.animations = []
         return new_node
+
+    def build(self, builder):
+        pass
