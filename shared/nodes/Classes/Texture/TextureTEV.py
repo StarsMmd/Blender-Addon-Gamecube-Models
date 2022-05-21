@@ -20,8 +20,8 @@ class TextureTEV(Node):
         ('alpha_b', 'uchar'),
         ('alpha_c', 'uchar'),
         ('alpha_d', 'uchar'),
-        ('konst', '@RGBColor'),
-        ('tev0', '@RGBColor'),
-        ('tev1', '@RGBColor'),
+        ('konst', '@RGBX8Color'),
+        ('tev0', '@RGBX8Color'),
+        ('tev1', '@RGBX8Color'),
         ('active', 'uint'),
     ]

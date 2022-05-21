@@ -5,4 +5,5 @@ from .InvalidReadAddressError import InvalidReadAddressError
 from .MeshWithoutPositionError import MeshWithoutPositionError
 from .PixelEngineUnknownBlendModeError import PixelEngineUnknownBlendModeError
 from .ShapeSetDimensionMismatchError import ShapeSetDimensionMismatchError
-from .VertexListTerminatorError import VertexListTerminatorError
+from .VertexErrors import UnknownVertexAttributeError
+from .VertexErrors import VertexListTerminatorError

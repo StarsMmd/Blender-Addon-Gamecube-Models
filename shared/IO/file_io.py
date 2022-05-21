@@ -2,7 +2,7 @@ import struct
 import os
 
 primitive_field_types = [
-    'uchar', 'ushort', 'uint', 'char', 'short', 'int', 'float', 'double', 'string', 'matrix'
+    'void', 'uchar', 'ushort', 'uint', 'char', 'short', 'int', 'float', 'double', 'string', 'matrix'
 ]
 
 class BinaryReader:
@@ -22,7 +22,8 @@ class BinaryReader:
         relative to `whence` ('start' or 'current')
         """
         self.seek(address + offset, whence)
-        
+        if type == 'void':
+            return None
         if type == 'uchar':
             return struct.unpack('>B', self.file.read(1))[0]
         if type == 'ushort':
@@ -118,6 +119,8 @@ class BinaryWriter:
         if offset != None:
         	self.seek(offset, whence)
         
+        if type == 'void':
+            return
         if type == 'uchar':
             self.file.write(struct.pack('>B', data))
         elif type == 'ushort':

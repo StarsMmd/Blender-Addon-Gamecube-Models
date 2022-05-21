@@ -43,6 +43,7 @@ class Importer:
 		# flags into the constructor
 		parser = DATParser(filepath, importer_options)
 		parser.parseSections()
+		parser.close()
 
     	# Pass the section objects to the model builder to import them into blender
 		if context != None and len(parser.sections) > 0:

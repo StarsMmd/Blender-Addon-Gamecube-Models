@@ -24,12 +24,6 @@ class PObject(Node):
     def loadFromBinary(self, parser):
         super().loadFromBinary(parser)
 
-        display_list_length = self.display_list_chunk_count * 32
-        display_list_type = 'uchar[{count}]'.format(
-            count = display_list_length
-        )
-        self.display_list = parser.read(display_list_type, self.display_list)
-
         if self.property > 0:
             property_type = self.flags & POBJ_TYPE_MASK
             if property_type == POBJ_SKIN:
@@ -41,7 +35,12 @@ class PObject(Node):
         else:
             self.property = None
 
-        self.blender_mesh = None
+        current_offset = self.display_list
+        for i in range(self.display_list_chunk_count):
+            next_chunk_offset = current_offset + 32
+            while current_offset < next_chunk_offset:
+
+            current_offset = next_chunk_offset
 
     def allocationSize(self):
         # If the property is an Envelope list then allocate space for
@@ -60,6 +59,8 @@ class PObject(Node):
     # Tells the builder how to write this node's data to the binary file.
     # Returns the offset the builder was at before it started writing its own data.
     def writeBinary(self, builder):
+        # TODO: properly calculate size of display list chunks
+        # TODO: make sure display list chunks are written and field is replaced with pointer to data
         self.disp_list_count = disp_list.length
         if isinstance(self.property, Joint):
             self.flags = POBJ_SKIN
@@ -81,6 +82,10 @@ class PObject(Node):
         name = ''
         if self.name:
             name = self.name
+        else:
+            name = str(builder.mesh_count)
+
+        builder.mesh_count += 1
 
         display_list = self.display_list
         vertex_list = self.vertex_list.vertices
@@ -97,7 +102,7 @@ class PObject(Node):
 
         #vertices, faces = read_geometry(vtxdesclist, displist, i)
         #TODO: move the loop here to avoid redundancy
-        sources, face_lists, normals = self.read_geometry(vertex_list, display_list, display_list_size)
+        sources, face_lists, normals = self.read_geometry()
         vertices = sources[position_vertex_index]
         faces = facelists[position_vertex_index]
 
@@ -116,7 +121,7 @@ class PObject(Node):
             type = self.flags & POBJ_TYPE_MASK
             if type == POBJ_SHAPEANIM:
                 shape_set = self.property
-                self.make_shapeset(mesh_object, shape_set, normdicts[position_vertex_index])
+                self.make_shapeset(mesh_object, shape_set, normals[position_vertex_index])
                 self.make_rigid_skin(self)
             elif type == POBJ_ENVELOPE:
                 envelope_list = self.property
@@ -142,7 +147,7 @@ class PObject(Node):
         #mesh.calc_normals()
         self.normals = None
         for index, vertex in enumerate(vertex_list):
-            if vertex.is_tex():
+            if vertex.isTexture():
                 uvlayer = self.make_texture_layer(mesh, vertex, sources[index], face_lists[index])
             elif vertex.attribute == GX_VA_NRM or vertex.attribute == GX_VA_NBT:
                 self.assign_normals_to_mesh(self, mesh, vertex, sources[index], facelists[index])
@@ -157,7 +162,130 @@ class PObject(Node):
 
         self.blender_mesh = mesh_object
 
+    def read_geometry(displist, displistsize):
+        vertices = self.vertex_list.vertices
+        vertex_formats = []
+        descsizes = []
+        normdicts= []
+        stride = 0
+        for vertex in vertices:
+            fmt = get_vtxdesc_element_fmt(vertex)
+            vertex_formats.append(fmt)
+            size = struct.calcsize(fmt)
+            descsizes.append(size)
+            stride += size
+        #comp_frac = vertex.component_frac
+        #TODO: add comp_frac to direct values
 
+        sources = []
+        facelists = []
+        offset = 0
+        for vertex_index, vertex in enumerate(vertices):
+            faces = []
+            norm_dict = {}
+            norm_index = 0
+            c = 0
+            opcode = displist[c] & gx.GX_OPCODE_MASK
+            #On the console the displaylist would be copied in a chunk, limit reading to that area
+            size_limit = displistsize * 0x20
+            while opcode != gx.GX_NOP and c < size_limit:
+                c += 1
+                vtxcount = struct.unpack('>H', displist[c:c + 2])[0]
+                c += 2
+
+                indices = []
+                for i in range(vtxcount):
+                    index = struct.unpack(vertex_formats[vertex_index], displist[c + offset:c + offset + descsizes[vertex_index]])
+                    if not len(index) > 1:
+                        index = index[0]
+                    else:
+                        index = list(index)
+                    indices.append(index)
+                    c += stride
+
+                if not vertex.attr_type == gx.GX_DIRECT:
+                    i = 0
+                    for index in indices:
+                        if not index in norm_dict.keys():
+                            norm_dict[index] = norm_index
+                            norm_index += 1
+                        indices[i] = norm_dict[index]
+                        i += 1
+
+                if opcode == gx.GX_DRAW_QUADS:
+                    for i in range(vtxcount // 4):
+                        idx = i * 4
+                        face = [indices[idx + 3],
+                                indices[idx + 2],
+                                indices[idx + 1],
+                                indices[idx + 0]]
+                        faces.append(face)
+                elif opcode == gx.GX_DRAW_TRIANGLES:
+                    for i in range(vtxcount // 3):
+                        idx = i * 3
+                        face = [indices[idx + 0],
+                                indices[idx + 2],
+                                indices[idx + 1]]
+                        faces.append(face)
+                elif opcode == gx.GX_DRAW_TRIANGLE_STRIP:
+                    for i in range(vtxcount - 2):
+                        if i % 2 == 0:
+                            face = [indices[i + 1],
+                                    indices[i + 0],
+                                    indices[i + 2]]
+                        else:
+                            face = [indices[i + 0],
+                                    indices[i + 1],
+                                    indices[i + 2]]
+                        faces.append(face)
+                elif opcode == gx.GX_DRAW_TRIANGLE_FAN:
+                    first_index = indices[0]
+                    #latest_index = indices[1]
+                    for i in range(vtxcount - 2):
+                        idx = i + 1
+                        face = [first_index,
+                                indices[idx + 1],
+                                indices[idx]]
+                        #latest_index = indices[idx]
+                        faces.append(face)
+                elif opcode == gx.GX_DRAW_LINES:
+                    notice_output("GX_DRAW_LINES not supported, skipped")
+                elif opcode == gx.GX_DRAW_LINE_STRIP:
+                    notice_output("GX_DRAW_LINE_STRIP not supported, skipped")
+                elif opcode == gx.GX_DRAW_POINTS:
+                    notice_output("GX_DRAW_POINTS not supported, skipped")
+                else:
+                    notice_output("Unsupported geometry primitive, skipped")
+                opcode = displist[c] & gx.GX_OPCODE_MASK
+
+            vertices = []
+            if vertex.attr_type == gx.GX_DIRECT:
+                #this means the indices are actually the raw data they would be indexing
+                i = 0
+                new_faces = []
+                for face in faces:
+                    new_face = []
+                    for f in face:
+                        vertices.append(f)
+                        new_face.append(i)
+                        i += 1
+                    new_faces.append(new_face)
+                faces = new_faces
+            else:
+                indices = []
+                norm_indices = []
+                for key, value in norm_dict.items():
+                    indices.append(key)
+                    norm_indices.append(value)
+                indices = [x for _,x in sorted(zip(norm_indices,indices))]
+                vertices = read_vertex_data(vertex, indices)
+
+            sources.append(vertices)
+            facelists.append(faces)
+            normdicts.append(norm_dict)
+            offset += descsizes[vertex_index]
+
+        return sources, facelists, normdicts
 
 
 
