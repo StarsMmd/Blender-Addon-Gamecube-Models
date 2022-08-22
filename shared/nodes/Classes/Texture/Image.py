@@ -77,10 +77,11 @@ class Image(Node):
         in_data_size = (blocks_x * tile_S * blocks_y * tile_T * bits_per_pixel)
         in_data = parser.read_chunk(in_data_size, self.data_address)
         image_data = memoryview(in_data)
+        palette_data = memoryview(palette.data)
 
         for i in range(blocks_y):
             for j in range(blocks_x):
-                func(buffer, image_data, blocks_x, palette)
+                func(buffer, image_data, blocks_x, palette_data)
                 image_data = image_data[(tile_S * tile_T * bits_per_pixel) >> 3:]
                 out_data = buffer[CCC * tile_S:]
             buffer = buffer[CCC * blocks_x * tile_S * (tile_T - 1):]
