@@ -1,7 +1,7 @@
 from ...Node import Node
 
 from ....Constants import *
-from ....Erros import *
+from ....Errors import *
 from ..Colors import *
 
 # Vertex (aka vtxdesc)

@@ -40,7 +40,7 @@ class PObject(Node):
             next_chunk_offset = current_offset + 32
             while current_offset < next_chunk_offset:
 
-            current_offset = next_chunk_offset
+                current_offset = next_chunk_offset
 
     def allocationSize(self):
         # If the property is an Envelope list then allocate space for
