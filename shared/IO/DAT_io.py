@@ -270,8 +270,8 @@ class DATParser(BinaryReader):
 		self.images_cache_by_image_id_and_tlut_id = {}
 
 		if filepath[-4:] == '.pkx':
-	        # check for byte pattern unique to XD pkx models
-			self.isXDModel = self.read('uint', 32, 0, False) == 0xFFFFFFFF
+	        # check for byte pattern unique to Colosseum pkx models
+			self.isXDModel = self.read('uint', 0, 0, False) != self.read('uint', 0x40, 0, False)
 
 			pkx_header_size = 0xE60 if self.isXDModel else 0x40
 			gpt1SizeOffset = 8 if self.isXDModel else 4
