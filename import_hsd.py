@@ -73,7 +73,7 @@ def load_hsd(filepath, context = None, offset = 0, scene_name = 'scene_data', da
         return
 
     if filepath[-4:] == '.pkx':
-        # check for byte pattern unique to XD pkx models
+        # check for byte pattern unique to Colosseum pkx models
         isXDModel = data[0] != data[0x40]
 
         pkx_header_size = 0xE60 if isXDModel else 0x40
