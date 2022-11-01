@@ -74,7 +74,7 @@ def load_hsd(filepath, context = None, offset = 0, scene_name = 'scene_data', da
 
     if filepath[-4:] == '.pkx':
         # check for byte pattern unique to XD pkx models
-        isXDModel = struct.unpack('>I', data[32:32+4])[0] == 0xFFFFFFFF
+        isXDModel = data[0] != data[0x40]
 
         pkx_header_size = 0xE60 if isXDModel else 0x40
         gpt1SizeOffset = 8 if isXDModel else 4
