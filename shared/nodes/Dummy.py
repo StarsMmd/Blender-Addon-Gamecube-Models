@@ -3,6 +3,7 @@ from .Node import Node
 # Dummy Node
 class Dummy(Node):
     class_name = "Dummy"
+    is_cachable = False
     fields = []
 
     # Parse struct from binary file.

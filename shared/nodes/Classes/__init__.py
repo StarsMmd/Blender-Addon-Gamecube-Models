@@ -1,5 +1,6 @@
 from .Animation import *
 from .Camera import *
+from .Colors import *
 from .Fog import *
 from .Joints import *
 from .Light import *

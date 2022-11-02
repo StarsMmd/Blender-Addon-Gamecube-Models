@@ -339,7 +339,7 @@ class DATParser(BinaryReader):
 		elif _isPrimitiveType(field_type):
 			final_offset = offset + self._startOffset(relative_to_header)
 
-			if final_offset + _getTypeLength(field_type) > self.filesize:
+			if address + final_offset + _getTypeLength(field_type) > self.filesize:
 				raise InvalidReadAddressError(final_offset, field_type, self.filesize)
 
 			return super().read(field_type, address, final_offset, whence)
