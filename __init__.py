@@ -3,7 +3,7 @@
 bl_info = {
     "name": "Gamecube Dat Model",
     "author": "Made, StarsMmd",
-    "blender": (2, 81, 0),
+    "blender": (3, 1, 0),
     "location": "File > Import-Export",
     "description": "Import-Export Gamecube .dat models",
     "warning": "",
@@ -41,24 +41,19 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
     bl_label = "Import HSD"
     bl_options = {'UNDO'}
 
-    files = CollectionProperty(name="File Path",
+    files: bpy.props.CollectionProperty(name="File Path",
                           description="File path used for importing "
                                       "the HSD file",
                           type=bpy.types.OperatorFileListElement)
-
-    directory = StringProperty(subtype='DIR_PATH')
-    section = StringProperty(default = '', name = 'Section Name', description = 'Name of the section that should be imported. Leave blank to import all.')
-    ik_hack = BoolProperty(default = True, name = 'IK Hack', description = 'Shrinks Bones down to 1e-3 to make IK work properly.')
-    max_frame = IntProperty(default = 1000, name = 'Max Anim Frame', description = 'Cutoff frame after which animations aren\'t sampled. Use 0 For no limit.')
+    section: bpy.props.StringProperty(default = '', name = 'Section Name', description = 'Name of the section that should be imported. Leave blank to import all.')
+    ik_hack: bpy.props.BoolProperty(default = True, name = 'IK Hack', description = 'Shrinks Bones down to 1e-3 to make IK work properly.')
+    max_frame: bpy.props.IntProperty(default = 1000, name = 'Max Anim Frame', description = 'Cutoff frame after which animations aren\'t sampled. Use 0 For no limit.')
 
     filename_ext = ".dat"
     filter_glob = StringProperty(default="*.fdat;*.dat;*.rdat;*.pkx", options={'HIDDEN'})
 
     def execute(self, context):
-        paths = [os.path.join(self.directory, name.name)
-                 for name in self.files]
-        if not paths:
-            paths.append(self.filepath)
+        paths = [self.filepath]
 
         for path in paths:
             status = Importer.parseDAT(context, path, self.section, self.ik_hack, self.max_frame, False)
