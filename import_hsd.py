@@ -944,7 +944,7 @@ active: %.8X' % ((tev.color_op, tev.alpha_op, tev.color_bias, tev.alpha_bias,\
             #do color
             #technically there is an inaccuracy with this since the game engine ensures that specular maps are evaluated last
             #this only has potential effects on the alpha channel, but I haven't seen a specular map use alpha yet
-            if (texdesc.flag & hsd.TEX_LIGHTMAP_MASK) & (hsd.TEX_LIGHTMAP_DIFFUSE | hsd.TEX_LIGHTMAP_EXT | hsd.TEX_LIGHTMAP_SPECULAR):
+            if (texdesc.flag & hsd.TEX_LIGHTMAP_MASK) & (hsd.TEX_LIGHTMAP_DIFFUSE | hsd.TEX_LIGHTMAP_AMBIENT | hsd.TEX_LIGHTMAP_SPECULAR | hsd.TEX_LIGHTMAP_EXT):
                 if texdesc.flag & hsd.TEX_LIGHTMAP_SPECULAR and not mobj.rendermode & hsd.RENDER_SPECULAR:
                     continue
                 colormap = texdesc.flag & hsd.TEX_COLORMAP_MASK
