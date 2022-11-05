@@ -1621,6 +1621,9 @@ def add_geometry(armature, bones, mesh_dict):
                     pobj = dobj.pobj
                     while pobj:
                         mesh = mesh_dict[pobj.id]
+                        if hsd_bone.flags & hsd.JOBJ_HIDDEN:
+                            mesh.hide_render = True
+                            mesh.hide_set(True)
                         mesh.parent = armature
                         #apply deformation and rigid transformations temporarily stored in the hsd_mesh
                         #this is done here because the meshes are created before the object hierarchy exists

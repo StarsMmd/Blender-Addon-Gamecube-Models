@@ -7,6 +7,7 @@ from ....Constants import *
 # Joint (aka Bone)
 class Joint(Node):
     class_name = "Joint"
+    isHidden = false
     fields = [
         ('name', 'string'),
         ('flags', 'uint'),
@@ -23,6 +24,8 @@ class Joint(Node):
     # Parse struct from binary file.
     def loadFromBinary(self, parser):
         super().loadFromBinary(parser)
+
+        self.isHidden = self.flags & JOBJ_HIDDEN
 
         property_type = 'Mesh'
         if self.flags & JOBJ_PTCL:
@@ -49,6 +52,9 @@ class Joint(Node):
         else:
             self.flags = 0
             self.property = self.property.address
+
+        if isHidden:
+            self.flags |= JOBJ_HIDDEN
 
         super().writeBinary(builder)
 

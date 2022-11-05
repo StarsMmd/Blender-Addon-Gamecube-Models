@@ -110,6 +110,9 @@ class ModelSet(Node):
                         pobj = mesh.pobj
                         while pobj:
                             blender_mesh = pobj.blender_mesh
+                            if bone.isHidden:
+                                blender_mesh.hide_render = True
+                                blender_mesh.hide_set(True)
                             blender_mesh.parent = armature
                             # Apply deformation and rigid transformations temporarily stored in the hsd_mesh
                             # This is done here because the meshes are created before the object hierarchy exists
