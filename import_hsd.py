@@ -1479,6 +1479,8 @@ def make_tev_op_add_sub(nodes, links, inputs, tev, iscolor):
 
 
 def make_tev_op_comp(nodes, links, inputs, tev, iscolor):
+    return inputs[0]
+    """
     #OUT = [3] + ([2] if ([0] <OP> [1]) else 0)
     comp_result = None
     if iscolor:
@@ -1573,6 +1575,7 @@ def make_tev_op_comp(nodes, links, inputs, tev, iscolor):
     links.new(inputs[3], add.inputs[0])
     links.new(switch.outputs[0], add.inputs[1])
     return add.outputs[0]
+    """
     
 
 pedesc_src_factor_dict = {
