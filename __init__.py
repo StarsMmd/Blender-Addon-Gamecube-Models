@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Gamecube Dat Model",
     "author": "M",
-    "blender": (2, 80, 0),
+    "blender": (3, 1, 0),
     "location": "File > Import-Export",
     "description": "Import-Export Gamecube .dat models",
     "warning": "",
@@ -41,31 +41,30 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
     bl_label = "Import HSD"
     bl_options = {'UNDO'}
 
-    files = CollectionProperty(name="File Path",
+    files: bpy.props.CollectionProperty(name="File Path",
                           description="File path used for importing "
                                       "the HSD file",
                           type=bpy.types.OperatorFileListElement)
-
-    directory = StringProperty()
-    section = StringProperty(default = 'scene_data', name = 'Section Name', description = 'Name of the section that should be imported as a scene')
-    offset = IntProperty(default = 0, name = 'Offset', description = 'Offset of the Scene data in the file')
-    data_type = EnumProperty(
+    directory: bpy.props.StringProperty(subtype="DIR_PATH")
+    section: bpy.props.StringProperty(default = 'scene_data', name = 'Section Name', description = 'Name of the section that should be imported as a scene')
+    offset: bpy.props.IntProperty(default = 0, name = 'Offset', description = 'Offset of the Scene data in the file')
+    data_type: bpy.props.EnumProperty(
                 items = (('SCENE', 'Scene', 'Import Scene'),
                          ('BONE', 'Bone', 'Import Armature')
                         ), name = 'Data Type', description = 'The type of data that is stored in the section')
-    import_animation = BoolProperty(default = True, name = 'Import Animation', description = 'Whether to import animation. Off by default while it\'s still very buggy')
-    ik_hack = BoolProperty(default = True, name = 'IK Hack', description = 'Shrinks Bones down to 1e-3 to make IK work properly')
-    use_max_frame = BoolProperty(default = True, name = 'Use Max Anim Frame', description = 'Limits the sampled animation range to a maximum length')
-    max_frame = IntProperty(default = 1000, name = 'Max Anim Frame', description = 'Cutoff frame after which animations aren\'t sampled')
+    import_animation: bpy.props.BoolProperty(default = True, name = 'Import Animation', description = 'Whether to import animation. Off by default while it\'s still very buggy')
+    ik_hack: bpy.props.BoolProperty(default = True, name = 'IK Hack', description = 'Shrinks Bones down to 1e-3 to make IK work properly')
+    use_max_frame: bpy.props.BoolProperty(default = True, name = 'Use Max Anim Frame', description = 'Limits the sampled animation range to a maximum length')
+    max_frame: bpy.props.IntProperty(default = 1000, name = 'Max Anim Frame', description = 'Cutoff frame after which animations aren\'t sampled')
 
     filename_ext = ".dat"
     filter_glob = StringProperty(default="*.fdat;*.dat;*.rdat;*.pkx", options={'HIDDEN'})
 
     def execute(self, context):
-        paths = [os.path.join(self.directory, name.name)
-                 for name in self.files]
-        if not paths:
-            paths.append(self.filepath)
+        if self.files and self.directory:
+            paths = [os.path.join(self.directory, file.name) for file in self.files]
+        else:
+            paths = [self.filepath]
 
         from . import import_hsd
 
