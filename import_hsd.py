@@ -1218,14 +1218,14 @@ active: %.8X' % ((tev.color_op, tev.alpha_op, tev.color_bias, tev.alpha_bias,\
         #links.new(last_alpha, alpha_factor.inputs[0])
         #last_alpha = alpha_factor.outputs[0]
         #
-        links.new(last_alpha, shader.inputs[18])
+        links.new(last_alpha, shader.inputs[21])
 
     #normal
     if last_bump:
         bump = nodes.new('ShaderNodeBump')
         bump.inputs[1].default_value = 1
         links.new(last_bump, bump.inputs[2])
-        links.new(bump.outputs[0], shader.inputs[19])
+        links.new(bump.outputs[0], shader.inputs[22])
 
     #Add Additive or multiplicative alpha blending, since these don't have explicit options in 2.81 anymore
     if (alt_blend_mode == 'ADD'):
