@@ -73,8 +73,8 @@ def load_hsd(filepath, context = None, offset = 0, scene_name = 'scene_data', da
         return
 
     if filepath[-4:] == '.pkx':
-        # check for byte pattern unique to XD pkx models
-        isXDModel = struct.unpack('>I', data[32:32+4])[0] == 0xFFFFFFFF
+        # check for byte pattern unique to Colosseum pkx models
+        isXDModel = data[0] != data[0x40]
 
         pkx_header_size = 0xE60 if isXDModel else 0x40
         gpt1SizeOffset = 8 if isXDModel else 4
@@ -790,21 +790,29 @@ active: %.8X' % ((tev.color_op, tev.alpha_op, tev.color_bias, tev.alpha_bias,\
             break
 
     print('textures: %d' % len(textures))
+    
+    diffuse_flags = mobj.rendermode & hsd.RENDER_DIFFUSE_BITS
+    if diffuse_flags == hsd.RENDER_DIFFUSE_MAT0:
+        diffuse_flags = hsd.RENDER_DIFFUSE_MAT
+    
+    alpha_flags = mobj.rendermode & hsd.RENDER_ALPHA_BITS
+    if alpha_flags == hsd.RENDER_ALPHA_COMPAT:
+        alpha_flags = diffuse_flags << hsd.RENDER_ALPHA_SHIFT
 
     if mobj.rendermode & hsd.RENDER_DIFFUSE:
         color = nodes.new('ShaderNodeRGB')
-        if (mobj.rendermode & hsd.RENDER_DIFFUSE_BITS) == hsd.RENDER_DIFFUSE_VTX:
+        if diffuse_flags == hsd.RENDER_DIFFUSE_VTX:
             color.outputs[0].default_value[:] = [1,1,1,1]
         else:
             color.outputs[0].default_value[:] = mat_diffuse_color
 
         alpha = nodes.new('ShaderNodeValue')
-        if (mobj.rendermode & hsd.RENDER_ALPHA_BITS) == hsd.RENDER_ALPHA_VTX:
+        if alpha_flags == hsd.RENDER_ALPHA_VTX:
             alpha.outputs[0].default_value = 1
         else:
             alpha.outputs[0].default_value = material.alpha
     else:
-        if (mobj.rendermode & hsd.CHANNEL_FIELD) == hsd.RENDER_DIFFUSE_MAT:
+        if diffuse_flags == hsd.RENDER_DIFFUSE_MAT:
             color = nodes.new('ShaderNodeRGB')
             color.outputs[0].default_value[:] = mat_diffuse_color
         else:
@@ -817,7 +825,7 @@ active: %.8X' % ((tev.color_op, tev.alpha_op, tev.color_bias, tev.alpha_bias,\
             color = nodes.new('ShaderNodeAttribute')
             color.attribute_name = 'color_0'
 
-            if not ((mobj.rendermode & hsd.RENDER_DIFFUSE_BITS) == hsd.RENDER_DIFFUSE_VTX):
+            if not (diffuse_flags == hsd.RENDER_DIFFUSE_VTX):
                 diff = nodes.new('ShaderNodeRGB')
                 diff.outputs[0].default_value[:] = mat_diffuse_color
                 mix = nodes.new('ShaderNodeMixRGB')
@@ -827,14 +835,14 @@ active: %.8X' % ((tev.color_op, tev.alpha_op, tev.color_bias, tev.alpha_bias,\
                 links.new(diff.outputs[0], mix.inputs[2])
                 color = mix
 
-        if (mobj.rendermode & hsd.RENDER_ALPHA_BITS) == hsd.RENDER_ALPHA_MAT:
+        if alpha_flags == hsd.RENDER_ALPHA_MAT:
             alpha = nodes.new('ShaderNodeValue')
             alpha.outputs[0].default_value = material.alpha
         else:
             alpha = nodes.new('ShaderNodeAttribute')
             alpha.attribute_name = 'alpha_0'
 
-            if not (mobj.rendermode & hsd.RENDER_ALPHA_BITS) == hsd.RENDER_ALPHA_VTX:
+            if not (alpha_flags == hsd.RENDER_ALPHA_VTX):
                 mat_alpha = nodes.new('ShaderNodeValue')
                 mat_alpha.outputs[0].default_value = material.alpha
                 mix = nodes.new('ShaderNodeMath')
@@ -846,7 +854,13 @@ active: %.8X' % ((tev.color_op, tev.alpha_op, tev.color_bias, tev.alpha_bias,\
 
     last_color = color.outputs[0]
     last_alpha = alpha.outputs[0]
+    last_specular = None
     last_bump  = None
+    
+    if mobj.rendermode & hsd.RENDER_SPECULAR:
+        spec = nodes.new('ShaderNodeRGB')
+        spec.outputs[0].default_value[:] = normcolor(material.specular)
+        last_specular = spec.outputs[0]
 
     for texdesc in textures:
         if (texdesc.flag & hsd.TEX_COORD_MASK) == hsd.TEX_COORD_UV:
@@ -928,7 +942,11 @@ active: %.8X' % ((tev.color_op, tev.alpha_op, tev.color_bias, tev.alpha_bias,\
                 last_bump = cur_color
         else:
             #do color
-            if (texdesc.flag & hsd.TEX_LIGHTMAP_MASK) & (hsd.TEX_LIGHTMAP_DIFFUSE | hsd.TEX_LIGHTMAP_EXT):
+            #technically there is an inaccuracy with this since the game engine ensures that specular maps are evaluated last
+            #this only has potential effects on the alpha channel, but I haven't seen a specular map use alpha yet
+            if (texdesc.flag & hsd.TEX_LIGHTMAP_MASK) & (hsd.TEX_LIGHTMAP_DIFFUSE | hsd.TEX_LIGHTMAP_AMBIENT | hsd.TEX_LIGHTMAP_SPECULAR | hsd.TEX_LIGHTMAP_EXT):
+                if texdesc.flag & hsd.TEX_LIGHTMAP_SPECULAR and not mobj.rendermode & hsd.RENDER_SPECULAR:
+                    continue
                 colormap = texdesc.flag & hsd.TEX_COLORMAP_MASK
                 if not (colormap == hsd.TEX_COLORMAP_NONE or
                         colormap == hsd.TEX_COLORMAP_PASS):
@@ -950,7 +968,10 @@ active: %.8X' % ((tev.color_op, tev.alpha_op, tev.color_bias, tev.alpha_bias,\
                     mix.name = colormap_name_dict[colormap] + ' ' + str(texdesc.blending)
                     ###
                     if not colormap == hsd.TEX_COLORMAP_REPLACE:
-                        links.new(last_color, mix.inputs[1])
+                        if texdesc.flag & hsd.TEX_LIGHTMAP_SPECULAR:
+                            links.new(last_specular, mix.inputs[1])
+                        else:
+                            links.new(last_color, mix.inputs[1])
                         links.new(cur_color, mix.inputs[2])
                     if colormap == hsd.TEX_COLORMAP_ALPHA_MASK:
                         links.new(cur_alpha, mix.inputs[0])
@@ -961,39 +982,66 @@ active: %.8X' % ((tev.color_op, tev.alpha_op, tev.color_bias, tev.alpha_bias,\
                     elif colormap == hsd.TEX_COLORMAP_REPLACE:
                         links.new(cur_color, mix.inputs[1])
                         mix.inputs[0].default_value = 0.0
+                    if texdesc.flag & hsd.TEX_LIGHTMAP_SPECULAR:
+                        last_specular = mix.outputs[0]
+                    else:
+                        last_color = mix.outputs[0]
+                #do alpha
+                alphamap = texdesc.flag & hsd.TEX_ALPHAMAP_MASK
+                if not (alphamap == hsd.TEX_ALPHAMAP_NONE or
+                        alphamap == hsd.TEX_ALPHAMAP_PASS):
+                    mix = nodes.new('ShaderNodeMixRGB')
+                    mix.blend_type = map_alpha_op_dict[alphamap]
+                    mix.inputs[0].default_value = 1
+                    ###
+                    alphamap_name_dict = {
+                    hsd.TEX_ALPHAMAP_NONE: 'TEX_ALPHAMAP_NONE',
+                    hsd.TEX_ALPHAMAP_PASS: 'TEX_ALPHAMAP_PASS',
+                    hsd.TEX_ALPHAMAP_REPLACE: 'TEX_ALPHAMAP_REPLACE',
+                    hsd.TEX_ALPHAMAP_ALPHA_MASK: 'TEX_ALPHAMAP_ALPHA_MASK',
+                    hsd.TEX_ALPHAMAP_BLEND: 'TEX_ALPHAMAP_BLEND',
+                    hsd.TEX_ALPHAMAP_ADD: 'TEX_ALPHAMAP_ADD',
+                    hsd.TEX_ALPHAMAP_SUB: 'TEX_ALPHAMAP_SUB',
+                    hsd.TEX_ALPHAMAP_MODULATE: 'TEX_ALPHAMAP_MODULATE'
+                    }
+                    mix.name = alphamap_name_dict[alphamap]
+                    ###
+                    if not alphamap == hsd.TEX_ALPHAMAP_REPLACE:
+                        links.new(last_alpha, mix.inputs[1])
+                        links.new(cur_alpha, mix.inputs[2])
+                    if alphamap == hsd.TEX_ALPHAMAP_ALPHA_MASK:
+                        links.new(cur_alpha, mix.inputs[0])
+                    elif alphamap == hsd.TEX_ALPHAMAP_BLEND:
+                        mix.inputs[0].default_value = texdesc.blending
+                    elif alphamap == hsd.TEX_ALPHAMAP_REPLACE:
+                        links.new(cur_alpha, mix.inputs[1])
 
-                    last_color = mix.outputs[0]
-            #do alpha
-            alphamap = texdesc.flag & hsd.TEX_ALPHAMAP_MASK
-            if not (alphamap == hsd.TEX_ALPHAMAP_NONE or
-                    alphamap == hsd.TEX_ALPHAMAP_PASS):
-                mix = nodes.new('ShaderNodeMixRGB')
-                mix.blend_type = map_alpha_op_dict[alphamap]
-                mix.inputs[0].default_value = 1
-                ###
-                alphamap_name_dict = {
-                hsd.TEX_ALPHAMAP_NONE: 'TEX_ALPHAMAP_NONE',
-                hsd.TEX_ALPHAMAP_PASS: 'TEX_ALPHAMAP_PASS',
-                hsd.TEX_ALPHAMAP_REPLACE: 'TEX_ALPHAMAP_REPLACE',
-                hsd.TEX_ALPHAMAP_ALPHA_MASK: 'TEX_ALPHAMAP_ALPHA_MASK',
-                hsd.TEX_ALPHAMAP_BLEND: 'TEX_ALPHAMAP_BLEND',
-                hsd.TEX_ALPHAMAP_ADD: 'TEX_ALPHAMAP_ADD',
-                hsd.TEX_ALPHAMAP_SUB: 'TEX_ALPHAMAP_SUB',
-                hsd.TEX_ALPHAMAP_MODULATE: 'TEX_ALPHAMAP_MODULATE'
-                }
-                mix.name = alphamap_name_dict[alphamap]
-                ###
-                if not alphamap == hsd.TEX_ALPHAMAP_REPLACE:
-                    links.new(last_alpha, mix.inputs[1])
-                    links.new(cur_alpha, mix.inputs[2])
-                if alphamap == hsd.TEX_ALPHAMAP_ALPHA_MASK:
-                    links.new(cur_alpha, mix.inputs[0])
-                elif alphamap == hsd.TEX_ALPHAMAP_BLEND:
-                    mix.inputs[0].default_value = texdesc.blending
-                elif alphamap == hsd.TEX_ALPHAMAP_REPLACE:
-                    links.new(cur_alpha, mix.inputs[1])
+                    last_alpha = mix.outputs[0]
 
-                last_alpha = mix.outputs[0]
+    if mobj.rendermode & hsd.RENDER_DIFFUSE:
+        #no alpha light support
+        
+        #no toon support yet
+        # if toon:
+            
+        #else:
+        if diffuse_flags & hsd.RENDER_DIFFUSE_VTX:
+            color = nodes.new('ShaderNodeAttribute')
+            color.attribute_name = 'color_0'
+            mult = nodes.new('ShaderNodeMixRGB')
+            mult.blend_type = 'MULTIPLY'
+            links.new(color.outputs[0], mult.inputs[0])
+            links.new(last_color, mult.inputs[1])
+            last_color = mult.outputs[0]
+        
+        if alpha_flags & hsd.RENDER_ALPHA_VTX:
+            cur_alpha = nodes.new('ShaderNodeAttribute')
+            cur_alpha.attribute_name = 'alpha_0'
+            mult = nodes.new('ShaderNodeMixRGB')
+            mult.blend_type = 'MULTIPLY'
+            links.new(cur_alpha.outputs[0], mult.inputs[0])
+            links.new(last_alpha, mult.inputs[1])
+            last_alpha = mult.outputs[0]
 
     #final render settings, on the GameCube these would control how the rendered data is written to the EFB (Embedded Frame Buffer)
 
@@ -1140,7 +1188,17 @@ active: %.8X' % ((tev.color_op, tev.alpha_op, tev.color_bias, tev.alpha_bias,\
     shader = nodes.new('ShaderNodeBsdfPrincipled')
     #specular
     if mobj.rendermode & hsd.RENDER_SPECULAR:
-        shader.inputs[5].default_value = mobj.mat.shininess / 50
+        #Blender's principled BSDF node does not support colored specular at this time
+        #Just multiply the luminance
+        hsv = nodes.new('ShaderNodeSeparateHSV')
+        links.new(last_specular, hsv.inputs[0])
+        shiny = nodes.new('ShaderNodeValue')
+        shiny.outputs[0].default_value = material.shininess / 50
+        mult = nodes.new('ShaderNodeMath')
+        mult.operation = 'MULTIPLY'
+        links.new(hsv.outputs[2], mult.inputs[0])
+        links.new(shiny.outputs[0], mult.inputs[1])
+        links.new(mult.outputs[0], shader.inputs[5])
     else:
         shader.inputs[5].default_value = 0
     #specular tint
@@ -1421,9 +1479,104 @@ def make_tev_op_add_sub(nodes, links, inputs, tev, iscolor):
 
 
 def make_tev_op_comp(nodes, links, inputs, tev, iscolor):
-    #TODO:
     return inputs[0]
-    pass
+    """
+    #OUT = [3] + ([2] if ([0] <OP> [1]) else 0)
+    comp_result = None
+    if iscolor:
+        #per component comparisons
+        #color only
+	    if tev.color_op == gx.GX_TEV_COMP_RGB8_GT or tev.color_op == gx.GX_TEV_COMP_RGB8_EQ:
+            separate0 = nodes.new('ShaderNodeSeparateRGB')
+            separate1 = nodes.new('ShaderNodeSeparateRGB')
+            links.new(inputs[0], separate0.inputs[0])
+            links.new(inputs[1], separate1.inputs[0])
+            combine = nodes.new('ShaderNodeCombineRGB')
+            if tev.color_op == gx.GX_TEV_COMP_RGB8_GT:
+                for i in range(3):
+                    comp = nodes.new('ShaderNodeMath')
+                    comp.operation = 'GREATER_THAN'
+                    links.new(separate0.outputs[i], comp.inputs[0])
+                    links.new(separate1.outputs[i], comp.inputs[1])
+                    links.new(comp.outputs[0], combine.inputs[i])
+            else: # gx.GX_TEV_COMP_RGB8_EQ
+                #realistically this will output 0 in most situations due to floating point errors
+                for i in range(3):
+                    less = nodes.new('ShaderNodeMath')
+                    less.operation = 'LESS_THAN'
+                    links.new(separate0.outputs[i], less.inputs[0])
+                    links.new(separate1.outputs[i], less.inputs[1])
+                    more = nodes.new('ShaderNodeMath')
+                    more.operation = 'GREATER_THAN'
+                    links.new(separate0.outputs[i], more.inputs[0])
+                    links.new(separate1.outputs[i], more.inputs[1])
+                    and_ = nodes.new('ShaderNodeMath')
+                    and_.operation = 'ADD'
+                    links.new(less.outputs[0], and_.inputs[0])
+                    links.new(more.outputs[0], and_.inputs[1])
+                    comp = nodes.new('ShaderNodeMath')
+                    comp.operation = 'SUBTRACT'
+                    comp.inputs[0].default_value = 1.0
+                    links.new(and_.outputs[0], comp.inputs[1])
+                    links.new(comp.outputs[0], combine.inputs[i])
+            comp_result = combine.outputs[0]
+    else:
+        # alpha only
+        if tev.alpha_op == gx.GX_TEV_COMP_A8_GT:
+            comp = nodes.new('ShaderNodeMath')
+            comp.operation = 'GREATER_THAN'
+            links.new(inputs[0], comp.inputs[0])
+            links.new(inputs[1], comp.inputs[1])
+        elif tev.alpha_op == gx.GX_TEV_COMP_A8_EQ:
+            less = nodes.new('ShaderNodeMath')
+            less.operation = 'LESS_THAN'
+            links.new(inputs[0], less.inputs[0])
+            links.new(inputs[1], less.inputs[1])
+            more = nodes.new('ShaderNodeMath')
+            more.operation = 'GREATER_THAN'
+            links.new(inputs[0], more.inputs[0])
+            links.new(inputs[1], more.inputs[1])
+            and_ = nodes.new('ShaderNodeMath')
+            and_.operation = 'ADD'
+            links.new(less.outputs[0], and_.inputs[0])
+            links.new(more.outputs[0], and_.inputs[1])
+            comp = nodes.new('ShaderNodeMath')
+            comp.operation = 'SUBTRACT'
+            comp.inputs[0].default_value = 1.0
+            links.new(and_.outputs[0], comp.inputs[1])
+        comp_result = combine.outputs[0]
+    #comparisons using combined components as one number
+    #can be used on both color and alpha, but I don't think sys
+    if iscolor:
+        #8 bit
+    else:
+        
+     
+    #output
+    if iscolor:
+        zero = nodes.new('ShaderNodeRGB')
+        zero.outputs[0].default_value[:] = [0.0, 0.0, 0.0, 1.0]
+        switch = nodes.new('ShaderNodeMixRGB')
+        switch.blend_type = 'MULTIPLY'
+    else:
+        zero = nodes.new('ShaderNodeValue')
+        zero.outputs[0].default_value = 0.0
+        switch = nodes.new('ShaderNodeMath')
+        switch.operation = 'MULTIPLY'
+    links.new(inputs[2], switch.inputs[0])
+    links.new(comp_result, switch.inputs[1])
+        
+    if iscolor:
+        add = nodes.new('ShaderNodeMixRGB')
+        add.blend_type = 'ADD'
+    else:
+        add = nodes.new('ShaderNodeMath')
+        add.operation = 'ADD'
+    links.new(inputs[3], add.inputs[0])
+    links.new(switch.outputs[0], add.inputs[1])
+    return add.outputs[0]
+    """
+    
 
 pedesc_src_factor_dict = {
 gx.GX_BL_ZERO        : 'GX_BL_ZERO',
