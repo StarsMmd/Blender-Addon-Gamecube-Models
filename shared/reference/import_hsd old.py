@@ -1198,16 +1198,16 @@ active: %.8X' % ((tev.color_op, tev.alpha_op, tev.color_bias, tev.alpha_bias,\
         mult.operation = 'MULTIPLY'
         links.new(hsv.outputs[2], mult.inputs[0])
         links.new(shiny.outputs[0], mult.inputs[1])
-        links.new(mult.outputs[0], shader.inputs[5])
+        links.new(mult.outputs[0], shader.inputs["Specular"])
     else:
-        shader.inputs[5].default_value = 0
+        shader.inputs["Specular"].default_value = 0
     #specular tint
-    shader.inputs[6].default_value = .5
+    shader.inputs["Specular Tint"].default_value = .5
     #roughness
-    shader.inputs[7].default_value = .5
+    shader.inputs["Roughness"].default_value = .5
 
     #diffuse color
-    links.new(last_color, shader.inputs[0])
+    links.new(last_color, shader.inputs["Base Color"])
 
     #alpha
     if transparent_shader:
@@ -1218,14 +1218,14 @@ active: %.8X' % ((tev.color_op, tev.alpha_op, tev.color_bias, tev.alpha_bias,\
         #links.new(last_alpha, alpha_factor.inputs[0])
         #last_alpha = alpha_factor.outputs[0]
         #
-        links.new(last_alpha, shader.inputs[18])
+        links.new(last_alpha, shader.inputs["Alpha"])
 
     #normal
     if last_bump:
         bump = nodes.new('ShaderNodeBump')
         bump.inputs[1].default_value = 1
         links.new(last_bump, bump.inputs[2])
-        links.new(bump.outputs[0], shader.inputs[19])
+        links.new(bump.outputs[0], shader.inputs["Normal"])
 
     #Add Additive or multiplicative alpha blending, since these don't have explicit options in 2.81 anymore
     if (alt_blend_mode == 'ADD'):

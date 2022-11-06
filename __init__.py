@@ -2,7 +2,7 @@
 # https://wiki.blender.org/wiki/Process/Addons/Guidelines/metainfo
 bl_info = {
     "name": "Gamecube Dat Model",
-    "author": "Made, StarsMmd",
+    "author": "Made, StarsMmd, MikeyX",
     "blender": (3, 1, 0),
     "location": "File > Import-Export",
     "description": "Import-Export Gamecube .dat models",
