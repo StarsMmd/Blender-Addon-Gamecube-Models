@@ -2,7 +2,11 @@ import bpy
 import sys
 import traceback
 
-from shared.IO import *
+# Blender uses a different relative path structure to the command line
+try:
+	from ..shared.IO import *
+except:
+	from shared.IO import *
 
 #TODO list
 #features:

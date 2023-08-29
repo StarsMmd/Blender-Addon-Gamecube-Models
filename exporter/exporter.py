@@ -1,5 +1,10 @@
-from shared.IO import *
-from shared.Nodes import SectionInfo
+# Blender uses a different relative path structure to the command line
+try:
+	from ..shared.IO import *
+	from ..shared.Nodes import SectionInfo
+except:
+	from shared.IO import *
+	from shared.Nodes import SectionInfo
 
 class Exporter():
 
