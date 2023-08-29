@@ -31,8 +31,8 @@ from bpy_extras.io_utils import (
         axis_conversion,
 )
 
-from importer import importer
-from exporter import exporter
+from .importer import *
+from .exporter import *
 
 # This class declares global properties which blender uses to add toggles and fields to the file open browser
 # allowing more options to be selected along with the filepath being opened.
