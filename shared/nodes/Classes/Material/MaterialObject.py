@@ -24,6 +24,7 @@ class MaterialObject(Node):
 
     def prepareForBlender(self, builder):
         super().prepareForBlender(builder)
+        return
 
         material = self.material
         blender_material = bpy.data.materials.new('')

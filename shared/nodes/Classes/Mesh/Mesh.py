@@ -16,6 +16,7 @@ class Mesh(Node):
 
     def prepareForBlender(self, builder):
         super().prepareForBlender(builder)
+        return
         
         # Add material to sub meshes
         material = self.mobject.blender_material

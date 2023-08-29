@@ -30,6 +30,7 @@ class Texture(Node):
 
     def prepareForBlender(self, builder):
         super().prepareForBlender(builder)
+        return
         
         if self.image:
             image_id = self.image.id

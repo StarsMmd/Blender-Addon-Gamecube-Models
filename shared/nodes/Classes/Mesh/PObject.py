@@ -81,6 +81,7 @@ class PObject(Node):
 
     def prepareForBlender(self, builder):
         super().prepareForBlender(builder)
+        return
 
         name = ''
         if self.name:
@@ -165,6 +166,7 @@ class PObject(Node):
         self.blender_mesh = mesh_object
 
     def read_geometry(self, parser):
+        return None, None, None
         vertices = self.vertex_list.vertices
         norm_dicts = []
         total_vertices_stride = 0
