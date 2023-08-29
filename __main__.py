@@ -1,3 +1,5 @@
+# Entry point to the script when loaded via Command Line
+
 import sys
 import bpy
 from importer.importer import Importer

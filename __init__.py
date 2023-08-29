@@ -1,3 +1,5 @@
+# Entry point to the script when loaded via Blender
+
 # metadata about the addon which blender requires
 # https://wiki.blender.org/wiki/Process/Addons/Guidelines/metainfo
 bl_info = {
