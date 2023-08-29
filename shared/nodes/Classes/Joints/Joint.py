@@ -7,7 +7,7 @@ from ....Constants import *
 # Joint (aka Bone)
 class Joint(Node):
     class_name = "Joint"
-    isHidden = false
+    isHidden = False
     fields = [
         ('name', 'string'),
         ('flags', 'uint'),

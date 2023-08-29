@@ -1,6 +1,6 @@
 import sys
-from importer.importer import Importer
 import bpy
+from importer.importer import Importer
 
 # This function is called when the addon is run through the command line.
 # To do this first install bpy (`pip install bpy`)

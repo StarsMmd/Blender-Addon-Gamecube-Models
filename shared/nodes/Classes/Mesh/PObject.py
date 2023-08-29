@@ -1,7 +1,9 @@
 import bpy
+import struct
 
 from ..Joints import *
 from ..Shape import *
+from ..Colors import *
 from ...Node import Node
 
 from ....Constants import *
@@ -16,9 +18,10 @@ class PObject(Node):
         ('vertex_list', 'VertexList'),
         ('flags', 'ushort'),
         ('display_list_chunk_count', 'ushort'),
-        ('display_list', 'uint'),
+        ('display_list_address', 'uint'),
         ('property', 'uint')
     ]
+    display_list_chunk_size = 32
 
     # Parse struct from binary file.
     def loadFromBinary(self, parser):
@@ -35,12 +38,12 @@ class PObject(Node):
         else:
             self.property = None
 
-        current_offset = self.display_list
-        for i in range(self.display_list_chunk_count):
-            next_chunk_offset = current_offset + 32
-            while current_offset < next_chunk_offset:
+        self.display_list = parser.read_chunk(self.display_list_chunk_size * self.display_list_chunk_count, self.display_list_address)
 
-                current_offset = next_chunk_offset
+        sources, face_lists, normals = self.read_geometry(parser)
+        self.sources = sources
+        self.face_lists = face_lists
+        self.normals = normals
 
     def allocationSize(self):
         # If the property is an Envelope list then allocate space for
@@ -102,7 +105,6 @@ class PObject(Node):
 
         #vertices, faces = read_geometry(vtxdesclist, displist, i)
         #TODO: move the loop here to avoid redundancy
-        sources, face_lists, normals = self.read_geometry()
         vertices = sources[position_vertex_index]
         faces = facelists[position_vertex_index]
 
@@ -162,40 +164,37 @@ class PObject(Node):
 
         self.blender_mesh = mesh_object
 
-    def read_geometry(displist, displistsize):
+    def read_geometry(self, parser):
         vertices = self.vertex_list.vertices
-        vertex_formats = []
-        descsizes = []
-        normdicts= []
-        stride = 0
+        norm_dicts = []
+        total_vertices_stride = 0
         for vertex in vertices:
-            fmt = get_vtxdesc_element_fmt(vertex)
-            vertex_formats.append(fmt)
-            size = struct.calcsize(fmt)
-            descsizes.append(size)
-            stride += size
+            total_vertices_stride += vertex.stride
         #comp_frac = vertex.component_frac
         #TODO: add comp_frac to direct values
 
         sources = []
         facelists = []
         offset = 0
+
+        # On the console the displaylist would be copied in a chunk, limit reading to that area
+        size_limit = self.display_list_chunk_count * self.display_list_chunk_size
+
         for vertex_index, vertex in enumerate(vertices):
             faces = []
             norm_dict = {}
             norm_index = 0
-            c = 0
-            opcode = displist[c] & gx.GX_OPCODE_MASK
-            #On the console the displaylist would be copied in a chunk, limit reading to that area
-            size_limit = displistsize * 0x20
+            offset_in_chunk = 0
+
+            opcode = struct.unpack('>B', self.display_list[offset_in_chunk: offset_in_chunk + 1])[0] & gx.GX_OPCODE_MASK
             while opcode != gx.GX_NOP and c < size_limit:
-                c += 1
-                vtxcount = struct.unpack('>H', displist[c:c + 2])[0]
-                c += 2
+                offset_in_chunk += 1
+                vertex_count = struct.unpack('>H', display_list[offset_in_chunk:offset_in_chunk + 2])[0]
+                offset_in_chunk += 2
 
                 indices = []
-                for i in range(vtxcount):
-                    index = struct.unpack(vertex_formats[vertex_index], displist[c + offset:c + offset + descsizes[vertex_index]])
+                for i in range(vertex_count):
+                    index = struct.unpack(vertex_formats[vertex_index], display_list[c + offset:c + offset + descsizes[vertex_index]])
                     if not len(index) > 1:
                         index = index[0]
                     else:
@@ -256,7 +255,7 @@ class PObject(Node):
                     notice_output("GX_DRAW_POINTS not supported, skipped")
                 else:
                     notice_output("Unsupported geometry primitive, skipped")
-                opcode = displist[c] & gx.GX_OPCODE_MASK
+                opcode = struct.unpack('>B', display_list[offset_in_chunk:offset_in_chunk + 1])[0] & gx.GX_OPCODE_MASK
 
             vertices = []
             if vertex.attr_type == gx.GX_DIRECT:

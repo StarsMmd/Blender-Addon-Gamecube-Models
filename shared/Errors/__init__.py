@@ -7,3 +7,9 @@ from .PixelEngineUnknownBlendModeError import PixelEngineUnknownBlendModeError
 from .ShapeSetDimensionMismatchError import ShapeSetDimensionMismatchError
 from .VertexErrors import UnknownVertexAttributeError
 from .VertexErrors import VertexListTerminatorError
+from .InvalidTypeError import InvalidPrimitiveTypeError
+from .InvalidTypeError import InvalidTypeError
+from .InvalidTypeError import StringTypeLengthError
+from .InvalidTypeError import StringTypeStructFormatError
+from .InvalidTypeError import MatrixTypeStructFormatError
+from .InvalidTypeError import VoidTypeStructFormatError

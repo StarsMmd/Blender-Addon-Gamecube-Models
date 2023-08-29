@@ -1,5 +1,5 @@
 # Blender SysDolphin Addon
-A Blender addon for importing gamecube .dat models into Blender. This addon is currently developed predominantly for `Pokemon Colosseum` and `Pokemon XD: Gale of Darkness` but may have some compatibility with other games that use the format (based on the sysdolphin library) such as `Super Smash Bros. Melee`, `Kirby Air ride` and `Killer7`.
+A Blender addon for importing gamecube .dat models into Blender. This addon is currently developed predominantly for `Pokemon Colosseum` and `Pokemon XD: Gale of Darkness` but may have some compatibility with other games that use the format (based on the sysdolphin library) such as `Super Smash Bros. Melee`, `Kirby Air ride`, `Chibi-Robo! Plug Into Adventure!` and `Killer7`.
 Original implementation provided by Made. 
 
 # How to use

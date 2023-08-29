@@ -19,7 +19,7 @@ class Vertex(Node):
     ]
 
     def getElementType(self):
-        if vertex.attribute_type == GX_NONE:
+        if self.attribute_type == GX_NONE:
             return 'void'
 
         if self.attribute_type == GX_DIRECT:
