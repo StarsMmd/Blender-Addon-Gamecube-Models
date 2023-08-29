@@ -27,7 +27,7 @@ class ModelBuilder(object):
 		self.fogs = []
 
 		# Sometimes there are sets which are separated across multiple sections.
-		# In this scenario we can build up the model set bit by bit.
+		# We can load multiple sections at the same time and bundle them into sets.
 		disjoint_modelset = ModelSet.emptySet()
 		disjoint_cameraset = CameraSet.emptySet()
 		disjoint_lightset = LightSet.emptySet()
@@ -68,19 +68,27 @@ class ModelBuilder(object):
 
 			elif isinstance(section.root_node, SceneData):
 				scene_data = section.root_node
-				self.cameras.append(scene_data.camera)
-				self.fogs.append(scene_data.fog)
-				self.lights += scene_data.lights
-				self.models += scene_data.models
+
+				if scene_data.camera != None:
+					self.cameras.append(scene_data.camera)
+
+				if scene_data.fog != None:
+					self.fogs.append(scene_data.fog)
+
+				if scene_data.lights != None:
+					self.lights += scene_data.lights
+
+				if scene_data.models != None:
+					self.models += scene_data.models
 
 		if disjoint_modelset.root_joint != None:
-			self.modelsets.append(disjoint_modelset)
+			self.models.append(disjoint_modelset)
 
 		if disjoint_cameraset.camera != None:
 			self.cameras.append(disjoint_cameraset)
 
 		if disjoint_lightset.light != None:
-			self.lightsets.append(disjoint_lightset)
+			self.lights.append(disjoint_lightset)
 
 	def build(self):
 		if self.options.get("verbose"):
