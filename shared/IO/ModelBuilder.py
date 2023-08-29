@@ -112,7 +112,7 @@ class ModelBuilder(object):
 		if model == None:
 			return
 		model.prepareForBlender(self)
-		model.build(self)
+		armature = model.build(self)
 
 	def importLight(self, light):
 		light.prepareForBlender(self)
