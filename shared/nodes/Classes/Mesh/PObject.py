@@ -79,17 +79,15 @@ class PObject(Node):
         super().writeBinary(builder)
 
 
-    def prepareForBlender(self, builder):
-        super().prepareForBlender(builder)
-        return
+    def build(self, builder, model):
 
         name = ''
         if self.name:
             name = self.name
         else:
-            name = str(builder.mesh_count)
+            name = str(model.mesh_count)
 
-        builder.mesh_count += 1
+        model.mesh_count += 1
 
         display_list = self.display_list
         vertex_list = self.vertex_list.vertices
@@ -104,10 +102,9 @@ class PObject(Node):
         if position_vertex_index == None:
             raise MeshWithoutPositionError
 
-        #vertices, faces = read_geometry(vtxdesclist, displist, i)
         #TODO: move the loop here to avoid redundancy
-        vertices = sources[position_vertex_index]
-        faces = facelists[position_vertex_index]
+        vertices = self.sources[position_vertex_index]
+        faces = self.face_lists[position_vertex_index]
 
         # Create mesh and object
         mesh = bpy.data.meshes.new('Mesh_' + name)
@@ -120,53 +117,52 @@ class PObject(Node):
         # faces should be [], or you ask for problems
         mesh.from_pydata(vertices, [], faces)
 
-        if self.property:
-            type = self.flags & POBJ_TYPE_MASK
-            if type == POBJ_SHAPEANIM:
-                shape_set = self.property
-                self.make_shapeset(mesh_object, shape_set, normals[position_vertex_index])
-                self.make_rigid_skin(self)
-            elif type == POBJ_ENVELOPE:
-                envelope_list = self.property
-                envelope_vertex_index = None
-                for index, vertex in enumerate(vertex_list):
-                    if vertex.attribute == GX_VA_PNMTXIDX:
-                        envelope_vertex_index = index
-                if envelope_vertex_index != None:
-                    self.make_deform_skin(self, envelope_list, sources[envelope_vertex_index], face_lists[envelope_vertex_index], faces)
-                else:
-                    raise InvalidEnvelopeError
+        # if self.property:
+        #     type = self.flags & POBJ_TYPE_MASK
+        #     if type == POBJ_SHAPEANIM:
+        #         shape_set = self.property
+        #         self.make_shapeset(mesh_object, shape_set, normals[position_vertex_index])
+        #         self.make_rigid_skin(self)
+        #     elif type == POBJ_ENVELOPE:
+        #         envelope_list = self.property
+        #         envelope_vertex_index = None
+        #         for index, vertex in enumerate(vertex_list):
+        #             if vertex.attribute == GX_VA_PNMTXIDX:
+        #                 envelope_vertex_index = index
+        #         if envelope_vertex_index != None:
+        #             self.make_deform_skin(self, envelope_list, sources[envelope_vertex_index], face_lists[envelope_vertex_index], faces)
+        #         else:
+        #             raise InvalidEnvelopeError
 
-            else:
-                # Make skin
-                # Deprecated, probably still used somewhere though
-                joint = self.property
-                self.make_skin(self, joint)
+        #     else:
+        #         # Make skin
+        #         # Deprecated, probably still used somewhere though
+        #         joint = self.property
+        #         self.make_skin(self, joint)
 
-        else:
-            self.make_rigid_skin(self)
+        # else:
+        #     self.make_rigid_skin(self)
 
 
-        #mesh.calc_normals()
-        self.normals = None
-        for index, vertex in enumerate(vertex_list):
-            if vertex.isTexture():
-                uvlayer = self.make_texture_layer(mesh, vertex, sources[index], face_lists[index])
-            elif vertex.attribute == GX_VA_NRM or vertex.attribute == GX_VA_NBT:
-                self.assign_normals_to_mesh(self, mesh, vertex, sources[index], facelists[index])
-                mesh.use_auto_smooth = True
-            elif (vertex.attribute == GX_VA_CLR0 or
-                  vertex.attribute == GX_VA_CLR1):
-                self.add_color_layer(mesh, vertex, sources[index], face_lists[index])
+        # #mesh.calc_normals()
+        # self.normals = None
+        # for index, vertex in enumerate(vertex_list):
+        #     if vertex.isTexture():
+        #         uvlayer = self.make_texture_layer(mesh, vertex, sources[index], face_lists[index])
+        #     elif vertex.attribute == GX_VA_NRM or vertex.attribute == GX_VA_NBT:
+        #         self.assign_normals_to_mesh(self, mesh, vertex, sources[index], facelists[index])
+        #         mesh.use_auto_smooth = True
+        #     elif (vertex.attribute == GX_VA_CLR0 or
+        #           vertex.attribute == GX_VA_CLR1):
+        #         self.add_color_layer(mesh, vertex, sources[index], face_lists[index])
 
         # Update mesh with new data
         # Remove degenerate faces (These mostly occur due to triangle strips creating invisible faces when changing orientation)
         mesh.update(calc_edges = True, calc_edges_loose = False)
 
-        self.blender_mesh = mesh_object
+        return blender_mesh
 
     def read_geometry(self, parser):
-        return None, None, None
         vertices = self.vertex_list.vertices
         norm_dicts = []
         total_vertices_stride = 0

@@ -84,8 +84,12 @@ class ModelSet(Node):
         self.bone_count = 0
         bones = self.root_joint.buildBoneHierarchy(builder, self, None, None, armature_data)
 
-        # bpy.ops.object.mode_set(mode = 'POSE')
-        # self.addGeometry(armature, bones)
+        bpy.ops.object.mode_set(mode = 'POSE')
+
+        # Add meshes
+        self.mesh_count = 0
+        self.addGeometry(builder, armature, bones)
+
         # self.addConstraints(armature, bones)
         # self.addInstances(armature, bones, mesh_dict)
 
@@ -98,32 +102,34 @@ class ModelSet(Node):
         #correct orientation due to coordinate system differences
         obj.matrix_basis @= Matrix.Rotation(math.pi / 2, 4, [1.0,0.0,0.0])
 
-    # def addGeometry(self, armature, bones):
-    #     for bone in bones:
-    #         # TODO: Find out what to do with particles ?
-    #         if bone.flags & JOBJ_INSTANCE:
-    #             # We can't copy objects from other bones here since they may not be parented yet
-    #             pass
+    def addGeometry(self, builder, armature, bones):
+        for bone in bones:
+            # TODO: Find out what to do with particles ?
+            if bone.flags & JOBJ_INSTANCE:
+                # We can't copy objects from other bones here since they may not be parented yet
+                pass
 
-    #         else:
-    #             if isinstance(bone.property, Mesh):
-    #                 mesh = bone.property
-    #                 while mesh:
-    #                     pobj = mesh.pobj
-    #                     while pobj:
-    #                         blender_mesh = pobj.blender_mesh
-    #                         if bone.isHidden:
-    #                             blender_mesh.hide_render = True
-    #                             blender_mesh.hide_set(True)
-    #                         blender_mesh.parent = armature
-    #                         # Apply deformation and rigid transformations temporarily stored in the hsd_mesh
-    #                         # This is done here because the meshes are created before the object hierarchy exists
-    #                         self.apply_bone_weights(blender_mesh, pobj, hsd_bone, armature)
-    #                         # Remove degenerate geometry
-    #                         # Most of the time it's generated from tristrips changing orientation (for example in a plane)
-    #                         blender_mesh.data.validate(verbose=False, clean_customdata=False)
-    #                         pobj = pobj.next
-    #                     mesh = mesh.next
+            else:
+                if isinstance(bone.property, Mesh):
+                    mesh = bone.property
+                    while mesh:
+                        pobj = mesh.pobj
+                        while pobj:
+                            blender_mesh = pobj.build(builder, self)
+                            if bone.isHidden:
+                                blender_mesh.hide_render = True
+                                blender_mesh.hide_set(True)
+                            blender_mesh.parent = armature
+
+                            # # Apply deformation and rigid transformations temporarily stored in the hsd_mesh
+                            # # This is done here because the meshes are created before the object hierarchy exists
+                            # self.apply_bone_weights(blender_mesh, pobj, bone, armature)
+                            
+                            # Remove degenerate geometry
+                            # Most of the time it's generated from tristrips changing orientation (for example in a plane)
+                            blender_mesh.data.validate(verbose=False, clean_customdata=False)
+                            pobj = pobj.next
+                        mesh = mesh.next
 
     # def apply_bone_weights(self, mesh, hsd_mesh, hsd_bone, armature):
     #     #apply weights now that the bones actually exist
