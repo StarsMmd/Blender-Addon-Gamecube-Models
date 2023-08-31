@@ -141,17 +141,17 @@ class PObject(Node):
             self.make_rigid_skin()
 
 
-        # #mesh.calc_normals()
-        # self.normals = None
-        # for index, vertex in enumerate(vertex_list):
-        #     if vertex.isTexture():
-        #         uvlayer = self.make_texture_layer(mesh, vertex, sources[index], face_lists[index])
-        #     elif vertex.attribute == GX_VA_NRM or vertex.attribute == GX_VA_NBT:
-        #         self.assign_normals_to_mesh(self, mesh, vertex, sources[index], facelists[index])
-        #         mesh.use_auto_smooth = True
-        #     elif (vertex.attribute == GX_VA_CLR0 or
-        #           vertex.attribute == GX_VA_CLR1):
-        #         self.add_color_layer(mesh, vertex, sources[index], face_lists[index])
+        #mesh.calc_normals()
+        self.normals = None
+        for index, vertex in enumerate(vertex_list):
+            if vertex.isTexture():
+                uvlayer = self.make_texture_layer(mesh, vertex, self.sources[index], self.face_lists[index])
+            elif vertex.attribute == GX_VA_NRM or vertex.attribute == GX_VA_NBT:
+                self.assign_normals_to_mesh(mesh, vertex, self.sources[index], self.face_lists[index])
+                mesh.use_auto_smooth = True
+            elif (vertex.attribute == GX_VA_CLR0 or
+                  vertex.attribute == GX_VA_CLR1):
+                self.add_color_layer(mesh, vertex, self.sources[index], self.face_lists[index])
 
         # Update mesh with new data
         # Remove degenerate faces (These mostly occur due to triangle strips creating invisible faces when changing orientation)
@@ -346,3 +346,52 @@ class PObject(Node):
                 value = vertex_list[tri_index]
                 shapekey.data[normdict[tri_index]].co = value
 
+    def assign_normals_to_mesh(self, meshdata, vertex, source, faces):
+        #temporarily store normals in pobj to then be applied when bone deformations are done
+        normals = [None] * len(meshdata.loops)
+        for polygon in meshdata.polygons:
+            face = faces[polygon.index]
+            range = polygon.loop_indices
+            minr = min(range)
+
+            if vertex.attribute == GX_VA_NBT:
+                for i in range:
+                    normals[i] = source[face[i - minr]][0:3]
+            else:
+                for i in range:
+                    normals[i] = source[face[i - minr]]
+        self.normals = normals
+
+    def add_color_layer(self, meshdata, vertex, source, faces):
+        if vertex.attribute == gx.GX_VA_CLR0:
+            color_num = '0'
+        elif vertex.attribute == gx.GX_VA_CLR1:
+            color_num = '1'
+        color_layer = meshdata.vertex_colors.new(name = 'color_' + color_num)
+        alpha_layer = meshdata.vertex_colors.new(name = 'alpha_' + color_num)
+        for polygon in meshdata.polygons:
+            face = faces[polygon.index]
+            range = polygon.loop_indices
+            minr = min(range)
+
+            for i in range:
+                color = source[face[i - minr]]
+                color.linearize()
+                # color = interpret_color(vertex, color)
+                color_layer.data[i].color[0:3] = [color.red, color.green, color.blue, color.alpha]
+                alpha_layer.data[i].color[0:3] = [color.alpha] * 3 # question: should this be * 4?
+
+    def make_texture_layer(self, meshdata, vertex, source, faces):
+        uvtex = meshdata.uv_layers.new()
+        uvtex.name = 'uvtex_' + str(vertex.attribute - gx.GX_VA_TEX0)
+        uvlayer = meshdata.uv_layers[uvtex.name]
+        for polygon in meshdata.polygons:
+            face = faces[polygon.index]
+            range = polygon.loop_indices
+            minr = min(range)
+
+            for i in range:
+                coords = source[face[i - minr]]
+                #blender's UV coordinate origin is in the bottom left for some reason
+                uvlayer.data[i].uv = [coords[0], 1 - coords[1]]
+        return uvtex
