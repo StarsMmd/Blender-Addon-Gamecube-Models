@@ -2,6 +2,7 @@ import bpy
 import math
 from mathutils import Matrix, Euler, Vector
 
+from ..Mesh import *
 from ...Node import Node
 from ....Constants import *
 
@@ -113,7 +114,7 @@ class ModelSet(Node):
                 if isinstance(bone.property, Mesh):
                     mesh = bone.property
                     while mesh:
-                        pobj = mesh.pobj
+                        pobj = mesh.pobject
                         while pobj:
                             blender_mesh = pobj.build(builder, self)
                             if bone.isHidden:
@@ -124,7 +125,7 @@ class ModelSet(Node):
                             # # Apply deformation and rigid transformations temporarily stored in the hsd_mesh
                             # # This is done here because the meshes are created before the object hierarchy exists
                             # self.apply_bone_weights(blender_mesh, pobj, bone, armature)
-                            
+
                             # Remove degenerate geometry
                             # Most of the time it's generated from tristrips changing orientation (for example in a plane)
                             blender_mesh.data.validate(verbose=False, clean_customdata=False)

@@ -1,5 +1,6 @@
 import bpy
 import struct
+from mathutils import Matrix, Euler, Vector
 
 from ..Joints import *
 from ..Shape import *
@@ -7,6 +8,7 @@ from ..Colors import *
 from ...Node import Node
 
 from ....Constants import *
+from ....Errors import *
 
 
 # PObject
@@ -34,11 +36,9 @@ class PObject(Node):
             elif property_type == POBJ_SHAPEANIM:
                 self.property = parser.read('ShapeSet', self.property)
             else:
-                self.property = parser.read('(*Envelope)[]', self.property)
+                self.property = parser.read('((*Envelope)[])[]', self.property)
         else:
             self.property = None
-
-        self.display_list = parser.read_chunk(self.display_list_chunk_size * self.display_list_chunk_count, self.display_list_address)
 
         sources, face_lists, normals = self.read_geometry(parser)
         self.sources = sources
@@ -86,12 +86,9 @@ class PObject(Node):
             name = self.name
         else:
             name = str(model.mesh_count)
-
         model.mesh_count += 1
 
-        display_list = self.display_list
         vertex_list = self.vertex_list.vertices
-        display_list_size = self.display_list_chunk_count
 
         position_vertex_index = None #index of the vtxdesc that holds vertex position data
         for i in range(len(vertex_list)):
@@ -117,31 +114,31 @@ class PObject(Node):
         # faces should be [], or you ask for problems
         mesh.from_pydata(vertices, [], faces)
 
-        # if self.property:
-        #     type = self.flags & POBJ_TYPE_MASK
-        #     if type == POBJ_SHAPEANIM:
-        #         shape_set = self.property
-        #         self.make_shapeset(mesh_object, shape_set, normals[position_vertex_index])
-        #         self.make_rigid_skin(self)
-        #     elif type == POBJ_ENVELOPE:
-        #         envelope_list = self.property
-        #         envelope_vertex_index = None
-        #         for index, vertex in enumerate(vertex_list):
-        #             if vertex.attribute == GX_VA_PNMTXIDX:
-        #                 envelope_vertex_index = index
-        #         if envelope_vertex_index != None:
-        #             self.make_deform_skin(self, envelope_list, sources[envelope_vertex_index], face_lists[envelope_vertex_index], faces)
-        #         else:
-        #             raise InvalidEnvelopeError
+        if self.property:
+            type = self.flags & POBJ_TYPE_MASK
+            if type == POBJ_SHAPEANIM:
+                shape_set = self.property
+                self.make_shapeset(mesh_object, builder, shape_set, normals[position_vertex_index])
+                self.make_rigid_skin()
+            elif type == POBJ_ENVELOPE:
+                envelope_list = self.property
+                envelope_vertex_index = None
+                for index, vertex in enumerate(vertex_list):
+                    if vertex.attribute == GX_VA_PNMTXIDX:
+                        envelope_vertex_index = index
+                if envelope_vertex_index != None:
+                    self.make_deform_skin(envelope_list, self.sources[envelope_vertex_index], self.face_lists[envelope_vertex_index], faces)
+                else:
+                    raise InvalidEnvelopeError
 
-        #     else:
-        #         # Make skin
-        #         # Deprecated, probably still used somewhere though
-        #         joint = self.property
-        #         self.make_skin(self, joint)
+            else:
+                # Make skin
+                # Deprecated, probably still used somewhere though
+                joint = self.property
+                self.make_skin(joint)
 
-        # else:
-        #     self.make_rigid_skin(self)
+        else:
+            self.make_rigid_skin()
 
 
         # #mesh.calc_normals()
@@ -160,57 +157,53 @@ class PObject(Node):
         # Remove degenerate faces (These mostly occur due to triangle strips creating invisible faces when changing orientation)
         mesh.update(calc_edges = True, calc_edges_loose = False)
 
-        return blender_mesh
+        return mesh_object
 
     def read_geometry(self, parser):
         vertices = self.vertex_list.vertices
-        norm_dicts = []
-        total_vertices_stride = 0
+        normal_dicts = []
+        stride = 0
         for vertex in vertices:
-            total_vertices_stride += vertex.stride
+            stride += parser.getTypeLength(vertex.getFormat())
         #comp_frac = vertex.component_frac
         #TODO: add comp_frac to direct values
 
         sources = []
-        facelists = []
-        offset = 0
+        face_lists = []
 
         # On the console the displaylist would be copied in a chunk, limit reading to that area
-        size_limit = self.display_list_chunk_count * self.display_list_chunk_size
-
+        display_list_size = self.display_list_chunk_count * self.display_list_chunk_size
+        offset_in_vertex_list = 0
+        
         for vertex_index, vertex in enumerate(vertices):
+            vertex_format = vertex.getFormat()
             faces = []
             norm_dict = {}
             norm_index = 0
-            offset_in_chunk = 0
+            offset = 0
 
-            opcode = struct.unpack('>B', self.display_list[offset_in_chunk: offset_in_chunk + 1])[0] & gx.GX_OPCODE_MASK
-            while opcode != gx.GX_NOP and c < size_limit:
-                offset_in_chunk += 1
-                vertex_count = struct.unpack('>H', display_list[offset_in_chunk:offset_in_chunk + 2])[0]
-                offset_in_chunk += 2
+            opcode = parser.read('uchar', self.display_list_address, offset)  & gx.GX_OPCODE_MASK
+            offset += parser.getTypeLength('uchar')
+
+            while opcode != gx.GX_NOP and offset < display_list_size:
+                vertex_count = parser.read('ushort', self.display_list_address, offset)
+                offset += parser.getTypeLength('ushort')
 
                 indices = []
                 for i in range(vertex_count):
-                    index = struct.unpack(vertex_formats[vertex_index], display_list[c + offset:c + offset + descsizes[vertex_index]])
-                    if not len(index) > 1:
-                        index = index[0]
+                    index = parser.read(vertex.getFormat(), self.display_list_address, offset + offset_in_vertex_list)
+                    if vertex.attribute_type == gx.GX_DIRECT:
+                        indices.append(index)
                     else:
-                        index = list(index)
-                    indices.append(index)
-                    c += stride
-
-                if not vertex.attr_type == gx.GX_DIRECT:
-                    i = 0
-                    for index in indices:
                         if not index in norm_dict.keys():
                             norm_dict[index] = norm_index
                             norm_index += 1
-                        indices[i] = norm_dict[index]
-                        i += 1
+                        indices.append(norm_dict[index])
+                    
+                    offset += stride
 
                 if opcode == gx.GX_DRAW_QUADS:
-                    for i in range(vtxcount // 4):
+                    for i in range(vertex_count // 4):
                         idx = i * 4
                         face = [indices[idx + 3],
                                 indices[idx + 2],
@@ -218,14 +211,14 @@ class PObject(Node):
                                 indices[idx + 0]]
                         faces.append(face)
                 elif opcode == gx.GX_DRAW_TRIANGLES:
-                    for i in range(vtxcount // 3):
+                    for i in range(vertex_count // 3):
                         idx = i * 3
                         face = [indices[idx + 0],
                                 indices[idx + 2],
                                 indices[idx + 1]]
                         faces.append(face)
                 elif opcode == gx.GX_DRAW_TRIANGLE_STRIP:
-                    for i in range(vtxcount - 2):
+                    for i in range(vertex_count - 2):
                         if i % 2 == 0:
                             face = [indices[i + 1],
                                     indices[i + 0],
@@ -238,7 +231,7 @@ class PObject(Node):
                 elif opcode == gx.GX_DRAW_TRIANGLE_FAN:
                     first_index = indices[0]
                     #latest_index = indices[1]
-                    for i in range(vtxcount - 2):
+                    for i in range(vertex_count - 2):
                         idx = i + 1
                         face = [first_index,
                                 indices[idx + 1],
@@ -246,17 +239,23 @@ class PObject(Node):
                         #latest_index = indices[idx]
                         faces.append(face)
                 elif opcode == gx.GX_DRAW_LINES:
-                    notice_output("GX_DRAW_LINES not supported, skipped")
+                    if parser.options.get("verbose"):
+                        print("GX_DRAW_LINES not supported, skipped")
                 elif opcode == gx.GX_DRAW_LINE_STRIP:
-                    notice_output("GX_DRAW_LINE_STRIP not supported, skipped")
+                    if parser.options.get("verbose"):
+                        print("GX_DRAW_LINE_STRIP not supported, skipped")
                 elif opcode == gx.GX_DRAW_POINTS:
-                    notice_output("GX_DRAW_POINTS not supported, skipped")
+                    if parser.options.get("verbose"):
+                        print("GX_DRAW_POINTS not supported, skipped")
                 else:
-                    notice_output("Unsupported geometry primitive, skipped")
-                opcode = struct.unpack('>B', display_list[offset_in_chunk:offset_in_chunk + 1])[0] & gx.GX_OPCODE_MASK
+                    if parser.options.get("verbose"):
+                        print("Unsupported geometry primitive, skipped")
+
+                opcode = parser.read('uchar', self.display_list_address, offset)  & gx.GX_OPCODE_MASK
+                offset += parser.getTypeLength('uchar')
 
             vertices = []
-            if vertex.attr_type == gx.GX_DIRECT:
+            if vertex.attribute_type == gx.GX_DIRECT:
                 #this means the indices are actually the raw data they would be indexing
                 i = 0
                 new_faces = []
@@ -275,17 +274,75 @@ class PObject(Node):
                     indices.append(key)
                     norm_indices.append(value)
                 indices = [x for _,x in sorted(zip(norm_indices,indices))]
-                vertices = read_vertex_data(vertex, indices)
+                vertices = self.read_vertex_data(parser, vertex, indices)
 
             sources.append(vertices)
-            facelists.append(faces)
-            normdicts.append(norm_dict)
-            offset += descsizes[vertex_index]
+            face_lists.append(faces)
+            normal_dicts.append(norm_dict)
+            offset_in_vertex_list += parser.getTypeLength(vertex.getFormat())
 
-        return sources, facelists, normdicts
+        return sources, face_lists, normal_dicts
 
+    def read_vertex_data(self, parser, vertex, indices):
+        #TODO: add support for NBT
+        data = []
+        base_pointer = vertex.base_pointer
+        vertex_format = vertex.getDirectElementType()
+        format_length = parser.getTypeLength(vertex_format)
+        if vertex.attribute == gx.GX_VA_NBT and vertex.component_count == gx.GX_NRM_NBT3:
+            #Normal, Binormal and Tangent are individually indexed
+            for index in indices:
+                value = []
+                for i in range(3):
+                    position = vertex.stride * index[i] + i * format_length
+                    value[i*3:i*3+3] = parser.read(vertex_format, base_pointer, position)
+                if vertex.attribute_type != gx.GX_F32:
+                    value = [v / (1 << vertex.component_frac) for v in value]
+                data.append(value)
+        else:
+            for index in indices:
+                position = vertex.stride * index
+                value = list(parser.read(vertex_format, base_pointer, position))
+                if not (vertex.isMatrix()
+                        or vertex.attribute == gx.GX_VA_CLR0
+                        or vertex.attribute == gx.GX_VA_CLR1
+                        or vertex.attribute_type == gx.GX_F32):
+                    value = [v / (1 << vertex.component_frac) for v in value]
 
+                data.append(value)
+        return data
 
+    def make_deform_skin(self, envelope_list, source, faces, g_faces):
+        #temporarily store vertex group info in the hsd object
+        #envelope indices can only be GX_DIRECT
 
+        indices = {}
+        for j, face in enumerate(g_faces):
+            for i, vertex in enumerate(face):
+                indices[vertex] = source[faces[j][i]] // 3 # see GXPosNrmMtx
+        indices = list(indices.items())
 
+        #HSD envelopes do *NOT* correspond to Blender's envelope setting for skinning
+        envelopes = []
+        for envelope in envelope_list:
+            envelopes.append([(entry.weight, entry.joint) for entry in envelope])
+
+        self.skin = (indices, envelopes)
+
+    def make_skin(self, joint):
+        self.skin = (None, joint.id)
+
+    def make_rigid_skin(self):
+        self.skin = (None, None)
+
+    def make_shapeset(self, builder, ob, shape_set, normdict):
+        #ob.shape_key_add(from_mix = False)
+        #TODO: implement normals
+        for shape_index in range(shape_set.shape_count + 1):
+            shapekey = ob.shape_key_add(from_mix = False)
+            vertex_list = shape_set.vertex_set[shape_index]
+
+            for tri_index in range(shape_set.vertex_tri_count):
+                value = vertex_list[tri_index]
+                shapekey.data[normdict[tri_index]].co = value
 

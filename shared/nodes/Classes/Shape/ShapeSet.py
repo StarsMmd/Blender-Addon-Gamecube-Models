@@ -8,12 +8,43 @@ class ShapeSet(Node):
         ('flags', 'ushort'),
         ('shape_count', 'ushort'),
         ('vertex_tri_count', 'uint'),
-        ('vertices', 'VertexList'),
-        ('vertex_set', '*((*((@ShapeIndexTri)[vertex_tri_count]))[shape_count])'),
+        ('vertex', 'Vertex'),
+        ('vertex_set', 'uint'),
         ('normal_tri_count', 'uint'),
-        ('normals', 'VertexList'),
-        ('normal_set', '*((*((@ShapeIndexTri)[normal_tri_count]))[shape_count])'),
+        ('normal', 'Vertex'),
+        ('normal_set', 'uint'),
     ]
+
+    # Parse struct from binary file.
+    def loadFromBinary(self, parser):
+        super().loadFromBinary(parser)
+
+        vertex_format = self.vertex.getDirectElementType()
+        vertex_format_size = parser.getTypeLength(vertex_format)
+        vertex_index_format = self.vertex.getFormat()
+        vertex_index_format_size = parser.getTypeLength(vertex_index_format)
+        vertex_set_type = '((*((@'+ vertex_index_format + ')[vertex_tri_count]))[shape_count])'
+        vertex_set = parser.read(vertex_set_type, self.vertex_set)
+
+        normal_format = self.normal.getDirectElementType()
+        normal_format_size = parser.getTypeLength(normal_format)
+        normal_index_format = self.normal.getFormat()
+        normal_index_format_size = parser.getTypeLength(normal_index_format)
+        normal_set_type = '((*((@'+ normal_index_format + ')[normal_tri_count]))[shape_count])'
+        self.normal_set = parser.read(normal_set_type, self.normal_set)
+
+        self.vertex_set = []
+        for shape_index in range(self.shape_count + 1):
+            vertex_list = []
+
+            for tri_index in range(self.vertex_tri_count):
+                #Dunno if this works for meshes with normalized vertex indices
+                index = vertex_set[shape_index][tri_index]
+                position = self.vertex.stride * index
+                value = parser.read(vertex_format, self.vertex.base_pointer, position)
+                vertex_list.append(value)
+
+            self.vertex_set.append(vertex_list)
 
     # Tells the builder how to write this node's data to the binary file.
     # Returns the offset the builder was at before it started writing its own data.

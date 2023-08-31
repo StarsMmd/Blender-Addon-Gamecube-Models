@@ -17,10 +17,11 @@ class VertexList(Node):
         found_end_of_list = False
         while not found_end_of_list:
             vertex = parser.read('Vertex', self.address, current_offset)
-            self.vertices.append(vertex)
             if vertex.attribute == 0xFF:
                 found_end_of_list = True
-            current_offset += vertex_length
+            else:
+                self.vertices.append(vertex)
+                current_offset += vertex_length
 
     # For any fields which are a pointer where the underlying sub type is a primitive type,
     # write them to the builder's output and replace the field with the address it was written to
