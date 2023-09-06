@@ -79,14 +79,14 @@ class PObject(Node):
         super().writeBinary(builder)
 
 
-    def build(self, builder, model):
+    def build(self, builder):
 
         name = ''
         if self.name:
             name = self.name
         else:
-            name = str(model.mesh_count)
-        model.mesh_count += 1
+            name = str(builder.mesh_count)
+        builder.mesh_count += 1
 
         vertex_list = self.vertex_list.vertices
 
@@ -377,9 +377,8 @@ class PObject(Node):
             for i in range:
                 color = source[face[i - minr]]
                 color.linearize()
-                # color = interpret_color(vertex, color)
                 color_layer.data[i].color[0:3] = [color.red, color.green, color.blue, color.alpha]
-                alpha_layer.data[i].color[0:3] = [color.alpha] * 3 # question: should this be * 4?
+                alpha_layer.data[i].color[0:3] = [color.alpha] * 3 # question should this be * 4?
 
     def make_texture_layer(self, meshdata, vertex, source, faces):
         uvtex = meshdata.uv_layers.new()

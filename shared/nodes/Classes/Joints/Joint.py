@@ -59,12 +59,12 @@ class Joint(Node):
 
         super().writeBinary(builder)
 
-    def buildBoneHierarchy(self, builder, model, parent, hsd_parent, armature_data):
+    def buildBoneHierarchy(self, builder, parent, hsd_parent, armature_data):
         bones = []
 
         bpy.ops.object.mode_set(mode = 'EDIT')
-        name = 'Bone_' + str(model.bone_count)
-        model.bone_count += 1
+        name = 'Bone_' + str(builder.bone_count)
+        builder.bone_count += 1
 
         bone = armature_data.edit_bones.new(name = name)
         if builder.options.get("ik_hack"):
@@ -94,9 +94,9 @@ class Joint(Node):
 
         #bone.use_relative_parent = True
         if self.child and not self.flags & JOBJ_INSTANCE:
-            bones += self.child.buildBoneHierarchy(builder, model, bone, self, armature_data)
+            bones += self.child.buildBoneHierarchy(builder, bone, self, armature_data)
         if self.next:
-            bones += self.next.buildBoneHierarchy(builder, model, parent, hsd_parent, armature_data)
+            bones += self.next.buildBoneHierarchy(builder, parent, hsd_parent, armature_data)
 
         bones.append(self)
         return bones

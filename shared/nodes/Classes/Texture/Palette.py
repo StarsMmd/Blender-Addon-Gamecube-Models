@@ -1,5 +1,6 @@
 from ...Node import Node
 from ....Constants import *
+from .Image import *
 
 # Palette (aka Texture Lookup Table, aka TLUT)
 class Palette(Node):
@@ -17,7 +18,14 @@ class Palette(Node):
         # then make sure the id is still the address of the table
         self.id = self.data
 
+        bits_per_pixel, is_indexed, blockWidth, blockHeight, type = format_dict[self.format]
         bits_per_color = 32 if self.format == gx.GX_TF_RGBA8 else 16
-        palette_size = self.entry_count * bits_per_color
-        self.data = parser.read_chunk(palette_size, self.data)
+        data = []
 
+        for i in range(self.entry_count):
+            offset = i * (bits_per_color // 8)
+            color = parser.read(type, self.data, offset)
+            color.normalize()
+            data.append(color)
+
+        self.data = data

@@ -28,10 +28,6 @@ class Texture(Node):
         super().loadFromBinary(parser)
         self.id = self.address
 
-    def prepareForBlender(self, builder):
-        super().prepareForBlender(builder)
-        return
-        
         if self.image:
             image_id = self.image.id
             palette_id = 0
@@ -43,7 +39,8 @@ class Texture(Node):
                 self.image_data = cached_image
 
             else:
-                self.image_data = self.image.loadDataWithPalette(parser, self.palette)
+                palette_data = None if self.palette == None else self.palette.data
+                self.image_data = self.image.loadDataWithPalette(parser, palette_data)
                 parser.cacheImage(image_id, palette_id, self.image_data)
 
         else:
