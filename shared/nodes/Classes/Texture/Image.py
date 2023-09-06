@@ -84,7 +84,7 @@ class Image(Node):
                     color1 = palette[index1]
                     color2 = palette[index2]
                     pixels.append(color1)
-                    pixels.append(colour2)
+                    pixels.append(color2)
             else:
                 for i in range(pixels_in_image):
                     index = parser.read(type, self.data_address, i * bytes_per_pixel)

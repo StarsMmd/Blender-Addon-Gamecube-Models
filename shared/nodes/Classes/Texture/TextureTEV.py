@@ -25,3 +25,9 @@ class TextureTEV(Node):
         ('tev1', '@RGBX8Color'),
         ('active', 'uint'),
     ]
+
+    def loadFromBinary(self, parser):
+        super().loadFromBinary(parser)
+        self.konst.normalize()
+        self.tev0.normalize()
+        self.tev1.normalize()

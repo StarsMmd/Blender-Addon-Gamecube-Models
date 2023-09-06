@@ -62,7 +62,7 @@ class MaterialObject(Node):
         else:
             if (self.render_mode & CHANNEL_FIELD) == RENDER_DIFFUSE_MAT:
                 color = nodes.new('ShaderNodeRGB')
-                color.outputs[0].default_value[:] = mat_diffuse_color
+                color.outputs[0].default_value[:] = diffuse_color
             else:
                 # Toon not supported. 
                 # TODO: confirm if any models use Toon textures
@@ -153,12 +153,12 @@ class MaterialObject(Node):
             if texture.tev:
                 tev = texture.tev
                 if tev.active & TOBJ_TEVREG_ACTIVE_COLOR_TEV:
-                    inputs = [make_tev_input(nodes, blender_texture, tev, i, True) for i in range(4)]
-                    cur_color = make_tev_op(nodes, links, inputs, tev, True)
+                    inputs = [self.make_tev_input(nodes, blender_texture, tev, i, True) for i in range(4)]
+                    cur_color = self.make_tev_op(nodes, links, inputs, tev, True)
 
                 if tev.active & TOBJ_TEVREG_ACTIVE_ALPHA_TEV:
-                    inputs = [make_tev_input(nodes, blender_texture, tev, i, False) for i in range(4)]
-                    cur_alpha = make_tev_op(nodes, links, inputs, tev, False)
+                    inputs = [self.make_tev_input(nodes, blender_texture, tev, i, False) for i in range(4)]
+                    cur_alpha = self.make_tev_op(nodes, links, inputs, tev, False)
 
                 blender_texture.name += ' tev'
             if texture.flags & TEX_BUMP:
@@ -446,6 +446,325 @@ class MaterialObject(Node):
             output.name += ' ' + str(pixel_engine_data.source_factor) + ' ' + str(pixel_engine_data.destination_factor)
 
         return blender_material
+
+    def make_tev_input(self, nodes, texture, tev, input, iscolor):
+        if iscolor:
+            flag = (tev.color_a, tev.color_b, tev.color_c, tev.color_d)[input]
+            if not (flag == gx.GX_CC_TEXC or flag == gx.GX_CC_TEXA):
+                color = nodes.new('ShaderNodeRGB')
+            if flag == gx.GX_CC_ZERO:
+                color.outputs[0].default_value = [0.0, 0.0, 0.0, 1]
+            elif flag == gx.GX_CC_ONE:
+                color.outputs[0].default_value = [1.0, 1.0, 1.0, 1]
+            elif flag == gx.GX_CC_HALF:
+                color.outputs[0].default_value = [0.5, 0.5, 0.5, 1]
+            elif flag == gx.GX_CC_TEXC:
+                return texture.outputs[0]
+            elif flag == gx.GX_CC_TEXA:
+                return texture.outputs[1]
+            elif flag == hsd.TOBJ_TEV_CC_KONST_RGB:
+                color.outputs[0].default_value = [tev.konst.red, tev.konst.green,tev.konst.blue,tev.konst.alpha]
+            elif flag == hsd.TOBJ_TEV_CC_KONST_RRR:
+                color.outputs[0].default_value = [tev.konst.red, tev.konst.red,tev.konst.red,tev.konst.alpha]
+            elif flag == hsd.TOBJ_TEV_CC_KONST_GGG:
+                color.outputs[0].default_value = [tev.konst.green, tev.konst.green,tev.konst.green,tev.konst.alpha]
+            elif flag == hsd.TOBJ_TEV_CC_KONST_BBB:
+                color.outputs[0].default_value = [tev.konst.blue, tev.konst.blue,tev.konst.blue,tev.konst.alpha]
+            elif flag == hsd.TOBJ_TEV_CC_KONST_AAA:
+                color.outputs[0].default_value = [tev.konst.alpha, tev.konst.alpha,tev.konst.alpha,tev.konst.alpha]
+            elif flag == hsd.TOBJ_TEV_CC_TEX0_RGB:
+                color.outputs[0].default_value = [tev.tev0.red, tev.tev0.green,tev.tev0.blue,tev.tev0.alpha]
+            elif flag == hsd.TOBJ_TEV_CC_TEX0_AAA:
+                color.outputs[0].default_value = [tev.tev0.alpha, tev.tev0.alpha,tev.tev0.alpha,tev.tev0.alpha]
+            elif flag == hsd.TOBJ_TEV_CC_TEX1_RGB:
+                color.outputs[0].default_value = [tev.tev1.red, tev.tev1.green,tev.tev1.blue,tev.tev1.alpha]
+            elif flag == hsd.TOBJ_TEV_CC_TEX1_AAA:
+                color.outputs[0].default_value = [tev.tev1.alpha, tev.tev1.alpha,tev.tev1.alpha,tev.tev1.alpha]
+            else:
+                error_output("unknown tev color input: 0x%X" % flag)
+                return texture.outputs[0]
+            return color.outputs[0]
+        else:
+            flag = (tev.alpha_a, tev.alpha_b, tev.alpha_c, tev.alpha_d)[input]
+            if not (flag == gx.GX_CA_TEXA):
+                alpha = nodes.new('ShaderNodeValue')
+            if flag == gx.GX_CA_ZERO:
+                alpha.outputs[0].default_value = 0.0
+            elif flag == gx.GX_CA_TEXA:
+                return texture.outputs[1]
+            elif flag == hsd.TOBJ_TEV_CA_KONST_R:
+                alpha.outputs[0].default_value = self.normcolor((tev.konst[0], 'R'))
+            elif flag == hsd.TOBJ_TEV_CA_KONST_G:
+                alpha.outputs[0].default_value = self.normcolor((tev.konst[1], 'G'))
+            elif flag == hsd.TOBJ_TEV_CA_KONST_B:
+                alpha.outputs[0].default_value = self.normcolor((tev.konst[2], 'B'))
+            elif flag == hsd.TOBJ_TEV_CA_KONST_A:
+                alpha.outputs[0].default_value = self.normcolor((tev.konst[3], 'A'))
+            elif flag == hsd.TOBJ_TEV_CA_TEX0_A:
+                alpha.outputs[0].default_value = self.normcolor((tev.tev0[3], 'A'))
+            elif flag == hsd.TOBJ_TEV_CA_TEX1_A:
+                alpha.outputs[0].default_value = normcolor((tev.tev1[3], 'A'))
+            else:
+                error_output("unknown tev alpha input: 0x%X" % flag)
+                return texture.outputs[1]
+            return alpha.outputs[0]
+
+    def make_tev_op(self, nodes, links, inputs, tev, iscolor):
+        scale_dict = {
+            gx.GX_CS_SCALE_1: 1,
+            gx.GX_CS_SCALE_2: 2,
+            gx.GX_CS_SCALE_4: 4,
+            gx.GX_CS_DIVIDE_2: 0.5,
+        }
+        if iscolor:
+            if tev.color_op == gx.GX_TEV_ADD or tev.color_op == gx.GX_TEV_SUB:
+                last_node = self.make_tev_op_add_sub(nodes, links, inputs, tev, iscolor)
+                if not tev.color_bias == gx.GX_TB_ZERO:
+                    bias = nodes.new('ShaderNodeMixRGB')
+                    bias.inputs[0].default_value = 1
+                    if tev.color_bias == gx.GX_TB_ADDHALF:
+                        bias.blend_type = 'ADD'
+                    else:
+                        bias.blend_type = 'SUBTRACT'
+                    links.new(last_node, bias.inputs[1])
+                    bias.inputs[2].default_value = [0.5, 0.5, 0.5, 1]
+                    last_node = bias.outputs[0]
+
+                scale = nodes.new('ShaderNodeMixRGB')
+                scale.blend_type = 'MULTIPLY'
+                scale.inputs[0].default_value = 1
+                if tev.color_clamp == gx.GX_TRUE:
+                    scale.use_clamp = True
+                links.new(last_node, scale.inputs[1])
+                scale.inputs[2].default_value = [scale_dict[tev.color_scale]] * 4
+                last_node = scale.outputs[0]
+            else:
+                last_node = self.make_tev_op_comp(nodes, links, inputs, tev, iscolor)
+                if tev.color_clamp == gx.GX_TRUE:
+                    scale = nodes.new('ShaderNodeMixRGB')
+                    scale.operation = 'MULTIPLY'
+                    scale.inputs[0].default_value = 1
+                    scale.use_clamp = True
+                    links.new(last_node, scale.inputs[1])
+                    scale.inputs[2].default_value = [scale_dict[tev.color_scale]] * 4
+                    last_node = scale.outputs[0]
+        else:
+            if tev.alpha_op == gx.GX_TEV_ADD or tev.alpha_op == gx.GX_TEV_SUB:
+                last_node = self.make_tev_op_add_sub(nodes, links, inputs, tev, iscolor)
+                if not tev.alpha_bias == gx.GX_TB_ZERO:
+                    bias = nodes.new('ShaderNodeMath')
+                    bias.operation = 'ADD'
+                    links.new(last_node, bias.inputs[0])
+                    if tev.alpha_bias == gx.GX_TB_ADDHALF:
+                        bias.inputs[1].default_value = 0.5
+                    else:
+                        bias.inputs[1].default_value = -0.5
+                    last_node = bias.outputs[0]
+
+                scale = nodes.new('ShaderNodeMath')
+                scale.operation = 'MULTIPLY'
+                if tev.alpha_clamp == gx.GX_TRUE:
+                    scale.use_clamp = True
+                links.new(last_node, scale.inputs[0])
+                scale.inputs[1].default_value = scale_dict[tev.alpha_scale]
+                last_node = scale.outputs[0]
+            else:
+                last_node = self.make_tev_op_comp(nodes, links, inputs, tev, iscolor)
+                if tev.alpha_clamp == gx.GX_TRUE:
+                    scale = nodes.new('ShaderNodeMath')
+                    scale.operation = 'MULTIPLY'
+                    scale.use_clamp = True
+                    links.new(last_node, scale.inputs[0])
+                    scale.inputs[1].default_value = 1
+                    last_node = scale.outputs[0]
+        return last_node
+
+    def make_tev_op_add_sub(self, nodes, links, inputs, tev, iscolor):
+        if iscolor:
+            sub0 = nodes.new('ShaderNodeMixRGB')
+            sub0.inputs[0].default_value = 1
+            sub0.blend_type = 'SUBTRACT'
+            sub0.inputs[1].default_value = [1,1,1,1]
+            links.new(inputs[2], sub0.inputs[2])
+
+            mul0 = nodes.new('ShaderNodeMixRGB')
+            mul0.inputs[0].default_value = 1
+            mul0.blend_type = 'MULTIPLY'
+            links.new(inputs[1], mul0.inputs[1])
+            links.new(inputs[2], mul0.inputs[2])
+
+            mul1 = nodes.new('ShaderNodeMixRGB')
+            mul1.inputs[0].default_value = 1
+            mul1.blend_type = 'MULTIPLY'
+            links.new(inputs[0], mul1.inputs[1])
+            links.new(sub0.outputs[0], mul1.inputs[2])
+
+            add0 = nodes.new('ShaderNodeMixRGB')
+            add0.inputs[0].default_value = 1
+            add0.blend_type = 'ADD'
+            links.new(mul1.outputs[0], add0.inputs[1])
+            links.new(mul0.outputs[0], add0.inputs[2])
+
+            if tev.color_op == gx.GX_TEV_ADD:
+                #OUT = [3] + ((1.0 - [2])*[0] + [2]*[1])
+
+                add1 = nodes.new('ShaderNodeMixRGB')
+                add1.inputs[0].default_value = 1
+                add1.blend_type = 'ADD'
+                links.new(inputs[3], add1.inputs[1])
+                links.new(add0.outputs[0], add1.inputs[2])
+
+                return add1.outputs[0]
+            else: # GX_TEV_SUB
+                #OUT = [3] - ((1.0 - [2])*[0] + [2]*[1])
+
+                sub1 = nodes.new('ShaderNodeMixRGB')
+                sub1.inputs[0].default_value = 1
+                sub1.blend_type = 'SUBTRACT'
+                links.new(inputs[3], sub1.inputs[1])
+                links.new(add0.outputs[0], sub1.inputs[2])
+
+                return sub1.outputs[0]
+
+        else:
+            sub0 = nodes.new('ShaderNodeMath')
+            sub0.operation = 'SUBTRACT'
+            sub0.inputs[1].default_value = 1.0
+            links.new(inputs[2], sub0.inputs[2])
+
+            mul0 = nodes.new('ShaderNodeMath')
+            mul0.operation = 'MULTIPLY'
+            links.new(inputs[1], mul0.inputs[1])
+            links.new(inputs[2], mul0.inputs[2])
+
+            mul1 = nodes.new('ShaderNodeMath')
+            mul1.operation = 'MULTIPLY'
+            links.new(inputs[0], mul1.inputs[1])
+            links.new(sub0.outputs[0], mul1.inputs[2])
+
+            add0 = nodes.new('ShaderNodeMath')
+            add0.operation = 'ADD'
+            links.new(mul1.outputs[0], add0.inputs[1])
+            links.new(mul0.outputs[0], add0.inputs[2])
+
+            if tev.alpha_op == gx.GX_TEV_ADD:
+                #OUT = [3] + ((1.0 - [2])*[0] + [2]*[1])
+
+                add1 = nodes.new('ShaderNodeMath')
+                add1.operation = 'ADD'
+                links.new(inputs[3], add1.inputs[1])
+                links.new(add0.outputs[0], add1.inputs[2])
+
+                return add1.outputs[0]
+            else: # GX_TEV_SUB
+                #OUT = [3] - ((1.0 - [2])*[0] + [2]*[1])
+
+                sub1 = nodes.new('ShaderNodeMath')
+                sub1.operation = 'SUBTRACT'
+                links.new(inputs[3], sub1.inputs[1])
+                links.new(add0.outputs[0], sub1.inputs[2])
+
+                return sub1.outputs[0]
+
+
+    def make_tev_op_comp(self, nodes, links, inputs, tev, iscolor):
+        return inputs[0]
+        """
+        #OUT = [3] + ([2] if ([0] <OP> [1]) else 0)
+        comp_result = None
+        if iscolor:
+            #per component comparisons
+            #color only
+            if tev.color_op == gx.GX_TEV_COMP_RGB8_GT or tev.color_op == gx.GX_TEV_COMP_RGB8_EQ:
+                separate0 = nodes.new('ShaderNodeSeparateRGB')
+                separate1 = nodes.new('ShaderNodeSeparateRGB')
+                links.new(inputs[0], separate0.inputs[0])
+                links.new(inputs[1], separate1.inputs[0])
+                combine = nodes.new('ShaderNodeCombineRGB')
+                if tev.color_op == gx.GX_TEV_COMP_RGB8_GT:
+                    for i in range(3):
+                        comp = nodes.new('ShaderNodeMath')
+                        comp.operation = 'GREATER_THAN'
+                        links.new(separate0.outputs[i], comp.inputs[0])
+                        links.new(separate1.outputs[i], comp.inputs[1])
+                        links.new(comp.outputs[0], combine.inputs[i])
+                else: # gx.GX_TEV_COMP_RGB8_EQ
+                    #realistically this will output 0 in most situations due to floating point errors
+                    for i in range(3):
+                        less = nodes.new('ShaderNodeMath')
+                        less.operation = 'LESS_THAN'
+                        links.new(separate0.outputs[i], less.inputs[0])
+                        links.new(separate1.outputs[i], less.inputs[1])
+                        more = nodes.new('ShaderNodeMath')
+                        more.operation = 'GREATER_THAN'
+                        links.new(separate0.outputs[i], more.inputs[0])
+                        links.new(separate1.outputs[i], more.inputs[1])
+                        and_ = nodes.new('ShaderNodeMath')
+                        and_.operation = 'ADD'
+                        links.new(less.outputs[0], and_.inputs[0])
+                        links.new(more.outputs[0], and_.inputs[1])
+                        comp = nodes.new('ShaderNodeMath')
+                        comp.operation = 'SUBTRACT'
+                        comp.inputs[0].default_value = 1.0
+                        links.new(and_.outputs[0], comp.inputs[1])
+                        links.new(comp.outputs[0], combine.inputs[i])
+                comp_result = combine.outputs[0]
+        else:
+            # alpha only
+            if tev.alpha_op == gx.GX_TEV_COMP_A8_GT:
+                comp = nodes.new('ShaderNodeMath')
+                comp.operation = 'GREATER_THAN'
+                links.new(inputs[0], comp.inputs[0])
+                links.new(inputs[1], comp.inputs[1])
+            elif tev.alpha_op == gx.GX_TEV_COMP_A8_EQ:
+                less = nodes.new('ShaderNodeMath')
+                less.operation = 'LESS_THAN'
+                links.new(inputs[0], less.inputs[0])
+                links.new(inputs[1], less.inputs[1])
+                more = nodes.new('ShaderNodeMath')
+                more.operation = 'GREATER_THAN'
+                links.new(inputs[0], more.inputs[0])
+                links.new(inputs[1], more.inputs[1])
+                and_ = nodes.new('ShaderNodeMath')
+                and_.operation = 'ADD'
+                links.new(less.outputs[0], and_.inputs[0])
+                links.new(more.outputs[0], and_.inputs[1])
+                comp = nodes.new('ShaderNodeMath')
+                comp.operation = 'SUBTRACT'
+                comp.inputs[0].default_value = 1.0
+                links.new(and_.outputs[0], comp.inputs[1])
+            comp_result = combine.outputs[0]
+        #comparisons using combined components as one number
+        #can be used on both color and alpha, but I don't think sys
+        if iscolor:
+            #8 bit
+        else:
+            
+         
+        #output
+        if iscolor:
+            zero = nodes.new('ShaderNodeRGB')
+            zero.outputs[0].default_value[:] = [0.0, 0.0, 0.0, 1.0]
+            switch = nodes.new('ShaderNodeMixRGB')
+            switch.blend_type = 'MULTIPLY'
+        else:
+            zero = nodes.new('ShaderNodeValue')
+            zero.outputs[0].default_value = 0.0
+            switch = nodes.new('ShaderNodeMath')
+            switch.operation = 'MULTIPLY'
+        links.new(inputs[2], switch.inputs[0])
+        links.new(comp_result, switch.inputs[1])
+            
+        if iscolor:
+            add = nodes.new('ShaderNodeMixRGB')
+            add.blend_type = 'ADD'
+        else:
+            add = nodes.new('ShaderNodeMath')
+            add.operation = 'ADD'
+        links.new(inputs[3], add.inputs[0])
+        links.new(switch.outputs[0], add.inputs[1])
+        return add.outputs[0]
+        """
 
     interpolation_name_by_gx_constant = {
         GX_NEAR: 'Closest',
