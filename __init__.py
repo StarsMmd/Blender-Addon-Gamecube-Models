@@ -38,9 +38,9 @@ from .exporter import *
 # allowing more options to be selected along with the filepath being opened.
 # When a file is selected the execute() function runs.
 class ImportHSD(bpy.types.Operator, ImportHelper):
-    """Load a HSD scene"""
-    bl_idname = "import_scene.hsd"
-    bl_label = "Import HSD"
+    """Load a DAT model"""
+    bl_idname = "import_model.dat"
+    bl_label = "Import DAT"
     bl_options = {'UNDO'}
 
     files: bpy.props.CollectionProperty(name="File Path",
