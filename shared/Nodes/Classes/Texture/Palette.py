@@ -25,7 +25,7 @@ class Palette(Node):
         for i in range(self.entry_count):
             offset = i * bytes_per_color
             color = parser.read(type, self.data, offset)
-            color.transform()
+            color.normalize()
             data.append(color)
 
         self.data = data
