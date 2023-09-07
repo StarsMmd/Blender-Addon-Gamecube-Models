@@ -18,14 +18,21 @@ class Palette(Node):
         # then make sure the id is still the address of the table
         self.id = self.data
 
-        bits_per_pixel, is_indexed, blockWidth, blockHeight, type = format_dict[self.format]
-        bits_per_color = 32 if self.format == gx.GX_TF_RGBA8 else 16
+        bits_per_pixel, type = palette_format_dict[self.format]
+        bytes_per_color = bits_per_pixel // 8
         data = []
 
         for i in range(self.entry_count):
-            offset = i * (bits_per_color // 8)
+            offset = i * bytes_per_color
             color = parser.read(type, self.data, offset)
             color.normalize()
             data.append(color)
 
         self.data = data
+
+palette_format_dict = {
+    #                 bits per pixel | type
+    0:    (BITSPPX_IA8   ,  'IA8Color'   ),
+    1:    (BITSPPX_RGB565,  'RGB565Color'),
+    2:    (BITSPPX_RGB5A3,  'RGB5A3Color'),
+}

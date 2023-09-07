@@ -44,3 +44,7 @@ class Color:
 
 	def asRGBAList(self):
 		return [self.red, self.green, self.blue, self.alpha]
+
+	def __str__(self):
+		return "red: " + str(self.red) + "\ngreen: " + str(self.green) + "\nblue: " + str(self.blue) + "\nalpha: " + str(self.alpha)
+

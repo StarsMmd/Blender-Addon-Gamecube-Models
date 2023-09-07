@@ -38,6 +38,9 @@ class RGB565Color(Node, Color):
 
         super().writeBinary(builder)
 
+    def __str__(self):
+        return "red: " + str(self.red) + "\ngreen: " + str(self.green) + "\nblue: " + str(self.blue) + "\nalpha: " + str(self.alpha)
+
 class RGB5A3Color(Node, Color):
     class_name = "RGB5A3 Color"
     is_cachable = False
@@ -92,6 +95,9 @@ class RGB5A3Color(Node, Color):
 
         super().writeBinary(builder)
 
+    def __str__(self):
+        return "red: " + str(self.red) + "\ngreen: " + str(self.green) + "\nblue: " + str(self.blue) + "\nalpha: " + str(self.alpha)
+
 class RGB8Color(Node, Color):
     class_name = "RGB8 Color"
     is_cachable = False
@@ -104,6 +110,9 @@ class RGB8Color(Node, Color):
     def loadFromBinary(self, parser):
         super().loadFromBinary(parser)
         self.alpha = 0xFF
+
+    def __str__(self):
+        return "red: " + str(self.red) + "\ngreen: " + str(self.green) + "\nblue: " + str(self.blue) + "\nalpha: " + str(self.alpha)
 
 # TODO: Confirm if these need to be aligned by a 4 byte boundary.
 # If so then read the fields as a single 32bit raw value and parse the color components in
@@ -125,6 +134,9 @@ class RGBX8Color(Node, Color):
     def writeBinary(self, builder):
         self.padding = 0
         super().writeBinary(builder)
+
+    def __str__(self):
+        return "red: " + str(self.red) + "\ngreen: " + str(self.green) + "\nblue: " + str(self.blue) + "\nalpha: " + str(self.alpha)
 
 class RGBA4Color(Node, Color):
     class_name = "RGBA4 Color"
@@ -150,6 +162,9 @@ class RGBA4Color(Node, Color):
 
         super().writeBinary(builder)
 
+    def __str__(self):
+        return "red: " + str(self.red) + "\ngreen: " + str(self.green) + "\nblue: " + str(self.blue) + "\nalpha: " + str(self.alpha)
+
 class RGBA6Color(Node, Color):
     class_name = "RGBA6 Color"
     is_cachable = False
@@ -173,6 +188,9 @@ class RGBA6Color(Node, Color):
         self.raw_value += (self.alpha >> 2)
         super().writeBinary(builder)
 
+    def __str__(self):
+        return "red: " + str(self.red) + "\ngreen: " + str(self.green) + "\nblue: " + str(self.blue) + "\nalpha: " + str(self.alpha)
+
 class I8Color(Node, Color):
     class_name = "I8 Color"
     is_cachable = False
@@ -192,6 +210,9 @@ class I8Color(Node, Color):
         self.intensity = (self.red + self.green + self.blue) / 3
 
         super().writeBinary(builder)
+
+    def __str__(self):
+        return "red: " + str(self.red) + "\ngreen: " + str(self.green) + "\nblue: " + str(self.blue) + "\nalpha: " + str(self.alpha)
 
 class IA4Color(Node, Color):
     class_name = "IA4 Color"
@@ -218,6 +239,9 @@ class IA4Color(Node, Color):
 
         super().writeBinary(builder)
 
+    def __str__(self):
+        return "red: " + str(self.red) + "\ngreen: " + str(self.green) + "\nblue: " + str(self.blue) + "\nalpha: " + str(self.alpha)
+
 class IA8Color(Node, Color):
     class_name = "IA8 Color"
     is_cachable = False
@@ -237,6 +261,9 @@ class IA8Color(Node, Color):
         self.intensity = (self.red + self.green + self.blue) / 3
 
         super().writeBinary(builder)
+
+    def __str__(self):
+        return "red: " + str(self.red) + "\ngreen: " + str(self.green) + "\nblue: " + str(self.blue) + "\nalpha: " + str(self.alpha)
 
 
 

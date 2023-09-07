@@ -275,6 +275,7 @@ class Image(Node):
 
         image.pixels = normalized_pixels
 
+        # blender won't load the model while this is uncommented but it's useful for testing that textures were generated correctly
         # image.filepath_raw = "./" + name + ".png"
         # image.file_format = 'PNG'
         # image.save()
