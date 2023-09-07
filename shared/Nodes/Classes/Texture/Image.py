@@ -104,7 +104,7 @@ class Image(Node):
                         green = parser.read('uchar', self.data_address, block_start + (j * 2) + 32)
                         blue = parser.read('uchar', self.data_address, block_start + (j * 2) + 32 + 1)
                         color = Color(red, green, blue, alpha)
-                        color.normalize()
+                        color.transform()
 
                         pixels.append(color)
 
@@ -153,10 +153,10 @@ class Image(Node):
                         palette.append(colour3)
                         palette.append(colour4)
 
-                        colour1.normalize()
-                        colour2.normalize()
-                        colour3.normalize()
-                        colour4.normalize()
+                        colour1.transform()
+                        colour2.transform()
+                        colour3.transform()
+                        colour4.transform()
 
                         for k in range(16):
                             nibble_position = (15 - k) * 2
@@ -200,14 +200,14 @@ class Image(Node):
                         color2.green = intensity2 << 4
                         color2.blue = intensity2 << 4
                         color2.alpha = 0xFF
-                        color1.normalize()
-                        color2.normalize()
+                        color1.transform()
+                        color2.transform()
                         pixels.append(color1)
                         pixels.append(color2)
                 else:
                     for i in range(pixels_in_image):
                         color = parser.read(type, self.data_address, i * bytes_per_pixel)
-                        color.normalize()
+                        color.transform()
                         pixels.append(color)
 
         return pixels

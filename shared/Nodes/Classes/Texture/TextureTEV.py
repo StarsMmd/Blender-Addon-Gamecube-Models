@@ -28,6 +28,6 @@ class TextureTEV(Node):
 
     def loadFromBinary(self, parser):
         super().loadFromBinary(parser)
-        self.konst.normalize()
-        self.tev0.normalize()
-        self.tev1.normalize()
+        self.konst.transform()
+        self.tev0.transform()
+        self.tev1.transform()

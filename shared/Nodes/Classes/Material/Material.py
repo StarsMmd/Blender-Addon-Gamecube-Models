@@ -10,3 +10,9 @@ class Material(Node):
         ('alpha', 'float'),
         ('shininess', 'float'),
     ]
+
+    def loadFromBinary(self, parser):
+        super().loadFromBinary(parser)
+        self.ambient.transform()
+        self.diffuse.transform()
+        self.specular.transform()
