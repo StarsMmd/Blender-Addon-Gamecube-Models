@@ -111,7 +111,9 @@ class ModelSet(Node):
             else:
                 if isinstance(bone.property, Mesh):
                     mesh = bone.property
-                    mesh.build(builder, armature, bone)
+                    while mesh:
+                        mesh.build(builder, armature, bone)
+                        mesh = mesh.next
 
     # def addConstraints(self, armature, bones):
     #     for hsd_joint in bones:

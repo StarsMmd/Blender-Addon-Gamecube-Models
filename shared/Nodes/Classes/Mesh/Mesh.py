@@ -40,9 +40,6 @@ class Mesh(Node):
             blender_mesh.data.validate(verbose=False, clean_customdata=False)
             pobj = pobj.next
 
-        if self.next != None:
-            self.next.build(builder, armature, bone)
-
     def apply_bone_weights(self, mesh, hsd_mesh, hsd_bone, armature):
         #apply weights now that the bones actually exist
 
