@@ -1,6 +1,8 @@
 import bpy
+from mathutils import Matrix, Euler, Vector
 
 from ...Node import Node
+from ....Constants import *
 
 # Mesh (aka DObject)
 class Mesh(Node):
@@ -135,38 +137,38 @@ class Mesh(Node):
         mod.use_bone_envelopes = False
         mod.use_vertex_groups = True
 
-    #This is needed for correctly applying all this envelope stuff
-    def envelope_coord_system(hsd_joint):
-        #r: Root
-        #x: First parent bone
-        #m: Referenced joint
-        if hsd_joint.flags & hsd.JOBJ_SKELETON_ROOT: # r == x == m
-            return None
-        else:
-            #find first parent bone
-            hsd_x = find_skeleton(hsd_joint)
-            x_inverse = get_hsd_invbind(hsd_joint)
-            if hsd_x.id == hsd_joint.id: # r != x == m
-                return x_inverse.inverted()
-            elif hsd_x.flags & hsd.JOBJ_SKELETON_ROOT: # r == x != m
-                return (hsd_x.temp_matrix).inverted() @ hsd_joint.temp_matrix
-            else: # r != x != m
-                return (hsd_x.temp_matrix @ x_inverse).inverted() @ hsd_joint.temp_matrix
-
-    def get_hsd_invbind(hsd_joint):
-        if hsd_joint.invbind:
-            return Matrix(hsd_joint.invbind)
-        else:
-            if hsd_joint.temp_parent:
-                return get_hsd_invbind(hsd_joint.temp_parent)
-            else:
-                identity = Matrix()
-                identity.identity()
-                return identity
-
-    def find_skeleton(hsd_joint):
-        while hsd_joint:
-            if hsd_joint.flags & (JOBJ_SKELETON_ROOT | JOBJ_SKELETON):
-                return hsd_joint
-            hsd_joint = hsd_joint.temp_parent
+#This is needed for correctly applying all this envelope stuff
+def envelope_coord_system(hsd_joint):
+    #r: Root
+    #x: First parent bone
+    #m: Referenced joint
+    if hsd_joint.flags & JOBJ_SKELETON_ROOT: # r == x == m
         return None
+    else:
+        #find first parent bone
+        hsd_x = find_skeleton(hsd_joint)
+        x_inverse = get_hsd_invbind(hsd_joint)
+        if hsd_x.id == hsd_joint.id: # r != x == m
+            return x_inverse.inverted()
+        elif hsd_x.flags & hsd.JOBJ_SKELETON_ROOT: # r == x != m
+            return (hsd_x.temp_matrix).inverted() @ hsd_joint.temp_matrix
+        else: # r != x != m
+            return (hsd_x.temp_matrix @ x_inverse).inverted() @ hsd_joint.temp_matrix
+
+def get_hsd_invbind(hsd_joint):
+    if hsd_joint.inverse_bind:
+        return Matrix(hsd_joint.inverse_bind)
+    else:
+        if hsd_joint.temp_parent:
+            return get_hsd_invbind(hsd_joint.temp_parent)
+        else:
+            identity = Matrix()
+            identity.identity()
+            return identity
+
+def find_skeleton(hsd_joint):
+    while hsd_joint:
+        if hsd_joint.flags & (JOBJ_SKELETON_ROOT | JOBJ_SKELETON):
+            return hsd_joint
+        hsd_joint = hsd_joint.temp_parent
+    return None

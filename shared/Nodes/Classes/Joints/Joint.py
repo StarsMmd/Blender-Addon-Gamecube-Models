@@ -26,6 +26,7 @@ class Joint(Node):
     def loadFromBinary(self, parser):
         super().loadFromBinary(parser)
 
+        self.id = self.address
         self.isHidden = self.flags & JOBJ_HIDDEN
 
         property_type = 'Mesh'

@@ -36,7 +36,7 @@ class PObject(Node):
             elif property_type == POBJ_SHAPEANIM:
                 self.property = parser.read('ShapeSet', self.property)
             else:
-                self.property = parser.read('((*Envelope)[])[]', self.property)
+                self.property = parser.read('(*(Envelope[]))[]', self.property)
         else:
             self.property = None
 
