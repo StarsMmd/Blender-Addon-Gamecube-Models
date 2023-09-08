@@ -302,7 +302,7 @@ class PObject(Node):
         else:
             for index in indices:
                 position = vertex.stride * index
-                value = list(parser.read(vertex_format, base_pointer, position))
+                value = parser.read(vertex_format, base_pointer, position)
                 if not (vertex.isMatrix()
                         or vertex.attribute == gx.GX_VA_CLR0
                         or vertex.attribute == gx.GX_VA_CLR1
