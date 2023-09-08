@@ -49,8 +49,6 @@ class MaterialObject(Node):
             if texture_number > 7:
                 break
 
-        print("texture count:",len(textures))
-
         alpha = None
         diffuse_flags = self.render_mode & RENDER_DIFFUSE_BITS
         if diffuse_flags == RENDER_DIFFUSE_MAT0:
