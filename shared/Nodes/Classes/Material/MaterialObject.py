@@ -33,7 +33,6 @@ class MaterialObject(Node):
             nodes.remove(node)
         output = nodes.new('ShaderNodeOutputMaterial')
 
-        material.diffuse.transform()
         diffuse_color = material.diffuse.asRGBAList()
 
         textures = []
@@ -42,25 +41,39 @@ class MaterialObject(Node):
         # Note: there shouldn't be more than 7 textures per material
         while texture:
             # Check if texture is enabled in the material
-            if self.render_mode & (1 << (len(textures) + 4)):
+            if self.render_mode & (1 << (texture_number + 4)):
+                texture.build(builder)
                 textures.append(texture)
             texture = texture.next
+            texture_number += 1
+            if texture_number > 7:
+                break
+
+        print("texture count:",len(textures))
 
         alpha = None
+        diffuse_flags = self.render_mode & RENDER_DIFFUSE_BITS
+        if diffuse_flags == RENDER_DIFFUSE_MAT0:
+            diffuse_flags = RENDER_DIFFUSE_MAT
+        
+        alpha_flags = self.render_mode & RENDER_ALPHA_BITS
+        if alpha_flags == RENDER_ALPHA_COMPAT:
+            alpha_flags = diffuse_flags << RENDER_ALPHA_SHIFT
+
         if self.render_mode & RENDER_DIFFUSE:
             color = nodes.new('ShaderNodeRGB')
-            if (self.render_mode & RENDER_DIFFUSE_BITS) == RENDER_DIFFUSE_VTX:
+            if diffuse_flags == RENDER_DIFFUSE_VTX:
                 color.outputs[0].default_value[:] = [1,1,1,1]
             else:
                 color.outputs[0].default_value[:] = diffuse_color
 
             alpha = nodes.new('ShaderNodeValue')
-            if (self.render_mode & RENDER_ALPHA_BITS) == RENDER_ALPHA_VTX:
+            if alpha_flags == RENDER_ALPHA_VTX:
                 alpha.outputs[0].default_value = 1
             else:
                 alpha.outputs[0].default_value = material.alpha
         else:
-            if (self.render_mode & CHANNEL_FIELD) == RENDER_DIFFUSE_MAT:
+            if diffuse_flags == RENDER_DIFFUSE_MAT:
                 color = nodes.new('ShaderNodeRGB')
                 color.outputs[0].default_value[:] = diffuse_color
             else:
@@ -74,7 +87,7 @@ class MaterialObject(Node):
                 color = nodes.new('ShaderNodeAttribute')
                 color.attribute_name = 'color_0'
 
-                if not ((self.render_mode & RENDER_DIFFUSE_BITS) == RENDER_DIFFUSE_VTX):
+                if not diffuse_flags == RENDER_DIFFUSE_VTX:
                     diffuse = nodes.new('ShaderNodeRGB')
                     diffuse.outputs[0].default_value[:] = diffuse_color
                     mix = nodes.new('ShaderNodeMixRGB')
@@ -84,14 +97,14 @@ class MaterialObject(Node):
                     links.new(diffuse.outputs[0], mix.inputs[2])
                     color = mix
 
-            if (self.render_mode & RENDER_ALPHA_BITS) == RENDER_ALPHA_MAT:
+            if alpha_flags == RENDER_ALPHA_MAT:
                 alpha = nodes.new('ShaderNodeValue')
                 alpha.outputs[0].default_value = material.alpha
             else:
                 alpha = nodes.new('ShaderNodeAttribute')
                 alpha.attribute_name = 'alpha_0'
 
-                if not (self.render_mode & RENDER_ALPHA_BITS) == RENDER_ALPHA_VTX:
+                if not alpha_flags == RENDER_ALPHA_VTX:
                     material_alpha = nodes.new('ShaderNodeValue')
                     material_alpha.outputs[0].default_value = material.alpha
                     mix = nodes.new('ShaderNodeMath')
@@ -132,9 +145,6 @@ class MaterialObject(Node):
             blender_texture = nodes.new('ShaderNodeTexImage')
             blender_texture.image = texture.image_data
             blender_texture.name = ("0x%X" % texture.id)
-            blender_texture.name += ' flags: %X' % texture.flags
-            blender_texture.name += (' image: 0x%X ' % (texture.image.id if texture.image else -1))
-            blender_texture.name += (' tlut: 0x%X' % (texture.palette.id if texture.palette else -1))
 
             blender_texture.extension = 'EXTEND'
             if texture.wrap_t == GX_REPEAT:

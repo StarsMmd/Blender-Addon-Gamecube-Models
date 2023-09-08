@@ -63,6 +63,7 @@ class Image(Node):
         super().loadFromBinary(parser)
         # Use the address of the image data as the id
         self.id = self.data_address
+        self.pixel_data = None
 
     # palette is [Color]
     def pixels(self, parser, palette):
@@ -257,23 +258,30 @@ class Image(Node):
         return pixels
 
     def loadDataWithPalette(self, parser, palette):
-        width = self.width
-        height = self.height
+        if self.pixel_data:
+            return
 
+        pixel_data = []
+
+        pixels = self.croppedImage(parser, self.width, self.height, palette)
+        for pixel in pixels:
+            pixel_data.append(pixel.red)
+            pixel_data.append(pixel.green)
+            pixel_data.append(pixel.blue)
+            pixel_data.append(pixel.alpha)
+
+        self.pixel_data = pixel_data
+
+    def build(self, builder):
         # TODO: use dolphin's naming convention for image file name
         name = 'image_' + name_dict.get(self.format) + "_" + str(self.id)
-        image = bpy.data.images.new(name, width, height, alpha=True)
+        image = bpy.data.images.new(name, self.width, self.height, alpha=True)
+        image.pixels = self.pixel_data
 
-        normalized_pixels = []
-
-        pixels = self.croppedImage(parser, width, height, palette)
-        for pixel in pixels:
-            normalized_pixels.append(pixel.red)
-            normalized_pixels.append(pixel.green)
-            normalized_pixels.append(pixel.blue)
-            normalized_pixels.append(pixel.alpha)
-
-        image.pixels = normalized_pixels
+        #make sure the image doesn't unload and is stored in .blend files
+        image.pack()
+        #setting this before packing erases the image for some reason
+        image.alpha_mode = 'CHANNEL_PACKED'
 
         # blender won't load the model while this is uncommented but it's useful for testing that textures were generated correctly
         # image.filepath_raw = "./" + name + ".png"

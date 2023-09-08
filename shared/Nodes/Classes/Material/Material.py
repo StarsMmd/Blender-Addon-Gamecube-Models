@@ -13,6 +13,6 @@ class Material(Node):
 
     def loadFromBinary(self, parser):
         super().loadFromBinary(parser)
-        self.ambient.transform()
-        self.diffuse.transform()
-        self.specular.transform()
+        self.ambient.normalize()
+        self.diffuse.normalize()
+        self.specular.normalize()
