@@ -97,7 +97,7 @@ class DATParser(BinaryReader):
 			type_length = 1 if field_type == 'string' else get_type_length(field_type)
 
 			if address + final_offset + type_length > self.filesize:
-				raise InvalidReadAddressError(final_offset, field_type, self.filesize)
+				raise InvalidReadAddressError(address + offset, field_type, self.filesize)
 
 			return super().read(field_type, address, final_offset, whence)
 
