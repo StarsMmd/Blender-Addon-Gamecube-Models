@@ -36,7 +36,7 @@ class PObject(Node):
             elif property_type == POBJ_SHAPEANIM:
                 self.property = parser.read('ShapeSet', self.property)
             else:
-                self.property = parser.read('(*(Envelope[]))[]', self.property)
+                self.property = parser.read('(*EnvelopeList)[]', self.property)
         else:
             self.property = None
 
@@ -325,7 +325,7 @@ class PObject(Node):
         #HSD envelopes do *NOT* correspond to Blender's envelope setting for skinning
         envelopes = []
         for envelope in envelope_list:
-            envelopes.append([(entry.weight, entry.joint) for entry in envelope])
+            envelopes.append([(entry.weight, entry.joint) for entry in envelope.envelopes])
 
         self.skin = (indices, envelopes)
 
