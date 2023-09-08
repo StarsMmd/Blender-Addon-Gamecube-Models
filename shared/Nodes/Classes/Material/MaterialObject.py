@@ -119,7 +119,7 @@ class MaterialObject(Node):
         for texture in textures:
             if (texture.flags & TEX_COORD_MASK) == TEX_COORD_UV:
                 uv = nodes.new('ShaderNodeUVMap')
-                uv.uv_map = 'uvtex_' + str(texture.id)
+                uv.uv_map = 'uvtex_' + str(texture.source - 4)
                 uv_output = uv.outputs[0]
             elif (texture.flags & TEX_COORD_MASK) == TEX_COORD_REFLECTION:
                 uv = nodes.new('ShaderNodeTexCoord')
