@@ -113,7 +113,14 @@ class Joint(Node):
         return translation @ rotation_z @ rotation_y @ rotation_x @ scale_z @ scale_y @ scale_x
 
 
+    def getReferenceObject(self, type, sub_type):
+        reference = self.reference
+        while reference:
+            if isinstance(reference.property, type) and reference.sub_type == sub_type:
+                return reference
+            reference = reference.next
 
+        return None
 
 
 

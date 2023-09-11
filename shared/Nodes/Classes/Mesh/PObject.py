@@ -156,6 +156,7 @@ class PObject(Node):
         # Update mesh with new data
         # Remove degenerate faces (These mostly occur due to triangle strips creating invisible faces when changing orientation)
         mesh.update(calc_edges = True, calc_edges_loose = False)
+        self.blender_mesh = mesh
 
         return mesh_object
 
