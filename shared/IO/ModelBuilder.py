@@ -26,6 +26,9 @@ class ModelBuilder(object):
 		self.cameras = []
 		self.fogs = []
 
+		# Images that have been loaded from their texture data
+		self.images_cache_by_image_id_and_tlut_id = {}
+
 		# Sometimes there are sets which are separated across multiple sections.
 		# We can load multiple sections at the same time and bundle them into sets.
 		disjoint_modelset = ModelSet.emptySet()
@@ -126,7 +129,11 @@ class ModelBuilder(object):
 		fog.prepareForBlender(self)
 		fog.build(self)
 
+	def cacheImage(self, image_id, tlut_id, image_data):
+		self.images_cache_by_image_id_and_tlut_id[(image_id, tlut_id)] = image_data
 
+	def getCachedImage(self, image_id, tlut_id):
+		return self.images_cache_by_image_id_and_tlut_id.get((image_id, tlut_id))
 
 
 

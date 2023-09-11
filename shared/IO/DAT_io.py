@@ -34,9 +34,6 @@ class DATParser(BinaryReader):
 		# one when that offset is parsed again
 		self.nodes_cache_by_offset = {}
 
-		# Images that have been loaded from their texture data
-		self.images_cache_by_image_id_and_tlut_id = {}
-
 		if filepath[-4:] == '.pkx':
 	        # check for byte pattern unique to Colosseum pkx models
 			self.isXDModel = self.read('uint', 0, 0, False) != self.read('uint', 0x40, 0, False)
@@ -100,7 +97,7 @@ class DATParser(BinaryReader):
 			type_length = 1 if field_type == 'string' else get_type_length(field_type)
 
 			if address + final_offset + type_length > self.filesize:
-				raise InvalidReadAddressError(final_offset, field_type, self.filesize)
+				raise InvalidReadAddressError(address + offset, field_type, self.filesize)
 
 			return super().read(field_type, address, final_offset, whence)
 
@@ -240,12 +237,6 @@ class DATParser(BinaryReader):
 			value = self.read(field_type, node.address, current_offset, relative_to_header)
 			setattr(node, field_name, value)
 			current_offset += field_length
-
-	def cacheImage(self, image_id, tlut_id, image_data):
-		self.images_cache_by_image_id_and_tlut_id[(image_id, tlut_id)] = image_data
-
-	def getCachedImage(self, image_id, tlut_id):
-		return self.images_cache_by_image_id_and_tlut_id.get((image_id, tlut_id))
 
 # A class for managing the recursive writing of the Node tree. 
 # This happens in 3 steps:

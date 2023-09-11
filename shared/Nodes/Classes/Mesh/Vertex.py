@@ -18,12 +18,12 @@ class Vertex(Node):
         ('base_pointer', 'uint'),
     ]
 
-    def getElementType(self):
+    def getFormat(self):
         if self.attribute_type == GX_NONE:
             return 'void'
 
         if self.attribute_type == GX_DIRECT:
-            return self._getDirectElementType()
+            return self.getDirectElementType()
         else:
             if self.component_count == GX_NRM_NBT3:
                 if self.attribute_type == GX_INDEX8:
@@ -36,7 +36,7 @@ class Vertex(Node):
                 return 'ushort'
         return 'void'
 
-    def _getDirectElementType(self):
+    def getDirectElementType(self):
         if self.isMatrix():
             return 'uchar'
         type = ''

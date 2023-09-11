@@ -27,24 +27,27 @@ class Texture(Node):
     def loadFromBinary(self, parser):
         super().loadFromBinary(parser)
         self.id = self.address
+        if self.image:
+            palette_data = None if self.palette == None else self.palette.data
+            self.image.loadDataWithPalette(parser, palette_data)
 
-    def prepareForBlender(self, builder):
-        super().prepareForBlender(builder)
-        return
-        
+    def build(self, builder):
         if self.image:
             image_id = self.image.id
             palette_id = 0
             if self.palette:
                 palette_id = self.palette.id
 
-            cached_image = parser.getCachedImage(image_id, palette_id)
+            cached_image = builder.getCachedImage(image_id, palette_id)
             if cached_image:
                 self.image_data = cached_image
 
             else:
-                self.image_data = self.image.loadDataWithPalette(parser, self.palette)
-                parser.cacheImage(image_id, palette_id, self.image_data)
+                self.image_data = self.image.build(builder)
+                builder.cacheImage(image_id, palette_id, self.image_data)
 
         else:
             self.image_data = None
+
+
+

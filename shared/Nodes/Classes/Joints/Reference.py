@@ -1,3 +1,5 @@
+import math
+
 from ...Node import Node
 from .Joint import Joint
 
@@ -13,17 +15,24 @@ class Reference(Node):
     def loadFromBinary(self, parser):
         super().loadFromBinary(parser)
 
-        if (self.flags & 0x70000000 == 0x10000000):
-            self.property = parser.read('Joint', self.property)
-        elif (self.flags & 0x70000000 == 0x40000000):
-            self.property = parser.read('float[2]', self.property)
+        self.sub_type = 0
+        if (self.flags & 0x80000000):
+            self.sub_type = self.flags & 1
+            if (self.flags & 0x70000000 == 0x10000000):
+                self.property = parser.read('Joint', self.property)
+            elif (self.flags & 0x70000000 == 0x40000000):
+                boneReference = parser.read('BoneReference', self.property)
+                if (self.flags & 0x4):
+                    boneReference.pole_angle += math.pi
+                self.property = boneReference
+
 
     def writeBinary(self, builder):
         if self.property == None:
             self.flags = 0
 
         elif isinstance(self.property, Joint):
-            self.flags = 0x10000000
+            self.flags = 0x10000000 | self.sub_type
 
         elif isinstance(self.property, list):
             self.flags = 0x40000000
