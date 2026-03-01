@@ -30,15 +30,20 @@ import gx
 #implement texture animations
 #animations of other properties
 #culling?
-#figure out how the skyboxes are rendered shadeless (just no lights assigned?)
 #needed optimizations (bottlenecks):
 #image conversion
 #bugs:
 #fix custom normals #done?
 #fix texture transforms
-#why are the shadows in pyrite white?
 #misc:
 #deprecate blender internal material
+# find proper animation frame bounds for each action
+# improve materials
+# rework what is created as an armature and what as a regular object
+# implement instancing armatures at bones
+# support importing camera animations
+# import lights properly
+
 
 ikhack = True
 bone_count = 0
@@ -199,9 +204,9 @@ def add_bone_animation_total(armature, root_joint, animation, action):
         bone.use_local_location = True
     armature.animation_data_create()
     armature.animation_data.action = action
-    trav_animjoints_total(root_joint, animation, action, armature.pose)
+    trav_animjoints_total(root_joint, animation, action, armature)
 
-def trav_animjoints_total(joint, animjoint, action, pose):
+def trav_animjoints_total(joint, animjoint, action, armature):
 
     if joint.robj:
         robj = joint.robj
@@ -224,11 +229,11 @@ def trav_animjoints_total(joint, animjoint, action, pose):
             print('ROBJANIM')
 
     if animjoint.aobjdesc:
-        add_jointanim_to_armature_total(joint, animjoint, action, pose)
+        add_jointanim_to_armature_total(joint, animjoint, action, armature)
     if animjoint.child:
-        trav_animjoints_total(joint.child, animjoint.child, action, pose)
+        trav_animjoints_total(joint.child, animjoint.child, action, armature)
     if animjoint.next:
-        trav_animjoints_total(joint.next, animjoint.next, action, pose)
+        trav_animjoints_total(joint.next, animjoint.next, action, armature)
 
 
 TRANSFORMCOUNT = (hsd.HSD_A_J_SCAZ - hsd.HSD_A_J_ROTX) + 1
@@ -246,8 +251,8 @@ t_jointanim_type_dict = {
     hsd.HSD_A_J_SCAZ: ('s', 2),
 }
 
-def add_jointanim_to_armature_total(joint, animjoint, action, pose):
-    t0 = time.perf_counter()
+def add_jointanim_to_armature_total(joint, animjoint, action, armature):
+    pose = armature.pose
 
     aobjdesc = animjoint.aobjdesc
     if aobjdesc.flags & hsd.AOBJ_NO_ANIM:
@@ -257,37 +262,59 @@ def add_jointanim_to_armature_total(joint, animjoint, action, pose):
     fobj = aobjdesc.fobjdesc
 
     uses_path = False
+    pose_bone = pose.bones[joint.temp_name]
+    already_has_path_constraint = False
+    for constr in pose_bone.constraints:
+        if constr.type == 'FOLLOW_PATH':
+            already_has_path_constraint = True
+            uses_path = True
+            break
+    
     transform_list = [0] * (TRANSFORMCOUNT)
     while fobj:
         if fobj.type == hsd.HSD_A_J_PATH:
             uses_path = True
-            pose_bone = pose.bones[joint.temp_name]
-            already_has_path_constraint = False
-            for constr in pose_bone.constraints:
-                if constr.type == 'FOLLOW_PATH':
-                    already_has_path_constraint = True
-                    break
+            
+            # seems like these can be loose bones that are not created when doing the hierarchy
+            # for the spline to be positioned correctly, this bone should exist
+            if not hasattr(aobjdesc.joint.u, 'temp_name'):
+                bpy.context.view_layer.objects.active = armature
+                # We need to parent these loose bones to the parent of the path animation bone to get the right location
+                # The hsd code of other games doesn't seem to care about this and just reads values directly from the path 
+                # Maybe the Colo / XD code has changes to account for coordinates of the parent bone of paths
+                new_bones = build_bone_hierarchy(armature.data, aobjdesc.joint, root_parent = joint.temp_parent)
+                add_geometry(armature, new_bones, None)
+                add_contraints(armature, new_bones)
             
             path_obj = aobjdesc.joint.u.temp_obj
             if not already_has_path_constraint:
-                constr = pose_bone.constraints.new('FOLLOW_PATH')
+                path_constr = pose_bone.constraints.new('FOLLOW_PATH')
                 pose_bone.constraints.move(len(pose_bone.constraints) - 1, 0)
-                constr.target = path_obj
+                path_constr.target = path_obj
 
-            curve = action.fcurves.new('pose.bones["' + joint.temp_name + '"].constraints["' + constr.name + '"].offset')
+                # blender path constraints are relative to global translation, so to make bones follow paths, we need to zero out global translation
+                constr = pose_bone.constraints.new('LIMIT_LOCATION')
+                pose_bone.constraints.move(len(pose_bone.constraints) - 1, 0)
+                for c in ['x', 'y', 'z']:
+                    setattr(constr, 'use_min_' + c, True)
+                    setattr(constr, 'use_max_' + c, True)
+                    setattr(constr, 'min_' + c, 0.)
+                    setattr(constr, 'max_' + c, 0.)
+
+            curve = action.fcurves.new('pose.bones["' + joint.temp_name + '"].constraints["' + path_constr.name + '"].offset')
 
             curve_bias = 0
             curve_scale = -path_obj.data.path_duration
             read_fobjdesc(fobj, curve, curve_bias, curve_scale, False, False)
 
-            print(f'{joint.temp_name} has HSD_A_J_PATH with target {aobjdesc.joint.u.obj_name} on bone {aobjdesc.joint.temp_name}')
+            print(f'{joint.temp_name} has HSD_A_J_PATH with target {aobjdesc.joint.u.obj_name}')
         elif fobj.type >= hsd.HSD_A_J_ROTX and fobj.type <= hsd.HSD_A_J_SCAZ:
             data_type, component = t_jointanim_type_dict[fobj.type]
             data_path = 'pose.bones["' + joint.temp_name + '"]' + '.' + data_type
             curve = action.fcurves.new(data_path, index=component)
             transform_list[fobj.type - hsd.HSD_A_J_ROTX] = curve
 
-            #total values for testing
+            #
             curve_bias = 0
             curve_scale = 1
             read_fobjdesc(fobj, curve, curve_bias, curve_scale, False, False)
@@ -325,12 +352,10 @@ def add_jointanim_to_armature_total(joint, animjoint, action, pose):
 
     global anim_max_frame
     for frame in range(min(int(aobjdesc.endframe), anim_max_frame)):
-        rotation    = (transform_list[0].evaluate(frame), transform_list[1].evaluate(frame), transform_list[2].evaluate(frame))
-        translation = (transform_list[4].evaluate(frame), transform_list[5].evaluate(frame), transform_list[6].evaluate(frame))
-        scale       = (transform_list[7].evaluate(frame), transform_list[8].evaluate(frame), transform_list[9].evaluate(frame))
-        # blender path constraints are relative to local translation, so to make bones follow paths, we need to zero out local translation
-        if uses_path:
-            translation = (0., 0., 0.)
+        rotation    = [transform_list[0].evaluate(frame), transform_list[1].evaluate(frame), transform_list[2].evaluate(frame)]
+        translation = [transform_list[4].evaluate(frame), transform_list[5].evaluate(frame), transform_list[6].evaluate(frame)]
+        scale       = [transform_list[7].evaluate(frame), transform_list[8].evaluate(frame), transform_list[9].evaluate(frame)]
+
         # from blender armature.cc:
         # pose_mat(b) = pose_mat(b-1) * yoffs(b-1) * d_root(b) * bone_mat(b) * chan_mat(b)
         # yoffs * d_root should just be the edit bone's translation relative to the parent head
@@ -341,7 +366,13 @@ def add_jointanim_to_armature_total(joint, animjoint, action, pose):
         # we also have T_edit * R_edit = (TRS_base(b)).normalized() / (TRS_base(b-1)).normalized() := M_edit
         # => T_pose * R_pose * S_pose = M_edit^{-1} * (T * R * S)
         # to get the scale of the mesh to match before and after we also need to add some scale corrections
+        # the scale correction for each bone then needs to be reversed after the child's edit matrix to keep the same cumulative scale
+
         mtx = compileSRTmtx(scale, rotation, translation)
+        # rotation transform needed to account for blender path coordinate shenanigans
+        if uses_path:
+            mtx = Matrix.Rotation(-math.pi / 2, 4, 'X') @ mtx
+
         if joint.temp_parent:
             Bmtx = joint.local_edit_matrix.inverted() @ joint.temp_parent.edit_scale_correction @ mtx @ joint.edit_scale_correction.inverted()
         else:
@@ -360,22 +391,10 @@ def add_jointanim_to_armature_total(joint, animjoint, action, pose):
         new_transform_list[8].keyframe_points.insert(frame, scale[1]).interpolation = 'BEZIER'
         new_transform_list[9].keyframe_points.insert(frame, scale[2]).interpolation = 'BEZIER'
 
+    # clear temporary curves
     for c in transform_list:
         if c:
             action.fcurves.remove(c)
-
-    """transform *= Matrix.Translation(Vector(position))
-    posebone = pose.bones[joint.temp_name]
-    by.ops.screen.frame_set(frame)
-    posebone.matrix_local = transform
-    posebone.keyframe_insert(data_path = 'location')
-    posebone.keyframe_insert(data_path = 'rotation')
-    posebone.keyframe_insert(data_path = 'scale')
-    """
-
-    t1 = time.perf_counter()
-
-    #print (('anim %s: ' % joint.temp_name) + str(t1 - t0))
 
 
 ####################################
@@ -729,7 +748,7 @@ def make_spline(hsd_spline):
     hsd_spline.temp_obj = ob
     curve.use_path = True
     curve.dimensions = '3D'
-    
+
     # spline.path_duration = hsd_spline.length
     spline = curve.splines.new(spline_type_dict[hsd_spline.type])
     if hsd_spline.type == 0: # linear Spline
@@ -751,7 +770,7 @@ def make_spline(hsd_spline):
             spline.points[i].co[0:3] = c[:]
             spline.points[i].weight = 1.
     elif hsd_spline.type == 3: # cubic Cardinal Spline
-        spline.points.add(hsd_spline.numcvs - 1)
+        spline.bezier_points.add(hsd_spline.numcvs - 1)
         for i in range(hsd_spline.numcvs):
             spline.bezier_points[i].co[0:3] = hsd_spline.cv[i + 1][:]
             if i > 0:
@@ -1800,17 +1819,17 @@ def load_light(light):
     if light.interest:
         #orient the light
         notice_output('INTEREST: %f %f %f' % tuple(light.interest.wobjposition))
-        bpy.ops.object.empty_add(type='PLAIN_AXES', view_align=False)
+        bpy.ops.object.empty_add(type='PLAIN_AXES')
         target = bpy.context.object
         target.matrix_basis = Matrix.Translation(Vector(light.interest.wobjposition))
         constraint = lamp.constraints.new(type = 'TRACK_TO')
         constraint.target = target
         constraint.track_axis = 'TRACK_Z'
         constraint.up_axis = 'UP_X'
-        bpy.ops.object.select_all(action='DESELECT')
-        lamp.select = True
-        bpy.ops.object.visual_transform_apply()
-        bpy.data.objects.remove(target, True)
+        # bpy.ops.object.select_all(action='DESELECT')
+        # lamp.select = True
+        # bpy.ops.object.visual_transform_apply()
+        # bpy.data.objects.remove(target, True)
 
 
     bpy.context.scene.collection.objects.link(lamp)
@@ -2574,6 +2593,7 @@ def apply_bone_weights(mesh, hsd_mesh, hsd_bone, armature):
 
             for loop in mesh.data.loops:
                 hsd_mesh.normals[loop.index] = (normal_matrices[matrix_indices[loop.vertex_index]] @ Vector(hsd_mesh.normals[loop.index])).normalized()[:]
+            
             mesh.data.normals_split_custom_set(hsd_mesh.normals)
 
     else:
@@ -2603,7 +2623,6 @@ def apply_bone_weights(mesh, hsd_mesh, hsd_bone, armature):
             group.add([v.index for v in mesh.data.vertices], 1.0, 'REPLACE')
             if hsd_mesh.normals:
                 mesh.data.normals_split_custom_set(hsd_mesh.normals)
-
 
     mod = mesh.modifiers.new('Skinmod', 'ARMATURE')
     mod.object = armature
@@ -3186,19 +3205,17 @@ def vtxdesc_is_tex(vtxdesc):
             vtxdesc.attr == gx.GX_VA_TEX6 or
             vtxdesc.attr == gx.GX_VA_TEX7)
 
-def build_bone_hierarchy(arm_data, root_joint):
+def build_bone_hierarchy(arm_data, root_joint, root_parent = None):
 
     bpy.ops.object.mode_set(mode = 'EDIT')
-    bones = create_bone_rec(arm_data, root_joint, None, None, False)
-    bpy.ops.object.mode_set(mode = 'POSE')
-    set_default_pose_tranforms(bones)
+    if root_parent:
+        root_parent_bone = arm_data.edit_bones[root_parent.temp_name]
+    else:
+        root_parent_bone = None
+    bones = create_bone_rec(arm_data, root_joint, root_parent_bone, root_parent, False)
     bpy.ops.object.mode_set(mode = 'OBJECT')
     return bones
 
-def set_default_pose_tranforms(bones):
-
-
-    return
 
 def create_bone_rec(arm_data, hsd_bone, parent, hsd_parent, copy):
     bones = []
@@ -3218,23 +3235,6 @@ def create_bone_rec(arm_data, hsd_bone, parent, hsd_parent, copy):
     if hsd_bone.flags & hsd.JOBJ_SPLINE:
         print('JOBJ_SPLINE ' + str(bone_count))
         print('Address: %.8X' % hsd_bone.id)
-        # s0{ u8 flags?; u8; u8; u8 n; f32; * s1; f32; * s2; * s3; }
-        """
-        spline = hsd_bone.u
-        print('Flags: %.4X' % spline.flags)
-        print('N: %.4X' % spline.n)
-        print('Float 0: %.8f' % spline.f0)
-        print('S1: %s' % (spline.s1 != None))
-        if spline.s1:
-            print('\n'.join([str(x) for x in spline.s1]))
-        print('Float 1: %.8f' % spline.f1)
-        print('S2: %s' % (spline.s2 != None))
-        if spline.s2:
-            print('\n'.join([str(x) for x in spline.s2]))
-        print('S3: %s' % (spline.s3 != None))
-        if spline.s3:
-            print('\n'.join([str(x) for x in spline.s3]))
-        """
 
     bone_count += 1
     bone = arm_data.edit_bones.new(name = name)
@@ -3244,16 +3244,12 @@ def create_bone_rec(arm_data, hsd_bone, parent, hsd_parent, copy):
         # these are only equivalent when the bones are connected (head is equal to tail of parent)
         # here we move the head and tail close together to get similar results
         # if the bone becomes too small, it is pruned by blender when exiting edit mode, so that has to be accounted for
+
+        # additionally, we need this for splines that are parented to bones to be in the right location since that is also relative to the tail
         bone.tail = Vector((0.0, 1e-3 / hsd_bone.scale[1], 0.0))
     else:
         bone.tail = Vector((0.0, 1.0, 0.0))
-    scale_x = Matrix.Scale(hsd_bone.scale[0], 4, [1.0,0.0,0.0])
-    scale_y = Matrix.Scale(hsd_bone.scale[1], 4, [0.0,1.0,0.0])
-    scale_z = Matrix.Scale(hsd_bone.scale[2], 4, [0.0,0.0,1.0])
-    rotation_x = Matrix.Rotation(hsd_bone.rotation[0], 4, 'X')
-    rotation_y = Matrix.Rotation(hsd_bone.rotation[1], 4, 'Y')
-    rotation_z = Matrix.Rotation(hsd_bone.rotation[2], 4, 'Z')
-    translation = Matrix.Translation(Vector(hsd_bone.position))
+    
     if hsd_parent:
         hsd_bone.scl = [hsd_bone.scale[i] * hsd_parent.scl[i] for i in range(3)]
     else:
@@ -3265,7 +3261,7 @@ def create_bone_rec(arm_data, hsd_bone, parent, hsd_parent, copy):
     else:
         parent_scale = None
     bone_matrix = compileSRTmtx(hsd_bone.scale, hsd_bone.rotation, hsd_bone.position, parent_scale)
-    #bone_matrix = Matrix()
+
     hsd_bone.temp_matrix_local = bone_matrix
     if parent:
         bone_matrix = hsd_parent.temp_matrix @ bone_matrix
