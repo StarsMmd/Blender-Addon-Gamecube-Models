@@ -267,6 +267,7 @@ def add_jointanim_to_armature_total(joint, animjoint, action, armature):
     for constr in pose_bone.constraints:
         if constr.type == 'FOLLOW_PATH':
             already_has_path_constraint = True
+            path_constr = constr
             uses_path = True
             break
     
@@ -2582,9 +2583,6 @@ def apply_bone_weights(mesh, hsd_mesh, hsd_bone, armature):
             mesh.data.vertices[vertex].co = matrices[index] @ mesh.data.vertices[vertex].co
             for weight, joint in envelopes[index]:
                 joint_groups[joint.id].add([vertex], weight, 'REPLACE')
-
-        for matrix in matrices:
-            print(matrix)
 
         if hsd_mesh.normals:
             #XXX: Is this actually needed?
