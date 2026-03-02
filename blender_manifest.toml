@@ -1,0 +1,21 @@
+schema_version = "1.0.0"
+
+id = "colo_xd"
+version = "1.0.0"
+name = "Colosseum / XD - Importer"
+tagline = "Importer for scenes and other related files found in Colosseum and XD"
+maintainer = "Made"
+type = "add-on"
+
+website = "https://github.com/StarsMmd/Blender-Addon-Gamecube-Models"
+
+tags = ["Import-Export"]
+
+blender_version_min = "4.2.0"
+
+license = [
+  "TBD",
+]
+
+# [permissions]
+files = "Import/export scenes from/to disk"

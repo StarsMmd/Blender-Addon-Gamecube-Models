@@ -1304,6 +1304,7 @@ active: %.8X' % ((tev.color_op, tev.alpha_op, tev.color_bias, tev.alpha_bias,\
 
     #output shader
     shader = nodes.new('ShaderNodeBsdfPrincipled')
+    specular_name = 'Specular' if bpy.app.version[0] < 4 else 'Specular IOR Level'
     #specular
     if mobj.rendermode & hsd.RENDER_SPECULAR:
         #Blender's principled BSDF node does not support colored specular at this time
@@ -1316,11 +1317,14 @@ active: %.8X' % ((tev.color_op, tev.alpha_op, tev.color_bias, tev.alpha_bias,\
         mult.operation = 'MULTIPLY'
         links.new(hsv.outputs[2], mult.inputs[0])
         links.new(shiny.outputs[0], mult.inputs[1])
-        links.new(mult.outputs[0], shader.inputs["Specular"])
+        links.new(mult.outputs[0], shader.inputs[specular_name])
     else:
-        shader.inputs["Specular"].default_value = 0
+        shader.inputs[specular_name].default_value = 0
     #specular tint
-    shader.inputs["Specular Tint"].default_value = .5
+    if bpy.app.version[0] < 4:
+        shader.inputs["Specular Tint"].default_value = .5
+    else:
+        shader.inputs["Specular Tint"].default_value = (.5, .5, .5, 1.)
     #roughness
     shader.inputs["Roughness"].default_value = .5
 
@@ -2497,7 +2501,8 @@ def make_mesh_object(pobj, name):
             uvlayer = make_texture_layer(me, vtxdesc, sources[vtxnum], facelists[vtxnum])
         elif vtxdesc.attr == gx.GX_VA_NRM or vtxdesc.attr == gx.GX_VA_NBT:
             assign_normals_to_mesh(pobj, me, vtxdesc, sources[vtxnum], facelists[vtxnum])
-            me.use_auto_smooth = True
+            if bpy.app.version[0] < 4 and bpy.app.version[1] < 1:
+                me.use_auto_smooth = True
         elif (vtxdesc.attr == gx.GX_VA_CLR0 or
               vtxdesc.attr == gx.GX_VA_CLR1):
             add_color_layer(me, vtxdesc, sources[vtxnum], facelists[vtxnum])
