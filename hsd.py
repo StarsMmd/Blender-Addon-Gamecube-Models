@@ -501,7 +501,7 @@ _HSD_FORMATS = {
     'HSD_RObj':                     ('I', 'I', 'I'),
     #'HSD_FogAdjDesc':               ('I'),
 
-    'Spline':                       ('H', 'H', 'f', 'I', 'f', 'I', 'I'),
+    'Spline':                       ('Bx', 'H', 'f', 'I', 'f', 'I', 'I'),
 }
 
 _HSD_COMPONENTS = {
@@ -557,7 +557,7 @@ _HSD_COMPONENTS = {
     'HSD_RObj':                     'next flags u',
     #'HSD_FogAdjDesc':               'placeholder',
 
-    'Spline':                     'flags n f0 s1 f1 s2 s3',
+    'Spline':                       'type numcvs tension cv length segment_lengths poly_segments',
 }
 """
 _HSD_STRUCTS = {}
@@ -758,10 +758,57 @@ def HSD_init_Joint(data, offset):
 
 @offset_check
 def HSD_init_Spline(data, offset):
+    # 'type numcvs tension cv length segment_lengths poly_segments'
     spline, old = HSD_read_struct('Spline', data, offset)
     if old:
         return spline, True
-    if (spline.flags >> 8) == 0:
+    
+    if spline.segment_lengths:
+        segment_lengths_ptr = data[spline.segment_lengths:]
+        spline.segment_lengths = []
+        segments = 0
+        cur_seg_length = 0.
+        while cur_seg_length < 1.:
+            cur_seg_length = struct.unpack('>f', segment_lengths_ptr[segments * 4: (segments + 1) * 4])[0]
+            spline.segment_lengths.append(cur_seg_length)
+            segments += 1
+
+        spline.segments = segments
+
+    if spline.cv:
+        cv_ptr = data[spline.cv:]
+        spline.cv = []
+        if spline.type == 0:
+            total_cvs = spline.numcvs
+        elif spline.type == 1:
+            total_cvs = 3 * spline.numcvs - 2
+        elif spline.type == 2:
+            total_cvs = spline.numcvs + 2
+        elif spline.type == 3:
+            total_cvs = spline.numcvs + 2
+        else:
+            print('Unknown Spline Format ' + str(spline.type))
+            return None, False
+        for i in range(total_cvs):
+            cv = struct.unpack('>3f', cv_ptr[i * 3 * 4: (i + 1) * 3 * 4])
+            spline.cv.append(cv)
+
+        spline.total_cvs = total_cvs
+
+    # these coefficients encode the velocity of each curve segment as a fourth order polynomial 
+    # this is only used for calculating the curve parameter for a given arclength at runtime
+    if spline.segment_lengths and spline.poly_segments:
+        poly_segment_ptr = data[spline.poly_segments:]
+        spline.poly_segments = []
+        for i in range(spline.segments):
+            coefficients = struct.unpack('>5f', poly_segment_ptr[i * 5 * 4: (i + 1) * 5 * 4])
+            spline.poly_segments.append(coefficients)
+
+    # 
+    
+    """
+    if spline.type == 0:
+
         if spline.s1:
             p = data[spline.s1:]
             spline.s1 = []
@@ -774,7 +821,7 @@ def HSD_init_Spline(data, offset):
             spline.s1 = None
         if not spline.s3:
             spline.s3 = None
-    elif (spline.flags >> 8) == 3:
+    elif spline.type == 3:
         if spline.s1:
             p = data[spline.s1:]
             spline.s1 = []
@@ -804,6 +851,7 @@ def HSD_init_Spline(data, offset):
             spline.s2.append(struct.unpack('>f', p[i * 4: (i + 1) * 4]))
     else:
         spline.s2 = None
+    """
 
     return spline, True
 
