@@ -200,6 +200,77 @@ def build_particle():
     return b''
 
 
+def build_relocation_table(offsets):
+    """Build a relocation table from a list of data-section offsets."""
+    data = b''
+    for offset in offsets:
+        data += struct.pack('>I', offset)
+    return data
+
+
+def build_section_info(root_offset, name_offset):
+    """Build an 8-byte section info entry: root_node_offset(4) + section_name_offset(4)."""
+    return struct.pack('>II', root_offset, name_offset)
+
+
+def build_dat_with_sections(data_section, relocations, sections, section_names):
+    """
+    Build a complete DAT binary with header, data section, relocations,
+    section info entries, and section name strings.
+
+    Parameters:
+        data_section  — raw bytes for the data section
+        relocations   — list of uint offsets for the relocation table
+        sections      — list of (root_offset, is_public) tuples
+        section_names — list of section name strings (same order as sections)
+
+    Returns the full binary as bytes.
+    """
+    pub_count = sum(1 for _, is_pub in sections if is_pub)
+    ext_count = sum(1 for _, is_pub in sections if not is_pub)
+
+    # Pad data section to 4-byte alignment
+    while len(data_section) % 4 != 0:
+        data_section += b'\x00'
+
+    reloc_data = build_relocation_table(relocations)
+
+    # Build section info entries — public first, then external
+    public_sections = [(off, name) for (off, is_pub), name in zip(sections, section_names) if is_pub]
+    external_sections = [(off, name) for (off, is_pub), name in zip(sections, section_names) if not is_pub]
+    ordered = public_sections + external_sections
+
+    # Section name strings are concatenated; compute offsets relative to start of strings block
+    name_offset = 0
+    section_info_data = b''
+    name_offsets = []
+    for _, name in ordered:
+        name_offsets.append(name_offset)
+        name_offset += len(name) + 1  # +1 for null terminator
+
+    for i, (root_off, _) in enumerate(ordered):
+        section_info_data += build_section_info(root_off, name_offsets[i])
+
+    names_data = b''
+    for _, name in ordered:
+        names_data += name.encode('utf-8') + b'\x00'
+
+    # File size = header(32) + data + relocs + section_info + names
+    total_after_header = len(data_section) + len(reloc_data) + len(section_info_data) + len(names_data)
+    file_size = 32 + total_after_header
+
+    header = struct.pack('>IIIII',
+        file_size,
+        len(data_section),
+        len(relocations),
+        pub_count,
+        ext_count,
+    )
+    header += b'\x00' * 12  # padding to 32 bytes
+
+    return header + data_section + reloc_data + section_info_data + names_data
+
+
 def build_vertex_list_terminator():
     """
     Build a single Vertex sentinel that ends a VertexList (24 bytes).

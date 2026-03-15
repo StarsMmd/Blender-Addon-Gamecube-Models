@@ -31,18 +31,22 @@ class VertexList(Node):
 
     # Tells the builder how many bytes to reserve for this node.
     def allocationSize(self):
-        return self.vertex_length * len(self.vertices)
+        # +1 for the 0xFF terminator vertex
+        return self.vertex_length * (len(self.vertices) + 1)
 
     # Tells the builder how to write this node's data to the binary file.
     # The node should have had its write address allocated by the builder by the time this is called.
     def writeBinary(self, builder):
         for (i, vertex) in enumerate(self.vertices):
-            if i == len(self.vertices) - 1:
-                if vertex.attribute != 0xFF:
-                    raise VertexListTerminatorError
-
             vertex.address = self.address + (i * self.vertex_length)
             vertex.writeBinary(builder)
+
+        # Write terminator vertex (attribute = 0xFF, rest zeroed)
+        terminator_address = self.address + (len(self.vertices) * self.vertex_length)
+        abs_address = terminator_address + builder.DAT_header_length
+        builder.seek(abs_address)
+        builder.file.write(b'\x00' * self.vertex_length)
+        builder.write(0xFF, 'uint', terminator_address, relative_to_header=True)
         
 
     # Treat this as one complete node so the vertex nodes are always written in the correct order

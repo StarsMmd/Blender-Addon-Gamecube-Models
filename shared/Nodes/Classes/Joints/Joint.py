@@ -54,9 +54,13 @@ class Joint(Node):
             self.flags = JOBJ_SPLINE
             self.property = self.property.address
 
-        else:
+        elif self.property is not None:
             self.flags = 0
             self.property = self.property.address
+
+        else:
+            self.flags = 0
+            self.property = 0
 
         if self.isHidden:
             self.flags |= JOBJ_HIDDEN

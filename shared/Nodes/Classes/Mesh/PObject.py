@@ -47,16 +47,16 @@ class PObject(Node):
 
     def allocationSize(self):
         # If the property is an Envelope list then allocate space for
-        # the list of pointers.
+        # the null-terminated list of pointers that precedes the node.
         size = super().allocationSize()
         if isinstance(self.property, list):
-            size += len(self.property) * 4
+            size += (len(self.property) + 1) * 4  # +1 for null terminator
         return size
 
     def allocationOffset(self):
         offset = super().allocationOffset()
         if isinstance(self.property, list):
-            offset += len(self.property) * 4
+            offset += (len(self.property) + 1) * 4  # +1 for null terminator
         return offset
 
     # Tells the builder how to write this node's data to the binary file.
@@ -73,8 +73,23 @@ class PObject(Node):
             self.flags = POBJ_SHAPEANIM
             self.property = self.property.address
             
+        elif isinstance(self.property, list):
+            # Envelope list — write array of pointers before the node data
+            # The pointer array was pre-allocated in allocationOffset
+            array_address = self.address - self.allocationOffset()
+            for i, envelope in enumerate(self.property):
+                addr = envelope.address if envelope is not None and envelope.address is not None else 0
+                builder.write(addr, 'uint', array_address + i * 4, relative_to_header=True)
+                if addr != 0:
+                    builder.relocations.append(array_address + i * 4)
+            # Null terminator
+            builder.write(0, 'uint', array_address + len(self.property) * 4, relative_to_header=True)
+            self.property = array_address
+            self.flags = 0
+
         else:
             self.flags = 0
+            self.property = 0
 
         super().writeBinary(builder)
 

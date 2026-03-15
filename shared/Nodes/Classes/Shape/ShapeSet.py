@@ -50,20 +50,20 @@ class ShapeSet(Node):
     # Returns the offset the builder was at before it started writing its own data.
     def writeBinary(self, builder):
         # TODO: set vt count, nt count, shape count based on dimension of vertex_set and normal_set
-        if len(vertex_set) != len(normal_set):
-            raise ShapeSetDimensionMismatchError(len(vertex_set), len(normal_set))
+        if len(self.vertex_set) != len(self.normal_set):
+            raise ShapeSetDimensionMismatchError(len(self.vertex_set), len(self.normal_set))
 
-        if isinstance(vertex_set, list):
-            self.shape_count = len(vertex_set)
-            if len(vertex_set) == 0:
+        if isinstance(self.vertex_set, list):
+            self.shape_count = len(self.vertex_set)
+            if len(self.vertex_set) == 0:
                 self.vertex_tri_count = 0
-            elif isinstance(vertex_set[0], list):
-                self.vertex_tri_count = len(vertex_set[0])
+            elif isinstance(self.vertex_set[0], list):
+                self.vertex_tri_count = len(self.vertex_set[0])
 
-        if isinstance(normal_set, list):
-            if len(normal_set) == 0:
+        if isinstance(self.normal_set, list):
+            if len(self.normal_set) == 0:
                 self.normal_tri_count = 0
-            elif isinstance(vertex_set[0], list):
-                self.normal_tri_count = len(normal_set[0])
+            elif isinstance(self.normal_set[0], list):
+                self.normal_tri_count = len(self.normal_set[0])
 
         super().writeBinary(builder)

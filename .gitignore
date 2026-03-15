@@ -129,3 +129,5 @@ dmypy.json
 .pyre/
 shared/IO/.DS_Store
 shared/.DS_Store
+test_model
+.DS_Store

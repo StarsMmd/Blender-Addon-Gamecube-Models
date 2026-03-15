@@ -96,6 +96,8 @@ class Image(Node):
 
 def get_palette_color(palette, fmt):
     color = [0,0,0,0]
+    if len(palette) < 2:
+        return array.array('B', color)
     if fmt == gx.GX_TL_IA8:
         color[0] = palette[1]
         color[1] = palette[1]
@@ -290,7 +292,7 @@ def convert_CMPR_block(dst, src, blocks_x, _):
 
 
 def convert_C4_block(dst, src, blocks_x, tlut):
-    palette = memoryview(tlut.data)
+    palette = memoryview(tlut.raw_data)
     c = 0
     s = 0
     for i in range(TILE_T_C4):
@@ -302,7 +304,7 @@ def convert_C4_block(dst, src, blocks_x, tlut):
         c += (blocks_x - 1) * TILE_S_C4 * CCC
 
 def convert_C8_block(dst, src, blocks_x, tlut):
-    palette = memoryview(tlut.data)
+    palette = memoryview(tlut.raw_data)
     c = 0
     s = 0
     for i in range(TILE_T_C8):
@@ -313,7 +315,7 @@ def convert_C8_block(dst, src, blocks_x, tlut):
         c += (blocks_x - 1) * TILE_S_C8 * CCC
 
 def convert_C14X2_block(dst, src, blocks_x, tlut):
-    palette = memoryview(tlut.data)
+    palette = memoryview(tlut.raw_data)
     c = 0
     s = 0
     for i in range(TILE_T_C14X2):

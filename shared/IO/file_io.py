@@ -1,3 +1,4 @@
+import io
 import struct
 import os
 
@@ -6,13 +7,23 @@ from ..Constants import *
 class BinaryReader:
     """
     Wrapper class to simplify reading data of various types
-    from a binary file (assumes big-endian byte order)
+    from a binary file (assumes big-endian byte order).
+
+    Accepts either a filepath (str) or a file-like object (e.g. io.BytesIO).
     """
-    
-    def __init__(self, filepath):
-        self.filepath = filepath
-        self.file = open(filepath, 'rb')
-        self.filesize = os.path.getsize(filepath)
+
+    def __init__(self, filepath_or_stream):
+        if isinstance(filepath_or_stream, str):
+            self.filepath = filepath_or_stream
+            self.file = open(filepath_or_stream, 'rb')
+            self.filesize = os.path.getsize(filepath_or_stream)
+        else:
+            self.filepath = None
+            self.file = filepath_or_stream
+            pos = self.file.tell()
+            self.file.seek(0, 2)
+            self.filesize = self.file.tell()
+            self.file.seek(pos)
 
     def read(self, type, address, offset=0, whence='start'):
         """
@@ -82,9 +93,13 @@ class BinaryWriter:
     to a binary file (uses big-endian byte order)
     """
     
-    def __init__(self, filepath):
-        self.filepath = filepath
-        self.file = open(filepath, 'wb+')
+    def __init__(self, filepath_or_stream):
+        if isinstance(filepath_or_stream, str):
+            self.filepath = filepath_or_stream
+            self.file = open(filepath_or_stream, 'wb+')
+        else:
+            self.filepath = None
+            self.file = filepath_or_stream
 
     def currentAddress(self):
     	return self.file.tell()
@@ -115,8 +130,11 @@ class BinaryWriter:
             if type == 'void':
                 return
             elif type == 'string':
-                # TODO: confirm if this includes null terminator byte
-                self.file.write(bytes(data, 'utf-8'))
+                if data is None:
+                    self.file.write(b'\x00')
+                else:
+                    self.file.write(bytes(data, 'utf-8'))
+                    self.file.write(b'\x00')
             elif type == 'vec3':
                 for i in range(3):
                     self.file.write(struct.pack('>f', data[i]))

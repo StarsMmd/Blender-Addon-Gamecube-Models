@@ -18,17 +18,13 @@ class Palette(Node):
         # then make sure the id is still the address of the table
         self.id = self.data
 
-        bits_per_pixel, type = palette_format_dict[self.format]
+        bits_per_pixel, _ = palette_format_dict[self.format]
         bytes_per_color = bits_per_pixel // 8
-        data = []
+        data_size = self.entry_count * bytes_per_color
 
-        for i in range(self.entry_count):
-            offset = i * bytes_per_color
-            color = parser.read(type, self.data, offset)
-            color.normalize()
-            data.append(color)
-
-        self.data = data
+        # Read palette as raw bytes — the image converter's get_palette_color()
+        # decodes colors directly from byte data
+        self.raw_data = parser.read_chunk(data_size, self.data, parser._startOffset(True))
 
 palette_format_dict = {
     #                 bits per pixel | type

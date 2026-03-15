@@ -15,8 +15,8 @@ class DATParser(BinaryReader):
 	# Length of the Header data of a DAT model. Pointers in the data are relative to the end of this header
 	DAT_header_length = 32
 
-	def __init__(self, filepath, options):
-		super().__init__(filepath)
+	def __init__(self, filepath_or_stream, options):
+		super().__init__(filepath_or_stream)
 
 		# Settings chosen for the parser
 		# - "verbose"       : Prints more output for debugging purposes
@@ -34,6 +34,7 @@ class DATParser(BinaryReader):
 		# one when that offset is parsed again
 		self.nodes_cache_by_offset = {}
 
+		filepath = filepath_or_stream if isinstance(filepath_or_stream, str) else ''
 		if filepath[-4:] == '.pkx':
 	        # check for byte pattern unique to Colosseum pkx models
 			self.isXDModel = self.read('uint', 0, 0, False) != self.read('uint', 0x40, 0, False)
@@ -252,9 +253,10 @@ class DATBuilder(BinaryWriter):
 	# Length of the Header data of a DAT model. Pointers in the data are relative to the end of this header.
 	DAT_header_length = 32
 
-	def __init__(self, path, root_nodes):
-		super().__init__(path)
-		self.seek(self.DAT_header_length) # leave some padding bytes to be overwritten with the header at the end
+	def __init__(self, path_or_stream, root_nodes):
+		super().__init__(path_or_stream)
+		# Reserve space for the header (will be overwritten at the end)
+		self.file.write(b'\x00' * self.DAT_header_length)
 
 		self.root_nodes = root_nodes
 		self.relocations = []
@@ -286,16 +288,17 @@ class DATBuilder(BinaryWriter):
 				for i in range(node_length):
 					_ = self.write(0, 'uchar')
 
-		# Tidy up alignment and record data section size
+		# Write each node (this may also append pointed-to data like strings/matrices)
+		for node in self.node_list:
+			node.writeBinary(self)
+
+		# After all node data is written, align and record data section size
+		self.seek(0, 'end')
 		while (self._currentRelativeAddress()) % 16 != 0:
 			_ = self.write(0, 'uchar')
 		data_section_length = self._currentRelativeAddress()
 
-		# Write each node
-		for node in self.node_list:
-			node.writeBinary(self)
-
-		# Write relocation list
+	# Write relocation list
 		self.seek(0, 'end')
 		for relocation in self.relocations:
 			_ = self.write(relocation, 'uint')
@@ -331,7 +334,6 @@ class DATBuilder(BinaryWriter):
 	# If no address is specified then append to end of file
 	def write(self, value, field_type, address=None, relative_to_header=True, whence='start'):
 		if address is not None:
-			# TODO: DATBuilder doesn't define _startOffset
 			address = address + (self.DAT_header_length if relative_to_header else 0)
 			self.seek(address)
 		else:
@@ -349,11 +351,17 @@ class DATBuilder(BinaryWriter):
 		elif is_primitive_type(field_type):
 			write_address = self._currentRelativeAddress() if relative_to_header else self.currentAddress()
 			super().write(field_type, value)
-			return address
+			return write_address
 
 		elif isPointerType(field_type):
-			if relative_to_header:
-				self.relocations.append(address)
+			if value is None:
+				value = 0
+			elif isinstance(value, Node):
+				value = value.address if value.address is not None else 0
+			if relative_to_header and value != 0:
+				# Use the actual write position if no address was specified
+				reloc_addr = address if address is not None else self._currentRelativeAddress()
+				self.relocations.append(reloc_addr)
 			return self.write(value, 'uint', address, relative_to_header, whence)
 
 		elif isUnboundedArrayType(field_type) or isBoundedArrayType(field_type):
@@ -402,15 +410,45 @@ class DATBuilder(BinaryWriter):
 			field_length = get_type_length(field_type)
 
 			# Dump values that are pointed to first and replace them with their pointers
-			if isPointerType(field_type):
+			if isBracketedType(field_type):
+				inner = getBracketedSubType(field_type)
+				if isPointerType(inner):
+					sub_type = getPointerSubType(inner)
+					if field_value is None:
+						setattr(node, field_name, 0)
+					elif is_primitive_type(sub_type):
+						# e.g. (*matrix) or (*string) — pointer to primitive data
+						pointer = self.write(field_value, sub_type)
+						setattr(node, field_name, pointer)
+					elif isinstance(field_value, Node):
+						# e.g. (*Joint) — pointer to node class, address already allocated
+						setattr(node, field_name, field_value.address if field_value.address is not None else 0)
+					elif isinstance(field_value, int):
+						pass  # already an address
+					elif isinstance(field_value, list):
+						# e.g. (*(*AnimationJoint)[]) — delegate to self.write for array handling
+						pointer = self.write(field_value, sub_type)
+						setattr(node, field_name, pointer)
+					else:
+						pointer = self.write(field_value, sub_type)
+						setattr(node, field_name, pointer)
+				# else: inline struct (@Type) — handled in second loop
+
+			elif isPointerType(field_type):
 				sub_type = getPointerSubType(field_type)
-				pointer = self.write(field_value, sub_type)
-				setattr(node, field_name, pointer)
+				if field_value is None:
+					setattr(node, field_name, 0)
+				else:
+					pointer = self.write(field_value, sub_type)
+					setattr(node, field_name, pointer)
 
 			elif isNodeClassType(field_type):
-			    pointer = self.write(field_value, field_type)
-			    field_value.address = pointer
-			    setattr(node, field_name, pointer)
+				if field_value is None:
+					setattr(node, field_name, 0)
+				else:
+					pointer = self.write(field_value, field_type)
+					field_value.address = pointer
+					setattr(node, field_name, pointer)
 
 			elif isBoundedArrayType(field_type) or isUnboundedArrayType(field_type):
 				sub_type = getArraySubType(field_type)
@@ -426,16 +464,86 @@ class DATBuilder(BinaryWriter):
 
 					setattr(node, field_name, pointers_array)
 
-			write_address = (self._currentRelativeAddress() if relative_to_header else self.currentAddress())
+		# Seek to the node's pre-allocated address before writing its fields
+		write_address = node.address
+		absolute_address = write_address + (self.DAT_header_length if relative_to_header else 0)
+		self.seek(absolute_address)
 
+		current_offset = 0
 		for field in fields:
 			field_name = field[0]
-			field_type = field[1]
+			field_type = markUpFieldType(field[1])
 			field_value = getattr(node, field_name)
-			if isNodeClassType(field_type) or isPointerType(field_type):
+
+			# Flatten pointer/node types to uint for writing
+			is_inline_struct = False
+			if isBracketedType(field_type):
+				inner = getBracketedSubType(field_type)
+				if isPointerType(inner):
+					field_type = 'uint'
+					if field_value is None:
+						field_value = 0
+					elif isinstance(field_value, Node):
+						field_value = field_value.address if field_value.address is not None else 0
+				elif isNodeClassType(inner):
+					# Inline struct (@-prefixed) — write its fields directly
+					is_inline_struct = True
+			elif isPointerType(field_type):
 				field_type = 'uint'
-			
-			_ = self.write(field_value, field_type)
+				if field_value is None:
+					field_value = 0
+				elif isinstance(field_value, Node):
+					field_value = field_value.address if field_value.address is not None else 0
+			elif isNodeClassType(field_type):
+				field_type = 'uint'
+				if field_value is None:
+					field_value = 0
+				elif isinstance(field_value, Node):
+					field_value = field_value.address if field_value.address is not None else 0
+
+			if is_inline_struct:
+				# Write inline struct by delegating to its writeBinary
+				if field_value is not None and hasattr(field_value, 'fields'):
+					# Set the inline struct's address so writeNode writes at the right position
+					inline_address = write_address + current_offset
+					field_value.address = inline_address
+					field_value.writeBinary(self)
+					# Advance current_offset by the inline struct's total size
+					for sub_field in field_value.fields:
+						sub_type = sub_field[1]
+						sub_alignment = get_alignment_at_offset(sub_type, write_address + current_offset)
+						current_offset += sub_alignment + get_type_length(sub_type)
+					# Seek back to the correct position for the next field
+					self.seek(absolute_address + current_offset)
+			elif isBoundedArrayType(field_type) or isUnboundedArrayType(field_type):
+				# Write array elements sequentially
+				sub_type = getArraySubType(field_type)
+				if field_value is not None:
+					for element in field_value:
+						sub_alignment = get_alignment_at_offset(sub_type, write_address + current_offset)
+						for _ in range(sub_alignment):
+							self.file.write(b'\x00')
+						current_offset += sub_alignment
+						if isinstance(element, Node):
+							super().write('uint', element.address if element.address is not None else 0)
+						else:
+							super().write(sub_type, element)
+						current_offset += get_type_length(sub_type)
+					if isUnboundedArrayType(field_type):
+						# Null terminator for unbounded arrays
+						for _ in range(get_type_length(sub_type)):
+							self.file.write(b'\x00')
+						current_offset += get_type_length(sub_type)
+			else:
+				# Insert alignment padding (mirrors parseNode logic)
+				alignment = get_alignment_at_offset(field_type, write_address + current_offset)
+				for _ in range(alignment):
+					self.file.write(b'\x00')
+				current_offset += alignment
+
+				# Write at current position (sequential within the node's allocated space)
+				super().write(field_type, field_value)
+				current_offset += get_type_length(field_type)
 
 		return write_address
 

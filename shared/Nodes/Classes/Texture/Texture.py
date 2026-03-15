@@ -28,8 +28,7 @@ class Texture(Node):
         super().loadFromBinary(parser)
         self.id = self.address
         if self.image:
-            palette_data = None if not self.palette else self.palette.data
-            self.image.loadDataWithPalette(parser, palette_data)
+            self.image.loadDataWithPalette(parser, self.palette)
 
     def build(self, builder):
         if self.image:

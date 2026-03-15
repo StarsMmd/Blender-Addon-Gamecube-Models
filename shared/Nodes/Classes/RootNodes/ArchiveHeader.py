@@ -42,6 +42,6 @@ class ArchiveHeader(Node):
 
         self.section_addresses = section_addresses
 
-        def allocationSize(self):
-            # is length 20 or 32? first set as 32, then code in DATParser overwrites it to 20
-            return self.length
+    def allocationSize(self):
+        # is length 20 or 32? first set as 32, then code in DATParser overwrites it to 20
+        return self.length

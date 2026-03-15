@@ -41,7 +41,8 @@ class Light(Node):
         elif isinstance(self.property, float):
             self.flags = LOBJ_INFINITE
             self.attn_flags = 0
-            self.property = self.property.address
+            # floats don't have an .address — write the value and use the returned address
+            self.property = builder.write(self.property, 'float')
 
         elif isinstance(self.property, PointLight.PointLight):
             self.flags = LOBJ_POINT

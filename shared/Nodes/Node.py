@@ -1,4 +1,4 @@
-from .NodeTypes import get_type_length
+from .NodeTypes import get_type_length, get_alignment_at_offset, markUpFieldType
 
 
 # Abstract node class
@@ -75,7 +75,8 @@ class Node(object):
     def allocationSize(self):
         size = 0
         for field in self.fields:
-            size += get_type_length(field)
+            field_type = markUpFieldType(field[1])
+            size += get_type_length(field_type) + get_alignment_at_offset(field_type, size)
         return size
 
     # Tells the builder how far into the reserved region the node itself should start.

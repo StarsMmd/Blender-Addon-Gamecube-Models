@@ -15,6 +15,15 @@ class RGBAColor(Node, Color):
         ('alpha', 'uchar'),
     ]
 
+    def writeBinary(self, builder):
+        # If normalize() was called during load, convert floats back to u8
+        if isinstance(self.red, float):
+            self.red = min(255, max(0, round(self.red * 255)))
+            self.green = min(255, max(0, round(self.green * 255)))
+            self.blue = min(255, max(0, round(self.blue * 255)))
+            self.alpha = min(255, max(0, round(self.alpha * 255)))
+        super().writeBinary(builder)
+
 class RGB565Color(Node, Color):
     class_name = "RGB565 Color"
     is_cachable = False
@@ -132,6 +141,11 @@ class RGBX8Color(Node, Color):
         self.alpha = 0xFF
 
     def writeBinary(self, builder):
+        # If normalize() was called during load, convert floats back to u8
+        if isinstance(self.red, float):
+            self.red = min(255, max(0, round(self.red * 255)))
+            self.green = min(255, max(0, round(self.green * 255)))
+            self.blue = min(255, max(0, round(self.blue * 255)))
         self.padding = 0
         super().writeBinary(builder)
 
@@ -207,7 +221,7 @@ class I8Color(Node, Color):
         self.alpha = 0xFF
 
     def writeBinary(self, builder):
-        self.intensity = (self.red + self.green + self.blue) / 3
+        self.intensity = round((self.red + self.green + self.blue) / 3)
 
         super().writeBinary(builder)
 
@@ -233,7 +247,7 @@ class IA4Color(Node, Color):
         self.alpha = self.raw_value & 0xF0
 
     def writeBinary(self, builder):
-        intensity = (((self.red + self.green + self.blue) / 3) >> 4) & 0xF
+        intensity = (round((self.red + self.green + self.blue) / 3) >> 4) & 0xF
         alpha = self.alpha & 0xF0
         self.raw_value = alpha + intensity
 
@@ -258,7 +272,7 @@ class IA8Color(Node, Color):
         self.blue = self.intensity
 
     def writeBinary(self, builder):
-        self.intensity = (self.red + self.green + self.blue) / 3
+        self.intensity = round((self.red + self.green + self.blue) / 3)
 
         super().writeBinary(builder)
 

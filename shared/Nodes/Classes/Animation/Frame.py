@@ -18,7 +18,9 @@ class Frame(Node):
     def loadFromBinary(self, parser):
         super().loadFromBinary(parser)
         if self.ad and self.data_length:
-            self.ad = parser.read_chunk(self.data_length, self.ad, parser._startOffset(True))
+            self.raw_ad = parser.read_chunk(self.data_length, self.ad, parser._startOffset(True))
+        else:
+            self.raw_ad = b''
 
 
 _interpolation_dict = {
@@ -35,7 +37,7 @@ def read_fobjdesc(fobj, curve, bias, scale):
     """Decode the compressed keyframe byte stream and insert points into a Blender fcurve."""
     current_frame = 0 - fobj.start_frame // 1
     cur_pos = 0
-    ad = fobj.ad
+    ad = fobj.raw_ad
 
     value_type = fobj.frac_value & HSD_A_FRAC_TYPE_MASK
     frac_value = fobj.frac_value & HSD_A_FRAC_MASK

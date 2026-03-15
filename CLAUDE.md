@@ -98,8 +98,8 @@ Nodes are cached by file offset (`nodes_cache_by_offset`). Cache before parsing 
 | Joint animation import | ✅ Working |
 | Material/shape animation import | ❌ Stubs only |
 | Camera / Light / Fog import | ❌ Stubs only |
-| Exporter | ❌ Stub only — `DATBuilder` infrastructure exists |
-| Unit tests | ✅ 61 tests passing |
+| Exporter | ⚠️ `DATBuilder` infrastructure exists, basic round-trip validated |
+| Unit tests | ✅ 72 tests passing |
 
 ---
 
@@ -111,6 +111,15 @@ Nodes are cached by file offset (`nodes_cache_by_offset`). Cache before parsing 
 - ~~`DATBuilder.build()` references `data_size` (undefined) — should be `data_section_length`~~ ✅ Fixed
 - ~~`DATBuilder.__init__()` calls `.toList().reverse()` — `list.reverse()` returns `None`; should be `reversed(root_node.toList())` or assign then reverse~~ ✅ Fixed
 - ~~`Joint.writeBinary()` references `isHidden` (undefined) — should be `self.isHidden`~~ ✅ Fixed
+- ~~`ShapeSet.writeBinary()` references `vertex_set`/`normal_set` without `self.` prefix~~ ✅ Fixed
+- ~~`ArchiveHeader.allocationSize()` nested inside `loadFromBinary()` — dedented to class level~~ ✅ Fixed
+- ~~`Light.writeBinary()` calls `.address` on a float — fixed to write float via builder~~ ✅ Fixed
+- ~~`BinaryWriter.write()` string missing null terminator~~ ✅ Fixed
+- ~~`Joint.writeBinary()` crashes when `property` is `None`~~ ✅ Fixed
+- ~~`DATBuilder.writeNode()` second loop doesn't mark up field types, crashes writing null pointers~~ ✅ Fixed
+- ~~`DATBuilder.write()` doesn't handle `None` for pointer types~~ ✅ Fixed
+- ~~`DATBuilder.__init__()` uses `seek()` to reserve header space — breaks with BytesIO~~ ✅ Fixed
+- `DAT_io.py:277` — `# TODO: Look at EnvelopeList` — needs investigation for special node handling
 
 ---
 
