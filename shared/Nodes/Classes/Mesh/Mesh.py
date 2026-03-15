@@ -1,5 +1,5 @@
 import bpy
-from mathutils import Matrix, Euler, Vector
+from mathutils import Matrix, Vector
 
 from ...Node import Node
 from ....Constants import *
@@ -41,6 +41,9 @@ class Mesh(Node):
             # Most of the time it's generated from tristrips changing orientation (for example in a plane)
             blender_mesh.data.validate(verbose=False, clean_customdata=False)
             pobj = pobj.next
+
+        if self.next != None:
+            self.next.build(builder, armature, bone)
 
     def apply_bone_weights(self, mesh, hsd_mesh, hsd_bone, armature):
         #apply weights now that the bones actually exist
@@ -137,6 +140,7 @@ class Mesh(Node):
         mod.use_bone_envelopes = False
         mod.use_vertex_groups = True
 
+
 #This is needed for correctly applying all this envelope stuff
 def envelope_coord_system(hsd_joint):
     #r: Root
@@ -150,14 +154,14 @@ def envelope_coord_system(hsd_joint):
         x_inverse = get_hsd_invbind(hsd_joint)
         if hsd_x.id == hsd_joint.id: # r != x == m
             return x_inverse.inverted()
-        elif hsd_x.flags & hsd.JOBJ_SKELETON_ROOT: # r == x != m
+        elif hsd_x.flags & JOBJ_SKELETON_ROOT: # r == x != m
             return (hsd_x.temp_matrix).inverted() @ hsd_joint.temp_matrix
         else: # r != x != m
             return (hsd_x.temp_matrix @ x_inverse).inverted() @ hsd_joint.temp_matrix
 
 def get_hsd_invbind(hsd_joint):
-    if hsd_joint.inverse_bind:
-        return Matrix(hsd_joint.inverse_bind)
+    if hsd_joint.invbind:
+        return Matrix(hsd_joint.invbind)
     else:
         if hsd_joint.temp_parent:
             return get_hsd_invbind(hsd_joint.temp_parent)

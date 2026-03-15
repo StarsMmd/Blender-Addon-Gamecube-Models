@@ -34,7 +34,8 @@ class Importer:
 			"verbose": verbose,
 			"print_tree": print_tree,
 			"max_frame": max_frame if max_frame > 0 else 1000000000,
-			"section_names": [section_name] if len(section_name) > 0 else []
+			"section_names": [section_name] if len(section_name) > 0 else [],
+			"filepath": filepath,
 		}
 
 		# Make sure the current selection doesn't mess with anything

@@ -64,7 +64,7 @@ class PObject(Node):
     def writeBinary(self, builder):
         # TODO: properly calculate size of display list chunks
         # TODO: make sure display list chunks are written and field is replaced with pointer to data
-        self.disp_list_count = disp_list.length
+        # TODO: self.disp_list_count = ...
         if isinstance(self.property, Joint):
             self.flags = POBJ_SKIN
             self.property = self.property.address
@@ -118,7 +118,7 @@ class PObject(Node):
             type = self.flags & POBJ_TYPE_MASK
             if type == POBJ_SHAPEANIM:
                 shape_set = self.property
-                self.make_shapeset(mesh_object, builder, shape_set, normals[position_vertex_index])
+                self.make_shapeset(builder, mesh_object, shape_set, self.normals[position_vertex_index])
                 self.make_rigid_skin()
             elif type == POBJ_ENVELOPE:
                 envelope_list = self.property

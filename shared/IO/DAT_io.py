@@ -254,17 +254,17 @@ class DATBuilder(BinaryWriter):
 
 	def __init__(self, path, root_nodes):
 		super().__init__(path)
-		self.seek(DATBuilder.DAT_header_length) # leave some padding bytes to be overwritten with the header at the end
+		self.seek(self.DAT_header_length) # leave some padding bytes to be overwritten with the header at the end
 
 		self.root_nodes = root_nodes
 		self.relocations = []
 		self.node_list = []
 		for root_node in root_nodes:
-			self.node_list.extend(root_node.toList()[::-1])
+			self.node_list += list(reversed(root_node.toList()))
 
 
 	def _currentRelativeAddress(self, relative_to_header=True):
-		return super().currentAddress() - (DATBuilder.DAT_header_length if relative_to_header else 0)
+		return super().currentAddress() - (self.DAT_header_length if relative_to_header else 0)
 
 	def build(self):
 		# Write primitive pointers for each node
@@ -324,8 +324,7 @@ class DATBuilder(BinaryWriter):
 		file_size = self._currentRelativeAddress()
 		relocations_count = len(self.relocations)
 		self.write(file_size, 'uint', 0, False)
-		# TODO: data_size is never declared
-		# self.write(data_size, 'uint', 4, False)
+		self.write(data_section_length, 'uint', 4, False)
 		self.write(relocations_count, 'uint', 8, False)
 		self.write(len(self.root_nodes), 'uint', 12, False)
 
@@ -339,7 +338,8 @@ class DATBuilder(BinaryWriter):
 			self.seek(0, 'end')
 
 		padding = get_alignment_at_offset(field_type, self.currentAddress())
-		address += padding
+		if address is not None:
+			address += padding
 		for i in range(padding):
 			_ = self.write(0, 'uchar')
 
