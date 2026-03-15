@@ -1,15 +1,16 @@
 schema_version = "1.0.0"
 
 id = "colo_xd"
-version = "1.0.0"
+version = "1.0.1"
 name = "Colosseum / XD - Importer"
-tagline = "Importer for scenes and other related files found in Colosseum and XD"
+tagline = "Importer for sydolphin scenes"
+description = "Imports scenes and related files found in Colosseum and XD, may also work for other games using the same library"
 maintainer = "Made"
 type = "add-on"
 
 website = "https://github.com/StarsMmd/Blender-Addon-Gamecube-Models"
 
-tags = ["Import-Export"]
+tags = ["Import-Export",]
 
 blender_version_min = "4.2.0"
 
@@ -17,5 +18,5 @@ license = [
   "TBD",
 ]
 
-# [permissions]
-files = "Import/export scenes from/to disk"
+[permissions]
+files = "Import/export scene data from/to disk"
