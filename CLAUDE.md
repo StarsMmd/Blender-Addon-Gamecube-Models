@@ -56,10 +56,12 @@ class MyNode(Node):
     fields = [
         ('name',  'string'),
         ('flags', 'uint'),
+        ('count', 'uint'),          # integer field used as array bound below
         ('child', 'MyNode'),        # pointer to same type — automatically followed
         ('next',  'MyNode'),
-        ('data',  '[4]float'),      # bounded array of 4 floats
-        ('items', 'OtherNode[]'),   # unbounded array (null-terminated)
+        ('data',  'float[4]'),      # bounded array of 4 floats
+        ('items', 'float[count]'),  # bounded array whose length comes from the 'count' field
+        ('nodes', 'OtherNode[]'),   # unbounded array (null-terminated)
     ]
 ```
 
@@ -71,7 +73,7 @@ Precedence: `() > * > [] > primitive > NodeClass`
 
 - `Joint` → implicitly becomes `*Joint` (pointer, auto-followed)
 - `*Joint[]` → pointer to array of Joints
-- `[count]Type` — bounded array; `count` can reference another field name and is resolved by a two-pass parse
+- `Type[count]` — bounded array; `count` can reference another field name and is resolved by a two-pass parse
 - `@TypeName` — prefix `@` prevents automatic pointer wrapping
 
 ### Node Lifecycle
@@ -93,33 +95,35 @@ Nodes are cached by file offset (`nodes_cache_by_offset`). Cache before parsing 
 | Binary parsing (all node types) | ✅ Complete |
 | Static model import (geometry + textures) | ✅ Working for most models |
 | Skeleton/armature import | ✅ Working |
-| Joint animation import | ❌ Stubs only — no `build()` |
+| Joint animation import | ✅ Working |
 | Material/shape animation import | ❌ Stubs only |
 | Camera / Light / Fog import | ❌ Stubs only |
 | Exporter | ❌ Stub only — `DATBuilder` infrastructure exists |
-| Unit tests | ❌ Not written yet |
+| Unit tests | ✅ 61 tests passing |
 
 ---
 
 ## Known Bugs (fix before adding features)
 
-- `ExportHSD.execute()` in `__init__.py:81` references `path` (undefined) — should be `self.filepath`
-- `DATBuilder.build()` at `DAT_io.py:279` is missing `self` parameter
-- `DATBuilder._currentRelativeAddress()` at `DAT_io.py:277` references `DAT_header_length` without `self.`
-- `DATBuilder.build()` references `data_size` (undefined) — should be `data_section_length`
-- `DATBuilder.__init__()` calls `.toList().reverse()` — `list.reverse()` returns `None`; should be `reversed(root_node.toList())` or assign then reverse
-- `Joint.writeBinary()` references `isHidden` (undefined) — should be `self.isHidden`
+- ~~`ExportHSD.execute()` in `__init__.py:81` references `path` (undefined) — should be `self.filepath`~~ ✅ Fixed
+- ~~`DATBuilder.build()` at `DAT_io.py:279` is missing `self` parameter~~ ✅ Fixed
+- ~~`DATBuilder._currentRelativeAddress()` at `DAT_io.py:277` references `DAT_header_length` without `self.`~~ ✅ Fixed
+- ~~`DATBuilder.build()` references `data_size` (undefined) — should be `data_section_length`~~ ✅ Fixed
+- ~~`DATBuilder.__init__()` calls `.toList().reverse()` — `list.reverse()` returns `None`; should be `reversed(root_node.toList())` or assign then reverse~~ ✅ Fixed
+- ~~`Joint.writeBinary()` references `isHidden` (undefined) — should be `self.isHidden`~~ ✅ Fixed
 
 ---
 
 ## Implementation Priorities
 
-### Priority 1 — Animation (all missing)
+### Priority 1 — Animation
 Reference: `shared/reference/import_hsd old.py` lines 204–658
 
-- Frame/keyframe data parsing → `Frame.py` / `Animation.py`
-- Bone animation traversal → `AnimationJoint.build()`
-- Blender fcurve/keyframe generation → `ModelSet.build()` or `AnimationJoint.build()`
+- ~~Frame/keyframe data parsing → `Frame.py` / `Animation.py`~~ ✅ Done
+- ~~Bone animation traversal → `AnimationJoint.build()`~~ ✅ Done
+- ~~Blender fcurve/keyframe generation → `ModelSet.build()` or `AnimationJoint.build()`~~ ✅ Done
+- Material animation import → `MaterialAnimationJoint` / `MaterialAnimation`
+- Shape animation import → `ShapeAnimationJoint` / `ShapeAnimation`
 - Animation looping (CYCLES modifier)
 - Matrix decomposition for animated bones
 
