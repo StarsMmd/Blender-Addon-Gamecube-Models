@@ -32,7 +32,8 @@ class Importer:
 		importer_options = {
 			"ik_hack": ik_hack,
 			"verbose": verbose,
-			"print_tree": print_tree
+			"print_tree": print_tree,
+			"filepath": filepath,
 		}
 
 		importer_options["max_frame"] = max_frame if max_frame > 0 else 1000000000

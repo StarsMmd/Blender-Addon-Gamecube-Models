@@ -264,19 +264,19 @@ class DATBuilder(BinaryWriter):
 
 	def __init__(self, path, root_nodes):
 		super().__init__(path)
-		self.seek(DAT_header_length) # leave some padding bytes to be overwritten with the header at the end
+		self.seek(self.DAT_header_length) # leave some padding bytes to be overwritten with the header at the end
 
 		self.root_nodes = root_nodes
 		self.relocations = []
 		self.node_list = []
 		for root_node in root_nodes:
-			self.node_list += root_node.toList().reverse()
+			self.node_list += list(reversed(root_node.toList()))
 
 
 	def _currentRelativeAddress(self, relative_to_header=True):
-		return super().currentAddress() - (DAT_header_length if relative_to_header else 0)
+		return super().currentAddress() - (self.DAT_header_length if relative_to_header else 0)
 
-	def build():
+	def build(self):
 		# Write primitive pointers for each node
 		for node in self.node_list:
 			node.writePrimitivePointers(self)
@@ -332,7 +332,7 @@ class DATBuilder(BinaryWriter):
 		file_size = self._currentRelativeAddress()
 		relocations_count = len(self.relocations)
 		self.write(file_size, 'uint', 0, False)
-		self.write(data_size, 'uint', 4, False)
+		self.write(data_section_length, 'uint', 4, False)
 		self.write(relocations_count, 'uint', 8, False)
 		self.write(len(self.root_nodes), 'uint', 12, False)
 
@@ -344,8 +344,9 @@ class DATBuilder(BinaryWriter):
 		else:
 			self.seek(0, 'end')
 
-		padding = get_alignment_at_offset(field_type, currentAddress())
-		address += padding
+		padding = get_alignment_at_offset(field_type, self.currentAddress())
+		if address is not None:
+			address += padding
 		for i in range(padding):
 			_ = self.write(0, 'uchar')
 
@@ -353,7 +354,7 @@ class DATBuilder(BinaryWriter):
 			return self.write(value, getBracketedSubType(field_type), address, relative_to_header, whence)
 
 		elif is_primitive_type(field_type):
-			write_address = self.currentRelativeAddress() if relative_to_header else self.currentAddress()
+			write_address = self._currentRelativeAddress() if relative_to_header else self.currentAddress()
 			super().write(field_type, value)
 			return address
 
@@ -375,7 +376,7 @@ class DATBuilder(BinaryWriter):
 
 				values = pointers_array
 
-			write_address = currentRelativeAddress() if relative_to_header else currentAddress()
+			write_address = self._currentRelativeAddress() if relative_to_header else self.currentAddress()
 			for value in values:
 				_ = self.write(value, sub_type)
 

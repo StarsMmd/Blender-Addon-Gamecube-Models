@@ -64,7 +64,7 @@ class PObject(Node):
     def writeBinary(self, builder):
         # TODO: properly calculate size of display list chunks
         # TODO: make sure display list chunks are written and field is replaced with pointer to data
-        self.disp_list_count = disp_list.length
+        # TODO: self.disp_list_count = ...
         if isinstance(self.property, Joint):
             self.flags = POBJ_SKIN
             self.property = self.property.address
@@ -79,14 +79,14 @@ class PObject(Node):
         super().writeBinary(builder)
 
 
-    def build(self, builder, model):
+    def build(self, builder):
 
         name = ''
         if self.name:
             name = self.name
         else:
-            name = str(model.mesh_count)
-        model.mesh_count += 1
+            name = str(builder.mesh_count)
+        builder.mesh_count += 1
 
         vertex_list = self.vertex_list.vertices
 
@@ -118,7 +118,7 @@ class PObject(Node):
             type = self.flags & POBJ_TYPE_MASK
             if type == POBJ_SHAPEANIM:
                 shape_set = self.property
-                self.make_shapeset(mesh_object, builder, shape_set, normals[position_vertex_index])
+                self.make_shapeset(builder, mesh_object, shape_set, self.normals[position_vertex_index])
                 self.make_rigid_skin()
             elif type == POBJ_ENVELOPE:
                 envelope_list = self.property
@@ -379,7 +379,7 @@ class PObject(Node):
                 color.linearize()
                 # color = interpret_color(vertex, color)
                 color_layer.data[i].color[0:3] = [color.red, color.green, color.blue, color.alpha]
-                alpha_layer.data[i].color[0:3] = [color.alpha] * 3 # question: should this be * 4?
+                alpha_layer.data[i].color[0:3] = [color.alpha] * 3 # question should this be * 4?
 
     def make_texture_layer(self, meshdata, vertex, source, faces):
         uvtex = meshdata.uv_layers.new()

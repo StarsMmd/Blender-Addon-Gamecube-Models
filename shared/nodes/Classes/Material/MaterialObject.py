@@ -20,11 +20,8 @@ class MaterialObject(Node):
     def loadFromBinary(self, parser):
         super().loadFromBinary(parser)
         self.id = self.address
-        self.blender_material = None
 
-    def prepareForBlender(self, builder):
-        super().prepareForBlender(builder)
-        return
+    def build(self, builder):
 
         material = self.material
         blender_material = bpy.data.materials.new('')
@@ -448,7 +445,7 @@ class MaterialObject(Node):
         if self.pixel_engine_data and self.pixel_engine_data.type == GX_BM_BLEND:
             output.name += ' ' + str(pixel_engine_data.source_factor) + ' ' + str(pixel_engine_data.destination_factor)
 
-        self.blender_material = blender_material
+        return blender_material
 
     interpolation_name_by_gx_constant = {
         GX_NEAR: 'Closest',
