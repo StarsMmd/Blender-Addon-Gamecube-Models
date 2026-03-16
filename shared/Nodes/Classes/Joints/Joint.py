@@ -67,7 +67,7 @@ class Joint(Node):
 
         super().writeBinary(builder)
 
-    def buildBoneHierarchy(self, builder, parent, hsd_parent, armature_data, root_parent=None):
+    def buildBoneHierarchy(self, builder, parent, hsd_parent, armature_data):
         bones = []
 
         bpy.ops.object.mode_set(mode = 'EDIT')
@@ -75,60 +75,41 @@ class Joint(Node):
         builder.bone_count += 1
 
         bone = armature_data.edit_bones.new(name = name)
-
-        # Only apply small tail to effector and spline bones for IK hack
         if builder.options.get("ik_hack"):
-            joint_type = self.flags & JOBJ_TYPE_MASK
-            if joint_type == JOBJ_EFFECTOR or self.flags & JOBJ_SPLINE:
-                tail_length = 1e-3
-                if hsd_parent:
-                    tail_length /= hsd_parent.scale[1]
-                bone.tail = Vector((0.0, tail_length, 0.0))
-            else:
-                bone.tail = Vector((0.0, 1e-3, 0.0))
+            bone.tail = Vector((0.0, 1e-3, 0.0))
         else:
             bone.tail = Vector((0.0, 1.0, 0.0))
 
-        # Track cumulative scale
-        if hsd_parent:
-            self.scl = [self.scale[i] * hsd_parent.scl[i] for i in range(3)]
-        else:
-            self.scl = list(self.scale)
-
+        scale_x = Matrix.Scale(self.scale[0], 4, [1.0,0.0,0.0])
+        scale_y = Matrix.Scale(self.scale[1], 4, [0.0,1.0,0.0])
+        scale_z = Matrix.Scale(self.scale[2], 4, [0.0,0.0,1.0])
+        rotation_x = Matrix.Rotation(self.rotation[0], 4, 'X')
+        rotation_y = Matrix.Rotation(self.rotation[1], 4, 'Y')
+        rotation_z = Matrix.Rotation(self.rotation[2], 4, 'Z')
+        translation = Matrix.Translation(Vector(self.position))
+        # Parent * T * R * S
+        #bone_matrix = translation * rotation_z * rotation_y * rotation_x * scale_z * scale_y * scale_x
         bone_matrix = self.compileSRTMatrix(self.scale, self.rotation, self.position)
-        temp_matrix_local = bone_matrix
+        #bone_matrix = Matrix()
         self.temp_matrix_local = bone_matrix
-
-        if hsd_parent:
+        if parent:
             bone_matrix = hsd_parent.temp_matrix @ bone_matrix
             bone.parent = parent
-
         bone.matrix = bone_matrix
         self.temp_matrix = bone_matrix
         self.temp_name = bone.name
         self.temp_parent = hsd_parent
 
-        # Compute per-bone edit matrices for scale correction
-        self.edit_matrix = bone_matrix.normalized()
-        if hsd_parent:
-            self.local_edit_matrix = hsd_parent.edit_matrix.inverted() @ self.edit_matrix
-            self.edit_scale_correction = hsd_parent.edit_scale_correction @ temp_matrix_local.normalized().inverted() @ temp_matrix_local
-        else:
-            self.local_edit_matrix = self.edit_matrix
-            self.edit_scale_correction = temp_matrix_local.normalized().inverted() @ temp_matrix_local
-
-        # Use aligned scale inheritance for proper scale handling
-        bone.inherit_scale = 'ALIGNED'
-
+        #bone.use_relative_parent = True
         if self.child and not self.flags & JOBJ_INSTANCE:
-            bones += self.child.buildBoneHierarchy(builder, bone, self, armature_data, root_parent)
+            bones += self.child.buildBoneHierarchy(builder, bone, self, armature_data)
         if self.next:
-            bones += self.next.buildBoneHierarchy(builder, parent, hsd_parent, armature_data, root_parent)
+            bones += self.next.buildBoneHierarchy(builder, parent, hsd_parent, armature_data)
 
         bones.append(self)
         return bones
 
-    def compileSRTMatrix(self, scale, rotation, position, parent_scl=None):
+    def compileSRTMatrix(self, scale, rotation, position):
         scale_x = Matrix.Scale(scale[0], 4, [1.0,0.0,0.0])
         scale_y = Matrix.Scale(scale[1], 4, [0.0,1.0,0.0])
         scale_z = Matrix.Scale(scale[2], 4, [0.0,0.0,1.0])
@@ -136,16 +117,7 @@ class Joint(Node):
         rotation_y = Matrix.Rotation(rotation[1], 4, 'Y')
         rotation_z = Matrix.Rotation(rotation[2], 4, 'Z')
         translation = Matrix.Translation(Vector(position))
-        mtx = translation @ rotation_z @ rotation_y @ rotation_x @ scale_z @ scale_y @ scale_x
-
-        # Apply scale correction when parent scale is provided
-        if parent_scl is not None:
-            for i in range(3):
-                for j in range(3):
-                    if parent_scl[i] != 0:
-                        mtx[i][j] *= parent_scl[j] / parent_scl[i]
-
-        return mtx
+        return translation @ rotation_z @ rotation_y @ rotation_x @ scale_z @ scale_y @ scale_x
 
 
     def getReferenceObject(self, type, sub_type):
@@ -156,3 +128,8 @@ class Joint(Node):
             reference = reference.next
 
         return None
+
+
+
+
+

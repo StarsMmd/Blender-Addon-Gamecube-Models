@@ -4,7 +4,6 @@ import math
 from ...Node import Node
 from ....Errors import *
 from ....Constants import *
-from ....BlenderVersion import BlenderVersion
 
 # Material Object
 class MaterialObject(Node):
@@ -54,7 +53,7 @@ class MaterialObject(Node):
         diffuse_flags = self.render_mode & RENDER_DIFFUSE_BITS
         if diffuse_flags == RENDER_DIFFUSE_MAT0:
             diffuse_flags = RENDER_DIFFUSE_MAT
-
+        
         alpha_flags = self.render_mode & RENDER_ALPHA_BITS
         if alpha_flags == RENDER_ALPHA_COMPAT:
             alpha_flags = diffuse_flags << RENDER_ALPHA_SHIFT
@@ -76,16 +75,15 @@ class MaterialObject(Node):
                 color = nodes.new('ShaderNodeRGB')
                 color.outputs[0].default_value[:] = diffuse_color
             else:
-                # Toon not supported.
+                # Toon not supported. 
                 # TODO: confirm if any models use Toon textures
+                # if toon:
+                #    color = nodes.new('ShaderNodeTexImage')
+                #    color.image = toon.image_data
+                #    #TODO: add the proper texture mapping
+                # else:
                 color = nodes.new('ShaderNodeAttribute')
                 color.attribute_name = 'color_0'
-
-                # Gamma correction for vertex colors (sRGB → linear)
-                gamma = nodes.new('ShaderNodeGamma')
-                gamma.inputs[1].default_value = 1.0 / 2.2
-                links.new(color.outputs[0], gamma.inputs[0])
-                color = gamma
 
                 if not diffuse_flags == RENDER_DIFFUSE_VTX:
                     diffuse = nodes.new('ShaderNodeRGB')
@@ -131,21 +129,12 @@ class MaterialObject(Node):
 
             mapping = nodes.new('ShaderNodeMapping')
             mapping.vector_type = 'TEXTURE'
-
-            # Texture coordinate mapping with repeat factor
-            repeat_s = max(texture.repeat_s, 1)
-            repeat_t = max(texture.repeat_t, 1)
-            mapping.inputs[3].default_value = [
-                texture.scale[0] / repeat_s,
-                texture.scale[1] / repeat_t,
-                texture.scale[2]
-            ]
-            mapping.inputs[1].default_value = texture.translation
-            mapping.inputs[2].default_value = texture.rotation
+            mapping.inputs[1].default_value = texture.translation 
+            mapping.inputs[2].default_value = texture.rotation 
+            mapping.inputs[3].default_value = texture.scale 
 
             # Blender UV coordinates are relative to the bottom left so we need to account for that
-            scale_y = texture.scale[1] / repeat_t
-            mapping.inputs[1].default_value[1] = 1 - (scale_y * (texture.translation[1] + 1))
+            mapping.inputs[1].default_value[1] = 1 - (texture.scale[1] * (texture.translation[1] + 1))
 
             #TODO: Is this correct?
             if (texture.flags & TEX_COORD_MASK) == TEX_COORD_REFLECTION:
@@ -156,7 +145,7 @@ class MaterialObject(Node):
             blender_texture.name = ("0x%X" % texture.id)
 
             blender_texture.extension = 'EXTEND'
-            if texture.wrap_s == GX_REPEAT or texture.wrap_t == GX_REPEAT:
+            if texture.wrap_t == GX_REPEAT:
                 blender_texture.extension = 'REPEAT'
 
             if texture.lod:
@@ -168,7 +157,7 @@ class MaterialObject(Node):
 
             cur_color = blender_texture.outputs[0]
             cur_alpha = blender_texture.outputs[1]
-
+            
             if texture.tev:
                 tev = texture.tev
                 if tev.active & TOBJ_TEVREG_ACTIVE_COLOR_TEV:
@@ -194,43 +183,29 @@ class MaterialObject(Node):
                     bump_map = cur_color
             else:
                 # Color
-                lightmap_flags = texture.flags & TEX_LIGHTMAP_MASK
-                is_diffuse_lightmap = lightmap_flags & (TEX_LIGHTMAP_DIFFUSE | TEX_LIGHTMAP_EXT)
-                is_specular_lightmap = lightmap_flags & TEX_LIGHTMAP_SPECULAR
+                if (texture.flags & TEX_LIGHTMAP_MASK) & (TEX_LIGHTMAP_DIFFUSE | TEX_LIGHTMAP_EXT):
+                    colormap = texture.flags & TEX_COLORMAP_MASK
+                    if not (colormap == TEX_COLORMAP_NONE or colormap == TEX_COLORMAP_PASS):
+                        mix = nodes.new('ShaderNodeMixRGB')
+                        mix.blend_type = self.blender_colormap_ops_by_hsd_op[colormap]
+                        mix.inputs[0].default_value = 1
+                        
+                        mix.name = self.blender_colormap_names_by_hsd_op[colormap] + ' ' + str(texture.blending)
+                        
+                        if not colormap == TEX_COLORMAP_REPLACE:
+                            links.new(last_color, mix.inputs[1])
+                            links.new(cur_color, mix.inputs[2])
+                        if colormap == TEX_COLORMAP_ALPHA_MASK:
+                            links.new(cur_alpha, mix.inputs[0])
+                        elif colormap == TEX_COLORMAP_RGB_MASK:
+                            links.new(cur_color, mix.inputs[0])
+                        elif colormap == TEX_COLORMAP_BLEND:
+                            mix.inputs[0].default_value = texture.blending
+                        elif colormap == TEX_COLORMAP_REPLACE:
+                            links.new(cur_color, mix.inputs[1])
+                            mix.inputs[0].default_value = 0.0
 
-                if is_diffuse_lightmap or is_specular_lightmap:
-                    # Skip specular lightmap if RENDER_SPECULAR is not set
-                    if is_specular_lightmap and not is_diffuse_lightmap:
-                        if not (self.render_mode & RENDER_SPECULAR):
-                            # Skip this lightmap
-                            pass
-                        else:
-                            self._apply_colormap(nodes, links, texture, cur_color, cur_alpha, last_color)
-                            # last_color updated inside if needed
-                    else:
-                        colormap = texture.flags & TEX_COLORMAP_MASK
-                        if not (colormap == TEX_COLORMAP_NONE or colormap == TEX_COLORMAP_PASS):
-                            mix = nodes.new('ShaderNodeMixRGB')
-                            mix.blend_type = self.blender_colormap_ops_by_hsd_op[colormap]
-                            mix.inputs[0].default_value = 1
-
-                            mix.name = self.blender_colormap_names_by_hsd_op[colormap] + ' ' + str(texture.blending)
-
-                            if not colormap == TEX_COLORMAP_REPLACE:
-                                links.new(last_color, mix.inputs[1])
-                                links.new(cur_color, mix.inputs[2])
-                            if colormap == TEX_COLORMAP_ALPHA_MASK:
-                                links.new(cur_alpha, mix.inputs[0])
-                            elif colormap == TEX_COLORMAP_RGB_MASK:
-                                links.new(cur_color, mix.inputs[0])
-                            elif colormap == TEX_COLORMAP_BLEND:
-                                mix.inputs[0].default_value = texture.blending
-                            elif colormap == TEX_COLORMAP_REPLACE:
-                                links.new(cur_color, mix.inputs[1])
-                                mix.inputs[0].default_value = 0.0
-
-                            last_color = mix.outputs[0]
-
+                        last_color = mix.outputs[0]
                 #do alpha
                 alphamap = texture.flags & TEX_ALPHAMAP_MASK
                 if not (alphamap == TEX_ALPHAMAP_NONE or
@@ -238,9 +213,9 @@ class MaterialObject(Node):
                     mix = nodes.new('ShaderNodeMixRGB')
                     mix.blend_type = self.blender_alphamap_ops_by_hsd_op[alphamap]
                     mix.inputs[0].default_value = 1
-
+                    
                     mix.name = self.blender_alphamap_names_by_hsd_op[alphamap]
-
+                    
                     if not alphamap == TEX_ALPHAMAP_REPLACE:
                         links.new(last_alpha, mix.inputs[1])
                         links.new(cur_alpha, mix.inputs[2])
@@ -263,6 +238,10 @@ class MaterialObject(Node):
             # PE (Pixel Engine) parameters can be given manually in this struct
             # TODO: implement other custom PE stuff
             # Blend mode
+            # HSD_StateSetBlendMode    ((GXBlendMode) pe->type,
+            #         (GXBlendFactor) pixel_engine_data->source_factor,
+            #         (GXBlendFactor) pixel_engine_data->destination_factor,
+            #         (GXLogicOp) pixel_engine_data->logic_op);
             if pixel_engine_data.type == GX_BM_NONE:
                 pass #source data just overwrites EFB data (Opaque)
 
@@ -281,6 +260,7 @@ class MaterialObject(Node):
 
                     elif pixel_engine_data.source_factor == GX_BL_DSTCLR:
                         # Multiply source and destination
+                        # blender_material.blend_method = 'MULTIPLY'
                         alt_blend_mode = 'MULTIPLY'
 
                     elif pixel_engine_data.source_factor == GX_BL_SRCALPHA:
@@ -306,6 +286,7 @@ class MaterialObject(Node):
                 elif pixel_engine_data.destination_factor == GX_BL_ONE:
                     if pixel_engine_data.source_factor == GX_BL_ONE:
                         # Add source and destination
+                        # blender_material.blend_method = 'ADD'
                         alt_blend_mode = 'ADD'
 
                     elif pixel_engine_data.source_factor == GX_BL_ZERO:
@@ -319,6 +300,7 @@ class MaterialObject(Node):
                     elif pixel_engine_data.source_factor == GX_BL_SRCALPHA:
                         # Add alpha blended color
                         transparent_shader = True
+                        # blender_material.blend_method = 'ADD'
                         alt_blend_mode = 'ADD'
                         # Manually blend color
                         blend = nodes.new('ShaderNodeMixRGB')
@@ -330,6 +312,7 @@ class MaterialObject(Node):
                     elif pixel_engine_data.source_factor == GX_BL_INVSRCALPHA:
                         # Add inverse alpha blended color
                         transparent_shader = True
+                        # blender_material.blend_method = 'ADD'
                         alt_blend_mode = 'ADD'
                         # Manually blend color
                         blend = nodes.new('ShaderNodeMixRGB')
@@ -408,43 +391,37 @@ class MaterialObject(Node):
                 blender_material.blend_method = 'HASHED'
 
         # Output shader
-        # Check if shadeless (no diffuse lighting) — use emission shader
-        if not (self.render_mode & RENDER_DIFFUSE):
-            shader = nodes.new('ShaderNodeEmission')
-            links.new(last_color, shader.inputs[0])
-            shader.inputs[1].default_value = 1.0
+        shader = nodes.new('ShaderNodeBsdfPrincipled')
+        # Specular
+        if self.render_mode & RENDER_SPECULAR:
+            shader.inputs[5].default_value = self.material.shininess / 50
         else:
-            shader = nodes.new('ShaderNodeBsdfPrincipled')
+            shader.inputs[5].default_value = 0
+        # Specular tint
+        shader.inputs[6].default_value = .5
+        # Roughness
+        shader.inputs[7].default_value = .5
 
-            # Specular — use name-based access for Blender 4.0+ compatibility
-            specular_input_name = "Specular IOR Level" if bpy.app.version >= BlenderVersion(4, 0, 0) else "Specular"
-            if self.render_mode & RENDER_SPECULAR:
-                shader.inputs[specular_input_name].default_value = self.material.shininess / 50
-            else:
-                shader.inputs[specular_input_name].default_value = 0
+        # Diffuse color
+        links.new(last_color, shader.inputs[0])
 
-            # Specular tint — RGBA in Blender 4.0+, float in older
-            if bpy.app.version >= BlenderVersion(4, 0, 0):
-                shader.inputs["Specular Tint"].default_value = (0.5, 0.5, 0.5, 1.0)
-            else:
-                shader.inputs["Specular Tint"].default_value = 0.5
+        # Alpha
+        if transparent_shader:
+            #
+            #alpha_factor = nodes.new('ShaderNodeMath')
+            #alpha_factor.operation = 'POWER'
+            #alpha_factor.inputs[1].default_value = 3
+            #links.new(last_alpha, alpha_factor.inputs[0])
+            #last_alpha = alpha_factor.outputs[0]
+            #
+            links.new(last_alpha, shader.inputs[18])
 
-            # Roughness
-            shader.inputs["Roughness"].default_value = 0.5
-
-            # Diffuse color
-            links.new(last_color, shader.inputs["Base Color"])
-
-            # Alpha
-            if transparent_shader:
-                links.new(last_alpha, shader.inputs["Alpha"])
-
-            # Normal
-            if bump_map:
-                bump = nodes.new('ShaderNodeBump')
-                bump.inputs[1].default_value = 1
-                links.new(bump_map, bump.inputs[2])
-                links.new(bump.outputs[0], shader.inputs["Normal"])
+        # Normal
+        if bump_map:
+            bump = nodes.new('ShaderNodeBump')
+            bump.inputs[1].default_value = 1
+            links.new(bump_map, bump.inputs[2])
+            links.new(bump.outputs[0], shader.inputs[19])
 
         # Add Additive or multiplicative alpha blending, since these don't have explicit options in 2.81 anymore
         if (alt_blend_mode == 'ADD'):
