@@ -5,7 +5,7 @@
 bl_info = {
     "name": "Gamecube Dat Model",
     "author": "Made, StarsMmd, MikeyX",
-    "blender": (3, 1, 0),
+    "blender": (4, 5, 0),
     "location": "File > Import-Export",
     "description": "Import-Export Gamecube .dat models",
     "warning": "",

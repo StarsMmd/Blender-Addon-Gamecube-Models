@@ -1,9 +1,11 @@
 import bpy
+import math
 from mathutils import Matrix, Vector
 
 from ...Node import Node
 from ....Constants import *
 from .Frame import read_fobjdesc
+from ....BlenderVersion import BlenderVersion
 
 # Mapping: HSD animation type code → (temp data-path letter, component index)
 _t_jointanim_type_dict = {
@@ -33,34 +35,37 @@ class AnimationJoint(Node):
         ('flags', 'uint'),
     ]
 
-    def build(self, joint, action, builder):
+    def build(self, joint, action, builder, armature=None):
         """
-        joint:   the corresponding Joint node (bone)
-        action:  a bpy.data.actions object
-        builder: ModelBuilder
+        joint:    the corresponding Joint node (bone)
+        action:   a bpy.data.actions object
+        builder:  ModelBuilder
+        armature: the armature object (needed for path animation)
         """
         max_frame = builder.options.get("max_frame", 1000)
 
         if self.animation:
-            _apply_animation_to_bone(joint, self.animation, action, max_frame)
+            _apply_animation_to_bone(joint, self.animation, action, max_frame, armature)
 
         if self.child and joint.child:
-            self.child.build(joint.child, action, builder)
+            self.child.build(joint.child, action, builder, armature)
         if self.next and joint.next:
-            self.next.build(joint.next, action, builder)
+            self.next.build(joint.next, action, builder, armature)
 
 
-def _apply_animation_to_bone(joint, aobj, action, max_frame):
+def _apply_animation_to_bone(joint, aobj, action, max_frame, armature=None):
     """Port of add_jointanim_to_armature_total from reference."""
     if aobj.flags & AOBJ_NO_ANIM:
         return
 
     transform_list = [None] * _TRANSFORMCOUNT
+    uses_path = False
 
     fobj = aobj.frame
     while fobj:
         if fobj.type == HSD_A_J_PATH:
-            pass  # TODO: implement paths
+            uses_path = True
+            _apply_path_animation(joint, fobj, action, aobj, armature)
         elif HSD_A_J_ROTX <= fobj.type <= HSD_A_J_SCAZ:
             data_letter, component = _t_jointanim_type_dict[fobj.type]
             data_path = 'pose.bones["' + joint.temp_name + '"].' + data_letter
@@ -105,7 +110,6 @@ def _apply_animation_to_bone(joint, aobj, action, max_frame):
             'pose.bones["' + joint.temp_name + '"].scale', index=i)
         new_transform_list[i + 7] = curve
 
-    invmtx = joint.temp_matrix_local.inverted()
     end = min(int(aobj.end_frame), max_frame)
     for frame in range(end):
         mtx = joint.compileSRTMatrix(
@@ -119,7 +123,17 @@ def _apply_animation_to_bone(joint, aobj, action, max_frame):
              transform_list[5].evaluate(frame),
              transform_list[6].evaluate(frame)],
         )
-        Bmtx = invmtx @ mtx
+
+        # When using path animation, pre-multiply by coordinate rotation
+        if uses_path:
+            mtx = Matrix.Rotation(-math.pi / 2, 4, 'X') @ mtx
+
+        # New matrix formula accounting for scale correction
+        if joint.temp_parent:
+            Bmtx = joint.local_edit_matrix.inverted() @ joint.temp_parent.edit_scale_correction @ mtx @ joint.edit_scale_correction.inverted()
+        else:
+            Bmtx = joint.local_edit_matrix.inverted() @ mtx @ joint.edit_scale_correction.inverted()
+
         trans, rot, scale = Bmtx.decompose()
         rot = rot.to_euler()
         new_transform_list[0].keyframe_points.insert(frame, rot[0]).interpolation = 'BEZIER'
@@ -136,3 +150,49 @@ def _apply_animation_to_bone(joint, aobj, action, max_frame):
     for c in transform_list:
         if c:
             action.fcurves.remove(c)
+
+
+def _apply_path_animation(joint, fobj, action, aobj, armature):
+    """Handle HSD_A_J_PATH: build spline curve and follow-path constraint."""
+    if not armature:
+        return
+
+    spline = joint.property
+    if not spline:
+        return
+
+    from ..Misc.Spline import Spline
+    if not isinstance(spline, Spline):
+        return
+
+    # Build the spline curve object
+    curve_obj = spline.build()
+    if not curve_obj:
+        return
+
+    # Create a loose bone hierarchy for spline positioning
+    bpy.context.view_layer.objects.active = armature
+    bpy.ops.object.mode_set(mode='EDIT')
+    loose_bone = armature.data.edit_bones.new(name=joint.temp_name + '_path')
+    loose_bone.head = Vector((0, 0, 0))
+    loose_bone.tail = Vector((0, 1e-3, 0))
+    bpy.ops.object.mode_set(mode='POSE')
+
+    pose_bone = armature.pose.bones[loose_bone.name]
+
+    # Add FOLLOW_PATH constraint
+    follow = pose_bone.constraints.new(type='FOLLOW_PATH')
+    follow.target = curve_obj
+    follow.use_fixed_location = True
+
+    # Add LIMIT_LOCATION constraint to cancel global translation
+    limit = pose_bone.constraints.new(type='LIMIT_LOCATION')
+    limit.owner_space = 'LOCAL'
+
+    # Create fcurve for path offset
+    data_path = 'pose.bones["' + loose_bone.name + '"].constraints["' + follow.name + '"].offset_factor'
+    curve = action.fcurves.new(data_path)
+    read_fobjdesc(fobj, curve, 0, 1)
+
+    if aobj.flags & AOBJ_ANIM_LOOP:
+        curve.modifiers.new('CYCLES')

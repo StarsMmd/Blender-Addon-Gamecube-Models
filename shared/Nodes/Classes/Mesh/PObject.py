@@ -9,6 +9,18 @@ from ...Node import Node
 
 from ....Constants import *
 from ....Errors import *
+from ....BlenderVersion import BlenderVersion
+
+
+def validate_mesh(vertices, faces):
+    """Remove degenerate faces (faces with duplicate vertex indices).
+    These commonly occur from triangle strips creating invisible faces
+    when changing winding orientation."""
+    valid_faces = []
+    for face in faces:
+        if len(face) == len(set(face)):
+            valid_faces.append(face)
+    return valid_faces
 
 
 # PObject
@@ -72,7 +84,7 @@ class PObject(Node):
         elif isinstance(self.property, ShapeSet):
             self.flags = POBJ_SHAPEANIM
             self.property = self.property.address
-            
+
         elif isinstance(self.property, list):
             # Envelope list — write array of pointers before the node data
             # The pointer array was pre-allocated in allocationOffset
@@ -117,6 +129,9 @@ class PObject(Node):
         #TODO: move the loop here to avoid redundancy
         vertices = self.sources[position_vertex_index]
         faces = self.face_lists[position_vertex_index]
+
+        # Remove degenerate faces before creating mesh
+        faces = validate_mesh(vertices, faces)
 
         # Create mesh and object
         mesh = bpy.data.meshes.new('Mesh_' + name)
@@ -163,7 +178,8 @@ class PObject(Node):
                 uvlayer = self.make_texture_layer(mesh, vertex, self.sources[index], self.face_lists[index])
             elif vertex.attribute == GX_VA_NRM or vertex.attribute == GX_VA_NBT:
                 self.assign_normals_to_mesh(mesh, vertex, self.sources[index], self.face_lists[index])
-                if bpy.app.version < (4, 1, 0):
+                # use_auto_smooth removed in Blender 4.1
+                if bpy.app.version < BlenderVersion(4, 1, 0):
                     mesh.use_auto_smooth = True
             elif (vertex.attribute == GX_VA_CLR0 or
                   vertex.attribute == GX_VA_CLR1):
@@ -191,7 +207,7 @@ class PObject(Node):
         # On the console the displaylist would be copied in a chunk, limit reading to that area
         display_list_size = self.display_list_chunk_count * self.display_list_chunk_size
         offset_in_vertex_list = 0
-        
+
         for vertex_index, vertex in enumerate(vertices):
             vertex_format = vertex.getFormat()
             faces = []
@@ -216,7 +232,7 @@ class PObject(Node):
                             norm_dict[index] = norm_index
                             norm_index += 1
                         indices.append(norm_dict[index])
-                    
+
                     offset += stride
 
                 if opcode == gx.GX_DRAW_QUADS:
@@ -373,10 +389,12 @@ class PObject(Node):
 
             if vertex.attribute == GX_VA_NBT:
                 for i in range:
-                    normals[i] = source[face[i - minr]][0:3]
+                    normal = source[face[i - minr]][0:3]
+                    normals[i] = Vector(normal).normalized()[:]
             else:
                 for i in range:
-                    normals[i] = source[face[i - minr]]
+                    normal = source[face[i - minr]]
+                    normals[i] = Vector(normal).normalized()[:]
         self.normals = normals
 
     def add_color_layer(self, meshdata, vertex, source, faces):
