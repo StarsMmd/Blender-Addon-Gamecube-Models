@@ -6,6 +6,7 @@ from ..Nodes import *
 from ..Errors import *
 from ..Constants import *
 from .file_io import *
+from .Logger import Logger
 
 # A class for managing the recursive parsing of the Node tree. It handles caching
 # loaded nodes and reading the next node from the cache or calling its constructor.
@@ -23,6 +24,7 @@ class DATParser(BinaryReader):
 		# - "print_tree"    : Prints a tree representation of each section parsed
 		# - "section_names" : Only parses sections in this list. If empty, parses all sections possible
 		self.options = options
+		self.logger = Logger(verbose=options.get("verbose", False))
 
 		# Where in the file the dat model itself starts. E.g. .pkx files have extra metadata before the model
 		self.file_start_offset = 0
@@ -69,8 +71,7 @@ class DATParser(BinaryReader):
 					section.readNodeTree(self)
 				except Exception as error:
 					traceback.print_exc()
-					print("\nFailed to parse section:", section.section_name, file=sys.stderr)
-					print(error,"\n", file=sys.stderr)
+					self.logger.error("Failed to parse section: %s — %s", section.section_name, error)
 					continue
 
 				if self.options.get("print_tree"):
@@ -87,8 +88,7 @@ class DATParser(BinaryReader):
 		return get_type_length(field_type)
 
 	def read(self, field_type, address, offset=0, relative_to_header=True, whence='start'):
-		if self.options.get("verbose"):
-			print("reading field type:", field_type, " at:", hex(address + offset + self._startOffset(relative_to_header)))
+		self.logger.debug("reading field type: %s at: 0x%X", field_type, address + offset + self._startOffset(relative_to_header))
 
 		if isBracketedType(field_type):
 			return self.read(getBracketedSubType(field_type), address, offset, relative_to_header, whence)
@@ -182,9 +182,7 @@ class DATParser(BinaryReader):
 		if not node:
 			return
 
-		if self.options.get("verbose"):
-			print("parsing struct:", node.class_name)
-			print("at:", node.address)
+		self.logger.debug("parsing struct: %s at: 0x%X", node.class_name, node.address)
 
 		if not fields:
 			fields = node.fields
@@ -218,8 +216,7 @@ class DATParser(BinaryReader):
 				field_type = markUpFieldType(field[1])
 
 				if bound_string in field_type:
-					if self.options.get("verbose"):
-						print("replacing bounded array var:", bound_string, "->", replacement_bound)
+					self.logger.debug("replacing bounded array var: %s -> %s", bound_string, replacement_bound)
 					updated_type = field_type.replace(bound_string, replacement_bound)
 					fields[i] = (field_name, updated_type)
 
@@ -231,8 +228,7 @@ class DATParser(BinaryReader):
 			field_length = get_type_length(field_type)
 
 			current_offset += get_alignment_at_offset(field_type, node.address + current_offset)
-			if self.options.get("verbose"):
-				print("reading field:", field_name, " at:", node.address + current_offset)
+			self.logger.debug("reading field: %s at: 0x%X", field_name, node.address + current_offset)
 
 			value = self.read(field_type, node.address, current_offset, relative_to_header)
 			setattr(node, field_name, value)

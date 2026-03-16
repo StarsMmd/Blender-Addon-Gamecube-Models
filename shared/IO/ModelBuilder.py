@@ -95,8 +95,7 @@ class ModelBuilder(object):
 			self.lights.append(disjoint_lightset)
 
 	def build(self):
-		if self.options.get("verbose"):
-			print("Building model")
+		self.logger.info("Building model")
 
 		for model in self.models:
 			self.importModel(model)

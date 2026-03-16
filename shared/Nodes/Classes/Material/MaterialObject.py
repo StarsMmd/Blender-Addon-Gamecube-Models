@@ -22,6 +22,7 @@ class MaterialObject(Node):
         self.id = self.address
 
     def build(self, builder):
+        self.logger = builder.logger
 
         material = self.material
         blender_material = bpy.data.materials.new('')
@@ -35,13 +36,12 @@ class MaterialObject(Node):
 
         diffuse_color = material.diffuse.asRGBAList()
 
-        # Diagnostic output for debugging material/texture issues
-        print('--- MOBJ 0x%X ---' % self.address)
-        print('  rendermode: 0x%08X  RENDER_DIFFUSE=%s  diffuse_bits=%d  alpha_bits=%d' % (
+        self.logger.debug('--- MOBJ 0x%X ---', self.address)
+        self.logger.debug('  rendermode: 0x%08X  RENDER_DIFFUSE=%s  diffuse_bits=%d  alpha_bits=%d',
             self.render_mode,
             bool(self.render_mode & RENDER_DIFFUSE),
             self.render_mode & RENDER_DIFFUSE_BITS,
-            (self.render_mode & RENDER_ALPHA_BITS) >> RENDER_ALPHA_SHIFT))
+            (self.render_mode & RENDER_ALPHA_BITS) >> RENDER_ALPHA_SHIFT)
 
         textures = []
         texture_number = 0
@@ -87,13 +87,13 @@ class MaterialObject(Node):
         last_alpha = alpha.outputs[0]
         bump_map  = None
 
-        print('  textures enabled: %d' % len(textures))
+        self.logger.debug('  textures enabled: %d', len(textures))
         for tex_i, texture in enumerate(textures):
             lightmap_type = texture.flags & TEX_LIGHTMAP_MASK
             passes_check = bool(lightmap_type & (TEX_LIGHTMAP_DIFFUSE | TEX_LIGHTMAP_AMBIENT | TEX_LIGHTMAP_SPECULAR | TEX_LIGHTMAP_EXT))
             colormap = texture.flags & TEX_COLORMAP_MASK
-            print('  tex[%d] flags=0x%08X  lightmap=0x%X  passes=%s  colormap=0x%X  bump=%s' % (
-                tex_i, texture.flags, lightmap_type, passes_check, colormap >> 16, bool(texture.flags & TEX_BUMP)))
+            self.logger.debug('  tex[%d] flags=0x%08X  lightmap=0x%X  passes=%s  colormap=0x%X  bump=%s',
+                tex_i, texture.flags, lightmap_type, passes_check, colormap >> 16, bool(texture.flags & TEX_BUMP))
             if (texture.flags & TEX_COORD_MASK) == TEX_COORD_UV:
                 uv = nodes.new('ShaderNodeUVMap')
                 uv.uv_map = 'uvtex_' + str(texture.source - 4)
@@ -505,7 +505,7 @@ class MaterialObject(Node):
             elif flag == hsd.TOBJ_TEV_CC_TEX1_AAA:
                 color.outputs[0].default_value = [tev.tev1.alpha, tev.tev1.alpha,tev.tev1.alpha,tev.tev1.alpha]
             else:
-                print("Error: unknown tev color input: 0x%X" % flag)
+                self.logger.warning("Unknown tev color input: 0x%X", flag)
                 return texture.outputs[0]
             return color.outputs[0]
         else:
@@ -529,7 +529,7 @@ class MaterialObject(Node):
             elif flag == hsd.TOBJ_TEV_CA_TEX1_A:
                 alpha.outputs[0].default_value = self.normcolor((tev.tev1[3], 'A'))
             else:
-                print("Error: unknown tev alpha input: 0x%X" % flag)
+                self.logger.warning("Unknown tev alpha input: 0x%X", flag)
                 return texture.outputs[1]
             return alpha.outputs[0]
 

@@ -256,17 +256,13 @@ class PObject(Node):
                         #latest_index = indices[idx]
                         faces.append(face)
                 elif opcode == gx.GX_DRAW_LINES:
-                    if parser.options.get("verbose"):
-                        print("GX_DRAW_LINES not supported, skipped")
+                    parser.logger.warning("GX_DRAW_LINES not supported, skipped")
                 elif opcode == gx.GX_DRAW_LINE_STRIP:
-                    if parser.options.get("verbose"):
-                        print("GX_DRAW_LINE_STRIP not supported, skipped")
+                    parser.logger.warning("GX_DRAW_LINE_STRIP not supported, skipped")
                 elif opcode == gx.GX_DRAW_POINTS:
-                    if parser.options.get("verbose"):
-                        print("GX_DRAW_POINTS not supported, skipped")
+                    parser.logger.warning("GX_DRAW_POINTS not supported, skipped")
                 else:
-                    if parser.options.get("verbose"):
-                        print("Unsupported geometry primitive, skipped")
+                    parser.logger.warning("Unsupported geometry primitive opcode 0x%X, skipped", opcode)
 
                 opcode = parser.read('uchar', self.display_list_address, offset)  & gx.GX_OPCODE_MASK
                 offset += parser.getTypeLength('uchar')

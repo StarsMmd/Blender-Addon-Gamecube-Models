@@ -56,6 +56,7 @@ if _bpy_available:
         section: bpy.props.StringProperty(default = '', name = 'Section Name', description = 'Name of the section that should be imported. Leave blank to import all.')
         ik_hack: bpy.props.BoolProperty(default = True, name = 'IK Hack', description = 'Shrinks Bones down to 1e-3 to make IK work properly.')
         max_frame: bpy.props.IntProperty(default = 1000, name = 'Max Anim Frame', description = 'Cutoff frame after which animations aren\'t sampled. Use 0 For no limit.')
+        verbose: bpy.props.BoolProperty(default = True, name = 'Verbose', description = 'Print detailed logging output to the console for debugging.')
 
         filename_ext = ".dat"
         filter_glob: StringProperty(default="*.fdat;*.dat;*.rdat;*.pkx", options={'HIDDEN'})
@@ -67,7 +68,7 @@ if _bpy_available:
                 paths = [self.filepath]
 
             for path in paths:
-                status = Importer.parseDAT(context, path, self.section, self.ik_hack, self.max_frame, False)
+                status = Importer.parseDAT(context, path, self.section, self.ik_hack, self.max_frame, self.verbose)
                 if not 'FINISHED' in status:
                     return status
 
