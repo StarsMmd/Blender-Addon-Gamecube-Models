@@ -92,8 +92,12 @@ class Image(Node):
             return None
         name = 'image_' + name_dict.get(self.format) + "_" + str(self.id)
         image = bpy.data.images.new(name, self.width, self.height, alpha=True)
+        # Use Non-Color so Blender doesn't apply sRGB-to-linear conversion.
+        # The GameCube TEV operates in gamma space, so shader mixing should too.
+        image.colorspace_settings.name = 'Non-Color'
         normalised_pixels = [intensity / 255 for intensity in pixel_data]
         image.pixels = normalised_pixels
+        image.pack()
         return image
 
 def get_palette_color(palette, fmt):

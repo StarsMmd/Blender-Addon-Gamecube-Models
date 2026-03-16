@@ -401,9 +401,9 @@ class PObject(Node):
 
             for i in range:
                 color = source[face[i - minr]]
-                color.linearize()
-                color_layer.data[i].color[0:3] = [color.red, color.green, color.blue, color.alpha]
-                alpha_layer.data[i].color[0:3] = [color.alpha] * 3 # question should this be * 4?
+                color.normalize()
+                color_layer.data[i].color = [color.red, color.green, color.blue, color.alpha]
+                alpha_layer.data[i].color = [color.alpha, color.alpha, color.alpha, 1.0]
 
     def make_texture_layer(self, meshdata, vertex, source, faces):
         uvtex = meshdata.uv_layers.new()

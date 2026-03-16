@@ -16,4 +16,5 @@ class LightSet(Node):
         return new_node
 
     def build(self, builder):
-        pass
+        if self.light:
+            self.light.build(builder)

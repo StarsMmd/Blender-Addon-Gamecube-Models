@@ -20,6 +20,7 @@ class ModelBuilder(object):
 		self.armature_count = 0
 		self.bone_count = 0
 		self.mesh_count = 0
+		self.light_count = 0
 
 		self.models = []
 		self.lights = []

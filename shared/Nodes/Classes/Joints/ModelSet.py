@@ -55,6 +55,21 @@ class ModelSet(Node):
 
             bpy.ops.object.mode_set(mode='OBJECT')
 
+        # Reset pose to rest position and select the first animation
+        bpy.context.view_layer.objects.active = armature
+        bpy.ops.object.mode_set(mode='POSE')
+        for bone in armature.pose.bones:
+            bone.location = (0, 0, 0)
+            bone.rotation_euler = (0, 0, 0)
+            bone.rotation_quaternion = (1, 0, 0, 0)
+            bone.scale = (1, 1, 1)
+        bpy.ops.object.mode_set(mode='OBJECT')
+
+        first_action_name = os.path.basename(filepath) + '_Anim_00'
+        if first_action_name in bpy.data.actions:
+            armature.animation_data.action = bpy.data.actions[first_action_name]
+        bpy.context.scene.frame_set(0)
+
     def _createArmature(self, builder):
         if self.root_joint == None:
             return
