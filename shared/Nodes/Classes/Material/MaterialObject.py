@@ -129,12 +129,19 @@ class MaterialObject(Node):
 
             mapping = nodes.new('ShaderNodeMapping')
             mapping.vector_type = 'TEXTURE'
-            mapping.inputs[1].default_value = texture.translation 
-            mapping.inputs[2].default_value = texture.rotation 
-            mapping.inputs[3].default_value = texture.scale 
+            mapping.inputs[1].default_value = texture.translation
+            mapping.inputs[2].default_value = texture.rotation
+
+            # Apply texture repeat factors to the scale
+            tex_scale = list(texture.scale)
+            if texture.repeat_s > 1:
+                tex_scale[0] *= texture.repeat_s
+            if texture.repeat_t > 1:
+                tex_scale[1] *= texture.repeat_t
+            mapping.inputs[3].default_value = tex_scale
 
             # Blender UV coordinates are relative to the bottom left so we need to account for that
-            mapping.inputs[1].default_value[1] = 1 - (texture.scale[1] * (texture.translation[1] + 1))
+            mapping.inputs[1].default_value[1] = 1 - (tex_scale[1] * (texture.translation[1] + 1))
 
             #TODO: Is this correct?
             if (texture.flags & TEX_COORD_MASK) == TEX_COORD_REFLECTION:
@@ -145,7 +152,7 @@ class MaterialObject(Node):
             blender_texture.name = ("0x%X" % texture.id)
 
             blender_texture.extension = 'EXTEND'
-            if texture.wrap_t == GX_REPEAT:
+            if texture.wrap_s == GX_REPEAT or texture.wrap_t == GX_REPEAT:
                 blender_texture.extension = 'REPEAT'
 
             if texture.lod:

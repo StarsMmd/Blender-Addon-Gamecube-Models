@@ -1,3 +1,6 @@
+import bpy
+from mathutils import Vector
+
 from ...Node import Node
 
 # Spline
@@ -76,6 +79,37 @@ class Spline(Node):
         else:
             self.s2 = None
 
+    def build(self, builder):
+        if not self.s1:
+            return None
 
+        spline_type = self.flags >> 8
+        curve_data = bpy.data.curves.new('Spline_' + str(self.address), type='CURVE')
+        curve_data.dimensions = '3D'
 
+        if spline_type == 0:
+            # Polyline
+            spline = curve_data.splines.new('POLY')
+            spline.points.add(len(self.s1) - 1)
+            for i, pt in enumerate(self.s1):
+                spline.points[i].co = Vector((pt[0], pt[1], pt[2], 1.0))
+        elif spline_type == 3:
+            # NURBS
+            spline = curve_data.splines.new('NURBS')
+            spline.points.add(len(self.s1) - 1)
+            for i, pt in enumerate(self.s1):
+                w = self.s2[i] if self.s2 and i < len(self.s2) else 1.0
+                spline.points[i].co = Vector((pt[0], pt[1], pt[2], w))
+            spline.use_endpoint_u = True
+            spline.order_u = min(4, len(self.s1))
+        else:
+            # Unsupported type — create polyline fallback
+            spline = curve_data.splines.new('POLY')
+            spline.points.add(len(self.s1) - 1)
+            for i, pt in enumerate(self.s1):
+                spline.points[i].co = Vector((pt[0], pt[1], pt[2], 1.0))
+
+        curve_obj = bpy.data.objects.new('Spline_' + str(self.address), curve_data)
+        bpy.context.scene.collection.objects.link(curve_obj)
+        return curve_obj
 

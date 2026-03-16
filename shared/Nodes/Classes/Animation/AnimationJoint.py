@@ -33,34 +33,37 @@ class AnimationJoint(Node):
         ('flags', 'uint'),
     ]
 
-    def build(self, joint, action, builder):
+    def build(self, joint, action, armature, builder):
         """
-        joint:   the corresponding Joint node (bone)
-        action:  a bpy.data.actions object
-        builder: ModelBuilder
+        joint:    the corresponding Joint node (bone)
+        action:   a bpy.data.actions object
+        armature: the Blender armature object
+        builder:  ModelBuilder
         """
         max_frame = builder.options.get("max_frame", 1000)
 
         if self.animation:
-            _apply_animation_to_bone(joint, self.animation, action, max_frame)
+            _apply_animation_to_bone(joint, self.animation, action, armature, max_frame)
 
         if self.child and joint.child:
-            self.child.build(joint.child, action, builder)
+            self.child.build(joint.child, action, armature, builder)
         if self.next and joint.next:
-            self.next.build(joint.next, action, builder)
+            self.next.build(joint.next, action, armature, builder)
 
 
-def _apply_animation_to_bone(joint, aobj, action, max_frame):
+def _apply_animation_to_bone(joint, aobj, action, armature, max_frame):
     """Port of add_jointanim_to_armature_total from reference."""
     if aobj.flags & AOBJ_NO_ANIM:
         return
 
     transform_list = [None] * _TRANSFORMCOUNT
+    has_path = False
 
     fobj = aobj.frame
     while fobj:
         if fobj.type == HSD_A_J_PATH:
-            pass  # TODO: implement paths
+            has_path = True
+            _apply_path_animation(joint, fobj, aobj, action, armature, max_frame)
         elif HSD_A_J_ROTX <= fobj.type <= HSD_A_J_SCAZ:
             data_letter, component = _t_jointanim_type_dict[fobj.type]
             data_path = 'pose.bones["' + joint.temp_name + '"].' + data_letter
@@ -73,6 +76,13 @@ def _apply_animation_to_bone(joint, aobj, action, max_frame):
                 curve.modifiers.new('CYCLES')
 
         fobj = fobj.next
+
+    if has_path:
+        # Path animation handles its own keyframes; clean up any partial SRT curves
+        for c in transform_list:
+            if c:
+                action.fcurves.remove(c)
+        return
 
     # Fill any missing channels with a constant rest-pose keyframe
     for i in range(3):
@@ -136,3 +146,64 @@ def _apply_animation_to_bone(joint, aobj, action, max_frame):
     for c in transform_list:
         if c:
             action.fcurves.remove(c)
+
+
+def _apply_path_animation(joint, fobj, aobj, action, armature, max_frame):
+    """Apply spline path-based animation to a bone.
+    The path fobj references a Spline attached to the joint. The bone
+    follows the spline curve instead of using SRT keyframes."""
+    from ..Misc.Spline import Spline
+
+    spline = None
+    if joint.property and isinstance(joint.property, Spline):
+        spline = joint.property
+    elif hasattr(joint, 'flags') and joint.flags & JOBJ_SPLINE and joint.property:
+        spline = joint.property
+
+    if not spline or not spline.s1:
+        return
+
+    # Build a temporary fcurve for the path parameter
+    param_curve = action.fcurves.new('pose.bones["' + joint.temp_name + '"].path_param', index=0)
+    read_fobjdesc(fobj, param_curve, 0, 1)
+
+    # Create Blender fcurves for location
+    loc_curves = []
+    for i in range(3):
+        curve = action.fcurves.new(
+            'pose.bones["' + joint.temp_name + '"].location', index=i)
+        loc_curves.append(curve)
+
+    invmtx = joint.temp_matrix_local.inverted()
+    end = min(int(aobj.end_frame), max_frame)
+    points = spline.s1
+
+    for frame in range(end):
+        t = param_curve.evaluate(frame)
+        # Clamp t to valid range
+        t = max(0.0, min(t, len(points) - 1))
+        # Linear interpolation between spline control points
+        idx = int(t)
+        frac = t - idx
+        if idx >= len(points) - 1:
+            pos = points[-1]
+        else:
+            p0 = points[idx]
+            p1 = points[idx + 1]
+            pos = [p0[j] + frac * (p1[j] - p0[j]) for j in range(3)]
+
+        # Convert from HSD space to bone-local pose space
+        world_pos = Vector(pos)
+        local_mtx = Matrix.Translation(world_pos)
+        Bmtx = invmtx @ local_mtx
+        trans = Bmtx.to_translation()
+
+        for i in range(3):
+            loc_curves[i].keyframe_points.insert(frame, trans[i]).interpolation = 'BEZIER'
+
+    if aobj.flags & AOBJ_ANIM_LOOP:
+        for c in loc_curves:
+            c.modifiers.new('CYCLES')
+
+    # Remove the temporary parameter curve
+    action.fcurves.remove(param_curve)

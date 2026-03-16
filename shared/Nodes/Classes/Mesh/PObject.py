@@ -373,10 +373,18 @@ class PObject(Node):
 
             if vertex.attribute == GX_VA_NBT:
                 for i in range:
-                    normals[i] = source[face[i - minr]][0:3]
+                    n = source[face[i - minr]][0:3]
+                    v = Vector(n)
+                    if v.length > 0:
+                        v.normalize()
+                    normals[i] = v[:]
             else:
                 for i in range:
-                    normals[i] = source[face[i - minr]]
+                    n = source[face[i - minr]]
+                    v = Vector(n)
+                    if v.length > 0:
+                        v.normalize()
+                    normals[i] = v[:]
         self.normals = normals
 
     def add_color_layer(self, meshdata, vertex, source, faces):
