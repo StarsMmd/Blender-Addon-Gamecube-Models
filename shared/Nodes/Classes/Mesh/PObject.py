@@ -163,7 +163,8 @@ class PObject(Node):
                 uvlayer = self.make_texture_layer(mesh, vertex, self.sources[index], self.face_lists[index])
             elif vertex.attribute == GX_VA_NRM or vertex.attribute == GX_VA_NBT:
                 self.assign_normals_to_mesh(mesh, vertex, self.sources[index], self.face_lists[index])
-                mesh.use_auto_smooth = True
+                if bpy.app.version < (4, 1, 0):
+                    mesh.use_auto_smooth = True
             elif (vertex.attribute == GX_VA_CLR0 or
                   vertex.attribute == GX_VA_CLR1):
                 self.add_color_layer(mesh, vertex, self.sources[index], self.face_lists[index])

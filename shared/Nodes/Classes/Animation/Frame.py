@@ -61,10 +61,14 @@ def read_fobjdesc(fobj, curve, bias, scale):
 
         if opcode == HSD_A_OP_SLP:
             for _ in range(node_count):
+                if cur_pos >= len(ad):
+                    break
                 _, cur_slope, cur_pos = _read_node_values(
                     opcode, value_type, frac_value, slope_type, frac_slope, ad, cur_pos)
         else:
             for _ in range(node_count):
+                if cur_pos >= len(ad):
+                    break
                 val, slope, cur_pos = _read_node_values(
                     opcode, value_type, frac_value, slope_type, frac_slope, ad, cur_pos)
                 slopes.append((cur_slope, slope))
@@ -77,7 +81,7 @@ def read_fobjdesc(fobj, curve, bias, scale):
                 if opcode != HSD_A_OP_NONE:
                     shift = 0
                     wait  = 0
-                    while True:
+                    while cur_pos < len(ad):
                         wait += (ad[cur_pos] & HSD_A_WAIT_MASK) << (HSD_A_WAIT_BIT * shift)
                         shift += 1
                         if not ad[cur_pos] & HSD_A_WAIT_EXT:
@@ -86,15 +90,22 @@ def read_fobjdesc(fobj, curve, bias, scale):
                     cur_pos += 1
                     current_frame += wait
 
-    for i, keyframe in enumerate(keyframes):
+    # Access keyframes through the curve's collection — stored references from
+    # insert() become stale after subsequent inserts (Blender reallocates internally).
+    kf_count = len(curve.keyframe_points)
+    offset = kf_count - len(keyframes)
+    for i in range(len(keyframes)):
+        keyframe = curve.keyframe_points[offset + i]
         if i > 0:
-            l_delta = keyframe.co[0] - keyframes[i - 1].co[0]
+            prev = curve.keyframe_points[offset + i - 1]
+            l_delta = keyframe.co[0] - prev.co[0]
             keyframe.handle_left[:] = (
                 keyframe.co[0] - l_delta / 3,
                 keyframe.co[1] - slopes[i][0] * l_delta / 3,
             )
         if i < len(keyframes) - 1:
-            r_delta = keyframes[i + 1].co[0] - keyframe.co[0]
+            nxt = curve.keyframe_points[offset + i + 1]
+            r_delta = nxt.co[0] - keyframe.co[0]
             keyframe.handle_right[:] = (
                 keyframe.co[0] + r_delta / 3,
                 keyframe.co[1] + slopes[i][1] * r_delta / 3,

@@ -58,7 +58,7 @@ if _bpy_available:
         max_frame: bpy.props.IntProperty(default = 1000, name = 'Max Anim Frame', description = 'Cutoff frame after which animations aren\'t sampled. Use 0 For no limit.')
 
         filename_ext = ".dat"
-        filter_glob = StringProperty(default="*.fdat;*.dat;*.rdat;*.pkx", options={'HIDDEN'})
+        filter_glob: StringProperty(default="*.fdat;*.dat;*.rdat;*.pkx", options={'HIDDEN'})
 
         def execute(self, context):
             if self.files and self.directory:

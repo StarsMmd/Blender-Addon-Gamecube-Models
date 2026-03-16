@@ -34,25 +34,25 @@ class ModelSet(Node):
         if not self.animated_joints:
             return
 
-        filepath = builder.options.get("filepath", "")
-        for i, animated_joint in enumerate(self.animated_joints):
-            action_name = os.path.basename(filepath) + '_Anim_' + str(i)
-            action = bpy.data.actions.new(action_name)
-            action.use_fake_user = True
+        # filepath = builder.options.get("filepath", "")
+        # for i, animated_joint in enumerate(self.animated_joints):
+        #     action_name = os.path.basename(filepath) + '_Anim_' + str(i)
+        #     action = bpy.data.actions.new(action_name)
+        #     action.use_fake_user = True
 
-            bpy.context.view_layer.objects.active = armature
-            bpy.ops.object.mode_set(mode='POSE')
-            for bone in armature.pose.bones:
-                bone.rotation_mode = 'XYZ'
-            for bone in armature.data.bones:
-                bone.use_local_location = True
+        #     bpy.context.view_layer.objects.active = armature
+        #     bpy.ops.object.mode_set(mode='POSE')
+        #     for bone in armature.pose.bones:
+        #         bone.rotation_mode = 'XYZ'
+        #     for bone in armature.data.bones:
+        #         bone.use_local_location = True
 
-            armature.animation_data_create()
-            armature.animation_data.action = action
+        #     armature.animation_data_create()
+        #     armature.animation_data.action = action
 
-            animated_joint.build(self.root_joint, action, builder)
+        #     animated_joint.build(self.root_joint, action, builder)
 
-            bpy.ops.object.mode_set(mode='OBJECT')
+        #     bpy.ops.object.mode_set(mode='OBJECT')
 
     def _createArmature(self, builder):
         if self.root_joint == None:

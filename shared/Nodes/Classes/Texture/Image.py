@@ -74,24 +74,26 @@ class Image(Node):
         out_data = array.array('B', [0] * (blocks_x * tile_S * blocks_y * tile_T * CCC))
         buffer = memoryview(out_data)
 
-        in_data_size = (blocks_x * tile_S * blocks_y * tile_T * bits_per_pixel)
-        in_data = parser.read_chunk(in_data_size, self.data_address)
+        in_data_size = (blocks_x * tile_S * blocks_y * tile_T * bits_per_pixel) >> 3
+        in_data = parser.read_chunk(in_data_size, self.data_address, parser._startOffset(True))
         image_data = memoryview(in_data)
 
         for i in range(blocks_y):
             for j in range(blocks_x):
                 func(buffer, image_data, blocks_x, palette)
                 image_data = image_data[(tile_S * tile_T * bits_per_pixel) >> 3:]
-                out_data = buffer[CCC * tile_S:]
+                buffer = buffer[CCC * tile_S:]
             buffer = buffer[CCC * blocks_x * tile_S * (tile_T - 1):]
 
-        # TODO: use dolphin's naming convention for image file name
+        return out_data
+
+    def build(self, builder, pixel_data):
+        if pixel_data is None:
+            return None
         name = 'image_' + name_dict.get(self.format) + "_" + str(self.id)
-        image = bpy.data.images.new(name, width, height, alpha=True)
-
-        normalised_pixels = [intensity / 255 for intensity in out_data]
+        image = bpy.data.images.new(name, self.width, self.height, alpha=True)
+        normalised_pixels = [intensity / 255 for intensity in pixel_data]
         image.pixels = normalised_pixels
-
         return image
 
 def get_palette_color(palette, fmt):

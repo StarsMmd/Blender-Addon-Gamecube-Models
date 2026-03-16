@@ -271,7 +271,7 @@ class MaterialObject(Node):
                         links.new(last_color, blend.inputs[2])
                         last_color = blend.outputs[0]
 
-                    elif pixel_engine_data.source_factor == INVSRCALPHA:
+                    elif pixel_engine_data.source_factor == GX_BL_INVSRCALPHA:
                         # Same as above with inverted alpha
                         blend = nodes.new('ShaderNodeMixRGB')
                         links.new(last_alpha, blend.inputs[0])
@@ -493,7 +493,7 @@ class MaterialObject(Node):
             elif flag == hsd.TOBJ_TEV_CC_TEX1_AAA:
                 color.outputs[0].default_value = [tev.tev1.alpha, tev.tev1.alpha,tev.tev1.alpha,tev.tev1.alpha]
             else:
-                error_output("unknown tev color input: 0x%X" % flag)
+                print("Error: unknown tev color input: 0x%X" % flag)
                 return texture.outputs[0]
             return color.outputs[0]
         else:
@@ -515,9 +515,9 @@ class MaterialObject(Node):
             elif flag == hsd.TOBJ_TEV_CA_TEX0_A:
                 alpha.outputs[0].default_value = self.normcolor((tev.tev0[3], 'A'))
             elif flag == hsd.TOBJ_TEV_CA_TEX1_A:
-                alpha.outputs[0].default_value = normcolor((tev.tev1[3], 'A'))
+                alpha.outputs[0].default_value = self.normcolor((tev.tev1[3], 'A'))
             else:
-                error_output("unknown tev alpha input: 0x%X" % flag)
+                print("Error: unknown tev alpha input: 0x%X" % flag)
                 return texture.outputs[1]
             return alpha.outputs[0]
 
@@ -554,7 +554,7 @@ class MaterialObject(Node):
                 last_node = self.make_tev_op_comp(nodes, links, inputs, tev, iscolor)
                 if tev.color_clamp == gx.GX_TRUE:
                     scale = nodes.new('ShaderNodeMixRGB')
-                    scale.operation = 'MULTIPLY'
+                    scale.blend_type = 'MULTIPLY'
                     scale.inputs[0].default_value = 1
                     scale.use_clamp = True
                     links.new(last_node, scale.inputs[1])
@@ -668,6 +668,32 @@ class MaterialObject(Node):
     def make_tev_op_comp(self, nodes, links, inputs, tev, iscolor):
         # TODO: Implement TEV comparison operations
         return inputs[0]
+
+    @staticmethod
+    def _srgb_to_linear(color):
+        result = []
+        for c in color[0:3]:
+            if c <= 0.0404482362771082:
+                result.append(c / 12.92)
+            else:
+                result.append(pow((c + 0.055) / 1.055, 2.4))
+        if len(color) > 3:
+            result.append(color[3])
+        return tuple(result)
+
+    @staticmethod
+    def normcolor(x):
+        """Normalize a u8 color value to float, with sRGB-to-linear conversion for RGB channels."""
+        if len(x) > 2:
+            color = [c / 255 for c in x]
+            return MaterialObject._srgb_to_linear(color)
+        else:
+            channel_type = x[1]
+            val = x[0] / 255
+            if channel_type in ('R', 'G', 'B'):
+                return MaterialObject._srgb_to_linear([val])[0]
+            elif channel_type == 'A':
+                return val
 
     interpolation_name_by_gx_constant = {
         GX_NEAR: 'Closest',

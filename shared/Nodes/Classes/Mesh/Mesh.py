@@ -103,7 +103,8 @@ class Mesh(Node):
 
                 for loop in mesh.data.loops:
                     hsd_mesh.normals[loop.index] = (normal_matrices[matrix_indices[loop.vertex_index]] @ Vector(hsd_mesh.normals[loop.index])).normalized()[:]
-                mesh.data.normals_split_custom_set(hsd_mesh.normals)
+                if bpy.app.version < (4, 1, 0):
+                    mesh.data.normals_split_custom_set(hsd_mesh.normals)
 
         else:
             if hsd_mesh.skin[1]:
@@ -124,7 +125,8 @@ class Mesh(Node):
                     for loop in mesh.data.loops:
                         matrix = matrix.inverted().transposed()
                         hsd_mesh.normals[loop.index] = (matrix @ Vector(hsd_mesh.normals[loop.index])).normalized()[:]
-                    mesh.data.normals_split_custom_set(hsd_mesh.normals)
+                    if bpy.app.version < (4, 1, 0):
+                        mesh.data.normals_split_custom_set(hsd_mesh.normals)
 
             else:
                 mesh.matrix_local = hsd_bone.temp_matrix #* get_hsd_invbind(hsd_bone)
@@ -132,7 +134,8 @@ class Mesh(Node):
                 group = mesh.vertex_groups.new(name=hsd_bone.temp_name)
                 group.add([v.index for v in mesh.data.vertices], 1.0, 'REPLACE')
                 if hsd_mesh.normals:
-                    mesh.data.normals_split_custom_set(hsd_mesh.normals)
+                    if bpy.app.version < (4, 1, 0):
+                        mesh.data.normals_split_custom_set(hsd_mesh.normals)
 
 
         mod = mesh.modifiers.new('Skinmod', 'ARMATURE')
@@ -160,8 +163,8 @@ def envelope_coord_system(hsd_joint):
             return (hsd_x.temp_matrix @ x_inverse).inverted() @ hsd_joint.temp_matrix
 
 def get_hsd_invbind(hsd_joint):
-    if hsd_joint.invbind:
-        return Matrix(hsd_joint.invbind)
+    if hsd_joint.inverse_bind:
+        return Matrix(hsd_joint.inverse_bind)
     else:
         if hsd_joint.temp_parent:
             return get_hsd_invbind(hsd_joint.temp_parent)

@@ -28,7 +28,9 @@ class Texture(Node):
         super().loadFromBinary(parser)
         self.id = self.address
         if self.image:
-            self.image.loadDataWithPalette(parser, self.palette)
+            self.decoded_pixels = self.image.loadDataWithPalette(parser, self.palette)
+        else:
+            self.decoded_pixels = None
 
     def build(self, builder):
         if self.image:
@@ -42,7 +44,7 @@ class Texture(Node):
                 self.image_data = cached_image
 
             else:
-                self.image_data = self.image.build(builder)
+                self.image_data = self.image.build(builder, self.decoded_pixels)
                 builder.cacheImage(image_id, palette_id, self.image_data)
 
         else:
