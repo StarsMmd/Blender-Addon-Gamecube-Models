@@ -62,6 +62,8 @@ class Image(Node):
         super().loadFromBinary(parser)
         # Use the address of the image data as the id
         self.id = self.data_address
+        parser.logger.debug("Image 0x%X: %dx%d, format=%d, data_address=0x%X",
+                            self.address, self.width, self.height, self.format, self.data_address)
 
     def loadDataWithPalette(self, parser, palette):
         width = self.width

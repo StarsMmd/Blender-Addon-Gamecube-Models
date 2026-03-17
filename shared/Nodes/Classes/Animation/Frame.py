@@ -19,6 +19,8 @@ class Frame(Node):
         super().loadFromBinary(parser)
         if self.ad and self.data_length:
             self.raw_ad = parser.read_chunk(self.data_length, self.ad, parser._startOffset(True))
+            parser.logger.debug("Frame 0x%X: type=%d, data_length=%d, start_frame=%.1f, frac_value=0x%02X, frac_slope=0x%02X",
+                                self.address, self.type, self.data_length, self.start_frame, self.frac_value, self.frac_slope)
         else:
             self.raw_ad = b''
 

@@ -159,11 +159,11 @@ class DATParser(BinaryReader):
 			node.loadFromBinary(self)
 
 			# For debugging purposes
-			node.length = 0
+			node._struct_size = 0
 			for field in node.fields:
 				field_type = markUpFieldType(field[1])
-				field_length = get_type_length(field_type) + get_alignment_at_offset(field_type, node.length)
-				node.length += field_length
+				field_length = get_type_length(field_type) + get_alignment_at_offset(field_type, node._struct_size)
+				node._struct_size += field_length
 
 			# If the class hasn't been implemented it is replaced with a Dummy implementation.
 			# We can set the class name to the intended type so when reading the tree structure

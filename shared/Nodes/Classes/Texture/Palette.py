@@ -18,9 +18,17 @@ class Palette(Node):
         # then make sure the id is still the address of the table
         self.id = self.data
 
+        if self.format not in palette_format_dict:
+            parser.logger.warning("Palette 0x%X: unknown format %d", self.address, self.format)
+            self.raw_data = b''
+            return
+
         bits_per_pixel, _ = palette_format_dict[self.format]
         bytes_per_color = bits_per_pixel // 8
         data_size = self.entry_count * bytes_per_color
+
+        parser.logger.debug("Palette 0x%X: format=%d, entries=%d, data_size=%d bytes",
+                            self.address, self.format, self.entry_count, data_size)
 
         # Read palette as raw bytes — the image converter's get_palette_color()
         # decodes colors directly from byte data

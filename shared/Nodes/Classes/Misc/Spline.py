@@ -18,6 +18,9 @@ class Spline(Node):
 
     def loadFromBinary(self, parser):
         super().loadFromBinary(parser)
+        spline_type = self.flags >> 8
+        parser.logger.debug("Spline 0x%X: type=%d, n=%d, s1=0x%X, s2=0x%X, s3=0x%X",
+                            self.address, spline_type, self.n, self.s1 or 0, self.s2 or 0, self.s3 or 0)
         if (self.flags >> 8) == 0:
             if self.s1:
                 s1_address = self.s1

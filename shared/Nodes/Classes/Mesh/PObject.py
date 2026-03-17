@@ -32,10 +32,13 @@ class PObject(Node):
         if self.property > 0:
             property_type = self.flags & POBJ_TYPE_MASK
             if property_type == POBJ_SKIN:
+                parser.logger.debug("PObject 0x%X: property -> Joint (SKIN) at 0x%X", self.address, self.property)
                 self.property = parser.read('Joint', self.property)
             elif property_type == POBJ_SHAPEANIM:
+                parser.logger.debug("PObject 0x%X: property -> ShapeSet (SHAPEANIM) at 0x%X", self.address, self.property)
                 self.property = parser.read('ShapeSet', self.property)
             else:
+                parser.logger.debug("PObject 0x%X: property -> EnvelopeList[] (ENVELOPE) at 0x%X", self.address, self.property)
                 self.property = parser.read('(*EnvelopeList)[]', self.property)
         else:
             self.property = None

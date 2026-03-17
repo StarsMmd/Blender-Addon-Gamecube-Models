@@ -23,6 +23,8 @@ class VertexList(Node):
                 self.vertices.append(vertex)
                 current_offset += self.vertex_length
 
+        parser.logger.debug("VertexList 0x%X: %d vertex descriptors", self.address, len(self.vertices))
+
     # For any fields which are a pointer where the underlying sub type is a primitive type,
     # write them to the builder's output and replace the field with the address it was written to
     def writePrimitivePointers(self, builder):

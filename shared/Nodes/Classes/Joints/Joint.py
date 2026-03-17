@@ -39,6 +39,8 @@ class Joint(Node):
             property_type = 'Spline'
 
         if self.property > 0:
+            parser.logger.debug("Joint 0x%X: property -> %s at 0x%X, flags=0x%X",
+                                self.address, property_type, self.property, self.flags)
             self.property = parser.read(property_type, self.property)
         else:
             self.property = None

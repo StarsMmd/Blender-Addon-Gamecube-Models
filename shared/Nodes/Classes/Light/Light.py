@@ -25,15 +25,20 @@ class Light(Node):
         super().loadFromBinary(parser)
 
         if self.attn_flags & LOBJ_LIGHT_ATTN:
+            parser.logger.debug("Light 0x%X: property -> Attn at 0x%X", self.address, self.property)
             self.property = parser.read('Attn', self.property)
         else:
             if self.flags == LOBJ_INFINITE:
+                parser.logger.debug("Light 0x%X: INFINITE, property -> float at 0x%X", self.address, self.property)
                 self.property = parser.read('float', self.property)
             elif self.flags == LOBJ_POINT:
+                parser.logger.debug("Light 0x%X: POINT, property -> PointLight at 0x%X", self.address, self.property)
                 self.property = parser.read('PointLight', self.property)
             elif self.flags == LOBJ_SPOT:
+                parser.logger.debug("Light 0x%X: SPOT, property -> SpotLight at 0x%X", self.address, self.property)
                 self.property = parser.read('SpotLight', self.property)
             else: # LOBJ_AMBIENT
+                parser.logger.debug("Light 0x%X: AMBIENT, no property", self.address)
                 self.property = None
 
     def writeBinary(self, builder):

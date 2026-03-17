@@ -28,8 +28,13 @@ class Texture(Node):
         super().loadFromBinary(parser)
         self.id = self.address
         if self.image:
+            parser.logger.debug("Texture 0x%X: image at 0x%X, palette=%s, flags=0x%08X, source=%d",
+                                self.address, self.image.address,
+                                ("0x%X" % self.palette.address) if self.palette else "None",
+                                self.flags, self.source)
             self.decoded_pixels = self.image.loadDataWithPalette(parser, self.palette)
         else:
+            parser.logger.debug("Texture 0x%X: no image", self.address)
             self.decoded_pixels = None
 
     def build(self, builder):
