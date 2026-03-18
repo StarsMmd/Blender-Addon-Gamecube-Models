@@ -156,7 +156,7 @@ class Node(object):
 
         def stringRep(value):
             if isinstance(value, Node) and value.is_cachable:
-                return "-> " + value.class_name + " @" + hex(value.address) + " (" + str(value._struct_size) + " bytes)"
+                return "-> " + value.class_name + " @" + hex(value.address) + " (" + str(getattr(value, '_struct_size', '?')) + " bytes)"
             else:
                 return str(value)
 
@@ -225,7 +225,7 @@ class Node(object):
             else:
                 return 1
 
-        text = "-> " + self.class_name + " @" + hex(self.address) + " (" + str(self._struct_size) + " bytes)\n"
+        text = "-> " + self.class_name + " @" + hex(self.address) + " (" + str(getattr(self, '_struct_size', '?')) + " bytes)\n"
 
         sorted_fields = sorted(self.fields, key=fieldWeight)
         for (field_name, field_type) in sorted_fields:

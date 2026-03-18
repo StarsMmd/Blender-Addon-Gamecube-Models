@@ -42,6 +42,8 @@ class MaterialObject(Node):
             bool(self.render_mode & RENDER_DIFFUSE),
             self.render_mode & RENDER_DIFFUSE_BITS,
             (self.render_mode & RENDER_ALPHA_BITS) >> RENDER_ALPHA_SHIFT)
+        self.logger.debug('  diffuse_color (linearized): [%.4f, %.4f, %.4f, %.4f]  mat.alpha=%.4f',
+            *diffuse_color, material.alpha)
 
         textures = []
         texture_number = 0
@@ -66,21 +68,77 @@ class MaterialObject(Node):
         if alpha_flags == RENDER_ALPHA_COMPAT:
             alpha_flags = diffuse_flags << RENDER_ALPHA_SHIFT
 
-        # Base color: VTX modes use white (vertex color applied post-texture),
-        # MAT/BOTH modes use the material diffuse color.
-        color = nodes.new('ShaderNodeRGB')
-        if diffuse_flags == RENDER_DIFFUSE_VTX:
-            color.outputs[0].default_value[:] = [1,1,1,1]
-        else:
-            color.outputs[0].default_value[:] = diffuse_color
+        diffuse_names = {RENDER_DIFFUSE_MAT0: 'MAT0', RENDER_DIFFUSE_MAT: 'MAT',
+                         RENDER_DIFFUSE_VTX: 'VTX', RENDER_DIFFUSE_BOTH: 'BOTH'}
+        alpha_names = {RENDER_ALPHA_COMPAT: 'COMPAT', RENDER_ALPHA_MAT: 'MAT',
+                       RENDER_ALPHA_VTX: 'VTX', RENDER_ALPHA_BOTH: 'BOTH'}
 
-        # Base alpha: VTX modes use 1.0 (vertex alpha applied post-texture),
-        # MAT/BOTH modes use the material alpha.
-        alpha = nodes.new('ShaderNodeValue')
-        if alpha_flags == RENDER_ALPHA_VTX:
-            alpha.outputs[0].default_value = 1
+        if self.render_mode & RENDER_DIFFUSE:
+            # RENDER_DIFFUSE set: VTX modes use white (vertex color applied post-texture),
+            # MAT/BOTH modes use the material diffuse color.
+            color = nodes.new('ShaderNodeRGB')
+            if diffuse_flags == RENDER_DIFFUSE_VTX:
+                color.outputs[0].default_value[:] = [1,1,1,1]
+                self.logger.debug('  base color: RENDER_DIFFUSE=1, diffuse=%s → white [1,1,1,1]',
+                    diffuse_names.get(diffuse_flags, hex(diffuse_flags)))
+            else:
+                color.outputs[0].default_value[:] = diffuse_color
+                self.logger.debug('  base color: RENDER_DIFFUSE=1, diffuse=%s → mat color %s',
+                    diffuse_names.get(diffuse_flags, hex(diffuse_flags)), diffuse_color)
+
+            alpha = nodes.new('ShaderNodeValue')
+            if alpha_flags == RENDER_ALPHA_VTX:
+                alpha.outputs[0].default_value = 1
+                self.logger.debug('  base alpha: alpha=%s → 1.0',
+                    alpha_names.get(alpha_flags, hex(alpha_flags)))
+            else:
+                alpha.outputs[0].default_value = material.alpha
+                self.logger.debug('  base alpha: alpha=%s → mat alpha %.3f',
+                    alpha_names.get(alpha_flags, hex(alpha_flags)), material.alpha)
         else:
-            alpha.outputs[0].default_value = material.alpha
+            # RENDER_DIFFUSE not set: vertex color is the base, material color is additive
+            if diffuse_flags == RENDER_DIFFUSE_MAT:
+                color = nodes.new('ShaderNodeRGB')
+                color.outputs[0].default_value[:] = diffuse_color
+                self.logger.debug('  base color: RENDER_DIFFUSE=0, diffuse=MAT → mat color %s',
+                    diffuse_color)
+            else:
+                color = nodes.new('ShaderNodeAttribute')
+                color.attribute_name = 'color_0'
+                if diffuse_flags != RENDER_DIFFUSE_VTX:
+                    diff = nodes.new('ShaderNodeRGB')
+                    diff.outputs[0].default_value[:] = diffuse_color
+                    mix = nodes.new('ShaderNodeMixRGB')
+                    mix.blend_type = 'ADD'
+                    mix.inputs[0].default_value = 1
+                    links.new(color.outputs[0], mix.inputs[1])
+                    links.new(diff.outputs[0], mix.inputs[2])
+                    color = mix
+                    self.logger.debug('  base color: RENDER_DIFFUSE=0, diffuse=%s → vtx_color + mat color %s',
+                        diffuse_names.get(diffuse_flags, hex(diffuse_flags)), diffuse_color)
+                else:
+                    self.logger.debug('  base color: RENDER_DIFFUSE=0, diffuse=VTX → vtx_color attribute only')
+
+            if alpha_flags == RENDER_ALPHA_MAT:
+                alpha = nodes.new('ShaderNodeValue')
+                alpha.outputs[0].default_value = material.alpha
+                self.logger.debug('  base alpha: RENDER_DIFFUSE=0, alpha=MAT → mat alpha %.3f',
+                    material.alpha)
+            else:
+                alpha = nodes.new('ShaderNodeAttribute')
+                alpha.attribute_name = 'alpha_0'
+                if alpha_flags != RENDER_ALPHA_VTX:
+                    mat_alpha = nodes.new('ShaderNodeValue')
+                    mat_alpha.outputs[0].default_value = material.alpha
+                    mix = nodes.new('ShaderNodeMath')
+                    mix.operation = 'MULTIPLY'
+                    links.new(alpha.outputs[0], mix.inputs[0])
+                    links.new(mat_alpha.outputs[0], mix.inputs[1])
+                    alpha = mix
+                    self.logger.debug('  base alpha: RENDER_DIFFUSE=0, alpha=%s → vtx_alpha * mat alpha %.3f',
+                        alpha_names.get(alpha_flags, hex(alpha_flags)), material.alpha)
+                else:
+                    self.logger.debug('  base alpha: RENDER_DIFFUSE=0, alpha=VTX → vtx_alpha attribute only')
 
 
         last_color = color.outputs[0]
@@ -128,16 +186,36 @@ class MaterialObject(Node):
             blender_texture.image = texture.image_data
             blender_texture.name = ("0x%X" % texture.id)
 
-            blender_texture.extension = 'EXTEND'
-            if texture.wrap_s == GX_REPEAT or texture.wrap_t == GX_REPEAT:
+            # Texture wrapping: GX supports per-axis modes but Blender's texture
+            # node only has one extension mode. We set the texture node's mode
+            # based on the dominant wrap type, and use math nodes to handle
+            # per-axis clamping/mirroring when the S and T modes differ.
+            self.logger.debug('  tex[%d] wrap_s=%d wrap_t=%d repeat_s=%d repeat_t=%d',
+                tex_i, texture.wrap_s, texture.wrap_t, texture.repeat_s, texture.repeat_t)
+
+            has_repeat = texture.wrap_s == GX_REPEAT or texture.wrap_t == GX_REPEAT
+            has_mirror = texture.wrap_s == GX_MIRROR or texture.wrap_t == GX_MIRROR
+
+            if has_repeat or has_mirror:
                 blender_texture.extension = 'REPEAT'
+            else:
+                blender_texture.extension = 'CLIP'
 
             if texture.lod:
                 blender_texture.interpolation = self.interpolation_name_by_gx_constant[texture.lod.min_filter]
 
             if uv_output:
                 links.new(uv_output, mapping.inputs[0])
-            links.new(mapping.outputs[0], blender_texture.inputs[0])
+
+            # When S and T wrap modes differ, insert per-axis UV processing nodes
+            # between the mapping and the texture to handle clamping/mirroring per axis.
+            tex_uv_output = mapping.outputs[0]
+            if has_repeat and (texture.wrap_s != texture.wrap_t):
+                tex_uv_output = self._make_per_axis_wrap(
+                    nodes, links, mapping.outputs[0],
+                    texture.wrap_s, texture.wrap_t)
+
+            links.new(tex_uv_output, blender_texture.inputs[0])
 
             cur_color = blender_texture.outputs[0]
             cur_alpha = blender_texture.outputs[1]
@@ -219,26 +297,30 @@ class MaterialObject(Node):
                         last_alpha = mix.outputs[0]
 
         # Post-texture vertex color/alpha multiplication
-        # When vertex colors exist, they modulate the accumulated color.
-        # When they don't exist, ShaderNodeAttribute outputs 0 which makes
-        # Factor=0 in the MixRGB, leaving the color unchanged.
-        if diffuse_flags & RENDER_DIFFUSE_VTX:
-            vtx_color = nodes.new('ShaderNodeAttribute')
-            vtx_color.attribute_name = 'color_0'
-            mult = nodes.new('ShaderNodeMixRGB')
-            mult.blend_type = 'MULTIPLY'
-            links.new(vtx_color.outputs[0], mult.inputs[0])
-            links.new(last_color, mult.inputs[1])
-            last_color = mult.outputs[0]
+        # Only when RENDER_DIFFUSE is set — vertex colors modulate the accumulated color.
+        # When RENDER_DIFFUSE is not set, vertex color was already used as the base.
+        if self.render_mode & RENDER_DIFFUSE:
+            if diffuse_flags & RENDER_DIFFUSE_VTX:
+                vtx_color = nodes.new('ShaderNodeAttribute')
+                vtx_color.attribute_name = 'color_0'
+                mult = nodes.new('ShaderNodeMixRGB')
+                mult.blend_type = 'MULTIPLY'
+                links.new(vtx_color.outputs[0], mult.inputs[0])
+                links.new(last_color, mult.inputs[1])
+                last_color = mult.outputs[0]
+                self.logger.debug('  post-tex: multiply by vtx color_0')
 
-        if alpha_flags & RENDER_ALPHA_VTX:
-            vtx_alpha = nodes.new('ShaderNodeAttribute')
-            vtx_alpha.attribute_name = 'alpha_0'
-            mult = nodes.new('ShaderNodeMixRGB')
-            mult.blend_type = 'MULTIPLY'
-            links.new(vtx_alpha.outputs[0], mult.inputs[0])
-            links.new(last_alpha, mult.inputs[1])
-            last_alpha = mult.outputs[0]
+            if alpha_flags & RENDER_ALPHA_VTX:
+                vtx_alpha = nodes.new('ShaderNodeAttribute')
+                vtx_alpha.attribute_name = 'alpha_0'
+                mult = nodes.new('ShaderNodeMixRGB')
+                mult.blend_type = 'MULTIPLY'
+                links.new(vtx_alpha.outputs[0], mult.inputs[0])
+                links.new(last_alpha, mult.inputs[1])
+                last_alpha = mult.outputs[0]
+                self.logger.debug('  post-tex: multiply by vtx alpha_0')
+        else:
+            self.logger.debug('  post-tex: skipped (RENDER_DIFFUSE not set)')
 
         # Final render settings. On the GameCube these would control how the rendered data is written to the EFB (Embedded Frame Buffer)
 
@@ -406,34 +488,27 @@ class MaterialObject(Node):
         shader = nodes.new('ShaderNodeBsdfPrincipled')
         # Specular
         if self.render_mode & RENDER_SPECULAR:
-            shader.inputs[5].default_value = self.material.shininess / 50
+            shader.inputs['Specular'].default_value = self.material.shininess / 50
         else:
-            shader.inputs[5].default_value = 0
+            shader.inputs['Specular'].default_value = 0
         # Specular tint
-        shader.inputs[6].default_value = .5
+        shader.inputs['Specular Tint'].default_value = .5
         # Roughness
-        shader.inputs[7].default_value = .5
+        shader.inputs['Roughness'].default_value = .5
 
         # Diffuse color
-        links.new(last_color, shader.inputs[0])
+        links.new(last_color, shader.inputs['Base Color'])
 
         # Alpha
         if transparent_shader:
-            #
-            #alpha_factor = nodes.new('ShaderNodeMath')
-            #alpha_factor.operation = 'POWER'
-            #alpha_factor.inputs[1].default_value = 3
-            #links.new(last_alpha, alpha_factor.inputs[0])
-            #last_alpha = alpha_factor.outputs[0]
-            #
-            links.new(last_alpha, shader.inputs[18])
+            links.new(last_alpha, shader.inputs['Alpha'])
 
         # Normal
         if bump_map:
             bump = nodes.new('ShaderNodeBump')
             bump.inputs[1].default_value = 1
             links.new(bump_map, bump.inputs[2])
-            links.new(bump.outputs[0], shader.inputs[19])
+            links.new(bump.outputs[0], shader.inputs['Normal'])
 
         # Add Additive or multiplicative alpha blending, since these don't have explicit options in 2.81 anymore
         if (alt_blend_mode == 'ADD'):
@@ -680,6 +755,44 @@ class MaterialObject(Node):
     def make_tev_op_comp(self, nodes, links, inputs, tev, iscolor):
         # TODO: Implement TEV comparison operations
         return inputs[0]
+
+    def _make_per_axis_wrap(self, nodes, links, uv_input, wrap_s, wrap_t):
+        """Insert UV processing nodes for per-axis wrap mode handling.
+
+        When the texture node is set to REPEAT (because at least one axis repeats)
+        but the other axis should clamp, we clamp that axis's UV coordinate to [0,1]
+        so it doesn't tile.
+        """
+        separate = nodes.new('ShaderNodeSeparateXYZ')
+        separate.name = 'wrap_separate'
+        links.new(uv_input, separate.inputs[0])
+
+        s_out = separate.outputs[0]
+        t_out = separate.outputs[1]
+
+        if wrap_s == GX_CLAMP:
+            clamp_s = nodes.new('ShaderNodeClamp')
+            clamp_s.name = 'clamp_S'
+            clamp_s.inputs[1].default_value = 0.0  # min
+            clamp_s.inputs[2].default_value = 1.0  # max
+            links.new(s_out, clamp_s.inputs[0])
+            s_out = clamp_s.outputs[0]
+
+        if wrap_t == GX_CLAMP:
+            clamp_t = nodes.new('ShaderNodeClamp')
+            clamp_t.name = 'clamp_T'
+            clamp_t.inputs[1].default_value = 0.0
+            clamp_t.inputs[2].default_value = 1.0
+            links.new(t_out, clamp_t.inputs[0])
+            t_out = clamp_t.outputs[0]
+
+        combine = nodes.new('ShaderNodeCombineXYZ')
+        combine.name = 'wrap_combine'
+        links.new(s_out, combine.inputs[0])
+        links.new(t_out, combine.inputs[1])
+        links.new(separate.outputs[2], combine.inputs[2])
+
+        return combine.outputs[0]
 
     @staticmethod
     def _srgb_to_linear(color):

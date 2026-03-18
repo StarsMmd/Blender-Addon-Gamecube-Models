@@ -94,9 +94,6 @@ class Image(Node):
             return None
         name = 'image_' + name_dict.get(self.format) + "_" + str(self.id)
         image = bpy.data.images.new(name, self.width, self.height, alpha=True)
-        # Use Non-Color so Blender doesn't apply sRGB-to-linear conversion.
-        # The GameCube TEV operates in gamma space, so shader mixing should too.
-        image.colorspace_settings.name = 'Non-Color'
         normalised_pixels = [intensity / 255 for intensity in pixel_data]
         image.pixels = normalised_pixels
         image.pack()
@@ -187,7 +184,7 @@ def convert_IA8_block(dst, src, blocks_x, _):
             dst[c + 2] = val
             dst[c + 3] = src[s]
             c += CCC
-            s += TILE_S_IA8 >> 3
+            s += BITSPPX_IA8 >> 3
         c += (blocks_x - 1) * TILE_S_IA8 * CCC
 
 def convert_RGB565_block(dst, src, blocks_x, _):
@@ -328,7 +325,7 @@ def convert_C14X2_block(dst, src, blocks_x, tlut):
     s = 0
     for i in range(TILE_T_C14X2):
         for j in range(TILE_S_C14X2):
-            dst[c: c + CCC] = get_palette_color(palette[((src[s + 0] << 8) | src[s + 1]) * 2], tlut.format)
+            dst[c: c + CCC] = get_palette_color(palette[((src[s + 0] << 8) | src[s + 1]) * 2:], tlut.format)
             s += BITSPPX_C14X2 >> 3
             c += CCC
         c += (blocks_x - 1) * TILE_S_C14X2 * CCC

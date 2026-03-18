@@ -386,6 +386,10 @@ class PObject(Node):
                     normals[i] = v[:]
         self.normals = normals
 
+    @staticmethod
+    def _linearize_component(c):
+        return c / 12.92 if c <= 0.0404482362771082 else pow((c + 0.055) / 1.055, 2.4)
+
     def add_color_layer(self, meshdata, vertex, source, faces):
         if vertex.attribute == gx.GX_VA_CLR0:
             color_num = '0'
@@ -393,6 +397,7 @@ class PObject(Node):
             color_num = '1'
         color_layer = meshdata.vertex_colors.new(name = 'color_' + color_num)
         alpha_layer = meshdata.vertex_colors.new(name = 'alpha_' + color_num)
+        lin = self._linearize_component
         for polygon in meshdata.polygons:
             face = faces[polygon.index]
             range = polygon.loop_indices
@@ -400,9 +405,15 @@ class PObject(Node):
 
             for i in range:
                 color = source[face[i - minr]]
-                color.normalize()
-                color_layer.data[i].color = [color.red, color.green, color.blue, color.alpha]
-                alpha_layer.data[i].color = [color.alpha, color.alpha, color.alpha, 1.0]
+                # Normalize and linearize without mutating the source object
+                # (same vertex may be referenced by multiple polygons).
+                # Matches legacy interpret_color() + tolin().
+                r = color.red / 255
+                g = color.green / 255
+                b = color.blue / 255
+                a = color.alpha / 255
+                color_layer.data[i].color = [lin(r), lin(g), lin(b), a]
+                alpha_layer.data[i].color = [a, a, a, 1.0]
 
     def make_texture_layer(self, meshdata, vertex, source, faces):
         uvtex = meshdata.uv_layers.new()

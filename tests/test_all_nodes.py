@@ -600,7 +600,7 @@ class TestLightAnimationNode:
 class TestMaterialNode:
 
     def test_material_solo(self):
-        """Material with specific colors; loadFromBinary calls normalize() on each."""
+        """Material with specific colors; loadFromBinary calls transform() (normalize + linearize) on each."""
         data = build_material(
             ambient=(50, 50, 50, 255),
             diffuse=(200, 100, 50, 255),
@@ -609,10 +609,14 @@ class TestMaterialNode:
             shininess=50.0,
         )
         node = _parse(Material, 0, data)
-        # After normalize(), values are in [0, 1]
-        assert abs(node.diffuse.red - 200 / 255) < 1e-3
-        assert abs(node.diffuse.green - 100 / 255) < 1e-3
-        assert abs(node.diffuse.blue - 50 / 255) < 1e-3
+        # After transform(), RGB values are normalized then sRGB→linear converted.
+        # Alpha is normalized but not linearized.
+        def srgb_to_linear(c):
+            v = c / 255
+            return v / 12.92 if v <= 0.0404482362771082 else ((v + 0.055) / 1.055) ** 2.4
+        assert abs(node.diffuse.red - srgb_to_linear(200)) < 1e-5
+        assert abs(node.diffuse.green - srgb_to_linear(100)) < 1e-5
+        assert abs(node.diffuse.blue - srgb_to_linear(50)) < 1e-5
         assert abs(node.alpha - 1.0) < 1e-5
         assert abs(node.shininess - 50.0) < 1e-5
 
