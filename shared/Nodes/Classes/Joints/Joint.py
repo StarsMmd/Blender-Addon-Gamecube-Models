@@ -87,7 +87,7 @@ class Joint(Node):
                     tail_length /= hsd_parent.scale[1]
                 bone.tail = Vector((0.0, tail_length, 0.0))
             else:
-                bone.tail = Vector((0.0, 1e-3, 0.0))
+                bone.tail = Vector((0.0, 1.0, 0.0))
         else:
             bone.tail = Vector((0.0, 1.0, 0.0))
 

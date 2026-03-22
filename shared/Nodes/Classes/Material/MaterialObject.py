@@ -255,8 +255,6 @@ class MaterialObject(Node):
                 # or textures with no lightmap type set at all (treat as diffuse by default)
                 lightmap_type = texture.flags & TEX_LIGHTMAP_MASK
                 if lightmap_type == 0 or lightmap_type & (TEX_LIGHTMAP_DIFFUSE | TEX_LIGHTMAP_AMBIENT | TEX_LIGHTMAP_SPECULAR | TEX_LIGHTMAP_EXT):
-                    if texture.flags & TEX_LIGHTMAP_SPECULAR and not self.render_mode & RENDER_SPECULAR:
-                        continue
 
                     colormap = texture.flags & TEX_COLORMAP_MASK
                     if not (colormap == TEX_COLORMAP_NONE or colormap == TEX_COLORMAP_PASS):

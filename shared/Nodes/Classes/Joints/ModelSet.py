@@ -212,7 +212,7 @@ class ModelSet(Node):
 
             position = Vector(effector.parent.matrix_local.translation)
             direction = Vector(effector.parent.matrix_local.col[0][0:3]).normalized()
-            direction *= bone_length * effector.parent.matrix_local.to_scale()[0]
+            direction *= bone_length * hsd_joint.temp_parent.temp_matrix.to_scale()[0]
             position += direction
 
             offset = position - effector_pos

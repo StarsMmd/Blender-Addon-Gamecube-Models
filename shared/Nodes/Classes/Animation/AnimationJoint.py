@@ -116,6 +116,7 @@ def _apply_animation_to_bone(joint, aobj, action, armature, max_frame):
         new_transform_list[i + 7] = curve
 
     invmtx = joint.temp_matrix_local.inverted()
+    _, _, invmtxscale = invmtx.decompose()
     end = min(int(aobj.end_frame), max_frame)
     for frame in range(end):
         mtx = joint.compileSRTMatrix(
@@ -135,9 +136,9 @@ def _apply_animation_to_bone(joint, aobj, action, armature, max_frame):
         new_transform_list[0].keyframe_points.insert(frame, rot[0]).interpolation = 'BEZIER'
         new_transform_list[1].keyframe_points.insert(frame, rot[1]).interpolation = 'BEZIER'
         new_transform_list[2].keyframe_points.insert(frame, rot[2]).interpolation = 'BEZIER'
-        new_transform_list[4].keyframe_points.insert(frame, trans[0]).interpolation = 'BEZIER'
-        new_transform_list[5].keyframe_points.insert(frame, trans[1]).interpolation = 'BEZIER'
-        new_transform_list[6].keyframe_points.insert(frame, trans[2]).interpolation = 'BEZIER'
+        new_transform_list[4].keyframe_points.insert(frame, trans[0] / invmtxscale[0]).interpolation = 'BEZIER'
+        new_transform_list[5].keyframe_points.insert(frame, trans[1] / invmtxscale[1]).interpolation = 'BEZIER'
+        new_transform_list[6].keyframe_points.insert(frame, trans[2] / invmtxscale[2]).interpolation = 'BEZIER'
         new_transform_list[7].keyframe_points.insert(frame, scale[0]).interpolation = 'BEZIER'
         new_transform_list[8].keyframe_points.insert(frame, scale[1]).interpolation = 'BEZIER'
         new_transform_list[9].keyframe_points.insert(frame, scale[2]).interpolation = 'BEZIER'
