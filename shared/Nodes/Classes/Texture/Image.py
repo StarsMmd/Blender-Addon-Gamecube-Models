@@ -120,8 +120,8 @@ class Image(Node):
                              name, opaque_count, transparent_count, semi_count, total_pixels)
 
         # Save decoded image to temp directory for visual debugging (before pack)
-        import os, tempfile
-        debug_dir = os.path.join(tempfile.gettempdir(), 'blender_dat_import', 'textures')
+        import os
+        debug_dir = os.path.join(builder.logger.log_dir, 'textures')
         os.makedirs(debug_dir, exist_ok=True)
         png_path = os.path.join(debug_dir, name + '.png')
         image.filepath_raw = png_path

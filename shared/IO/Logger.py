@@ -13,6 +13,7 @@ class NullLogger:
     warning_count = 0
     error_count = 0
     log_path = None
+    log_dir = os.path.join(tempfile.gettempdir(), "blender_dat_import", "unknown")
 
     def error(self, msg, *args): pass
     def warning(self, msg, *args): pass
@@ -42,17 +43,18 @@ class Logger:
         logger.error("Failed to decode image format %d", fmt)
     """
 
-    def __init__(self, verbose=False):
+    def __init__(self, verbose=False, model_name="unknown"):
         self.verbose = verbose
+        self.model_name = model_name
         # Counts for summary
         self.warning_count = 0
         self.error_count = 0
 
-        # Open log file in temp directory
-        log_dir = os.path.join(tempfile.gettempdir(), "blender_dat_import")
-        os.makedirs(log_dir, exist_ok=True)
+        # Open log file in temp directory, organized by model name
+        self.log_dir = os.path.join(tempfile.gettempdir(), "blender_dat_import", model_name)
+        os.makedirs(self.log_dir, exist_ok=True)
         timestamp = time.strftime("%Y%m%d_%H%M%S")
-        self.log_path = os.path.join(log_dir, "import_%s.log" % timestamp)
+        self.log_path = os.path.join(self.log_dir, "import_%s.log" % timestamp)
         self._log_file = open(self.log_path, "w")
 
     def close(self):

@@ -311,9 +311,10 @@ class MaterialObject(Node):
                 vtx_color = nodes.new('ShaderNodeAttribute')
                 vtx_color.attribute_name = 'color_0'
                 mult = nodes.new('ShaderNodeMixRGB')
+                mult.inputs[0].default_value = 1
                 mult.blend_type = 'MULTIPLY'
-                links.new(vtx_color.outputs[0], mult.inputs[0])
-                links.new(last_color, mult.inputs[1])
+                links.new(vtx_color.outputs[0], mult.inputs[1])
+                links.new(last_color, mult.inputs[2])
                 last_color = mult.outputs[0]
                 self.logger.debug('  post-tex: multiply by vtx color_0')
 
@@ -321,9 +322,10 @@ class MaterialObject(Node):
                 vtx_alpha = nodes.new('ShaderNodeAttribute')
                 vtx_alpha.attribute_name = 'alpha_0'
                 mult = nodes.new('ShaderNodeMixRGB')
+                mult.inputs[0].default_value = 1
                 mult.blend_type = 'MULTIPLY'
-                links.new(vtx_alpha.outputs[0], mult.inputs[0])
-                links.new(last_alpha, mult.inputs[1])
+                links.new(vtx_alpha.outputs[0], mult.inputs[1])
+                links.new(last_alpha, mult.inputs[2])
                 last_alpha = mult.outputs[0]
                 self.logger.debug('  post-tex: multiply by vtx alpha_0')
         else:
@@ -509,11 +511,30 @@ class MaterialObject(Node):
         shader.inputs['Roughness'].default_value = .5
 
         # Diffuse color
-        links.new(last_color, shader.inputs['Base Color'])
+        if self.render_mode & RENDER_DIFFUSE:
+            links.new(last_color, shader.inputs['Base Color'])
+            # Alpha
+            if transparent_shader:
+                links.new(last_alpha, shader.inputs['Alpha'])
+        else:
+            # No diffuse lighting — use emission shader for flat/unlit appearance
+            shader.inputs['Base Color'].default_value = [0, 0, 0, 1]
+            emission = nodes.new('ShaderNodeEmission')
+            links.new(last_color, emission.inputs['Color'])
+            diffuse = emission
+            # Alpha
+            if transparent_shader:
+                mixshader = nodes.new('ShaderNodeMixShader')
+                transparent_sh = nodes.new('ShaderNodeBsdfTransparent')
+                links.new(last_alpha, mixshader.inputs[0])
+                links.new(transparent_sh.outputs[0], mixshader.inputs[1])
+                links.new(diffuse.outputs[0], mixshader.inputs[2])
+                diffuse = mixshader
 
-        # Alpha
-        if transparent_shader:
-            links.new(last_alpha, shader.inputs['Alpha'])
+            addshader = nodes.new('ShaderNodeAddShader')
+            links.new(diffuse.outputs[0], addshader.inputs[0])
+            links.new(shader.outputs[0], addshader.inputs[1])
+            shader = addshader
 
         # Normal
         if bump_map:
