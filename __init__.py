@@ -57,6 +57,7 @@ if _bpy_available:
         ik_hack: bpy.props.BoolProperty(default = True, name = 'IK Hack', description = 'Shrinks Bones down to 1e-3 to make IK work properly.')
         max_frame: bpy.props.IntProperty(default = 1000, name = 'Max Anim Frame', description = 'Cutoff frame after which animations aren\'t sampled. Use 0 For no limit.')
         verbose: bpy.props.BoolProperty(default = True, name = 'Verbose', description = 'Print detailed logging output to the console for debugging.')
+        setup_workspace: bpy.props.BoolProperty(default = False, name = 'Setup Workspace', description = 'Split the viewport and open a Dope Sheet / Action Editor. Sets playback end frame to 60.')
 
         filename_ext = ".dat"
         filter_glob: StringProperty(default="*.fdat;*.dat;*.rdat;*.pkx", options={'HIDDEN'})
@@ -71,6 +72,9 @@ if _bpy_available:
                 status = Importer.parseDAT(context, path, self.section, self.ik_hack, self.max_frame, self.verbose)
                 if not 'FINISHED' in status:
                     return status
+
+            if self.setup_workspace:
+                _setup_anim_workspace(context)
 
             return {'FINISHED'}
 
@@ -90,6 +94,37 @@ if _bpy_available:
 
             return {'FINISHED'}
 
+
+    def _setup_anim_workspace(context):
+        """Split the 3D viewport vertically and open a Dope Sheet / Action Editor. Set playback end to 60."""
+        context.scene.frame_end = 60
+
+        # Find the 3D Viewport area to split
+        screen = context.screen
+        view3d_area = None
+        for area in screen.areas:
+            if area.type == 'VIEW_3D':
+                view3d_area = area
+                break
+
+        if not view3d_area:
+            return
+
+        # Split by overriding context for the area
+        with context.temp_override(area=view3d_area):
+            bpy.ops.screen.area_split(direction='VERTICAL', factor=0.6)
+
+        # The new area is the last one added to screen.areas
+        # Find the new VIEW_3D area (the split-off one) and change it to DOPESHEET
+        # After a vertical split, the new area appears to the right
+        for area in screen.areas:
+            if area.type == 'VIEW_3D' and area != view3d_area:
+                area.type = 'DOPESHEET_EDITOR'
+                # Switch to Action Editor mode
+                for space in area.spaces:
+                    if space.type == 'DOPESHEET_EDITOR':
+                        space.mode = 'ACTION'
+                break
 
     def menu_func_import(self, context):
         self.layout.operator(ImportHSD.bl_idname, text="Gamecube DAT Model - Refactor (.dat)")
