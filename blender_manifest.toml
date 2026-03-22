@@ -2,12 +2,16 @@ schema_version = "1.0.0"
 
 id = "gamecube_dat_model"
 version = "3.1.0"
-name = "Gamecube Dat Model"
-tagline = "Import-Export Gamecube .dat models"
+name = "Gamecube Dat Model (Refactor)"
+tagline = "Import-Export Gamecube .dat models (refactored codebase)"
 maintainer = "Made, StarsMmd, MikeyX"
 type = "add-on"
 
-[blender_version_min]
-major = 4
-minor = 5
-patch = 0
+license = [
+  "SPDX:GPL-3.0-or-later",
+]
+
+blender_version_min = "4.5.0"
+
+[permissions]
+files = "Import/export scene data from/to disk"

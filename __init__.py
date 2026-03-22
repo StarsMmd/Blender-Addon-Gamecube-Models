@@ -3,7 +3,7 @@
 # metadata about the addon which blender requires
 # https://wiki.blender.org/wiki/Process/Addons/Guidelines/metainfo
 bl_info = {
-    "name": "Gamecube Dat Model",
+    "name": "Gamecube Dat Model (Refactor)",
     "author": "Made, StarsMmd, MikeyX",
     "blender": (4, 5, 0),
     "location": "File > Import-Export",
@@ -76,8 +76,8 @@ if _bpy_available:
 
 
     class ExportHSD(bpy.types.Operator, ExportHelper):
-        bl_idname = "export_scene.hsd"
-        bl_label = "Export HSD"
+        bl_idname = "export_model.dat"
+        bl_label = "Export DAT"
 
         @classmethod
         def poll(cls, context):
@@ -92,11 +92,11 @@ if _bpy_available:
 
 
     def menu_func_import(self, context):
-        self.layout.operator(ImportHSD.bl_idname, text="Gamecube Dat Model (.dat)")
+        self.layout.operator(ImportHSD.bl_idname, text="Gamecube DAT Model - Refactor (.dat)")
 
 
     def menu_func_export(self, context):
-        self.layout.operator(ExportHSD.bl_idname, text="Gamecube Dat Model (.dat)")
+        self.layout.operator(ExportHSD.bl_idname, text="Gamecube DAT Model - Refactor (.dat)")
 
 
     classes = (
