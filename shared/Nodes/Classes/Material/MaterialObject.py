@@ -176,7 +176,7 @@ class MaterialObject(Node):
             mapping.inputs[3].default_value = texture.scale
 
             # Blender UV origin is bottom-left; GX is top-left — flip V
-            mapping.inputs[1].default_value[1] = 1 - (texture.scale[1] * (texture.translation[1] + 1))
+            mapping.inputs[1].default_value[1] = 1 - texture.scale[1] - texture.translation[1]
 
             #TODO: Is this correct?
             if (texture.flags & TEX_COORD_MASK) == TEX_COORD_REFLECTION:
