@@ -36,8 +36,14 @@ class ModelSet(Node):
             return
 
         filepath = builder.options.get("filepath", "")
+        base_name = os.path.basename(filepath)
+        num_anims = len(self.animated_joints)
+        pad = len(str(num_anims - 1)) if num_anims > 1 else 1
+        actions = []
+
         for i, animated_joint in enumerate(self.animated_joints):
-            action_name = os.path.basename(filepath) + '_Anim_' + str(i).zfill(2)
+            # Use a placeholder name; renamed after build once we know the frame range
+            action_name = '%s_Anim_%s' % (base_name, str(i).zfill(pad))
             action = bpy.data.actions.new(action_name)
             action.use_fake_user = True
 
@@ -53,6 +59,13 @@ class ModelSet(Node):
 
             animated_joint.build(self.root_joint, action, armature, builder)
 
+            # Rename to "Pose" if the action has at most one frame of animation
+            frame_start, frame_end = action.frame_range
+            if frame_end - frame_start <= 1:
+                action.name = '%s_Pose_%s' % (base_name, str(i).zfill(pad))
+
+            actions.append(action)
+
             bpy.ops.object.mode_set(mode='OBJECT')
 
         # Reset pose to rest position and select the first animation
@@ -65,9 +78,9 @@ class ModelSet(Node):
             bone.scale = (1, 1, 1)
         bpy.ops.object.mode_set(mode='OBJECT')
 
-        first_action_name = os.path.basename(filepath) + '_Anim_00'
-        if first_action_name in bpy.data.actions:
-            armature.animation_data.action = bpy.data.actions[first_action_name]
+        first_anim = next((a for a in actions if '_Anim_' in a.name), None)
+        if first_anim or actions:
+            armature.animation_data.action = first_anim or actions[0]
         bpy.context.scene.frame_set(0)
 
     def _createArmature(self, builder):
