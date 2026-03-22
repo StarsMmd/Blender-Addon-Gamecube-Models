@@ -22,6 +22,7 @@ class EnvelopeList(Node):
             envelope = parser.read("Envelope", current_offset)
 
         self.envelopes = envelopes
+        parser.logger.debug("EnvelopeList 0x%X: %d envelopes", self.address, len(envelopes))
 
 
 # Envelope

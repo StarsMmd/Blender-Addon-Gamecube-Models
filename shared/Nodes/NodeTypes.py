@@ -66,7 +66,7 @@ def get_alignment_at_offset(field_type, offset):
 		for field in fields:
 			field_type = markUpFieldType(field[1])
 			field_alignment = get_alignment_at_offset(field_type, offset)
-			if not longest_field or longest_field < field_alignment:
+			if longest_field is None or longest_field < field_alignment:
 				longest_field = field_alignment
 				
 		return longest_field

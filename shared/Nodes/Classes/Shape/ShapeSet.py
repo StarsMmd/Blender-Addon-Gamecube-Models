@@ -19,6 +19,9 @@ class ShapeSet(Node):
     def loadFromBinary(self, parser):
         super().loadFromBinary(parser)
 
+        parser.logger.debug("ShapeSet 0x%X: shape_count=%d, vertex_tri_count=%d, normal_tri_count=%d",
+                            self.address, self.shape_count, self.vertex_tri_count, self.normal_tri_count)
+
         vertex_format = self.vertex.getDirectElementType()
         vertex_format_size = parser.getTypeLength(vertex_format)
         vertex_index_format = self.vertex.getFormat()

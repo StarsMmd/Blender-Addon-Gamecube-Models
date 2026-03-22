@@ -19,6 +19,8 @@ class Frame(Node):
         super().loadFromBinary(parser)
         if self.ad and self.data_length:
             self.raw_ad = parser.read_chunk(self.data_length, self.ad, parser._startOffset(True))
+            parser.logger.debug("Frame 0x%X: type=%d, data_length=%d, start_frame=%.1f, frac_value=0x%02X, frac_slope=0x%02X",
+                                self.address, self.type, self.data_length, self.start_frame, self.frac_value, self.frac_slope)
         else:
             self.raw_ad = b''
 
@@ -113,7 +115,8 @@ def read_fobjdesc(fobj, curve, bias, scale):
 
 
 def _read_node_values(opcode, value_type, frac_value, slope_type, frac_slope, ad, cur_pos):
-    """Decode one value+slope from the compressed byte stream (big-endian GameCube format)."""
+    """Decode one value+slope from the compressed animation byte stream.
+    Uses native byte order to match the reference implementation."""
     val   = 0
     slope = 0
 
@@ -122,36 +125,36 @@ def _read_node_values(opcode, value_type, frac_value, slope_type, frac_slope, ad
 
     if opcode != HSD_A_OP_SLP:
         if value_type == HSD_A_FRAC_FLOAT:
-            val = struct.unpack('>f', ad[cur_pos:cur_pos + 4])[0]
+            val = struct.unpack('f', ad[cur_pos:cur_pos + 4])[0]
             cur_pos += 4
         elif value_type == HSD_A_FRAC_S16:
-            val = struct.unpack('>h', ad[cur_pos:cur_pos + 2])[0] / (1 << frac_value)
+            val = struct.unpack('h', ad[cur_pos:cur_pos + 2])[0] / (1 << frac_value)
             cur_pos += 2
         elif value_type == HSD_A_FRAC_U16:
-            val = struct.unpack('>H', ad[cur_pos:cur_pos + 2])[0] / (1 << frac_value)
+            val = struct.unpack('H', ad[cur_pos:cur_pos + 2])[0] / (1 << frac_value)
             cur_pos += 2
         elif value_type == HSD_A_FRAC_S8:
-            val = struct.unpack('>b', ad[cur_pos:cur_pos + 1])[0] / (1 << frac_value)
+            val = struct.unpack('b', ad[cur_pos:cur_pos + 1])[0] / (1 << frac_value)
             cur_pos += 1
         elif value_type == HSD_A_FRAC_U8:
-            val = struct.unpack('>B', ad[cur_pos:cur_pos + 1])[0] / (1 << frac_value)
+            val = struct.unpack('B', ad[cur_pos:cur_pos + 1])[0] / (1 << frac_value)
             cur_pos += 1
 
     if opcode in (HSD_A_OP_SPL, HSD_A_OP_SLP):
         if slope_type == HSD_A_FRAC_FLOAT:
-            slope = struct.unpack('>f', ad[cur_pos:cur_pos + 4])[0]
+            slope = struct.unpack('f', ad[cur_pos:cur_pos + 4])[0]
             cur_pos += 4
         elif slope_type == HSD_A_FRAC_S16:
-            slope = struct.unpack('>h', ad[cur_pos:cur_pos + 2])[0] / (1 << frac_slope)
+            slope = struct.unpack('h', ad[cur_pos:cur_pos + 2])[0] / (1 << frac_slope)
             cur_pos += 2
         elif slope_type == HSD_A_FRAC_U16:
-            slope = struct.unpack('>H', ad[cur_pos:cur_pos + 2])[0] / (1 << frac_slope)
+            slope = struct.unpack('H', ad[cur_pos:cur_pos + 2])[0] / (1 << frac_slope)
             cur_pos += 2
         elif slope_type == HSD_A_FRAC_S8:
-            slope = struct.unpack('>b', ad[cur_pos:cur_pos + 1])[0] / (1 << frac_slope)
+            slope = struct.unpack('b', ad[cur_pos:cur_pos + 1])[0] / (1 << frac_slope)
             cur_pos += 1
         elif slope_type == HSD_A_FRAC_U8:
-            slope = struct.unpack('>B', ad[cur_pos:cur_pos + 1])[0] / (1 << frac_slope)
+            slope = struct.unpack('B', ad[cur_pos:cur_pos + 1])[0] / (1 << frac_slope)
             cur_pos += 1
 
     return val, slope, cur_pos

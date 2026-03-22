@@ -9,18 +9,6 @@ from ...Node import Node
 
 from ....Constants import *
 from ....Errors import *
-from ....BlenderVersion import BlenderVersion
-
-
-def validate_mesh(vertices, faces):
-    """Remove degenerate faces (faces with duplicate vertex indices).
-    These commonly occur from triangle strips creating invisible faces
-    when changing winding orientation."""
-    valid_faces = []
-    for face in faces:
-        if len(face) == len(set(face)):
-            valid_faces.append(face)
-    return valid_faces
 
 
 # PObject
@@ -41,13 +29,25 @@ class PObject(Node):
     def loadFromBinary(self, parser):
         super().loadFromBinary(parser)
 
+        # Log key fields for debugging UV/vertex issues
+        vtx_descs = []
+        for v in self.vertex_list.vertices:
+            vtx_descs.append('attr=%d type=%d bp=0x%X stride=%d frac=%d' %
+                             (v.attribute, v.attribute_type, v.base_pointer, v.stride, v.component_frac))
+        parser.logger.debug("PObject 0x%X: dl_addr=0x%X dl_chunks=%d vtxlist=0x%X descs=[%s]",
+                            self.address, self.display_list_address, self.display_list_chunk_count,
+                            self.vertex_list.address, ', '.join(vtx_descs))
+
         if self.property > 0:
             property_type = self.flags & POBJ_TYPE_MASK
             if property_type == POBJ_SKIN:
+                parser.logger.debug("PObject 0x%X: property -> Joint (SKIN) at 0x%X", self.address, self.property)
                 self.property = parser.read('Joint', self.property)
             elif property_type == POBJ_SHAPEANIM:
+                parser.logger.debug("PObject 0x%X: property -> ShapeSet (SHAPEANIM) at 0x%X", self.address, self.property)
                 self.property = parser.read('ShapeSet', self.property)
             else:
+                parser.logger.debug("PObject 0x%X: property -> EnvelopeList[] (ENVELOPE) at 0x%X", self.address, self.property)
                 self.property = parser.read('(*EnvelopeList)[]', self.property)
         else:
             self.property = None
@@ -84,7 +84,7 @@ class PObject(Node):
         elif isinstance(self.property, ShapeSet):
             self.flags = POBJ_SHAPEANIM
             self.property = self.property.address
-
+            
         elif isinstance(self.property, list):
             # Envelope list — write array of pointers before the node data
             # The pointer array was pre-allocated in allocationOffset
@@ -117,6 +117,24 @@ class PObject(Node):
 
         vertex_list = self.vertex_list.vertices
 
+        # Log vertex descriptors for this PObject
+        attr_names = {GX_VA_PNMTXIDX: 'PNMTXIDX', GX_VA_POS: 'POS', GX_VA_NRM: 'NRM',
+                      GX_VA_NBT: 'NBT', GX_VA_CLR0: 'CLR0', GX_VA_CLR1: 'CLR1'}
+        clr_type_names = {gx.GX_RGBA8: 'RGBA8', gx.GX_RGBA6: 'RGBA6', gx.GX_RGBA4: 'RGBA4',
+                          gx.GX_RGBX8: 'RGBX8', gx.GX_RGB8: 'RGB8', gx.GX_RGB565: 'RGB565'}
+        descs = []
+        for v in vertex_list:
+            if v.attribute in attr_names:
+                desc = attr_names[v.attribute]
+                if v.attribute in (GX_VA_CLR0, GX_VA_CLR1):
+                    desc += '(%s)' % clr_type_names.get(v.component_type, 'type_%d' % v.component_type)
+                descs.append(desc)
+            elif v.isTexture():
+                descs.append('TEX%d' % (v.attribute - gx.GX_VA_TEX0))
+            else:
+                descs.append('attr_%d' % v.attribute)
+        builder.logger.debug('  PObj 0x%X: vertex descriptors = [%s]', self.address, ', '.join(descs))
+
         position_vertex_index = None #index of the vtxdesc that holds vertex position data
         for i in range(len(vertex_list)):
             vertex = vertex_list[i]
@@ -129,9 +147,6 @@ class PObject(Node):
         #TODO: move the loop here to avoid redundancy
         vertices = self.sources[position_vertex_index]
         faces = self.face_lists[position_vertex_index]
-
-        # Remove degenerate faces before creating mesh
-        faces = validate_mesh(vertices, faces)
 
         # Create mesh and object
         mesh = bpy.data.meshes.new('Mesh_' + name)
@@ -178,12 +193,47 @@ class PObject(Node):
                 uvlayer = self.make_texture_layer(mesh, vertex, self.sources[index], self.face_lists[index])
             elif vertex.attribute == GX_VA_NRM or vertex.attribute == GX_VA_NBT:
                 self.assign_normals_to_mesh(mesh, vertex, self.sources[index], self.face_lists[index])
-                # use_auto_smooth removed in Blender 4.1
-                if bpy.app.version < BlenderVersion(4, 1, 0):
+                if bpy.app.version < (4, 1, 0):
                     mesh.use_auto_smooth = True
             elif (vertex.attribute == GX_VA_CLR0 or
                   vertex.attribute == GX_VA_CLR1):
                 self.add_color_layer(mesh, vertex, self.sources[index], self.face_lists[index])
+
+        # Log UV and color layers created on this mesh
+        uv_names = [uv.name for uv in mesh.uv_layers]
+        clr_names = [vc.name for vc in mesh.vertex_colors]
+        builder.logger.debug('  PObj 0x%X mesh "%s": uv_layers=%s, vertex_colors=%s',
+                             self.address, mesh.name, uv_names, clr_names)
+
+        # Log UV coordinate ranges for each UV layer
+        for uv_layer in mesh.uv_layers:
+            us = [d.uv[0] for d in uv_layer.data]
+            vs = [d.uv[1] for d in uv_layer.data]
+            if us:
+                builder.logger.debug('  PObj 0x%X UV "%s" range: U=[%.3f, %.3f] V=[%.3f, %.3f]',
+                                     self.address, uv_layer.name, min(us), max(us), min(vs), max(vs))
+
+        # Log vertex alpha statistics for alpha_0 layer (if it has CLR0 data)
+        if 'alpha_0' in mesh.vertex_colors:
+            alphas = [d.color[0] for d in mesh.vertex_colors['alpha_0'].data]
+            if alphas:
+                unique_a = set(round(a, 4) for a in alphas)
+                builder.logger.debug('  PObj 0x%X alpha_0 stats: min=%.4f max=%.4f unique=%d sample=%s',
+                                     self.address, min(alphas), max(alphas), len(unique_a),
+                                     sorted(unique_a)[:10])
+
+        # On the GameCube, when CLR0 isn't in the vertex format the GX hardware
+        # uses a default color register (white / full alpha).  Create default
+        # color_0 and alpha_0 vertex-color layers so that ShaderNodeAttribute
+        # nodes referencing these names return 1.0 instead of 0.0.
+        if 'color_0' not in mesh.vertex_colors:
+            color_layer = mesh.vertex_colors.new(name='color_0')
+            for i in range(len(color_layer.data)):
+                color_layer.data[i].color = [1.0, 1.0, 1.0, 1.0]
+        if 'alpha_0' not in mesh.vertex_colors:
+            alpha_layer = mesh.vertex_colors.new(name='alpha_0')
+            for i in range(len(alpha_layer.data)):
+                alpha_layer.data[i].color = [1.0, 1.0, 1.0, 1.0]
 
         # Update mesh with new data
         # Remove degenerate faces (These mostly occur due to triangle strips creating invisible faces when changing orientation)
@@ -207,7 +257,7 @@ class PObject(Node):
         # On the console the displaylist would be copied in a chunk, limit reading to that area
         display_list_size = self.display_list_chunk_count * self.display_list_chunk_size
         offset_in_vertex_list = 0
-
+        
         for vertex_index, vertex in enumerate(vertices):
             vertex_format = vertex.getFormat()
             faces = []
@@ -232,7 +282,7 @@ class PObject(Node):
                             norm_dict[index] = norm_index
                             norm_index += 1
                         indices.append(norm_dict[index])
-
+                    
                     offset += stride
 
                 if opcode == gx.GX_DRAW_QUADS:
@@ -272,17 +322,13 @@ class PObject(Node):
                         #latest_index = indices[idx]
                         faces.append(face)
                 elif opcode == gx.GX_DRAW_LINES:
-                    if parser.options.get("verbose"):
-                        print("GX_DRAW_LINES not supported, skipped")
+                    parser.logger.warning("GX_DRAW_LINES not supported, skipped")
                 elif opcode == gx.GX_DRAW_LINE_STRIP:
-                    if parser.options.get("verbose"):
-                        print("GX_DRAW_LINE_STRIP not supported, skipped")
+                    parser.logger.warning("GX_DRAW_LINE_STRIP not supported, skipped")
                 elif opcode == gx.GX_DRAW_POINTS:
-                    if parser.options.get("verbose"):
-                        print("GX_DRAW_POINTS not supported, skipped")
+                    parser.logger.warning("GX_DRAW_POINTS not supported, skipped")
                 else:
-                    if parser.options.get("verbose"):
-                        print("Unsupported geometry primitive, skipped")
+                    parser.logger.warning("Unsupported geometry primitive opcode 0x%X, skipped", opcode)
 
                 opcode = parser.read('uchar', self.display_list_address, offset)  & gx.GX_OPCODE_MASK
                 offset += parser.getTypeLength('uchar')
@@ -389,13 +435,23 @@ class PObject(Node):
 
             if vertex.attribute == GX_VA_NBT:
                 for i in range:
-                    normal = source[face[i - minr]][0:3]
-                    normals[i] = Vector(normal).normalized()[:]
+                    n = source[face[i - minr]][0:3]
+                    v = Vector(n)
+                    if v.length > 0:
+                        v.normalize()
+                    normals[i] = v[:]
             else:
                 for i in range:
-                    normal = source[face[i - minr]]
-                    normals[i] = Vector(normal).normalized()[:]
+                    n = source[face[i - minr]]
+                    v = Vector(n)
+                    if v.length > 0:
+                        v.normalize()
+                    normals[i] = v[:]
         self.normals = normals
+
+    @staticmethod
+    def _linearize_component(c):
+        return c / 12.92 if c <= 0.0404482362771082 else pow((c + 0.055) / 1.055, 2.4)
 
     def add_color_layer(self, meshdata, vertex, source, faces):
         if vertex.attribute == gx.GX_VA_CLR0:
@@ -411,9 +467,12 @@ class PObject(Node):
 
             for i in range:
                 color = source[face[i - minr]]
-                color.linearize()
-                color_layer.data[i].color[0:3] = [color.red, color.green, color.blue, color.alpha]
-                alpha_layer.data[i].color[0:3] = [color.alpha] * 3 # question should this be * 4?
+                r = color.red / 255
+                g = color.green / 255
+                b = color.blue / 255
+                a = color.alpha / 255
+                color_layer.data[i].color = [r, g, b, a]
+                alpha_layer.data[i].color = [a, a, a, 1.0]
 
     def make_texture_layer(self, meshdata, vertex, source, faces):
         uvtex = meshdata.uv_layers.new()

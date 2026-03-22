@@ -4,10 +4,9 @@ import math
 from mathutils import Matrix, Euler, Vector
 
 from ..Mesh import *
+from ..Misc.Spline import Spline
 from ...Node import Node
 from ....Constants import *
-from ....BlenderVersion import BlenderVersion
-
 
 # Model Set
 class ModelSet(Node):
@@ -37,15 +36,16 @@ class ModelSet(Node):
             return
 
         filepath = builder.options.get("filepath", "")
+        base_name = os.path.basename(filepath)
+        num_anims = len(self.animated_joints)
+        pad = len(str(num_anims - 1)) if num_anims > 1 else 1
+        actions = []
+
         for i, animated_joint in enumerate(self.animated_joints):
-            action_name = os.path.basename(filepath) + '_Anim_' + str(i)
+            # Use a placeholder name; renamed after build once we know the frame range
+            action_name = '%s_Anim_%s' % (base_name, str(i).zfill(pad))
             action = bpy.data.actions.new(action_name)
             action.use_fake_user = True
-
-            # Action slots for Blender 4.4+
-            if bpy.app.version >= BlenderVersion(4, 5, 0):
-                action.slots.new('OBJECT', 'Armature')
-                action.slots.active = action.slots[0]
 
             bpy.context.view_layer.objects.active = armature
             bpy.ops.object.mode_set(mode='POSE')
@@ -57,12 +57,31 @@ class ModelSet(Node):
             armature.animation_data_create()
             armature.animation_data.action = action
 
-            if bpy.app.version >= BlenderVersion(4, 4, 0):
-                armature.animation_data.action_slot = action.slots[0]
+            animated_joint.build(self.root_joint, action, armature, builder)
 
-            animated_joint.build(self.root_joint, action, builder, armature)
+            # Rename to "Pose" if the action has at most one frame of animation
+            frame_start, frame_end = action.frame_range
+            if frame_end - frame_start <= 1:
+                action.name = '%s_Pose_%s' % (base_name, str(i).zfill(pad))
+
+            actions.append(action)
 
             bpy.ops.object.mode_set(mode='OBJECT')
+
+        # Reset pose to rest position and select the first animation
+        bpy.context.view_layer.objects.active = armature
+        bpy.ops.object.mode_set(mode='POSE')
+        for bone in armature.pose.bones:
+            bone.location = (0, 0, 0)
+            bone.rotation_euler = (0, 0, 0)
+            bone.rotation_quaternion = (1, 0, 0, 0)
+            bone.scale = (1, 1, 1)
+        bpy.ops.object.mode_set(mode='OBJECT')
+
+        first_anim = next((a for a in actions if '_Anim_' in a.name), None)
+        if first_anim or actions:
+            armature.animation_data.action = first_anim or actions[0]
+        bpy.context.scene.frame_set(0)
 
     def _createArmature(self, builder):
         if self.root_joint == None:
@@ -105,10 +124,10 @@ class ModelSet(Node):
         # Add meshes
         self.addGeometry(builder, armature, bones)
 
-        # Add constraints (IK, copy location/rotation, track-to, limits)
-        self.addConstraints(armature, bones)
+        # Copy meshes for instanced bones (JOBJ_INSTANCE)
+        self.addInstances(builder, armature, bones)
 
-        # self.addInstances(armature, bones, mesh_dict)
+        self.addConstraints(armature, bones)
 
         bpy.context.view_layer.update()
         bpy.ops.object.mode_set(mode = 'OBJECT')
@@ -121,175 +140,102 @@ class ModelSet(Node):
 
     def addGeometry(self, builder, armature, bones):
         for bone in bones:
-            # TODO: Find out what to do with particles ?
             if bone.flags & JOBJ_INSTANCE:
-                # We can't copy objects from other bones here since they may not be parented yet
-                pass
+                pass  # Handled by addInstances() after all geometry is built
 
             else:
                 if isinstance(bone.property, Mesh):
                     mesh = bone.property
                     mesh.build(builder, armature, bone)
 
+    def addInstances(self, builder, armature, bones):
+        """Copy mesh objects from instanced bones.
+
+        JOBJ_INSTANCE bones reference another bone's geometry. After all normal
+        geometry is built, we copy the referenced meshes and place them at the
+        instance bone's transform. Matches legacy add_instances().
+        """
+        for bone in bones:
+            if bone.flags & JOBJ_INSTANCE and bone.child:
+                child = bone.child
+                mesh = child.property
+                if isinstance(mesh, Mesh):
+                    while mesh:
+                        pobj = mesh.pobject
+                        while pobj:
+                            original = builder.mesh_objects_by_pobj.get(pobj.address)
+                            if original:
+                                copy = original.copy()
+                                copy.parent = armature
+                                copy.matrix_local = bone.temp_matrix
+                                bpy.context.scene.collection.objects.link(copy)
+                            pobj = pobj.next
+                        mesh = mesh.next
+
     def addConstraints(self, armature, bones):
-        from .BoneReference import BoneReference
         from .Joint import Joint
+        from .BoneReference import BoneReference
 
         for hsd_joint in bones:
-            # IK effectors
-            if hsd_joint.flags & JOBJ_TYPE_MASK == JOBJ_EFFECTOR:
-                self._addIKConstraint(armature, hsd_joint)
-
-            # Regular constraints from RObj linked list
-            self._addReferenceConstraints(armature, hsd_joint)
-
-    def _addIKConstraint(self, armature, hsd_joint):
-        from .BoneReference import BoneReference
-        from .Joint import Joint
-
-        if not hsd_joint.temp_parent:
-            return
-
-        parent_type = hsd_joint.temp_parent.flags & JOBJ_TYPE_MASK
-        if parent_type == JOBJ_JOINT2:
-            chain_length = 3
-            pole_data_joint = hsd_joint.temp_parent.temp_parent
-        elif parent_type == JOBJ_JOINT1:
-            chain_length = 2
-            pole_data_joint = hsd_joint.temp_parent
-        else:
-            return
-
-        target_robj = hsd_joint.getReferenceObject(Joint, 1)
-        poletarget_robj = pole_data_joint.getReferenceObject(Joint, 0) if pole_data_joint else None
-        length_robj = hsd_joint.temp_parent.getReferenceObject(BoneReference, 0)
-
-        if not length_robj:
-            return
-
-        bone_length = length_robj.property.length
-        pole_angle = length_robj.property.pole_angle
-
-        # Enforce bone lengths by editing edit-bone positions
-        effector = armature.data.bones[hsd_joint.temp_name]
-        effector_pos = Vector(effector.matrix_local.translation)
-        effector_name = effector.name
-
-        bpy.context.view_layer.objects.active = armature
-        bpy.ops.object.mode_set(mode='EDIT')
-
-        position = Vector(effector.parent.matrix_local.translation)
-        direction = Vector(effector.parent.matrix_local.col[0][0:3]).normalized()
-        direction *= bone_length * effector.parent.matrix_local.to_scale()[0]
-        position += direction
-
-        headpos = Vector(armature.data.edit_bones[effector_name].head[:]) + (position - effector_pos)
-        armature.data.edit_bones[effector_name].head[:] = headpos[:]
-        tailpos = Vector(armature.data.edit_bones[effector_name].tail[:]) + (position - effector_pos)
-        armature.data.edit_bones[effector_name].tail[:] = tailpos[:]
-
-        bpy.ops.object.mode_set(mode='POSE')
-
-        # Add IK constraint
-        c = armature.pose.bones[effector_name].constraints.new(type='IK')
-        c.chain_count = chain_length
-        if target_robj:
-            c.target = armature
-            c.subtarget = target_robj.property.temp_name
-            if poletarget_robj:
-                c.pole_target = armature
-                c.pole_subtarget = poletarget_robj.property.temp_name
-                c.pole_angle = pole_angle
-
-    def _addReferenceConstraints(self, armature, hsd_joint):
-        from .Joint import Joint
-
-        reference = hsd_joint.reference
-        while reference:
-            if not (reference.flags & ROBJ_ACTIVE_BIT):
-                reference = reference.next
+            joint_type = hsd_joint.flags & JOBJ_TYPE_MASK
+            if joint_type != JOBJ_EFFECTOR:
+                continue
+            if not hsd_joint.temp_parent:
                 continue
 
-            ref_type = reference.flags & ROBJ_TYPE_MASK
-            sub_type = reference.flags & ROBJ_CNST_MASK
+            parent_type = hsd_joint.temp_parent.flags & JOBJ_TYPE_MASK
+            if parent_type == JOBJ_JOINT2:
+                chain_length = 3
+                pole_data_joint = hsd_joint.temp_parent.temp_parent
+            elif parent_type == JOBJ_JOINT1:
+                chain_length = 2
+                pole_data_joint = hsd_joint.temp_parent
+            else:
+                continue
 
-            if ref_type == REFTYPE_JOBJ and isinstance(reference.property, Joint):
-                target_joint = reference.property
-                bone_name = hsd_joint.temp_name
-                target_name = target_joint.temp_name
+            target_robj = hsd_joint.getReferenceObject(Joint, 1)
+            poletarget_robj = pole_data_joint.getReferenceObject(Joint, 0) if pole_data_joint else None
+            length_robj = hsd_joint.temp_parent.getReferenceObject(BoneReference, 0)
+            if not length_robj:
+                continue
 
-                if sub_type == 1:
-                    # COPY_LOCATION
-                    c = armature.pose.bones[bone_name].constraints.new(type='COPY_LOCATION')
-                    c.target = armature
-                    c.subtarget = target_name
+            bone_length = length_robj.property.length
+            pole_angle = length_robj.property.pole_angle
 
-                elif sub_type == 2:
-                    # TRACK_TO (X-axis)
-                    c = armature.pose.bones[bone_name].constraints.new(type='TRACK_TO')
-                    c.target = armature
-                    c.subtarget = target_name
-                    c.track_axis = 'TRACK_X'
-                    c.up_axis = 'UP_Y'
+            # Reposition the effector bone based on the IK bone length
+            effector = armature.data.bones[hsd_joint.temp_name]
+            effector_pos = Vector(effector.matrix_local.translation)
+            effector_name = effector.name
 
-                elif sub_type == 3:
-                    # TRACK_TO (Y-axis, limited)
-                    c = armature.pose.bones[bone_name].constraints.new(type='TRACK_TO')
-                    c.target = armature
-                    c.subtarget = target_name
-                    c.track_axis = 'TRACK_Y'
-                    c.up_axis = 'UP_Z'
+            bpy.context.view_layer.objects.active = armature
+            bpy.ops.object.mode_set(mode='EDIT')
 
-                elif sub_type == 4:
-                    # COPY_ROTATION
-                    c = armature.pose.bones[bone_name].constraints.new(type='COPY_ROTATION')
-                    c.target = armature
-                    c.subtarget = target_name
-                    if hsd_joint.flags & JOBJ_CLASSICAL_SCALING:
-                        c.target_space = 'LOCAL'
-                        c.owner_space = 'LOCAL'
+            position = Vector(effector.parent.matrix_local.translation)
+            direction = Vector(effector.parent.matrix_local.col[0][0:3]).normalized()
+            direction *= bone_length * hsd_joint.temp_parent.temp_matrix.to_scale()[0]
+            position += direction
 
-            elif ref_type == REFTYPE_LIMIT:
-                bone_name = hsd_joint.temp_name
-                constraint_type = sub_type
+            offset = position - effector_pos
+            edit_bone = armature.data.edit_bones[effector_name]
+            edit_bone.head = Vector(edit_bone.head[:]) + offset
+            edit_bone.tail = Vector(edit_bone.tail[:]) + offset
 
-                if 1 <= constraint_type <= 6:
-                    # Rotation limits
-                    c = armature.pose.bones[bone_name].constraints.new(type='LIMIT_ROTATION')
-                    c.owner_space = 'LOCAL'
-                    c.use_limit_x = constraint_type in (1, 2)
-                    c.use_limit_y = constraint_type in (3, 4)
-                    c.use_limit_z = constraint_type in (5, 6)
+            bpy.ops.object.mode_set(mode='POSE')
 
-                elif 7 <= constraint_type <= 12:
-                    # Position limits
-                    c = armature.pose.bones[bone_name].constraints.new(type='LIMIT_LOCATION')
-                    c.owner_space = 'LOCAL'
-                    c.use_min_x = constraint_type in (7, 8)
-                    c.use_max_x = constraint_type in (7, 8)
-                    c.use_min_y = constraint_type in (9, 10)
-                    c.use_max_y = constraint_type in (9, 10)
-                    c.use_min_z = constraint_type in (11, 12)
-                    c.use_max_z = constraint_type in (11, 12)
+            # Add IK constraint
+            c = armature.pose.bones[effector_name].constraints.new(type='IK')
+            c.chain_count = chain_length
+            if target_robj:
+                c.target = armature
+                c.subtarget = target_robj.property.temp_name
+                if poletarget_robj:
+                    c.pole_target = armature
+                    c.pole_subtarget = poletarget_robj.property.temp_name
+                    c.pole_angle = pole_angle
 
-            reference = reference.next
 
-    # def addInstances(self, armature, bones, mesh_dict):
-    #     # TODO: this is broken, as far as I can tell this should copy hierarchy down from the instanced bone as well
-    #     for bone in bones:
-    #         if bone.flags & hsd.JOBJ_INSTANCE:
-    #             child = bone.child
-    #             dobj = child.u
-    #             while dobj:
-    #                 pobj = dobj.pobj
-    #                 while pobj:
-    #                     mesh = mesh_dict[pobj.id]
-    #                     copy = mesh.copy()
-    #                     copy.parent = armature
-    #                     #copy.parent_bone = bone.temp_name
-    #                     #correct_coordinate_orientation(copy)
-    #                     copy.matrix_local = bone.temp_matrix
-    #                     bpy.context.scene.collection.objects.link(copy)
 
-    #                     pobj = pobj.next
-    #                 dobj = dobj.next
+
+
+
+

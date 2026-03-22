@@ -62,6 +62,8 @@ class Image(Node):
         super().loadFromBinary(parser)
         # Use the address of the image data as the id
         self.id = self.data_address
+        parser.logger.debug("Image 0x%X: %dx%d, format=%d, data_address=0x%X",
+                            self.address, self.width, self.height, self.format, self.data_address)
 
     def loadDataWithPalette(self, parser, palette):
         width = self.width
@@ -85,7 +87,20 @@ class Image(Node):
                 buffer = buffer[CCC * tile_S:]
             buffer = buffer[CCC * blocks_x * tile_S * (tile_T - 1):]
 
-        return out_data
+        # Crop tile-padded buffer to actual image dimensions and flip vertically.
+        # GX textures decode top-to-bottom but Blender's image.pixels expects
+        # bottom-to-top (row 0 = bottom). Flip rows so the UV V-flip (1 - V) in
+        # PObject and the V-translation formula in MaterialObject work correctly.
+        # (The original croppedImage() did this via sorting by (height - y).)
+        decoded_stride = blocks_x * tile_S * CCC
+        actual_stride = width * CCC
+        cropped = array.array('B', [0] * (width * height * CCC))
+        for row in range(height):
+            src_start = row * decoded_stride
+            dst_start = (height - 1 - row) * actual_stride
+            cropped[dst_start:dst_start + actual_stride] = out_data[src_start:src_start + actual_stride]
+
+        return cropped
 
     def build(self, builder, pixel_data):
         if pixel_data is None:
@@ -94,6 +109,29 @@ class Image(Node):
         image = bpy.data.images.new(name, self.width, self.height, alpha=True)
         normalised_pixels = [intensity / 255 for intensity in pixel_data]
         image.pixels = normalised_pixels
+        image.alpha_mode = 'CHANNEL_PACKED'
+
+        # Log alpha channel statistics for this image
+        total_pixels = self.width * self.height
+        alpha_values = pixel_data[3::4]  # every 4th byte starting at index 3
+        opaque_count = sum(1 for a in alpha_values if a == 255)
+        transparent_count = sum(1 for a in alpha_values if a == 0)
+        semi_count = total_pixels - opaque_count - transparent_count
+        builder.logger.debug('  Image %s: alpha stats: %d opaque, %d transparent, %d semi (%d total)',
+                             name, opaque_count, transparent_count, semi_count, total_pixels)
+
+        # Save decoded image to temp directory for visual debugging (before pack)
+        import os
+        debug_dir = os.path.join(builder.logger.log_dir, 'textures')
+        os.makedirs(debug_dir, exist_ok=True)
+        png_path = os.path.join(debug_dir, name + '.png')
+        image.filepath_raw = png_path
+        image.file_format = 'PNG'
+        image.save()
+        builder.logger.debug('  Image saved to: %s', png_path)
+
+        image.pack()
+
         return image
 
 def get_palette_color(palette, fmt):
@@ -181,7 +219,7 @@ def convert_IA8_block(dst, src, blocks_x, _):
             dst[c + 2] = val
             dst[c + 3] = src[s]
             c += CCC
-            s += TILE_S_IA8 >> 3
+            s += BITSPPX_IA8 >> 3
         c += (blocks_x - 1) * TILE_S_IA8 * CCC
 
 def convert_RGB565_block(dst, src, blocks_x, _):
@@ -322,7 +360,7 @@ def convert_C14X2_block(dst, src, blocks_x, tlut):
     s = 0
     for i in range(TILE_T_C14X2):
         for j in range(TILE_S_C14X2):
-            dst[c: c + CCC] = get_palette_color(palette[((src[s + 0] << 8) | src[s + 1]) * 2], tlut.format)
+            dst[c: c + CCC] = get_palette_color(palette[((src[s + 0] << 8) | src[s + 1]) * 2:], tlut.format)
             s += BITSPPX_C14X2 >> 3
             c += CCC
         c += (blocks_x - 1) * TILE_S_C14X2 * CCC

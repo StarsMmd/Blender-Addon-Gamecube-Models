@@ -73,7 +73,7 @@ class Vertex(Node):
         elif self.attribute == GX_VA_NRM:
             # GX_NRM_XYZ:
             return type + '[3]'
-        elif self.isTexture:
+        elif self.isTexture():
             if self.component_count == GX_TEX_S:
                 return type
             else:

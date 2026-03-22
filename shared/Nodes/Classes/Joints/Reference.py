@@ -21,12 +21,18 @@ class Reference(Node):
             self.sub_type = self.flags & ROBJ_CNST_MASK
             ref_type = self.flags & ROBJ_TYPE_MASK
             if ref_type == REFTYPE_JOBJ:
+                parser.logger.debug("Reference 0x%X: -> Joint at 0x%X", self.address, self.property)
                 self.property = parser.read('Joint', self.property)
             elif ref_type == REFTYPE_IKHINT:
+                parser.logger.debug("Reference 0x%X: -> BoneReference at 0x%X (pole_flip=%s)",
+                                    self.address, self.property, bool(self.flags & 0x4))
                 boneReference = parser.read('BoneReference', self.property)
                 if (self.flags & 0x4):
                     boneReference.pole_angle += math.pi
                 self.property = boneReference
+            else:
+                parser.logger.warning("Reference 0x%X: unknown ref_type 0x%X, flags=0x%X",
+                                      self.address, ref_type, self.flags)
 
 
     def writeBinary(self, builder):

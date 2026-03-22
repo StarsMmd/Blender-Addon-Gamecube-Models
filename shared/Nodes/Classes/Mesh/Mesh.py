@@ -20,13 +20,22 @@ class Mesh(Node):
         self.id = self.address
 
     def build(self, builder, armature, bone):
+        builder.logger.debug('=== DObj 0x%X build: bone=%s (0x%X), mobj=0x%X ===',
+                             self.address, getattr(bone, 'temp_name', '?'),
+                             getattr(bone, 'address', 0),
+                             self.mobject.address if self.mobject else 0)
 
-        material = self.mobject.build(builder)
+        material = self.mobject.build(builder, joint_flags=bone.flags)
+
+        builder.logger.debug('  DObj 0x%X: material "%s" (blend=%s)',
+                             self.address, material.name, material.blend_method)
 
         pobj = self.pobject
         while pobj:
             blender_mesh = pobj.build(builder)
             blender_mesh.data.materials.append(material)
+            builder.logger.debug('  DObj 0x%X: assigned material "%s" → mesh "%s" (pobj 0x%X)',
+                                 self.address, material.name, blender_mesh.name, pobj.address)
 
             if bone.isHidden:
                 blender_mesh.hide_render = True
@@ -34,9 +43,12 @@ class Mesh(Node):
 
             blender_mesh.parent = armature
 
+            # Track mesh objects for JOBJ_INSTANCE copying
+            builder.mesh_objects_by_pobj[pobj.address] = blender_mesh
+
             # # Apply deformation and rigid transformations temporarily stored in the hsd_mesh
             # # This is done here because the meshes are created before the object hierarchy exists
-            self.apply_bone_weights(blender_mesh, pobj, bone, armature)
+            self.apply_bone_weights(builder, blender_mesh, pobj, bone, armature)
 
             # Remove degenerate geometry
             # Most of the time it's generated from tristrips changing orientation (for example in a plane)
@@ -46,7 +58,7 @@ class Mesh(Node):
         if self.next != None:
             self.next.build(builder, armature, bone)
 
-    def apply_bone_weights(self, mesh, hsd_mesh, hsd_bone, armature):
+    def apply_bone_weights(self, builder, mesh, hsd_mesh, hsd_bone, armature):
         #apply weights now that the bones actually exist
 
         bpy.context.view_layer.objects.active = mesh
@@ -90,7 +102,7 @@ class Mesh(Node):
                     joint_groups[joint.id].add([vertex], weight, 'REPLACE')
 
             for matrix in matrices:
-                print(matrix)
+                builder.logger.debug("envelope matrix: %s", matrix)
 
             if hsd_mesh.normals:
                 #XXX: Is this actually needed?

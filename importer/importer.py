@@ -1,4 +1,5 @@
 import bpy
+import os
 import sys
 import traceback
 
@@ -29,6 +30,9 @@ class Importer:
 	@staticmethod
 	def parseDAT(context, filepath="", section_name='', ik_hack=True, max_frame=1000, verbose=False, print_tree=False):
 		
+		model_name = os.path.splitext(os.path.basename(filepath))[0] if filepath else "unknown"
+		logger = Logger(verbose=verbose, model_name=model_name)
+
 		importer_options = {
 			"ik_hack": ik_hack,
 			"verbose": verbose,
@@ -45,20 +49,27 @@ class Importer:
 		# We will most likely need to pass the flags and settings into the parser
 		# When the parser is asked to parse a node which references one of these it can pass the requried
 		# flags into the constructor
-		parser = DATParser(filepath, importer_options)
+		parser = DATParser(filepath, importer_options, logger=logger)
 		parser.parseSections()
 		parser.close()
 
-    	# Pass the section objects to the model builder to import them into blender
+		# Pass the section objects to the model builder to import them into blender
 		if context is not None and len(parser.sections) > 0:
-			builder = ModelBuilder(context, parser.sections, importer_options)
+			builder = ModelBuilder(context, parser.sections, importer_options, logger=logger)
 			try:
 				builder.build()
 			except Exception as error:
 				traceback.print_exc()
-				print("\nFailed to build model.", file=sys.stderr)
-				print(error,"\n", file=sys.stderr)
+				logger.error("Failed to build model: %s", error)
+				logger.info("Log file: %s", logger.log_path)
+				logger.close()
 				return {'CANCELLED'}
+
+		if logger.warning_count > 0 or logger.error_count > 0:
+			logger.warning("Import finished with %d warning(s) and %d error(s)", logger.warning_count - 1, logger.error_count)
+
+		logger.info("Log file: %s", logger.log_path)
+		logger.close()
 
 		return {'FINISHED'}
 

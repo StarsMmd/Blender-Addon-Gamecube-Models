@@ -188,18 +188,15 @@ class RGBA6Color(Node, Color):
 
     def loadFromBinary(self, parser):
         super().loadFromBinary(parser)
-        # raw_value = (raw_bytes[0] << 16) + (raw_bytes[1] << 8) + raw_bytes[2]
-        self.red = (self.raw_value >> 18) << 2
-        self.green = ((self.raw_value >> 12) & 0x3F) << 2
-        self.blue = ((self.raw_value >> 6) & 0x3F) << 2
-        self.alpha = (self.raw_value & 0x3F) << 2
+        raw_value = (self.raw_bytes[0] << 16) | (self.raw_bytes[1] << 8) | self.raw_bytes[2]
+        self.red = (raw_value >> 18) << 2
+        self.green = ((raw_value >> 12) & 0x3F) << 2
+        self.blue = ((raw_value >> 6) & 0x3F) << 2
+        self.alpha = (raw_value & 0x3F) << 2
 
     def writeBinary(self, builder):
-        self.raw_value = 0
-        self.raw_value += (self.red >> 2) << 18
-        self.raw_value += (self.green >> 2) << 12
-        self.raw_value += (self.blue >> 2) << 6
-        self.raw_value += (self.alpha >> 2)
+        raw_value = ((self.red >> 2) << 18) | ((self.green >> 2) << 12) | ((self.blue >> 2) << 6) | (self.alpha >> 2)
+        self.raw_bytes = [(raw_value >> 16) & 0xFF, (raw_value >> 8) & 0xFF, raw_value & 0xFF]
         super().writeBinary(builder)
 
     def __str__(self):
