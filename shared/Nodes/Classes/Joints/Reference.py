@@ -1,4 +1,5 @@
 import math
+import struct
 
 from ...Node import Node
 from .Joint import Joint
@@ -30,6 +31,11 @@ class Reference(Node):
                 if (self.flags & 0x4):
                     boneReference.pole_angle += math.pi
                 self.property = boneReference
+            elif ref_type == REFTYPE_LIMIT:
+                # Property field is a float value (limit amount), reinterpret the uint as float
+                self.property = struct.unpack('>f', struct.pack('>I', self.property))[0]
+                parser.logger.debug("Reference 0x%X: LIMIT sub_type=%d value=%f",
+                                    self.address, self.sub_type, self.property)
             else:
                 parser.logger.warning("Reference 0x%X: unknown ref_type 0x%X, flags=0x%X",
                                       self.address, ref_type, self.flags)

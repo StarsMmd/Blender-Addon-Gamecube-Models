@@ -115,8 +115,6 @@ def _apply_animation_to_bone(joint, aobj, action, armature, max_frame):
             'pose.bones["' + joint.temp_name + '"].scale', index=i)
         new_transform_list[i + 7] = curve
 
-    invmtx = joint.temp_matrix_local.inverted()
-    _, _, invmtxscale = invmtx.decompose()
     end = min(int(aobj.end_frame), max_frame)
     for frame in range(end):
         mtx = joint.compileSRTMatrix(
@@ -130,15 +128,21 @@ def _apply_animation_to_bone(joint, aobj, action, armature, max_frame):
              transform_list[5].evaluate(frame),
              transform_list[6].evaluate(frame)],
         )
-        Bmtx = invmtx @ mtx
+        # Scale correction: Blender edit bones are normalized (no scale),
+        # so we must account for the scale that was stripped.
+        # Formula: local_edit_matrix^-1 @ [parent_scale_correction @] mtx @ scale_correction^-1
+        if joint.temp_parent:
+            Bmtx = joint.local_edit_matrix.inverted() @ joint.temp_parent.edit_scale_correction @ mtx @ joint.edit_scale_correction.inverted()
+        else:
+            Bmtx = joint.local_edit_matrix.inverted() @ mtx @ joint.edit_scale_correction.inverted()
         trans, rot, scale = Bmtx.decompose()
         rot = rot.to_euler()
         new_transform_list[0].keyframe_points.insert(frame, rot[0]).interpolation = 'BEZIER'
         new_transform_list[1].keyframe_points.insert(frame, rot[1]).interpolation = 'BEZIER'
         new_transform_list[2].keyframe_points.insert(frame, rot[2]).interpolation = 'BEZIER'
-        new_transform_list[4].keyframe_points.insert(frame, trans[0] / invmtxscale[0]).interpolation = 'BEZIER'
-        new_transform_list[5].keyframe_points.insert(frame, trans[1] / invmtxscale[1]).interpolation = 'BEZIER'
-        new_transform_list[6].keyframe_points.insert(frame, trans[2] / invmtxscale[2]).interpolation = 'BEZIER'
+        new_transform_list[4].keyframe_points.insert(frame, trans[0]).interpolation = 'BEZIER'
+        new_transform_list[5].keyframe_points.insert(frame, trans[1]).interpolation = 'BEZIER'
+        new_transform_list[6].keyframe_points.insert(frame, trans[2]).interpolation = 'BEZIER'
         new_transform_list[7].keyframe_points.insert(frame, scale[0]).interpolation = 'BEZIER'
         new_transform_list[8].keyframe_points.insert(frame, scale[1]).interpolation = 'BEZIER'
         new_transform_list[9].keyframe_points.insert(frame, scale[2]).interpolation = 'BEZIER'
