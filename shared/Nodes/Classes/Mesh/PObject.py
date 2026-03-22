@@ -8,6 +8,7 @@ from ..Colors import *
 from ...Node import Node
 
 from ....Constants import *
+from ....BlenderVersion import BlenderVersion
 from ....Errors import *
 
 
@@ -193,7 +194,8 @@ class PObject(Node):
                 uvlayer = self.make_texture_layer(mesh, vertex, self.sources[index], self.face_lists[index])
             elif vertex.attribute == GX_VA_NRM or vertex.attribute == GX_VA_NBT:
                 self.assign_normals_to_mesh(mesh, vertex, self.sources[index], self.face_lists[index])
-                if bpy.app.version < (4, 1, 0):
+                # use_auto_smooth removed in Blender 4.1
+                if bpy.app.version < BlenderVersion(4, 1, 0):
                     mesh.use_auto_smooth = True
             elif (vertex.attribute == GX_VA_CLR0 or
                   vertex.attribute == GX_VA_CLR1):

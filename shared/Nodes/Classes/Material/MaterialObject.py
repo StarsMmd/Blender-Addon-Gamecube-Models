@@ -4,6 +4,7 @@ import math
 from ...Node import Node
 from ....Errors import *
 from ....Constants import *
+from ....BlenderVersion import BlenderVersion
 
 # Material Object
 class MaterialObject(Node):
@@ -498,13 +499,17 @@ class MaterialObject(Node):
 
         # Output shader
         shader = nodes.new('ShaderNodeBsdfPrincipled')
-        # Specular
+        # Specular — use name-based access for Blender 4.0+ compatibility
+        specular_input_name = "Specular IOR Level" if bpy.app.version >= BlenderVersion(4, 0, 0) else "Specular"
         if self.render_mode & RENDER_SPECULAR:
-            shader.inputs['Specular'].default_value = self.material.shininess / 50
+            shader.inputs[specular_input_name].default_value = self.material.shininess / 50
         else:
-            shader.inputs['Specular'].default_value = 0
-        # Specular tint
-        shader.inputs['Specular Tint'].default_value = .5
+            shader.inputs[specular_input_name].default_value = 0
+        # Specular tint — RGBA in Blender 4.0+, float in older
+        if bpy.app.version >= BlenderVersion(4, 0, 0):
+            shader.inputs["Specular Tint"].default_value = (0.5, 0.5, 0.5, 1.0)
+        else:
+            shader.inputs["Specular Tint"].default_value = .5
         # Roughness
         shader.inputs['Roughness'].default_value = .5
 

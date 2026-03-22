@@ -7,6 +7,7 @@ from ..Mesh import *
 from ..Misc.Spline import Spline
 from ...Node import Node
 from ....Constants import *
+from ....BlenderVersion import BlenderVersion
 
 # Model Set
 class ModelSet(Node):
@@ -47,6 +48,11 @@ class ModelSet(Node):
             action = bpy.data.actions.new(action_name)
             action.use_fake_user = True
 
+            # Action slots for Blender 4.5+
+            if bpy.app.version >= BlenderVersion(4, 5, 0):
+                action.slots.new('OBJECT', 'Armature')
+                action.slots.active = action.slots[0]
+
             bpy.context.view_layer.objects.active = armature
             bpy.ops.object.mode_set(mode='POSE')
             for bone in armature.pose.bones:
@@ -56,6 +62,8 @@ class ModelSet(Node):
 
             armature.animation_data_create()
             armature.animation_data.action = action
+            if bpy.app.version >= BlenderVersion(4, 4, 0):
+                armature.animation_data.action_slot = action.slots[0]
 
             animated_joint.build(self.root_joint, action, armature, builder)
 
