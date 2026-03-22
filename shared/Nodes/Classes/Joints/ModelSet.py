@@ -138,6 +138,17 @@ class ModelSet(Node):
 
         self.addConstraints(armature, bones, builder.logger)
 
+        # Verify constraints persisted
+        bpy.context.view_layer.objects.active = armature
+        bpy.ops.object.mode_set(mode='POSE')
+        for bone in armature.pose.bones:
+            if bone.constraints:
+                for c in bone.constraints:
+                    builder.logger.debug("  CONSTRAINT VERIFY: %s has %s (target=%s, subtarget=%s)",
+                                         bone.name, c.type,
+                                         getattr(c, 'target', None),
+                                         getattr(c, 'subtarget', ''))
+
         bpy.context.view_layer.update()
         bpy.ops.object.mode_set(mode = 'OBJECT')
 
@@ -271,7 +282,7 @@ class ModelSet(Node):
                 c.pole_angle = pole_angle
 
     def _addRegularConstraints(self, armature, hsd_joint, Joint, logger=NullLogger()):
-        """Add non-IK constraints from Reference objects (Copy Location, Track To, Copy Rotation)."""
+        """Add non-IK constraints from Reference objects (Copy Location, Track To, Copy Rotation, Limits)."""
         if not hsd_joint.reference:
             return
 
@@ -279,6 +290,7 @@ class ModelSet(Node):
         copy_pos_refs = []
         dirup_x_ref = None
         orientation_ref = None
+        limits = []
 
         reference = hsd_joint.reference
         while reference:
@@ -302,9 +314,17 @@ class ModelSet(Node):
                 elif reference.sub_type == 4:
                     orientation_ref = reference
 
+            elif ref_type == REFTYPE_LIMIT:
+                constraint_type = reference.sub_type
+                if 1 <= constraint_type <= 12:
+                    limit_variable = ['rot', 'pos'][(constraint_type - 1) // (2 * 3)]
+                    limit_component = ((constraint_type - 1) % 6) // 2
+                    limit_direction = (constraint_type - 1) % 2  # 0: upper, 1: lower
+                    limits.append((limit_variable, limit_component, limit_direction, reference.property))
+
             reference = reference.next
 
-        if not (copy_pos_refs or dirup_x_ref or orientation_ref):
+        if not (copy_pos_refs or dirup_x_ref or orientation_ref or limits):
             return
 
         bpy.context.view_layer.objects.active = armature
@@ -331,6 +351,31 @@ class ModelSet(Node):
             c.subtarget = orientation_ref.property.temp_name
             if hsd_joint.flags & 0x8:
                 c.owner_space = 'LOCAL'
+                c.target_space = 'LOCAL'
+
+        for limit in limits:
+            limit_type = {'pos': 'LIMIT_LOCATION', 'rot': 'LIMIT_ROTATION'}[limit[0]]
+            existing_constraint = None
+            for cnst in armature.pose.bones[hsd_joint.temp_name].constraints:
+                if cnst.type == limit_type:
+                    existing_constraint = cnst
+            if not existing_constraint:
+                existing_constraint = armature.pose.bones[hsd_joint.temp_name].constraints.new(type=limit_type)
+                existing_constraint.owner_space = 'LOCAL_WITH_PARENT'
+
+            axis = ['x', 'y', 'z'][limit[1]]
+            limit_text = '%s_%s' % (['max', 'min'][limit[2]], axis)
+            enable_text = 'use_' + limit_text
+            if getattr(existing_constraint, enable_text):
+                val = getattr(existing_constraint, limit_text)
+                if limit[2] == 0:
+                    val = max(val, limit[3])
+                else:
+                    val = min(val, limit[3])
+                setattr(existing_constraint, limit_text, val)
+            else:
+                setattr(existing_constraint, enable_text, True)
+                setattr(existing_constraint, limit_text, limit[3])
 
 
 

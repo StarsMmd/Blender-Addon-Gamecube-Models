@@ -147,8 +147,6 @@ def _apply_animation_to_bone(joint, aobj, action, armature, max_frame, logger=Nu
             'pose.bones["' + joint.temp_name + '"].scale', index=i)
         new_transform_list[i + 7] = curve
 
-    invmtx = joint.temp_matrix_local.inverted()
-
     # Log frame-0 raw values from temp curves
     r0 = [transform_list[i].evaluate(0) if transform_list[i] else None for i in range(3)]
     t0 = [transform_list[i+4].evaluate(0) if transform_list[i+4] else None for i in range(3)]
@@ -170,7 +168,13 @@ def _apply_animation_to_bone(joint, aobj, action, armature, max_frame, logger=Nu
              transform_list[5].evaluate(frame),
              transform_list[6].evaluate(frame)],
         )
-        Bmtx = invmtx @ mtx
+        # Scale correction: Blender edit bones are normalized (no scale),
+        # so we must account for the scale that was stripped.
+        # Formula: local_edit_matrix^-1 @ [parent_scale_correction @] mtx @ scale_correction^-1
+        if joint.temp_parent:
+            Bmtx = joint.local_edit_matrix.inverted() @ joint.temp_parent.edit_scale_correction @ mtx @ joint.edit_scale_correction.inverted()
+        else:
+            Bmtx = joint.local_edit_matrix.inverted() @ mtx @ joint.edit_scale_correction.inverted()
         trans, rot, scale = Bmtx.decompose()
         rot = rot.to_euler()
         if frame == 0:
