@@ -6,7 +6,7 @@ from ..Nodes import *
 from ..Errors import *
 from ..Constants import *
 from .file_io import *
-from .Logger import Logger
+from .Logger import Logger, NullLogger
 
 # A class for managing the recursive parsing of the Node tree. It handles caching
 # loaded nodes and reading the next node from the cache or calling its constructor.
@@ -16,7 +16,7 @@ class DATParser(BinaryReader):
 	# Length of the Header data of a DAT model. Pointers in the data are relative to the end of this header
 	DAT_header_length = 32
 
-	def __init__(self, filepath_or_stream, options):
+	def __init__(self, filepath_or_stream, options, logger=None):
 		super().__init__(filepath_or_stream)
 
 		# Settings chosen for the parser
@@ -24,7 +24,7 @@ class DATParser(BinaryReader):
 		# - "print_tree"    : Prints a tree representation of each section parsed
 		# - "section_names" : Only parses sections in this list. If empty, parses all sections possible
 		self.options = options
-		self.logger = Logger(verbose=options.get("verbose", False))
+		self.logger = logger or NullLogger()
 
 		# Where in the file the dat model itself starts. E.g. .pkx files have extra metadata before the model
 		self.file_start_offset = 0

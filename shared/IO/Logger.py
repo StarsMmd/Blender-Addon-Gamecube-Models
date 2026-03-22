@@ -4,6 +4,23 @@ import tempfile
 import time
 
 
+class NullLogger:
+    """A no-op logger that silently discards all messages.
+
+    Used as the default logger so callers never need to guard against None.
+    """
+    verbose = False
+    warning_count = 0
+    error_count = 0
+    log_path = None
+
+    def error(self, msg, *args): pass
+    def warning(self, msg, *args): pass
+    def info(self, msg, *args): pass
+    def debug(self, msg, *args): pass
+    def close(self): pass
+
+
 class Logger:
     """Logging for the import/export pipeline.
 

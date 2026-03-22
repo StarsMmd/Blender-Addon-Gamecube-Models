@@ -111,6 +111,9 @@ class ModelSet(Node):
         # Add meshes
         self.addGeometry(builder, armature, bones)
 
+        # Copy meshes for instanced bones (JOBJ_INSTANCE)
+        self.addInstances(builder, armature, bones)
+
         self.addConstraints(armature, bones)
 
         bpy.context.view_layer.update()
@@ -124,15 +127,37 @@ class ModelSet(Node):
 
     def addGeometry(self, builder, armature, bones):
         for bone in bones:
-            # TODO: Find out what to do with particles ?
             if bone.flags & JOBJ_INSTANCE:
-                # We can't copy objects from other bones here since they may not be parented yet
-                pass
+                pass  # Handled by addInstances() after all geometry is built
 
             else:
                 if isinstance(bone.property, Mesh):
                     mesh = bone.property
                     mesh.build(builder, armature, bone)
+
+    def addInstances(self, builder, armature, bones):
+        """Copy mesh objects from instanced bones.
+
+        JOBJ_INSTANCE bones reference another bone's geometry. After all normal
+        geometry is built, we copy the referenced meshes and place them at the
+        instance bone's transform. Matches legacy add_instances().
+        """
+        for bone in bones:
+            if bone.flags & JOBJ_INSTANCE and bone.child:
+                child = bone.child
+                mesh = child.property
+                if isinstance(mesh, Mesh):
+                    while mesh:
+                        pobj = mesh.pobject
+                        while pobj:
+                            original = builder.mesh_objects_by_pobj.get(pobj.address)
+                            if original:
+                                copy = original.copy()
+                                copy.parent = armature
+                                copy.matrix_local = bone.temp_matrix
+                                bpy.context.scene.collection.objects.link(copy)
+                            pobj = pobj.next
+                        mesh = mesh.next
 
     def addConstraints(self, armature, bones):
         from .Joint import Joint

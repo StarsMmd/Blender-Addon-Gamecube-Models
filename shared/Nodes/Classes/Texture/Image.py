@@ -87,7 +87,19 @@ class Image(Node):
                 buffer = buffer[CCC * tile_S:]
             buffer = buffer[CCC * blocks_x * tile_S * (tile_T - 1):]
 
-        return out_data
+        # GX textures decode top-to-bottom but Blender's image.pixels expects
+        # bottom-to-top (row 0 = bottom). Flip rows so the UV V-flip (1 - V) in
+        # PObject and the V-translation formula in MaterialObject work correctly.
+        # (The original croppedImage() did this via sorting by (height - y).)
+        stride = blocks_x * tile_S * CCC
+        flipped = array.array('B', [0] * len(out_data))
+        total_rows = blocks_y * tile_T
+        for row in range(total_rows):
+            src_start = row * stride
+            dst_start = (total_rows - 1 - row) * stride
+            flipped[dst_start:dst_start + stride] = out_data[src_start:src_start + stride]
+
+        return flipped
 
     def build(self, builder, pixel_data):
         if pixel_data is None:
@@ -96,7 +108,29 @@ class Image(Node):
         image = bpy.data.images.new(name, self.width, self.height, alpha=True)
         normalised_pixels = [intensity / 255 for intensity in pixel_data]
         image.pixels = normalised_pixels
+        image.alpha_mode = 'CHANNEL_PACKED'
+
+        # Log alpha channel statistics for this image
+        total_pixels = self.width * self.height
+        alpha_values = pixel_data[3::4]  # every 4th byte starting at index 3
+        opaque_count = sum(1 for a in alpha_values if a == 255)
+        transparent_count = sum(1 for a in alpha_values if a == 0)
+        semi_count = total_pixels - opaque_count - transparent_count
+        builder.logger.debug('  Image %s: alpha stats: %d opaque, %d transparent, %d semi (%d total)',
+                             name, opaque_count, transparent_count, semi_count, total_pixels)
+
+        # Save decoded image to temp directory for visual debugging (before pack)
+        import os, tempfile
+        debug_dir = os.path.join(tempfile.gettempdir(), 'blender_dat_import', 'textures')
+        os.makedirs(debug_dir, exist_ok=True)
+        png_path = os.path.join(debug_dir, name + '.png')
+        image.filepath_raw = png_path
+        image.file_format = 'PNG'
+        image.save()
+        builder.logger.debug('  Image saved to: %s', png_path)
+
         image.pack()
+
         return image
 
 def get_palette_color(palette, fmt):

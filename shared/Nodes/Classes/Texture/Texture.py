@@ -52,10 +52,18 @@ class Texture(Node):
             cached_image = builder.getCachedImage(image_id, palette_id)
             if cached_image:
                 self.image_data = cached_image
-
+                builder.logger.debug("  Texture 0x%X build: CACHED image '%s' (%dx%d) key=(%s, %s)",
+                    self.address, cached_image.name,
+                    cached_image.size[0], cached_image.size[1],
+                    hex(image_id), hex(palette_id))
             else:
                 self.image_data = self.image.build(builder, self.decoded_pixels)
                 builder.cacheImage(image_id, palette_id, self.image_data)
+                if self.image_data:
+                    builder.logger.debug("  Texture 0x%X build: NEW image '%s' (%dx%d) key=(%s, %s)",
+                        self.address, self.image_data.name,
+                        self.image_data.size[0], self.image_data.size[1],
+                        hex(image_id), hex(palette_id))
 
         else:
             self.image_data = None

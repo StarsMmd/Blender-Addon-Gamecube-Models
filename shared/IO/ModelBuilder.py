@@ -4,17 +4,17 @@ import math
 from ..Constants import *
 from ..Errors import *
 from ..Nodes import *
-from .Logger import Logger
+from .Logger import NullLogger
 
 class ModelBuilder(object):
 
-	def __init__(self, context, sections, options):
+	def __init__(self, context, sections, options, logger=None):
 		# Settings chosen for the parser
 		# - "ik_hack"   : A boolean for whether or not to scale down bones so ik works correctly
 		# - "max_frame" : An integer for the maximum number of frames to read from an animation, 0 for no limit
 		# - "verbose"   : Prints more output for debugging purposes
 		self.options = options
-		self.logger = Logger(verbose=options.get("verbose", False))
+		self.logger = logger or NullLogger()
 
 		self.context = context
 		self.sections = sections
@@ -31,6 +31,9 @@ class ModelBuilder(object):
 
 		# Images that have been loaded from their texture data
 		self.images_cache_by_image_id_and_tlut_id = {}
+
+		# Mesh objects indexed by PObject address, for instance copying
+		self.mesh_objects_by_pobj = {}
 
 		# Sometimes there are sets which are separated across multiple sections.
 		# We can load multiple sections at the same time and bundle them into sets.

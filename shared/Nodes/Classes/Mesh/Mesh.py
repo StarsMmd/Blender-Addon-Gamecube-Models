@@ -19,19 +19,31 @@ class Mesh(Node):
         self.id = self.address
 
     def build(self, builder, armature, bone):
+        builder.logger.debug('=== DObj 0x%X build: bone=%s (0x%X), mobj=0x%X ===',
+                             self.address, getattr(bone, 'temp_name', '?'),
+                             getattr(bone, 'address', 0),
+                             self.mobject.address if self.mobject else 0)
 
-        material = self.mobject.build(builder)
+        material = self.mobject.build(builder, joint_flags=bone.flags)
+
+        builder.logger.debug('  DObj 0x%X: material "%s" (blend=%s)',
+                             self.address, material.name, material.blend_method)
 
         pobj = self.pobject
         while pobj:
             blender_mesh = pobj.build(builder)
             blender_mesh.data.materials.append(material)
+            builder.logger.debug('  DObj 0x%X: assigned material "%s" → mesh "%s" (pobj 0x%X)',
+                                 self.address, material.name, blender_mesh.name, pobj.address)
 
             if bone.isHidden:
                 blender_mesh.hide_render = True
                 blender_mesh.hide_set(True)
 
             blender_mesh.parent = armature
+
+            # Track mesh objects for JOBJ_INSTANCE copying
+            builder.mesh_objects_by_pobj[pobj.address] = blender_mesh
 
             # # Apply deformation and rigid transformations temporarily stored in the hsd_mesh
             # # This is done here because the meshes are created before the object hierarchy exists

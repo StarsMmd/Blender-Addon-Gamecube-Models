@@ -47,15 +47,13 @@ class Importer:
 		# We will most likely need to pass the flags and settings into the parser
 		# When the parser is asked to parse a node which references one of these it can pass the requried
 		# flags into the constructor
-		parser = DATParser(filepath, importer_options)
-		parser.logger = logger
+		parser = DATParser(filepath, importer_options, logger=logger)
 		parser.parseSections()
 		parser.close()
 
 		# Pass the section objects to the model builder to import them into blender
 		if context is not None and len(parser.sections) > 0:
-			builder = ModelBuilder(context, parser.sections, importer_options)
-			builder.logger = logger
+			builder = ModelBuilder(context, parser.sections, importer_options, logger=logger)
 			try:
 				builder.build()
 			except Exception as error:

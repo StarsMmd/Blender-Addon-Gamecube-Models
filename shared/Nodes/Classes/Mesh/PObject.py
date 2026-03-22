@@ -29,6 +29,15 @@ class PObject(Node):
     def loadFromBinary(self, parser):
         super().loadFromBinary(parser)
 
+        # Log key fields for debugging UV/vertex issues
+        vtx_descs = []
+        for v in self.vertex_list.vertices:
+            vtx_descs.append('attr=%d type=%d bp=0x%X stride=%d frac=%d' %
+                             (v.attribute, v.attribute_type, v.base_pointer, v.stride, v.component_frac))
+        parser.logger.debug("PObject 0x%X: dl_addr=0x%X dl_chunks=%d vtxlist=0x%X descs=[%s]",
+                            self.address, self.display_list_address, self.display_list_chunk_count,
+                            self.vertex_list.address, ', '.join(vtx_descs))
+
         if self.property > 0:
             property_type = self.flags & POBJ_TYPE_MASK
             if property_type == POBJ_SKIN:
@@ -108,6 +117,24 @@ class PObject(Node):
 
         vertex_list = self.vertex_list.vertices
 
+        # Log vertex descriptors for this PObject
+        attr_names = {GX_VA_PNMTXIDX: 'PNMTXIDX', GX_VA_POS: 'POS', GX_VA_NRM: 'NRM',
+                      GX_VA_NBT: 'NBT', GX_VA_CLR0: 'CLR0', GX_VA_CLR1: 'CLR1'}
+        clr_type_names = {gx.GX_RGBA8: 'RGBA8', gx.GX_RGBA6: 'RGBA6', gx.GX_RGBA4: 'RGBA4',
+                          gx.GX_RGBX8: 'RGBX8', gx.GX_RGB8: 'RGB8', gx.GX_RGB565: 'RGB565'}
+        descs = []
+        for v in vertex_list:
+            if v.attribute in attr_names:
+                desc = attr_names[v.attribute]
+                if v.attribute in (GX_VA_CLR0, GX_VA_CLR1):
+                    desc += '(%s)' % clr_type_names.get(v.component_type, 'type_%d' % v.component_type)
+                descs.append(desc)
+            elif v.isTexture():
+                descs.append('TEX%d' % (v.attribute - gx.GX_VA_TEX0))
+            else:
+                descs.append('attr_%d' % v.attribute)
+        builder.logger.debug('  PObj 0x%X: vertex descriptors = [%s]', self.address, ', '.join(descs))
+
         position_vertex_index = None #index of the vtxdesc that holds vertex position data
         for i in range(len(vertex_list)):
             vertex = vertex_list[i]
@@ -171,6 +198,42 @@ class PObject(Node):
             elif (vertex.attribute == GX_VA_CLR0 or
                   vertex.attribute == GX_VA_CLR1):
                 self.add_color_layer(mesh, vertex, self.sources[index], self.face_lists[index])
+
+        # Log UV and color layers created on this mesh
+        uv_names = [uv.name for uv in mesh.uv_layers]
+        clr_names = [vc.name for vc in mesh.vertex_colors]
+        builder.logger.debug('  PObj 0x%X mesh "%s": uv_layers=%s, vertex_colors=%s',
+                             self.address, mesh.name, uv_names, clr_names)
+
+        # Log UV coordinate ranges for each UV layer
+        for uv_layer in mesh.uv_layers:
+            us = [d.uv[0] for d in uv_layer.data]
+            vs = [d.uv[1] for d in uv_layer.data]
+            if us:
+                builder.logger.debug('  PObj 0x%X UV "%s" range: U=[%.3f, %.3f] V=[%.3f, %.3f]',
+                                     self.address, uv_layer.name, min(us), max(us), min(vs), max(vs))
+
+        # Log vertex alpha statistics for alpha_0 layer (if it has CLR0 data)
+        if 'alpha_0' in mesh.vertex_colors:
+            alphas = [d.color[0] for d in mesh.vertex_colors['alpha_0'].data]
+            if alphas:
+                unique_a = set(round(a, 4) for a in alphas)
+                builder.logger.debug('  PObj 0x%X alpha_0 stats: min=%.4f max=%.4f unique=%d sample=%s',
+                                     self.address, min(alphas), max(alphas), len(unique_a),
+                                     sorted(unique_a)[:10])
+
+        # On the GameCube, when CLR0 isn't in the vertex format the GX hardware
+        # uses a default color register (white / full alpha).  Create default
+        # color_0 and alpha_0 vertex-color layers so that ShaderNodeAttribute
+        # nodes referencing these names return 1.0 instead of 0.0.
+        if 'color_0' not in mesh.vertex_colors:
+            color_layer = mesh.vertex_colors.new(name='color_0')
+            for i in range(len(color_layer.data)):
+                color_layer.data[i].color = [1.0, 1.0, 1.0, 1.0]
+        if 'alpha_0' not in mesh.vertex_colors:
+            alpha_layer = mesh.vertex_colors.new(name='alpha_0')
+            for i in range(len(alpha_layer.data)):
+                alpha_layer.data[i].color = [1.0, 1.0, 1.0, 1.0]
 
         # Update mesh with new data
         # Remove degenerate faces (These mostly occur due to triangle strips creating invisible faces when changing orientation)
@@ -397,7 +460,6 @@ class PObject(Node):
             color_num = '1'
         color_layer = meshdata.vertex_colors.new(name = 'color_' + color_num)
         alpha_layer = meshdata.vertex_colors.new(name = 'alpha_' + color_num)
-        lin = self._linearize_component
         for polygon in meshdata.polygons:
             face = faces[polygon.index]
             range = polygon.loop_indices
@@ -405,14 +467,11 @@ class PObject(Node):
 
             for i in range:
                 color = source[face[i - minr]]
-                # Normalize and linearize without mutating the source object
-                # (same vertex may be referenced by multiple polygons).
-                # Matches legacy interpret_color() + tolin().
                 r = color.red / 255
                 g = color.green / 255
                 b = color.blue / 255
                 a = color.alpha / 255
-                color_layer.data[i].color = [lin(r), lin(g), lin(b), a]
+                color_layer.data[i].color = [r, g, b, a]
                 alpha_layer.data[i].color = [a, a, a, 1.0]
 
     def make_texture_layer(self, meshdata, vertex, source, faces):

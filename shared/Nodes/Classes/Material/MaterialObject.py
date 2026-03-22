@@ -21,7 +21,7 @@ class MaterialObject(Node):
         super().loadFromBinary(parser)
         self.id = self.address
 
-    def build(self, builder):
+    def build(self, builder, joint_flags=0):
         self.logger = builder.logger
 
         material = self.material
@@ -156,27 +156,27 @@ class MaterialObject(Node):
                 uv = nodes.new('ShaderNodeUVMap')
                 uv.uv_map = 'uvtex_' + str(texture.source - 4)
                 uv_output = uv.outputs[0]
+                self.logger.debug('  tex[%d] uv_map: "%s" (source=%d, coord=UV)',
+                    tex_i, uv.uv_map, texture.source)
             elif (texture.flags & TEX_COORD_MASK) == TEX_COORD_REFLECTION:
                 uv = nodes.new('ShaderNodeTexCoord')
                 uv_output = uv.outputs[6]
+                self.logger.debug('  tex[%d] uv_map: REFLECTION (source=%d)', tex_i, texture.source)
             else:
                 uv_output = None
+                self.logger.debug('  tex[%d] uv_map: NONE (coord_mask=0x%X, source=%d)',
+                    tex_i, texture.flags & TEX_COORD_MASK, texture.source)
 
             mapping = nodes.new('ShaderNodeMapping')
             mapping.vector_type = 'TEXTURE'
-            mapping.inputs[1].default_value = texture.translation
             mapping.inputs[2].default_value = texture.rotation
 
-            # Apply texture repeat factors to the scale (matches Blender Internal's tex.repeat_x/y)
-            tex_scale = list(texture.scale)
-            if texture.repeat_s > 1:
-                tex_scale[0] *= texture.repeat_s
-            if texture.repeat_t > 1:
-                tex_scale[1] *= texture.repeat_t
-            mapping.inputs[3].default_value = tex_scale
+            # Scale and translation match the reference exactly
+            mapping.inputs[1].default_value = texture.translation
+            mapping.inputs[3].default_value = texture.scale
 
-            # Blender UV coordinates are relative to the bottom left so we need to account for that
-            mapping.inputs[1].default_value[1] = 1 - (tex_scale[1] * (texture.translation[1] + 1))
+            # Blender UV origin is bottom-left; GX is top-left — flip V
+            mapping.inputs[1].default_value[1] = 1 - (texture.scale[1] * (texture.translation[1] + 1))
 
             #TODO: Is this correct?
             if (texture.flags & TEX_COORD_MASK) == TEX_COORD_REFLECTION:
@@ -185,13 +185,12 @@ class MaterialObject(Node):
             blender_texture = nodes.new('ShaderNodeTexImage')
             blender_texture.image = texture.image_data
             blender_texture.name = ("0x%X" % texture.id)
+            self.logger.debug('  tex[%d] → image: %s', tex_i,
+                texture.image_data.name if texture.image_data else 'None')
 
-            # Texture wrapping: GX supports per-axis modes but Blender's texture
-            # node only has one extension mode. We set the texture node's mode
-            # based on the dominant wrap type, and use math nodes to handle
-            # per-axis clamping/mirroring when the S and T modes differ.
-            self.logger.debug('  tex[%d] wrap_s=%d wrap_t=%d repeat_s=%d repeat_t=%d',
-                tex_i, texture.wrap_s, texture.wrap_t, texture.repeat_s, texture.repeat_t)
+            self.logger.debug('  tex[%d] wrap_s=%d wrap_t=%d repeat_s=%d repeat_t=%d scale=%s trans=%s',
+                tex_i, texture.wrap_s, texture.wrap_t, texture.repeat_s, texture.repeat_t,
+                list(texture.scale), list(texture.translation))
 
             has_repeat = texture.wrap_s == GX_REPEAT or texture.wrap_t == GX_REPEAT
             has_mirror = texture.wrap_s == GX_MIRROR or texture.wrap_t == GX_MIRROR
@@ -199,23 +198,31 @@ class MaterialObject(Node):
             if has_repeat or has_mirror:
                 blender_texture.extension = 'REPEAT'
             else:
-                blender_texture.extension = 'CLIP'
+                # GX CLAMP shows the edge pixel for out-of-range UVs — use EXTEND, not CLIP
+                blender_texture.extension = 'EXTEND'
 
             if texture.lod:
                 blender_texture.interpolation = self.interpolation_name_by_gx_constant[texture.lod.min_filter]
 
-            if uv_output:
+            # Apply repeat by pre-multiplying UVs before the mapping node.
+            # This keeps the mapping's scale/translation identical to the reference
+            # while adding the GX hardware's repeat-based UV scaling separately.
+            if uv_output and (texture.repeat_s > 1 or texture.repeat_t > 1):
+                multiply = nodes.new('ShaderNodeVectorMath')
+                multiply.operation = 'MULTIPLY'
+                multiply.inputs[1].default_value = (
+                    texture.repeat_s if texture.repeat_s > 1 else 1,
+                    texture.repeat_t if texture.repeat_t > 1 else 1,
+                    1)
+                links.new(uv_output, multiply.inputs[0])
+                links.new(multiply.outputs[0], mapping.inputs[0])
+            elif uv_output:
                 links.new(uv_output, mapping.inputs[0])
 
-            # When S and T wrap modes differ, insert per-axis UV processing nodes
-            # between the mapping and the texture to handle clamping/mirroring per axis.
-            tex_uv_output = mapping.outputs[0]
-            if has_repeat and (texture.wrap_s != texture.wrap_t):
-                tex_uv_output = self._make_per_axis_wrap(
-                    nodes, links, mapping.outputs[0],
-                    texture.wrap_s, texture.wrap_t)
-
-            links.new(tex_uv_output, blender_texture.inputs[0])
+            # TODO: Per-axis wrap handling is disabled because the Y translation
+            # formula can shift texture coordinates outside [0,1], and clamping
+            # in the transformed space clips the texture incorrectly.
+            links.new(mapping.outputs[0], blender_texture.inputs[0])
 
             cur_color = blender_texture.outputs[0]
             cur_alpha = blender_texture.outputs[1]
@@ -329,6 +336,11 @@ class MaterialObject(Node):
         transparent_shader = False
         if self.pixel_engine_data:
             pixel_engine_data = self.pixel_engine_data
+            self.logger.debug('  PE: type=%d src=%d dst=%d logic=%d z_comp=%d alpha_comp0=%d alpha_op=%d alpha_comp1=%d',
+                pixel_engine_data.type, pixel_engine_data.source_factor,
+                pixel_engine_data.destination_factor, pixel_engine_data.logic_op,
+                pixel_engine_data.z_comp, pixel_engine_data.alpha_component_0,
+                pixel_engine_data.alpha_op, pixel_engine_data.alpha_component_1)
             # PE (Pixel Engine) parameters can be given manually in this struct
             # TODO: implement other custom PE stuff
             # Blend mode
@@ -482,7 +494,7 @@ class MaterialObject(Node):
             # TODO: use the presets from the rendermode flags
             if self.render_mode & RENDER_XLU:
                 transparent_shader = True
-                blender_material.blend_method = 'HASHED'
+                blender_material.blend_method = 'BLEND'
 
         # Output shader
         shader = nodes.new('ShaderNodeBsdfPrincipled')
@@ -533,6 +545,11 @@ class MaterialObject(Node):
 
         # Output to Material
         links.new(shader.outputs[0], output.inputs[0])
+
+        self.logger.debug('  final: transparent=%s, blend_method=%s, alt_blend=%s, '
+            'PE=%s, joint_flags=0x%X',
+            transparent_shader, blender_material.blend_method, alt_blend_mode,
+            str(pixel_engine_data.type) if self.pixel_engine_data else 'None', joint_flags)
 
         output.name = 'Rendermode : 0x%X' % self.render_mode
         output.name += ' Transparent: ' + ('True' if transparent_shader else 'False')
