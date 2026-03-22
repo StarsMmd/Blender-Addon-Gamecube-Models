@@ -87,19 +87,20 @@ class Image(Node):
                 buffer = buffer[CCC * tile_S:]
             buffer = buffer[CCC * blocks_x * tile_S * (tile_T - 1):]
 
+        # Crop tile-padded buffer to actual image dimensions and flip vertically.
         # GX textures decode top-to-bottom but Blender's image.pixels expects
         # bottom-to-top (row 0 = bottom). Flip rows so the UV V-flip (1 - V) in
         # PObject and the V-translation formula in MaterialObject work correctly.
         # (The original croppedImage() did this via sorting by (height - y).)
-        stride = blocks_x * tile_S * CCC
-        flipped = array.array('B', [0] * len(out_data))
-        total_rows = blocks_y * tile_T
-        for row in range(total_rows):
-            src_start = row * stride
-            dst_start = (total_rows - 1 - row) * stride
-            flipped[dst_start:dst_start + stride] = out_data[src_start:src_start + stride]
+        decoded_stride = blocks_x * tile_S * CCC
+        actual_stride = width * CCC
+        cropped = array.array('B', [0] * (width * height * CCC))
+        for row in range(height):
+            src_start = row * decoded_stride
+            dst_start = (height - 1 - row) * actual_stride
+            cropped[dst_start:dst_start + actual_stride] = out_data[src_start:src_start + actual_stride]
 
-        return flipped
+        return cropped
 
     def build(self, builder, pixel_data):
         if pixel_data is None:
