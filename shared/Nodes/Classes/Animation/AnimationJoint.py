@@ -3,6 +3,7 @@ from mathutils import Matrix, Vector
 
 from ...Node import Node
 from ....Constants import *
+from ....IO.Logger import NullLogger
 from .Frame import read_fobjdesc
 
 # Mapping: HSD animation type code → (temp data-path letter, component index)
@@ -40,10 +41,29 @@ class AnimationJoint(Node):
         armature: the Blender armature object
         builder:  ModelBuilder
         """
+        logger = builder.logger
         max_frame = builder.options.get("max_frame", 1000)
 
+        bone_name = getattr(joint, 'temp_name', '???')
+        has_anim = self.animation is not None
+        logger.debug("AnimJoint build: bone=%s anim_joint_addr=0x%X has_animation=%s",
+                     bone_name, self.address, has_anim)
+
         if self.animation:
-            _apply_animation_to_bone(joint, self.animation, action, armature, max_frame)
+            _apply_animation_to_bone(joint, self.animation, action, armature, max_frame, logger)
+
+        # Log traversal decisions
+        has_anim_child = self.child is not None
+        has_joint_child = joint.child is not None
+        has_anim_next = self.next is not None
+        has_joint_next = joint.next is not None
+
+        if has_anim_child != has_joint_child:
+            logger.warning("AnimJoint TREE MISMATCH at bone=%s: anim_child=%s joint_child=%s",
+                           bone_name, has_anim_child, has_joint_child)
+        if has_anim_next != has_joint_next:
+            logger.warning("AnimJoint TREE MISMATCH at bone=%s: anim_next=%s joint_next=%s",
+                           bone_name, has_anim_next, has_joint_next)
 
         if self.child and joint.child:
             self.child.build(joint.child, action, armature, builder)
@@ -51,21 +71,29 @@ class AnimationJoint(Node):
             self.next.build(joint.next, action, armature, builder)
 
 
-def _apply_animation_to_bone(joint, aobj, action, armature, max_frame):
+def _apply_animation_to_bone(joint, aobj, action, armature, max_frame, logger=NullLogger()):
     """Port of add_jointanim_to_armature_total from reference."""
+    bone_name = getattr(joint, 'temp_name', '???')
+
     if aobj.flags & AOBJ_NO_ANIM:
+        logger.debug("  %s: AOBJ_NO_ANIM flag set, skipping", bone_name)
         return
+
+    logger.debug("  %s: aobj flags=0x%X end_frame=%.1f", bone_name, aobj.flags, aobj.end_frame)
 
     transform_list = [None] * _TRANSFORMCOUNT
     has_path = False
+    channel_types = []
 
     fobj = aobj.frame
     while fobj:
         if fobj.type == HSD_A_J_PATH:
             has_path = True
+            channel_types.append('PATH')
             _apply_path_animation(joint, fobj, aobj, action, armature, max_frame)
         elif HSD_A_J_ROTX <= fobj.type <= HSD_A_J_SCAZ:
             data_letter, component = _t_jointanim_type_dict[fobj.type]
+            channel_types.append('%s[%d]' % (data_letter, component))
             data_path = 'pose.bones["' + joint.temp_name + '"].' + data_letter
             curve = action.fcurves.new(data_path, index=component)
             transform_list[fobj.type - HSD_A_J_ROTX] = curve
@@ -74,8 +102,12 @@ def _apply_animation_to_bone(joint, aobj, action, armature, max_frame):
 
             if aobj.flags & AOBJ_ANIM_LOOP:
                 curve.modifiers.new('CYCLES')
+        else:
+            channel_types.append('UNKNOWN(%d)' % fobj.type)
 
         fobj = fobj.next
+
+    logger.debug("  %s: channels=[%s] has_path=%s", bone_name, ', '.join(channel_types), has_path)
 
     if has_path:
         # Path animation handles its own keyframes; clean up any partial SRT curves
@@ -116,7 +148,15 @@ def _apply_animation_to_bone(joint, aobj, action, armature, max_frame):
         new_transform_list[i + 7] = curve
 
     invmtx = joint.temp_matrix_local.inverted()
-    _, _, invmtxscale = invmtx.decompose()
+
+    # Log frame-0 raw values from temp curves
+    r0 = [transform_list[i].evaluate(0) if transform_list[i] else None for i in range(3)]
+    t0 = [transform_list[i+4].evaluate(0) if transform_list[i+4] else None for i in range(3)]
+    s0 = [transform_list[i+7].evaluate(0) if transform_list[i+7] else None for i in range(3)]
+    logger.debug("  %s: frame0 raw: rot=%s trans=%s scale=%s", bone_name, r0, t0, s0)
+    logger.debug("  %s: rest pose:  rot=%s trans=%s scale=%s",
+                 bone_name, list(joint.rotation), list(joint.position), list(joint.scale))
+
     end = min(int(aobj.end_frame), max_frame)
     for frame in range(end):
         mtx = joint.compileSRTMatrix(
@@ -133,12 +173,15 @@ def _apply_animation_to_bone(joint, aobj, action, armature, max_frame):
         Bmtx = invmtx @ mtx
         trans, rot, scale = Bmtx.decompose()
         rot = rot.to_euler()
+        if frame == 0:
+            logger.debug("  %s: frame0 final: rot=(%.4f,%.4f,%.4f) loc=(%.4f,%.4f,%.4f) scale=(%.4f,%.4f,%.4f)",
+                         bone_name, rot[0], rot[1], rot[2], trans[0], trans[1], trans[2], scale[0], scale[1], scale[2])
         new_transform_list[0].keyframe_points.insert(frame, rot[0]).interpolation = 'BEZIER'
         new_transform_list[1].keyframe_points.insert(frame, rot[1]).interpolation = 'BEZIER'
         new_transform_list[2].keyframe_points.insert(frame, rot[2]).interpolation = 'BEZIER'
-        new_transform_list[4].keyframe_points.insert(frame, trans[0] / invmtxscale[0]).interpolation = 'BEZIER'
-        new_transform_list[5].keyframe_points.insert(frame, trans[1] / invmtxscale[1]).interpolation = 'BEZIER'
-        new_transform_list[6].keyframe_points.insert(frame, trans[2] / invmtxscale[2]).interpolation = 'BEZIER'
+        new_transform_list[4].keyframe_points.insert(frame, trans[0]).interpolation = 'BEZIER'
+        new_transform_list[5].keyframe_points.insert(frame, trans[1]).interpolation = 'BEZIER'
+        new_transform_list[6].keyframe_points.insert(frame, trans[2]).interpolation = 'BEZIER'
         new_transform_list[7].keyframe_points.insert(frame, scale[0]).interpolation = 'BEZIER'
         new_transform_list[8].keyframe_points.insert(frame, scale[1]).interpolation = 'BEZIER'
         new_transform_list[9].keyframe_points.insert(frame, scale[2]).interpolation = 'BEZIER'

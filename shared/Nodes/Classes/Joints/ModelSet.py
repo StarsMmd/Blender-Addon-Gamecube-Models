@@ -8,6 +8,7 @@ from ..Misc.Spline import Spline
 from ...Node import Node
 from ....Constants import *
 from ....BlenderVersion import BlenderVersion
+from ....IO.Logger import NullLogger
 
 # Model Set
 class ModelSet(Node):
@@ -135,7 +136,7 @@ class ModelSet(Node):
         # Copy meshes for instanced bones (JOBJ_INSTANCE)
         self.addInstances(builder, armature, bones)
 
-        self.addConstraints(armature, bones)
+        self.addConstraints(armature, bones, builder.logger)
 
         bpy.context.view_layer.update()
         bpy.ops.object.mode_set(mode = 'OBJECT')
@@ -180,66 +181,156 @@ class ModelSet(Node):
                             pobj = pobj.next
                         mesh = mesh.next
 
-    def addConstraints(self, armature, bones):
+    def addConstraints(self, armature, bones, logger=NullLogger()):
         from .Joint import Joint
         from .BoneReference import BoneReference
 
         for hsd_joint in bones:
             joint_type = hsd_joint.flags & JOBJ_TYPE_MASK
-            if joint_type != JOBJ_EFFECTOR:
-                continue
-            if not hsd_joint.temp_parent:
-                continue
 
-            parent_type = hsd_joint.temp_parent.flags & JOBJ_TYPE_MASK
-            if parent_type == JOBJ_JOINT2:
-                chain_length = 3
-                pole_data_joint = hsd_joint.temp_parent.temp_parent
-            elif parent_type == JOBJ_JOINT1:
-                chain_length = 2
-                pole_data_joint = hsd_joint.temp_parent
-            else:
-                continue
+            if joint_type == JOBJ_EFFECTOR:
+                self._addIKConstraint(armature, hsd_joint, Joint, BoneReference)
+            elif joint_type != JOBJ_JOINT2:
+                self._addRegularConstraints(armature, hsd_joint, Joint, logger)
 
-            target_robj = hsd_joint.getReferenceObject(Joint, 1)
-            poletarget_robj = pole_data_joint.getReferenceObject(Joint, 0) if pole_data_joint else None
-            length_robj = hsd_joint.temp_parent.getReferenceObject(BoneReference, 0)
-            if not length_robj:
-                continue
+    def _addIKConstraint(self, armature, hsd_joint, Joint, BoneReference):
+        if not hsd_joint.temp_parent:
+            return
 
-            bone_length = length_robj.property.length
-            pole_angle = length_robj.property.pole_angle
+        parent_type = hsd_joint.temp_parent.flags & JOBJ_TYPE_MASK
+        if parent_type == JOBJ_JOINT2:
+            chain_length = 3
+            pole_data_joint = hsd_joint.temp_parent.temp_parent
+        elif parent_type == JOBJ_JOINT1:
+            chain_length = 2
+            pole_data_joint = hsd_joint.temp_parent
+        else:
+            return
 
-            # Reposition the effector bone based on the IK bone length
-            effector = armature.data.bones[hsd_joint.temp_name]
-            effector_pos = Vector(effector.matrix_local.translation)
-            effector_name = effector.name
+        target_robj = hsd_joint.getReferenceObject(Joint, 1)
+        poletarget_robj = pole_data_joint.getReferenceObject(Joint, 3) if pole_data_joint else None
+        effector_length_robj = hsd_joint.temp_parent.getReferenceObject(BoneReference, 0)
+        joint2_length_robj = pole_data_joint.getReferenceObject(BoneReference, 0) if pole_data_joint else None
+        if not effector_length_robj:
+            return
 
+        if joint2_length_robj:
+            pole_angle = joint2_length_robj.property.pole_angle
+        else:
+            pole_angle = effector_length_robj.property.pole_angle
+
+        # Enforce second bone length if present (3-bone IK chain)
+        if chain_length == 3 and joint2_length_robj:
+            joint1 = armature.data.bones[hsd_joint.temp_parent.temp_name]
+            joint1_pos = Vector(joint1.matrix_local.translation)
+            joint1_name = joint1.name
             bpy.context.view_layer.objects.active = armature
             bpy.ops.object.mode_set(mode='EDIT')
-
-            position = Vector(effector.parent.matrix_local.translation)
-            direction = Vector(effector.parent.matrix_local.col[0][0:3]).normalized()
-            direction *= bone_length * hsd_joint.temp_parent.temp_matrix.to_scale()[0]
+            position = Vector(joint1.parent.matrix_local.translation)
+            direction = Vector(joint1.parent.matrix_local.col[0][0:3]).normalized()
+            bone_length = joint2_length_robj.property.length
+            direction *= bone_length * pole_data_joint.temp_matrix.to_scale()[0]
             position += direction
 
-            offset = position - effector_pos
-            edit_bone = armature.data.edit_bones[effector_name]
+            offset = position - joint1_pos
+            edit_bone = armature.data.edit_bones[joint1_name]
             edit_bone.head = Vector(edit_bone.head[:]) + offset
             edit_bone.tail = Vector(edit_bone.tail[:]) + offset
-
             bpy.ops.object.mode_set(mode='POSE')
 
-            # Add IK constraint
-            c = armature.pose.bones[effector_name].constraints.new(type='IK')
-            c.chain_count = chain_length
-            if target_robj:
+        # Reposition the effector bone based on the IK bone length
+        effector = armature.data.bones[hsd_joint.temp_name]
+        effector_pos = Vector(effector.matrix_local.translation)
+        effector_name = effector.name
+
+        bpy.context.view_layer.objects.active = armature
+        bpy.ops.object.mode_set(mode='EDIT')
+
+        position = Vector(effector.parent.matrix_local.translation)
+        direction = Vector(effector.parent.matrix_local.col[0][0:3]).normalized()
+        bone_length = effector_length_robj.property.length
+        direction *= bone_length * hsd_joint.temp_parent.temp_matrix.to_scale()[0]
+        position += direction
+
+        offset = position - effector_pos
+        edit_bone = armature.data.edit_bones[effector_name]
+        edit_bone.head = Vector(edit_bone.head[:]) + offset
+        edit_bone.tail = Vector(edit_bone.tail[:]) + offset
+
+        bpy.ops.object.mode_set(mode='POSE')
+
+        # Add IK constraint
+        c = armature.pose.bones[effector_name].constraints.new(type='IK')
+        c.chain_count = chain_length
+        if target_robj:
+            c.target = armature
+            c.subtarget = target_robj.property.temp_name
+            if poletarget_robj:
+                c.pole_target = armature
+                c.pole_subtarget = poletarget_robj.property.temp_name
+                c.pole_angle = pole_angle
+
+    def _addRegularConstraints(self, armature, hsd_joint, Joint, logger=NullLogger()):
+        """Add non-IK constraints from Reference objects (Copy Location, Track To, Copy Rotation)."""
+        if not hsd_joint.reference:
+            return
+
+        bone_name = getattr(hsd_joint, 'temp_name', '???')
+        copy_pos_refs = []
+        dirup_x_ref = None
+        orientation_ref = None
+
+        reference = hsd_joint.reference
+        while reference:
+            if not (reference.flags & ROBJ_ACTIVE_BIT):
+                reference = reference.next
+                continue
+
+            ref_type = reference.flags & ROBJ_TYPE_MASK
+
+            logger.debug("  Constraint check: bone=%s ref_addr=0x%X flags=0x%X ref_type=0x%X sub_type=%d property_type=%s",
+                         bone_name, reference.address, reference.flags, ref_type,
+                         reference.sub_type, type(reference.property).__name__)
+
+            if ref_type == REFTYPE_JOBJ and isinstance(reference.property, Joint):
+                if reference.sub_type == 1:
+                    copy_pos_refs.append(reference)
+                    logger.debug("  -> COPY_LOCATION: bone=%s target=%s", bone_name,
+                                 getattr(reference.property, 'temp_name', '???'))
+                elif reference.sub_type == 2:
+                    dirup_x_ref = reference
+                elif reference.sub_type == 4:
+                    orientation_ref = reference
+
+            reference = reference.next
+
+        if not (copy_pos_refs or dirup_x_ref or orientation_ref):
+            return
+
+        bpy.context.view_layer.objects.active = armature
+        bpy.ops.object.mode_set(mode='POSE')
+
+        if copy_pos_refs:
+            weight = 1.0 / len(copy_pos_refs)
+            for ref in copy_pos_refs:
+                c = armature.pose.bones[hsd_joint.temp_name].constraints.new(type='COPY_LOCATION')
+                c.influence = weight
                 c.target = armature
-                c.subtarget = target_robj.property.temp_name
-                if poletarget_robj:
-                    c.pole_target = armature
-                    c.pole_subtarget = poletarget_robj.property.temp_name
-                    c.pole_angle = pole_angle
+                c.subtarget = ref.property.temp_name
+
+        if dirup_x_ref:
+            c = armature.pose.bones[hsd_joint.temp_name].constraints.new(type='TRACK_TO')
+            c.target = armature
+            c.subtarget = dirup_x_ref.property.temp_name
+            c.track_axis = 'TRACK_X'
+            c.up_axis = 'UP_Y'
+
+        if orientation_ref:
+            c = armature.pose.bones[hsd_joint.temp_name].constraints.new(type='COPY_ROTATION')
+            c.target = armature
+            c.subtarget = orientation_ref.property.temp_name
+            if hsd_joint.flags & 0x8:
+                c.owner_space = 'LOCAL'
 
 
 
