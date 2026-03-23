@@ -65,20 +65,16 @@ class TextureAnimation(Node):
             return
 
         aobj = self.animation
+        logger.debug("    TexAnim: aobj flags=0x%X end_frame=%.1f loop=%s",
+                     aobj.flags, aobj.end_frame, bool(aobj.flags & AOBJ_ANIM_LOOP))
         fobj = aobj.frame
         while fobj:
             uv_mapping = _tex_uv_map.get(fobj.type)
             if uv_mapping:
                 input_index, component = uv_mapping
                 data_path = 'node_tree.nodes["%s"].inputs[%d].default_value' % (mapping_name, input_index)
-                curve = action.fcurves.find(data_path, index=component)
-                if curve:
-                    logger.debug("    TexAnim: fcurve %s[%d] already exists, skipping",
-                                 data_path, component)
-                    fobj = fobj.next
-                    continue
                 curve = action.fcurves.new(data_path, index=component)
-                read_fobjdesc(fobj, curve, 0, 1)
+                read_fobjdesc(fobj, curve, 0, 1, logger=logger)
 
                 if aobj.flags & AOBJ_ANIM_LOOP:
                     curve.modifiers.new('CYCLES')

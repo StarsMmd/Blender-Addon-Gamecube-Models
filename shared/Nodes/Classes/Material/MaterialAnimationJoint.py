@@ -12,9 +12,9 @@ class MaterialAnimationJoint(Node):
 
     def build(self, joint, action_name_base, builder):
         """
-        joint:            the corresponding Joint node
-        action_name_base: base name for material actions (e.g. 'model.dat_MatAnim_0')
-        builder:          ModelBuilder
+        joint:              the corresponding Joint node
+        action_name_base:   base name for material actions (e.g. 'model.dat_MatAnim_0')
+        builder:            ModelBuilder
         """
         from ..Mesh.Mesh import Mesh
         logger = builder.logger

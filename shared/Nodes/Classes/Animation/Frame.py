@@ -1,6 +1,7 @@
 import struct
 from ...Node import Node
 from ....Constants import *
+from ....IO.Logger import NullLogger
 
 # Frame (aka FObject)
 class Frame(Node):
@@ -19,8 +20,9 @@ class Frame(Node):
         super().loadFromBinary(parser)
         if self.ad and self.data_length:
             self.raw_ad = parser.read_chunk(self.data_length, self.ad, parser._startOffset(True))
-            parser.logger.debug("Frame 0x%X: type=%d, data_length=%d, start_frame=%.1f, frac_value=0x%02X, frac_slope=0x%02X",
-                                self.address, self.type, self.data_length, self.start_frame, self.frac_value, self.frac_slope)
+            parser.logger.debug("Frame 0x%X: type=%d, data_length=%d, start_frame=%.1f, frac_value=0x%02X, frac_slope=0x%02X, raw_ad=%s",
+                                self.address, self.type, self.data_length, self.start_frame, self.frac_value, self.frac_slope,
+                                ' '.join('%02X' % b for b in self.raw_ad))
         else:
             self.raw_ad = b''
 
@@ -35,7 +37,7 @@ _interpolation_dict = {
 }
 
 
-def read_fobjdesc(fobj, curve, bias, scale):
+def read_fobjdesc(fobj, curve, bias, scale, logger=NullLogger()):
     """Decode the compressed keyframe byte stream and insert points into a Blender fcurve."""
     current_frame = 0 - fobj.start_frame // 1
     cur_pos = 0
@@ -60,6 +62,8 @@ def read_fobjdesc(fobj, curve, bias, scale):
             shift += 1
         cur_pos += 1
         node_count += 1  # always at least one node
+
+        logger.debug("      fobjdesc: opcode=%d node_count=%d cur_pos=%d", opcode, node_count, cur_pos)
 
         if opcode == HSD_A_OP_SLP:
             for _ in range(node_count):
@@ -91,6 +95,10 @@ def read_fobjdesc(fobj, curve, bias, scale):
                         cur_pos += 1
                     cur_pos += 1
                     current_frame += wait
+
+                logger.debug("      fobjdesc: insert frame=%.1f val=%.4f scaled=%.4f wait=%d cur_pos=%d",
+                             keyframe.co[0], val, (val + bias) * scale,
+                             wait if opcode != HSD_A_OP_NONE else 0, cur_pos)
 
     # Access keyframes through the curve's collection — stored references from
     # insert() become stale after subsequent inserts (Blender reallocates internally).
