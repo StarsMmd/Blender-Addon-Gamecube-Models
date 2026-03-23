@@ -100,7 +100,7 @@ if _bpy_available:
 
 
     def _setup_anim_workspace(context):
-        """Split the 3D viewport vertically and open a Dope Sheet / Action Editor. Set playback end to 60."""
+        """Split the 3D viewport and open an Action Editor and NLA Editor. Set playback end to 60."""
         context.scene.frame_end = 60
 
         # Find the 3D Viewport area to split
@@ -114,20 +114,33 @@ if _bpy_available:
         if not view3d_area:
             return
 
-        # Split by overriding context for the area
+        # First split: 3D viewport | right panel (will become Action Editor)
         with context.temp_override(area=view3d_area):
             bpy.ops.screen.area_split(direction='VERTICAL', factor=0.6)
 
-        # The new area is the last one added to screen.areas
-        # Find the new VIEW_3D area (the split-off one) and change it to DOPESHEET
-        # After a vertical split, the new area appears to the right
+        # Find the new area and make it the Action Editor
+        dopesheet_area = None
         for area in screen.areas:
             if area.type == 'VIEW_3D' and area != view3d_area:
                 area.type = 'DOPESHEET_EDITOR'
-                # Switch to Action Editor mode
                 for space in area.spaces:
                     if space.type == 'DOPESHEET_EDITOR':
                         space.mode = 'ACTION'
+                dopesheet_area = area
+                break
+
+        if not dopesheet_area:
+            return
+
+        # Second split: Action Editor on top | NLA Editor on bottom
+        areas_before = set(screen.areas)
+        with context.temp_override(area=dopesheet_area):
+            bpy.ops.screen.area_split(direction='HORIZONTAL', factor=0.5)
+
+        # The new area is the one not in our previous set
+        for area in screen.areas:
+            if area not in areas_before:
+                area.type = 'NLA_EDITOR'
                 break
 
     def menu_func_import(self, context):
