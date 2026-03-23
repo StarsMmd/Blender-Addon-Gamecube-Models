@@ -45,15 +45,20 @@ class MaterialAnimation(Node):
         mat = mobject.blender_material
         max_frame = builder.options.get("max_frame", 1000)
 
-        logger.debug("  MatAnim build: material='%s' has_aobj=%s has_texanim=%s",
-                     mat.name, self.animation is not None,
-                     self.texture_animation is not None)
+        has_aobj = self.animation is not None and not (self.animation.flags & AOBJ_NO_ANIM if self.animation else True)
+        has_texanim = self.texture_animation is not None
 
-        # Ensure the material has animation data and an action
-        action = _get_or_create_action(mat, action_name_base, builder)
+        logger.debug("  MatAnim build: material='%s' has_aobj=%s has_texanim=%s",
+                     mat.name, has_aobj, has_texanim)
+
+        # Skip if no animation data at all
+        if not has_aobj and not has_texanim:
+            return
+
+        action = _create_action(mat, action_name_base, builder)
 
         # Process material color/alpha tracks
-        if self.animation and not (self.animation.flags & AOBJ_NO_ANIM):
+        if has_aobj:
             aobj = self.animation
             fobj = aobj.frame
             while fobj:
@@ -61,32 +66,46 @@ class MaterialAnimation(Node):
                 fobj = fobj.next
 
         # Process texture animation tracks
-        if self.texture_animation:
+        if has_texanim:
             tex_anim = self.texture_animation
             while tex_anim:
                 tex_anim.build(mobject, action, builder)
                 tex_anim = tex_anim.next
 
+        # Remove empty actions, or push to NLA for automatic playback
+        if len(action.fcurves) == 0:
+            bpy.data.actions.remove(action)
+        else:
+            # Push into NLA track — first track is unmuted (active), rest are muted.
+            # User can switch by muting/unmuting tracks in the NLA Editor
+            # without affecting bone animations in the Action Editor.
+            track = mat.animation_data.nla_tracks.new()
+            track.name = action.name
+            track.mute = True
+            strip = track.strips.new(action.name, 0, action)
+            strip.extrapolation = 'HOLD'
+            mat.animation_data.action = None
 
-def _get_or_create_action(material, action_name_base, builder):
-    """Ensure the Blender material has animation_data with an action."""
+
+def _create_action(material, action_name_base, builder):
+    """Create a new Blender action for this material animation index."""
     from ....BlenderVersion import BlenderVersion
 
     if not material.animation_data:
         material.animation_data_create()
-    if not material.animation_data.action:
-        action_name = action_name_base + '_' + material.name if material.name else action_name_base + '_mat'
-        action = bpy.data.actions.new(action_name)
-        action.use_fake_user = True
-        material.animation_data.action = action
 
-        # Action slots for Blender 4.5+
-        if bpy.app.version >= BlenderVersion(4, 5, 0):
-            action.slots.new('MATERIAL', material.name or 'Material')
-            action.slots.active = action.slots[0]
-            material.animation_data.action_slot = action.slots[0]
+    action_name = action_name_base + '_' + material.name if material.name else action_name_base + '_mat'
+    action = bpy.data.actions.new(action_name)
+    action.use_fake_user = True
+    material.animation_data.action = action
 
-    return material.animation_data.action
+    # Action slots for Blender 4.5+
+    if bpy.app.version >= BlenderVersion(4, 5, 0):
+        action.slots.new('MATERIAL', material.name or 'Material')
+        action.slots.active = action.slots[0]
+        material.animation_data.action_slot = action.slots[0]
+
+    return action
 
 
 def _apply_material_track(fobj, aobj, material, action, max_frame, logger=NullLogger()):
@@ -106,11 +125,6 @@ def _apply_material_track(fobj, aobj, material, action, max_frame, logger=NullLo
     needs_linearize = fobj.type in _srgb_tracks
 
     data_path = 'node_tree.nodes["%s"].outputs[0].default_value' % node_name
-
-    # Skip if this fcurve already exists (e.g. same material animated by multiple anim indices)
-    if action.fcurves.find(data_path, index=index):
-        logger.debug("    MatAnim: fcurve %s[%d] already exists, skipping", data_path, index)
-        return
 
     if needs_linearize:
         # Bake with sRGB→linear conversion:
