@@ -181,6 +181,18 @@ def _apply_animation_to_bone(joint, aobj, action, armature, max_frame, logger=Nu
             Bmtx = joint.temp_matrix_local.inverted_safe() @ mtx
         trans, rot, scale = Bmtx.decompose()
         rot = rot.to_euler()
+        # TODO: Temporary mitigation — clamp extreme scale values while investigating
+        # the root cause on models like Deoxys where edit_scale_correction becomes
+        # near-singular due to bones with very small cumulative rest-pose scales.
+        # The scale correction formula amplifies animation values through the parent
+        # chain, producing 100,000x+ scales from normal animation data.
+        # Both the main branch and refactor have this issue.
+        max_scale = 100.0
+        scale = Vector((
+            max(-max_scale, min(max_scale, scale[0])),
+            max(-max_scale, min(max_scale, scale[1])),
+            max(-max_scale, min(max_scale, scale[2])),
+        ))
         if frame == 0:
             logger.debug("  %s: frame0 final: rot=(%.4f,%.4f,%.4f) loc=(%.4f,%.4f,%.4f) scale=(%.4f,%.4f,%.4f)",
                          bone_name, rot[0], rot[1], rot[2], trans[0], trans[1], trans[2], scale[0], scale[1], scale[2])
