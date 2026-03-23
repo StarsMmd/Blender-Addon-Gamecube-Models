@@ -209,6 +209,9 @@ class ModelSet(Node):
             pole_angle = joint2_length_robj.property.pole_angle
         else:
             pole_angle = effector_length_robj.property.pole_angle
+        # Pole flip is always based on the effector's parent reference, matching main branch behavior
+        if getattr(effector_length_robj.property, 'pole_flip', False):
+            pole_angle += math.pi
 
         # Enforce second bone length if present (3-bone IK chain)
         if chain_length == 3 and joint2_length_robj:

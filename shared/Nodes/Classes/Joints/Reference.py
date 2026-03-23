@@ -28,8 +28,7 @@ class Reference(Node):
                 parser.logger.debug("Reference 0x%X: -> BoneReference at 0x%X (pole_flip=%s)",
                                     self.address, self.property, bool(self.flags & 0x4))
                 boneReference = parser.read('BoneReference', self.property)
-                if (self.flags & 0x4):
-                    boneReference.pole_angle += math.pi
+                boneReference.pole_flip = bool(self.flags & 0x4)
                 self.property = boneReference
             elif ref_type == REFTYPE_LIMIT:
                 # Property field is a float value (limit amount), reinterpret the uint as float
