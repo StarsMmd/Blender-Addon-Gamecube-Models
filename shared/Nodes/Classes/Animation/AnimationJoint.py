@@ -171,10 +171,14 @@ def _apply_animation_to_bone(joint, aobj, action, armature, max_frame, logger=Nu
         # Scale correction: Blender edit bones are normalized (no scale),
         # so we must account for the scale that was stripped.
         # Formula: local_edit_matrix^-1 @ [parent_scale_correction @] mtx @ scale_correction^-1
-        if joint.temp_parent:
-            Bmtx = joint.local_edit_matrix.inverted() @ joint.temp_parent.edit_scale_correction @ mtx @ joint.edit_scale_correction.inverted()
-        else:
-            Bmtx = joint.local_edit_matrix.inverted() @ mtx @ joint.edit_scale_correction.inverted()
+        try:
+            if joint.temp_parent:
+                Bmtx = joint.local_edit_matrix.inverted() @ joint.temp_parent.edit_scale_correction @ mtx @ joint.edit_scale_correction.inverted()
+            else:
+                Bmtx = joint.local_edit_matrix.inverted() @ mtx @ joint.edit_scale_correction.inverted()
+        except ValueError:
+            # Fallback for singular matrices (bones with zero/near-zero scale)
+            Bmtx = joint.temp_matrix_local.inverted_safe() @ mtx
         trans, rot, scale = Bmtx.decompose()
         rot = rot.to_euler()
         if frame == 0:
