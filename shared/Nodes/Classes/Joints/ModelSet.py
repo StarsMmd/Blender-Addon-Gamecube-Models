@@ -68,9 +68,19 @@ class ModelSet(Node):
 
             animated_joint.build(self.root_joint, action, armature, builder)
 
-            # Rename to "Pose" if the action has at most one frame of animation
-            frame_start, frame_end = action.frame_range
-            if frame_end - frame_start <= 1:
+            # Rename to "Pose" if no fcurve actually changes value across the action
+            is_static = True
+            for fcurve in action.fcurves:
+                points = fcurve.keyframe_points
+                if len(points) > 1:
+                    first_val = points[0].co[1]
+                    for kp in points:
+                        if abs(kp.co[1] - first_val) > 1e-6:
+                            is_static = False
+                            break
+                if not is_static:
+                    break
+            if is_static:
                 action.name = '%s_Pose_%s' % (base_name, str(i).zfill(pad))
 
             actions.append(action)
