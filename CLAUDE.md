@@ -188,3 +188,10 @@ GameCube → Blender requires a π/2 rotation around the X-axis. Applied once at
 - `armature.data.edit_bones` is only accessible in EDIT mode
 - `armature.pose.bones` is only accessible in POSE mode
 - `bpy.context.view_layer.update()` needed after structural scene changes
+
+---
+
+## Coding Conventions
+
+- **Logger parameter:** Functions that accept a `logger` parameter must default to `NullLogger()` (from `shared/IO/Logger.py`), never `None`. This avoids needing `if logger:` guards throughout the code — just call `logger.debug(...)` unconditionally. All levels on `NullLogger` are no-ops.
+- **Logging output:** All log messages are written to a file in the system temp directory regardless of the `verbose` setting. `verbose` only controls whether messages are also printed to the Blender console. Verbose defaults to off.
