@@ -67,10 +67,31 @@ class PObject(Node):
         else:
             self.property = None
 
+        # Store raw display list data for round-trip writing
+        display_list_size = self.display_list_chunk_count * self.display_list_chunk_size
+        if self.display_list_address and display_list_size > 0:
+            self.raw_display_list = parser.read_chunk(display_list_size, self.display_list_address, parser._startOffset(True))
+        else:
+            self.raw_display_list = b''
+
         sources, face_lists, normals = self.read_geometry(parser)
         self.sources = sources
         self.face_lists = face_lists
         self.normals = normals
+
+    def writePrivateData(self, builder):
+        super().writePrivateData(builder)
+        if self.raw_display_list:
+            builder.seek(0, 'end')
+            # Display lists are aligned to 32-byte boundaries on the GameCube
+            while builder._currentRelativeAddress() % 32 != 0:
+                builder.write(0, 'uchar')
+            self.display_list_address = builder._currentRelativeAddress()
+            for byte in self.raw_display_list:
+                builder.write(byte, 'uchar')
+            self._raw_pointer_fields.add('display_list_address')
+        else:
+            self.display_list_address = 0
 
     def allocationSize(self):
         # If the property is an Envelope list then allocate space for
@@ -89,17 +110,14 @@ class PObject(Node):
     # Tells the builder how to write this node's data to the binary file.
     # Returns the offset the builder was at before it started writing its own data.
     def writeBinary(self, builder):
-        # TODO: properly calculate size of display list chunks
-        # TODO: make sure display list chunks are written and field is replaced with pointer to data
-        # TODO: self.disp_list_count = ...
         if isinstance(self.property, Joint):
-            self.flags = POBJ_SKIN
             self.property = self.property.address
+            self._raw_pointer_fields.add('property')
 
         elif isinstance(self.property, ShapeSet):
-            self.flags = POBJ_SHAPEANIM
             self.property = self.property.address
-            
+            self._raw_pointer_fields.add('property')
+
         elif isinstance(self.property, list):
             # Envelope list — write array of pointers before the node data
             # The pointer array was pre-allocated in allocationOffset
@@ -112,10 +130,9 @@ class PObject(Node):
             # Null terminator
             builder.write(0, 'uint', array_address + len(self.property) * 4, relative_to_header=True)
             self.property = array_address
-            self.flags = 0
+            self._raw_pointer_fields.add('property')
 
-        else:
-            self.flags = 0
+        elif self.property is None:
             self.property = 0
 
         super().writeBinary(builder)
@@ -375,6 +392,18 @@ class PObject(Node):
                     norm_indices.append(value)
                 indices = [x for _,x in sorted(zip(norm_indices,indices))]
                 vertices = self.read_vertex_data(parser, vertex, indices)
+
+            # Store raw vertex buffer for round-trip writing.
+            # base_pointer=0 is valid (points to start of data section).
+            # Multiple PObjects may share a VertexList — keep the largest capture.
+            if vertex.base_pointer is not None and vertex.stride > 0 and norm_dict:
+                max_index = max(norm_dict.keys()) if norm_dict else 0
+                buffer_size = (max_index + 1) * vertex.stride
+                existing = getattr(vertex, 'raw_vertex_data', b'')
+                if buffer_size > len(existing):
+                    vertex.raw_vertex_data = parser.read_chunk(buffer_size, vertex.base_pointer, parser._startOffset(True))
+            elif not hasattr(vertex, 'raw_vertex_data'):
+                vertex.raw_vertex_data = b''
 
             sources.append(vertices)
             face_lists.append(faces)

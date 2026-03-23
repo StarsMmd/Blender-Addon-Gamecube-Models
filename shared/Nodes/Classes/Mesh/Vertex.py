@@ -18,6 +18,14 @@ class Vertex(Node):
         ('base_pointer', 'uint'),
     ]
 
+    def writePrivateData(self, builder):
+        # Vertex buffer data is shared and written in Phase 1 by VertexList.writePrimitivePointers.
+        # Here we just ensure the relocation is tracked.
+        if not hasattr(self, '_raw_pointer_fields'):
+            self._raw_pointer_fields = set()
+        if hasattr(self, 'raw_vertex_data') and self.raw_vertex_data and self.base_pointer != 0:
+            self._raw_pointer_fields.add('base_pointer')
+
     def getFormat(self):
         if self.attribute_type == GX_NONE:
             return 'void'

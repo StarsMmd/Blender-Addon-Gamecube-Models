@@ -807,8 +807,8 @@ class TestBoundBoxNode:
     def test_bound_box_solo(self):
         data = build_bound_box(unknown_1=42, unknown_2=0xABCD)
         node = _parse(BoundBox, 0, data)
-        assert node.unknown_1 == 42
-        assert node.unknown_2 == 0xABCD
+        assert node.anim_set_count == 42
+        assert node.unknown == 0xABCD
 
 
 # ===========================================================================

@@ -1,4 +1,9 @@
-from .NodeTypes import get_type_length, get_alignment_at_offset, markUpFieldType
+from .NodeTypes import get_type_length, get_alignment_at_offset, markUpFieldType, isNodeClassType
+from ..Constants.RecursiveTypes import (
+    isBracketedType, getBracketedSubType, isPointerType, getPointerSubType,
+    isUnboundedArrayType, getArraySubType
+)
+from ..Constants.PrimitiveTypes import is_primitive_type
 
 
 # Abstract node class
@@ -61,15 +66,78 @@ class Node(object):
                     for sub_field in field:
                         sub_field.prepareForBlender(builder)
 
-    # For any fields which are a pointer where the underlying sub type is a primitive type (but not a string),
-    # write them to the builder's output and replace the field with the address it was written to
+    # Override in subclasses that have SHARED raw data (vertex buffers, image pixels,
+    # palette data) that is written once in Phase 1 and referenced by multiple nodes.
+    # The base class is a no-op — most nodes have no shared data.
     def writePrimitivePointers(self, builder):
         pass
 
-    # For any fields which are a pointer to a string, write the string to the builder and replace
-    # the property's value with the address it was written to
-    def writeStringPointers(self, builder):
-        pass
+    # Write this node's PRIVATE raw data immediately before the node's struct allocation.
+    # Called during Phase 2 (DFS post-order) for each node.
+    # Handles: pointer-to-primitive fields (strings, matrices), pointer arrays for
+    # unbounded Node array fields, and subclass-specific data (display lists, frame ad, etc.)
+    #
+    # Subclasses that write raw data for 'uint' fields (which are actually pointers) should:
+    #   1. Call super().writePrivateData(builder) first
+    #   2. Write additional data and set the field to the address
+    #   3. Add the field name to self._raw_pointer_fields so a relocation is recorded in Phase 3
+    def writePrivateData(self, builder):
+        if not hasattr(self, '_raw_pointer_fields'):
+            self._raw_pointer_fields = set()
+
+        for field in self.fields:
+            field_name = field[0]
+            raw_field_type = field[1]
+            field_type = markUpFieldType(raw_field_type)
+            field_value = getattr(self, field_name)
+
+            # Skip inline struct types (@-prefixed) — they're written as part of the node struct
+            if raw_field_type.startswith('@') or '(@' in raw_field_type:
+                continue
+
+            # Write pointer-to-primitive data (strings, matrices)
+            if isBracketedType(field_type):
+                inner = getBracketedSubType(field_type)
+                if isPointerType(inner):
+                    sub_type = getPointerSubType(inner)
+                    if field_value is None:
+                        setattr(self, field_name, 0)
+                    elif is_primitive_type(sub_type):
+                        pointer = builder.write(field_value, sub_type)
+                        setattr(self, field_name, pointer)
+                    elif isinstance(field_value, list):
+                        # Only write pointer arrays for lists of nodes that have allocated addresses
+                        has_addressed_nodes = (len(field_value) > 0
+                            and hasattr(field_value[0], 'address')
+                            and field_value[0].address is not None)
+                        if has_addressed_nodes:
+                            # Pointer array for unbounded Node array fields (e.g. ModelSet[], LightSet[])
+                            resolved = []
+                            for v in field_value:
+                                if hasattr(v, 'address') and v.address is not None:
+                                    resolved.append(v.address)
+                                elif v is None:
+                                    resolved.append(0)
+                                else:
+                                    resolved.append(v)
+
+                            builder.seek(0, 'end')
+                            array_addr = builder._currentRelativeAddress()
+                            for addr in resolved:
+                                if addr != 0:
+                                    builder.relocations.append(builder._currentRelativeAddress())
+                                builder.write(addr, 'uint')
+                            # Null terminator
+                            builder.write(0, 'uint')
+                            setattr(self, field_name, array_addr)
+
+            elif isPointerType(field_type):
+                sub_type = getPointerSubType(field_type)
+                if field_value is None:
+                    setattr(self, field_name, 0)
+                elif is_primitive_type(sub_type):
+                    pointer = builder.write(field_value, sub_type)
+                    setattr(self, field_name, pointer)
 
     # Tells the builder how many bytes to reserve for this node.
     def allocationSize(self):
@@ -91,6 +159,20 @@ class Node(object):
         if self.address == None:
             return
         builder.writeNode(self, relative_to_header=True)
+
+        # Record relocations for 'uint' fields that actually hold pointer addresses
+        # (set by subclass writePrimitivePointers via _raw_pointer_fields)
+        raw_fields = getattr(self, '_raw_pointer_fields', set())
+        if raw_fields:
+            offset = 0
+            for field in self.fields:
+                field_type = markUpFieldType(field[1])
+                offset += get_alignment_at_offset(field_type, self.address + offset)
+                if field[0] in raw_fields:
+                    value = getattr(self, field[0])
+                    if isinstance(value, int) and value != 0:
+                        builder.relocations.append(self.address + offset)
+                offset += get_type_length(field_type)
 
     # TODO: confirm if the convention is depth first or breadth first write.
     # Converts the node tree into an list of every node present in the tree.

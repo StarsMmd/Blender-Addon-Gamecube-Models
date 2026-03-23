@@ -48,24 +48,16 @@ class Joint(Node):
     # Tells the builder how to write this node's data to the binary file.
     # Returns the offset the builder was at before it started writing its own data.
     def writeBinary(self, builder):
-        if isinstance(self.property, Particle):
-            self.flags = JOBJ_PTCL
-            self.property = self.property.address
-
-        elif isinstance(self.property, Spline):
-            self.flags = JOBJ_SPLINE
-            self.property = self.property.address
-
-        elif self.property is not None:
-            self.flags = 0
-            self.property = self.property.address
-
-        else:
-            self.flags = 0
+        # Convert property Node to its address — don't modify flags
+        if self.property is not None and hasattr(self.property, 'address'):
+            self.property = self.property.address if self.property.address is not None else 0
+            if self.property != 0:
+                if not hasattr(self, '_raw_pointer_fields'):
+                    self._raw_pointer_fields = set()
+                self._raw_pointer_fields.add('property')
+        elif self.property is None:
             self.property = 0
-
-        if self.isHidden:
-            self.flags |= JOBJ_HIDDEN
+        # else: property is already an int (e.g. 0)
 
         super().writeBinary(builder)
 

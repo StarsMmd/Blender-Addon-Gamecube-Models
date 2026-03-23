@@ -82,6 +82,44 @@ class Spline(Node):
         else:
             self.s2 = None
 
+    def writePrivateData(self, builder):
+        super().writePrivateData(builder)
+
+        # Write s1 float array (3 floats per control point)
+        if isinstance(self.s1, list) and self.s1:
+            builder.seek(0, 'end')
+            addr = builder._currentRelativeAddress()
+            for pt in self.s1:
+                for v in pt:
+                    builder.write(v, 'float')
+            self.s1 = addr
+            self._raw_pointer_fields.add('s1')
+        else:
+            self.s1 = 0
+
+        # Write s2 float array (1 float per knot/weight)
+        if isinstance(self.s2, list) and self.s2:
+            builder.seek(0, 'end')
+            addr = builder._currentRelativeAddress()
+            for v in self.s2:
+                builder.write(v, 'float')
+            self.s2 = addr
+            self._raw_pointer_fields.add('s2')
+        else:
+            self.s2 = 0
+
+        # Write s3 float array (5 floats per entry)
+        if isinstance(self.s3, list) and self.s3:
+            builder.seek(0, 'end')
+            addr = builder._currentRelativeAddress()
+            for entry in self.s3:
+                for v in entry:
+                    builder.write(v, 'float')
+            self.s3 = addr
+            self._raw_pointer_fields.add('s3')
+        else:
+            self.s3 = 0
+
     def build(self, builder):
         if not self.s1:
             return None

@@ -3,11 +3,15 @@
 Standalone round-trip validation tool for DAT/PKX binary files.
 
 Usage:
-    python3 test_dat_write.py <input.dat> <output.dat>
+    python3 test_dat_write.py <input_file>
 
-Parses the input file with DATParser, writes it back with DATBuilder,
-then re-parses the output and compares field values. Optionally reports
-byte-level differences.
+Parses the input file with DATParser, writes it back as a .dat with
+DATBuilder, then re-parses the output and compares field values.
+Optionally reports byte-level differences.
+
+The output is always a .dat file (written to the same directory as the
+input with '_output.dat' suffix). For container formats like .pkx, the
+byte comparison only covers the DAT section (skipping the PKX header).
 
 This is NOT a pytest test — it requires real (copyrighted) model files
 that the user provides. For automated testing with synthetic data, see
@@ -85,16 +89,20 @@ def byte_diff(data_a, data_b, max_diffs=20):
 
 
 def main():
-    if len(sys.argv) < 3:
+    if len(sys.argv) < 2:
         print(__doc__)
         sys.exit(1)
 
     input_path = sys.argv[1]
-    output_path = sys.argv[2]
 
     if not os.path.exists(input_path):
         print(f"Error: input file not found: {input_path}")
         sys.exit(1)
+
+    # Output is always .dat, written alongside the input file
+    input_dir = os.path.dirname(input_path)
+    input_stem = os.path.splitext(os.path.basename(input_path))[0]
+    output_path = os.path.join(input_dir, input_stem + "_output.dat")
 
     options = {
         "verbose": False,
@@ -107,15 +115,21 @@ def main():
     parser = DATParser(input_path, options)
     parser.parseSections()
 
+    # Record the DAT section offset so we can compare only the DAT bytes later
+    dat_offset = parser.file_start_offset
+    if dat_offset > 0:
+        print(f"  Container header detected (offset 0x{dat_offset:X}), DAT data starts after header")
+
     sections = parser.sections
     print(f"  Parsed {len(sections)} section(s)")
     for s in sections:
         print(f"    - {s.section_name} ({s.root_node.class_name})")
 
-    # Phase 2: Write output
+    # Phase 2: Write output (always a raw .dat)
     print(f"Writing: {output_path}")
     root_nodes = [s.root_node for s in sections]
-    builder = DATBuilder(output_path, root_nodes)
+    section_names = [s.section_name for s in sections]
+    builder = DATBuilder(output_path, root_nodes, section_names)
     builder.build()
     builder.close()
 
@@ -127,7 +141,7 @@ def main():
 
     print(f"  Re-parsed {len(re_sections)} section(s)")
 
-    # Phase 4: Compare
+    # Phase 4: Compare fields
     print("\n--- Field Comparison ---")
     all_mismatches = []
     for i, (orig, rewritten) in enumerate(zip(sections, re_sections)):
@@ -143,15 +157,20 @@ def main():
     else:
         print("All parsed fields match!")
 
-    # Phase 5: Byte comparison
+    # Phase 5: Byte comparison (DAT section only)
     print("\n--- Byte Comparison ---")
     with open(input_path, 'rb') as f:
-        input_bytes = f.read()
+        all_input_bytes = f.read()
     with open(output_path, 'rb') as f:
         output_bytes = f.read()
 
-    print(f"  Input size:  {len(input_bytes)} bytes")
-    print(f"  Output size: {len(output_bytes)} bytes")
+    # For container formats (.pkx), compare only the DAT section
+    input_bytes = all_input_bytes[dat_offset:]
+    if dat_offset > 0:
+        print(f"  Comparing DAT section only (skipping 0x{dat_offset:X} byte container header)")
+
+    print(f"  Input DAT size:  {len(input_bytes)} bytes")
+    print(f"  Output size:     {len(output_bytes)} bytes")
 
     if input_bytes == output_bytes:
         print("  Byte-level match: YES")
@@ -161,7 +180,7 @@ def main():
         if diffs:
             print(f"  First {len(diffs)} differing byte(s):")
             for offset, a, b in diffs:
-                print(f"    0x{offset:08X}: 0x{a:02X} vs 0x{b:02X}")
+                print(f"    0x{offset:08X}: input=0x{a:02X} output=0x{b:02X}")
         if len(input_bytes) != len(output_bytes):
             print(f"  Size difference: {len(output_bytes) - len(input_bytes):+d} bytes")
 

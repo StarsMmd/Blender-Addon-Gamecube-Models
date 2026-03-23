@@ -26,6 +26,17 @@ class Frame(Node):
         else:
             self.raw_ad = b''
 
+    def writePrivateData(self, builder):
+        super().writePrivateData(builder)
+        if self.raw_ad:
+            builder.seek(0, 'end')
+            self.ad = builder._currentRelativeAddress()
+            for byte in self.raw_ad:
+                builder.write(byte, 'uchar')
+            self._raw_pointer_fields.add('ad')
+        else:
+            self.ad = 0
+
 
 _interpolation_dict = {
     HSD_A_OP_NONE: 'CONSTANT',

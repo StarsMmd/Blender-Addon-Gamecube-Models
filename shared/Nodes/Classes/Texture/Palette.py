@@ -34,6 +34,19 @@ class Palette(Node):
         # decodes colors directly from byte data
         self.raw_data = parser.read_chunk(data_size, self.data, parser._startOffset(True))
 
+    def writePrimitivePointers(self, builder):
+        """Write shared palette data (Phase 1)."""
+        if not hasattr(self, '_raw_pointer_fields'):
+            self._raw_pointer_fields = set()
+        if hasattr(self, 'raw_data') and self.raw_data:
+            builder.seek(0, 'end')
+            self.data = builder._currentRelativeAddress()
+            for byte in self.raw_data:
+                builder.write(byte, 'uchar')
+            self._raw_pointer_fields.add('data')
+        else:
+            self.data = 0
+
 palette_format_dict = {
     #                 bits per pixel | type
     0:    (BITSPPX_IA8   ,  'IA8Color'   ),

@@ -42,15 +42,24 @@ class Reference(Node):
 
     def writeBinary(self, builder):
         if not self.property:
-            self.flags = 0
+            self.property = 0
+            # Don't overwrite flags — preserve original
 
         elif isinstance(self.property, Joint):
-            self.flags = ROBJ_ACTIVE_BIT | REFTYPE_JOBJ | self.sub_type
+            self.property = self.property.address if self.property.address is not None else 0
+            if self.property != 0:
+                if not hasattr(self, '_raw_pointer_fields'):
+                    self._raw_pointer_fields = set()
+                self._raw_pointer_fields.add('property')
 
-        elif isinstance(self.property, list):
-            self.flags = ROBJ_ACTIVE_BIT | REFTYPE_IKHINT
+        elif hasattr(self.property, 'address'):
+            # BoneReference or other node types
+            self.property = self.property.address if self.property.address is not None else 0
+            if self.property != 0:
+                if not hasattr(self, '_raw_pointer_fields'):
+                    self._raw_pointer_fields = set()
+                self._raw_pointer_fields.add('property')
 
-        else:
-            self.flags = 0
+        # else: property is already an int
 
         super().writeBinary(builder)

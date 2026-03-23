@@ -28,8 +28,41 @@ class VertexList(Node):
     # For any fields which are a pointer where the underlying sub type is a primitive type,
     # write them to the builder's output and replace the field with the address it was written to
     def writePrimitivePointers(self, builder):
+        # Write vertex buffer data with deduplication.
+        # Multiple VertexLists may share the same vertex buffers (same base_pointer).
+        # The builder pre-collects the max size per base_pointer and writes each once.
+        if not hasattr(builder, '_vertex_buffer_cache'):
+            builder._vertex_buffer_cache = {}
+
         for vertex in self.vertices:
-            vertex.writePrimitivePointers(builder)
+            # Save original base_pointer before any modification
+            if not hasattr(vertex, '_orig_base_pointer'):
+                vertex._orig_base_pointer = vertex.base_pointer
+
+        for vertex in self.vertices:
+            if hasattr(vertex, 'raw_vertex_data') and vertex.raw_vertex_data:
+                orig_bp = vertex._orig_base_pointer
+                if orig_bp not in builder._vertex_buffer_cache:
+                    # Find the largest raw_vertex_data for this base_pointer across all VertexLists
+                    max_data = vertex.raw_vertex_data
+                    for other in builder.node_list:
+                        if type(other).__name__ == 'VertexList':
+                            for ov in other.vertices:
+                                obp = getattr(ov, '_orig_base_pointer', ov.base_pointer)
+                                if hasattr(ov, 'raw_vertex_data') and ov.raw_vertex_data and obp == orig_bp:
+                                    if len(ov.raw_vertex_data) > len(max_data):
+                                        max_data = ov.raw_vertex_data
+                    # Write the largest buffer once
+                    builder.seek(0, 'end')
+                    new_addr = builder._currentRelativeAddress()
+                    for byte in max_data:
+                        builder.write(byte, 'uchar')
+                    builder._vertex_buffer_cache[orig_bp] = new_addr
+
+                vertex.base_pointer = builder._vertex_buffer_cache[orig_bp]
+
+            # Let the Vertex handle reloc flag tracking
+            vertex.writePrivateData(builder)
 
     # Tells the builder how many bytes to reserve for this node.
     def allocationSize(self):

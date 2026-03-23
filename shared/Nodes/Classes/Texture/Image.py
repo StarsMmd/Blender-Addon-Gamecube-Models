@@ -65,6 +65,29 @@ class Image(Node):
         parser.logger.debug("Image 0x%X: %dx%d, format=%d, data_address=0x%X",
                             self.address, self.width, self.height, self.format, self.data_address)
 
+        # Store raw texture data for round-trip writing
+        if self.data_address and self.format in format_dict:
+            bits_per_pixel, tile_S, tile_T, _ = format_dict[self.format]
+            blocks_x = (self.width  // tile_S) + (1 if ((self.width  % tile_S) > 0) else 0)
+            blocks_y = (self.height // tile_T) + (1 if ((self.height % tile_T) > 0) else 0)
+            data_size = (blocks_x * tile_S * blocks_y * tile_T * bits_per_pixel) >> 3
+            self.raw_image_data = parser.read_chunk(data_size, self.data_address, parser._startOffset(True))
+        else:
+            self.raw_image_data = b''
+
+    def writePrimitivePointers(self, builder):
+        """Write shared image pixel data (Phase 1)."""
+        if not hasattr(self, '_raw_pointer_fields'):
+            self._raw_pointer_fields = set()
+        if self.raw_image_data:
+            builder.seek(0, 'end')
+            self.data_address = builder._currentRelativeAddress()
+            for byte in self.raw_image_data:
+                builder.write(byte, 'uchar')
+            self._raw_pointer_fields.add('data_address')
+        else:
+            self.data_address = 0
+
     def loadDataWithPalette(self, parser, palette):
         width = self.width
         height = self.height
