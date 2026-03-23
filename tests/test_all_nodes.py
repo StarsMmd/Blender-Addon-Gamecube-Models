@@ -451,14 +451,15 @@ class TestReferenceNode:
         assert abs(node.property.pole_angle - 0.5) < 1e-3
 
     def test_reference_ikhint_pole_flip(self):
-        """REFTYPE_IKHINT with flag 0x4 adds pi to pole_angle."""
-        import math
+        """REFTYPE_IKHINT with flag 0x4 sets pole_flip on BoneReference.
+        The actual pi addition happens later in ModelSet.build()."""
         boneref_offset = REFERENCE_SIZE
         flags = ROBJ_ACTIVE_BIT | REFTYPE_IKHINT | 0x4
         data = build_reference(flags=flags, property_raw=boneref_offset) + build_bone_reference(length=1.0, pole_angle=0.0)
         node = _parse(Reference, 0, data)
         assert isinstance(node.property, BoneReference)
-        assert abs(node.property.pole_angle - math.pi) < 1e-5
+        assert node.property.pole_flip is True
+        assert node.property.pole_angle == 0.0
 
 
 class TestEnvelopeNode:
