@@ -30,7 +30,7 @@ class Importer:
 	@staticmethod
 	def parseDAT(context, filepath="", section_name='', ik_hack=True, max_frame=1000, verbose=False, print_tree=False):
 		
-		model_name = os.path.splitext(os.path.basename(filepath))[0] if filepath else "unknown"
+		model_name = os.path.basename(filepath).split('.')[0] if filepath else "unknown"
 		logger = Logger(verbose=verbose, model_name=model_name)
 
 		importer_options = {

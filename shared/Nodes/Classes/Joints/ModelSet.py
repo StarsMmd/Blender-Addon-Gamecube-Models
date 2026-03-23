@@ -96,11 +96,12 @@ class ModelSet(Node):
         if self.root_joint == None:
             return
 
-        armature_name = None
+        filepath = builder.options.get("filepath", "")
+        base_name = os.path.basename(filepath).split('.')[0] if filepath else "model"
         if self.root_joint.name:
-            armature_name = 'Armature_' + self.root_joint.name
+            armature_name = '%s_%s' % (base_name, self.root_joint.name)
         else:
-            armature_name = 'Armature_' + str(builder.armature_count)
+            armature_name = '%s_%d' % (base_name, builder.armature_count)
 
         self.id = builder.armature_count
         builder.armature_count += 1
