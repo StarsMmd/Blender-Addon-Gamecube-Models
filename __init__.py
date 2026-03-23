@@ -69,7 +69,11 @@ if _bpy_available:
                 paths = [self.filepath]
 
             for path in paths:
-                status = Importer.parseDAT(context, path, self.section, self.ik_hack, self.max_frame, self.verbose)
+                try:
+                    status = Importer.parseDAT(context, path, self.section, self.ik_hack, self.max_frame, self.verbose)
+                except Exception as error:
+                    self.report({'ERROR'}, "Import failed: %s" % error)
+                    return {'CANCELLED'}
                 if not 'FINISHED' in status:
                     return status
 

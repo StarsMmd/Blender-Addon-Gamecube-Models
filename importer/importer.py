@@ -63,7 +63,7 @@ class Importer:
 				logger.error("Failed to build model: %s", error)
 				logger.info("Log file: %s", logger.log_path)
 				logger.close()
-				return {'CANCELLED'}
+				raise
 
 		if logger.warning_count > 0 or logger.error_count > 0:
 			logger.warning("Import finished with %d warning(s) and %d error(s)", logger.warning_count - 1, logger.error_count)
