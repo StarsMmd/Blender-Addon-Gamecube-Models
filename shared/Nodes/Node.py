@@ -138,6 +138,25 @@ class Node(object):
                 elif is_primitive_type(sub_type):
                     pointer = builder.write(field_value, sub_type)
                     setattr(self, field_name, pointer)
+                elif isinstance(field_value, list):
+                    # Bounded array of Node pointers (e.g. *(Image[count]))
+                    # Write pointer array (no null terminator for bounded arrays)
+                    resolved = []
+                    for v in field_value:
+                        if hasattr(v, 'address') and v.address is not None:
+                            resolved.append(v.address)
+                        elif v is None:
+                            resolved.append(0)
+                        else:
+                            resolved.append(v)
+
+                    builder.seek(0, 'end')
+                    array_addr = builder._currentRelativeAddress()
+                    for addr in resolved:
+                        if addr != 0:
+                            builder.relocations.append(builder._currentRelativeAddress())
+                        builder.write(addr, 'uint')
+                    setattr(self, field_name, array_addr)
 
     # Tells the builder how many bytes to reserve for this node.
     def allocationSize(self):

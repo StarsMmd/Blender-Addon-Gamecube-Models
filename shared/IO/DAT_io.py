@@ -357,6 +357,10 @@ class DATBuilder(BinaryWriter):
 				node.address = self._currentRelativeAddress() + node.allocationOffset()
 				for i in range(node_size):
 					_ = self.write(0, 'uchar')
+			else:
+				# Stub nodes (e.g. RenderAnimation) — clear stale address from parsing
+				# so pointer resolution writes 0 instead of an invalid original address
+				node.address = None
 
 		# --- Phase 3: Write node structs at allocated addresses ---
 		for node in self.node_list:
