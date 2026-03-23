@@ -78,6 +78,7 @@ class MaterialObject(Node):
             # RENDER_DIFFUSE set: VTX modes use white (vertex color applied post-texture),
             # MAT/BOTH modes use the material diffuse color.
             color = nodes.new('ShaderNodeRGB')
+            color.name = 'DiffuseColor'
             if diffuse_flags == RENDER_DIFFUSE_VTX:
                 color.outputs[0].default_value[:] = [1,1,1,1]
                 self.logger.debug('  base color: RENDER_DIFFUSE=1, diffuse=%s → white [1,1,1,1]',
@@ -88,6 +89,7 @@ class MaterialObject(Node):
                     diffuse_names.get(diffuse_flags, hex(diffuse_flags)), diffuse_color)
 
             alpha = nodes.new('ShaderNodeValue')
+            alpha.name = 'AlphaValue'
             if alpha_flags == RENDER_ALPHA_VTX:
                 alpha.outputs[0].default_value = 1
                 self.logger.debug('  base alpha: alpha=%s → 1.0',
@@ -100,6 +102,7 @@ class MaterialObject(Node):
             # RENDER_DIFFUSE not set: vertex color is the base, material color is additive
             if diffuse_flags == RENDER_DIFFUSE_MAT:
                 color = nodes.new('ShaderNodeRGB')
+                color.name = 'DiffuseColor'
                 color.outputs[0].default_value[:] = diffuse_color
                 self.logger.debug('  base color: RENDER_DIFFUSE=0, diffuse=MAT → mat color %s',
                     diffuse_color)
@@ -108,6 +111,7 @@ class MaterialObject(Node):
                 color.attribute_name = 'color_0'
                 if diffuse_flags != RENDER_DIFFUSE_VTX:
                     diff = nodes.new('ShaderNodeRGB')
+                    diff.name = 'DiffuseColor'
                     diff.outputs[0].default_value[:] = diffuse_color
                     mix = nodes.new('ShaderNodeMixRGB')
                     mix.blend_type = 'ADD'
@@ -122,6 +126,7 @@ class MaterialObject(Node):
 
             if alpha_flags == RENDER_ALPHA_MAT:
                 alpha = nodes.new('ShaderNodeValue')
+                alpha.name = 'AlphaValue'
                 alpha.outputs[0].default_value = material.alpha
                 self.logger.debug('  base alpha: RENDER_DIFFUSE=0, alpha=MAT → mat alpha %.3f',
                     material.alpha)
@@ -130,6 +135,7 @@ class MaterialObject(Node):
                 alpha.attribute_name = 'alpha_0'
                 if alpha_flags != RENDER_ALPHA_VTX:
                     mat_alpha = nodes.new('ShaderNodeValue')
+                    mat_alpha.name = 'AlphaValue'
                     mat_alpha.outputs[0].default_value = material.alpha
                     mix = nodes.new('ShaderNodeMath')
                     mix.operation = 'MULTIPLY'
@@ -169,6 +175,7 @@ class MaterialObject(Node):
                     tex_i, texture.flags & TEX_COORD_MASK, texture.source)
 
             mapping = nodes.new('ShaderNodeMapping')
+            mapping.name = 'Mapping_0x%X' % texture.id
             mapping.vector_type = 'TEXTURE'
             mapping.inputs[2].default_value = texture.rotation
 
@@ -581,6 +588,7 @@ class MaterialObject(Node):
         if self.pixel_engine_data and self.pixel_engine_data.type == GX_BM_BLEND:
             output.name += ' ' + str(pixel_engine_data.source_factor) + ' ' + str(pixel_engine_data.destination_factor)
 
+        self.blender_material = blender_material
         return blender_material
 
     # --- TEV (Texture Environment) methods ---

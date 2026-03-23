@@ -34,73 +34,83 @@ class ModelSet(Node):
         if armature is None:
             return
 
-        if not self.animated_joints:
-            return
-
         filepath = builder.options.get("filepath", "")
         base_name = os.path.basename(filepath)
-        num_anims = len(self.animated_joints)
-        pad = len(str(num_anims - 1)) if num_anims > 1 else 1
-        actions = []
 
-        for i, animated_joint in enumerate(self.animated_joints):
-            # Use a placeholder name; renamed after build once we know the frame range
-            action_name = '%s_Anim_%s' % (base_name, str(i).zfill(pad))
-            action = bpy.data.actions.new(action_name)
-            action.use_fake_user = True
+        # --- Joint (bone) animation ---
+        if self.animated_joints:
+            num_anims = len(self.animated_joints)
+            pad = len(str(num_anims - 1)) if num_anims > 1 else 1
+            actions = []
 
-            # Action slots for Blender 4.5+
-            if bpy.app.version >= BlenderVersion(4, 5, 0):
-                action.slots.new('OBJECT', 'Armature')
-                action.slots.active = action.slots[0]
+            for i, animated_joint in enumerate(self.animated_joints):
+                # Use a placeholder name; renamed after build once we know the frame range
+                action_name = '%s_Anim_%s' % (base_name, str(i).zfill(pad))
+                action = bpy.data.actions.new(action_name)
+                action.use_fake_user = True
 
+                # Action slots for Blender 4.5+
+                if bpy.app.version >= BlenderVersion(4, 5, 0):
+                    action.slots.new('OBJECT', 'Armature')
+                    action.slots.active = action.slots[0]
+
+                bpy.context.view_layer.objects.active = armature
+                bpy.ops.object.mode_set(mode='POSE')
+                for bone in armature.pose.bones:
+                    bone.rotation_mode = 'XYZ'
+                for bone in armature.data.bones:
+                    bone.use_local_location = True
+
+                armature.animation_data_create()
+                armature.animation_data.action = action
+                if bpy.app.version >= BlenderVersion(4, 4, 0):
+                    armature.animation_data.action_slot = action.slots[0]
+
+                animated_joint.build(self.root_joint, action, armature, builder)
+
+                # Rename to "Pose" if no fcurve actually changes value across the action
+                is_static = True
+                for fcurve in action.fcurves:
+                    points = fcurve.keyframe_points
+                    if len(points) > 1:
+                        first_val = points[0].co[1]
+                        for kp in points:
+                            if abs(kp.co[1] - first_val) > 1e-6:
+                                is_static = False
+                                break
+                    if not is_static:
+                        break
+                if is_static:
+                    action.name = '%s_Pose_%s' % (base_name, str(i).zfill(pad))
+
+                actions.append(action)
+
+                bpy.ops.object.mode_set(mode='OBJECT')
+
+            # Reset pose to rest position and select the first animation
             bpy.context.view_layer.objects.active = armature
             bpy.ops.object.mode_set(mode='POSE')
             for bone in armature.pose.bones:
-                bone.rotation_mode = 'XYZ'
-            for bone in armature.data.bones:
-                bone.use_local_location = True
-
-            armature.animation_data_create()
-            armature.animation_data.action = action
-            if bpy.app.version >= BlenderVersion(4, 4, 0):
-                armature.animation_data.action_slot = action.slots[0]
-
-            animated_joint.build(self.root_joint, action, armature, builder)
-
-            # Rename to "Pose" if no fcurve actually changes value across the action
-            is_static = True
-            for fcurve in action.fcurves:
-                points = fcurve.keyframe_points
-                if len(points) > 1:
-                    first_val = points[0].co[1]
-                    for kp in points:
-                        if abs(kp.co[1] - first_val) > 1e-6:
-                            is_static = False
-                            break
-                if not is_static:
-                    break
-            if is_static:
-                action.name = '%s_Pose_%s' % (base_name, str(i).zfill(pad))
-
-            actions.append(action)
-
+                bone.location = (0, 0, 0)
+                bone.rotation_euler = (0, 0, 0)
+                bone.rotation_quaternion = (1, 0, 0, 0)
+                bone.scale = (1, 1, 1)
             bpy.ops.object.mode_set(mode='OBJECT')
 
-        # Reset pose to rest position and select the first animation
-        bpy.context.view_layer.objects.active = armature
-        bpy.ops.object.mode_set(mode='POSE')
-        for bone in armature.pose.bones:
-            bone.location = (0, 0, 0)
-            bone.rotation_euler = (0, 0, 0)
-            bone.rotation_quaternion = (1, 0, 0, 0)
-            bone.scale = (1, 1, 1)
-        bpy.ops.object.mode_set(mode='OBJECT')
+            first_anim = next((a for a in actions if '_Anim_' in a.name), None)
+            if first_anim or actions:
+                armature.animation_data.action = first_anim or actions[0]
+            bpy.context.scene.frame_set(0)
 
-        first_anim = next((a for a in actions if '_Anim_' in a.name), None)
-        if first_anim or actions:
-            armature.animation_data.action = first_anim or actions[0]
-        bpy.context.scene.frame_set(0)
+        # --- Material animation ---
+        if self.animated_material_joints:
+            num_mat_anims = len(self.animated_material_joints)
+            pad = len(str(num_mat_anims - 1)) if num_mat_anims > 1 else 1
+            builder.logger.info("Building %d material animation(s)", num_mat_anims)
+
+            for i, mat_anim_joint in enumerate(self.animated_material_joints):
+                action_name_base = '%s_MatAnim_%s' % (base_name, str(i).zfill(pad))
+                mat_anim_joint.build(self.root_joint, action_name_base, builder)
 
     def _createArmature(self, builder):
         if self.root_joint == None:
