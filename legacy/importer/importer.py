@@ -7,7 +7,7 @@ import traceback
 try:
 	from ..shared.IO import *
 except:
-	from shared.IO import *
+	from legacy.shared.IO import *
 
 #TODO list
 #features:

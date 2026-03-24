@@ -3,8 +3,8 @@ try:
 	from ..shared.IO import *
 	from ..shared.Nodes import SectionInfo
 except:
-	from shared.IO import *
-	from shared.Nodes import SectionInfo
+	from legacy.shared.IO import *
+	from legacy.shared.Nodes import SectionInfo
 
 class Exporter:
 

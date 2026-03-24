@@ -32,8 +32,8 @@ try:
             ExportHelper,
             axis_conversion,
     )
-    from .importer import *
-    from .exporter import *
+    from .legacy.importer import *
+    from .legacy.exporter import *
     _bpy_available = True
 except (ImportError, SystemError):
     _bpy_available = False
@@ -58,6 +58,7 @@ if _bpy_available:
         max_frame: bpy.props.IntProperty(default = 1000, name = 'Max Anim Frame', description = 'Cutoff frame after which animations aren\'t sampled. Use 0 For no limit.')
         verbose: bpy.props.BoolProperty(default = False, name = 'Verbose', description = 'Print detailed logging output to the console for debugging.')
         setup_workspace: bpy.props.BoolProperty(default = False, name = 'Setup Workspace', description = 'Split the viewport and open a Dope Sheet / Action Editor. Sets playback end frame to 60.')
+        use_ir: bpy.props.BoolProperty(default = False, name = 'Use Intermediate Representation Pipeline', description = 'Use the new Intermediate Representation-based import pipeline (experimental).')
 
         filename_ext = ".dat"
         filter_glob: StringProperty(default="*.fdat;*.dat;*.rdat;*.pkx", options={'HIDDEN'})
@@ -70,7 +71,10 @@ if _bpy_available:
 
             for path in paths:
                 try:
-                    status = Importer.parseDAT(context, path, self.section, self.ik_hack, self.max_frame, self.verbose)
+                    if self.use_ir:
+                        status = _import_ir(context, path, self.section, self.ik_hack, self.max_frame, self.verbose)
+                    else:
+                        status = Importer.parseDAT(context, path, self.section, self.ik_hack, self.max_frame, self.verbose)
                 except Exception as error:
                     self.report({'ERROR'}, "Import failed: %s" % error)
                     return {'CANCELLED'}
@@ -142,6 +146,39 @@ if _bpy_available:
             if area not in areas_before:
                 area.type = 'NLA_EDITOR'
                 break
+
+    def _import_ir(context, filepath, section_name='', ik_hack=True, max_frame=1000, verbose=False):
+        """New Intermediate Representation-based import pipeline."""
+        from .shared.IO.DAT_io import DATParser
+        from .shared.IO.Logger import Logger
+        from .phases.describe import describe_scene
+        from .phases.build_blender import build_blender_scene
+
+        model_name = os.path.basename(filepath).split('.')[0] if filepath else "unknown"
+        logger = Logger(verbose=verbose, model_name=model_name)
+
+        importer_options = {
+            "ik_hack": ik_hack,
+            "verbose": verbose,
+            "max_frame": max_frame if max_frame > 0 else 1000000000,
+            "section_names": [section_name] if len(section_name) > 0 else [],
+            "filepath": filepath,
+        }
+
+        if bpy.ops.object.select_all.poll():
+            bpy.ops.object.select_all(action='DESELECT')
+
+        parser = DATParser(filepath, importer_options, logger=logger)
+        parser.parseSections()
+        parser.close()
+
+        if context is not None and len(parser.sections) > 0:
+            ir_scene = describe_scene(parser.sections, importer_options)
+            build_blender_scene(ir_scene, context, importer_options)
+
+        logger.info("Log file: %s", logger.log_path)
+        logger.close()
+        return {'FINISHED'}
 
     def menu_func_import(self, context):
         self.layout.operator(ImportHSD.bl_idname, text="Gamecube DAT Model - Refactor (.dat)")
