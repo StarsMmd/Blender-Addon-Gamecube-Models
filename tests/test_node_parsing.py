@@ -6,7 +6,8 @@ import pytest
 
 from helpers import (
     build_minimal_dat, build_joint, build_mesh, build_pobject,
-    build_animjoint, build_spline, build_particle,
+    build_animjoint, build_spline, build_particle, build_render_animation,
+    build_animation,
     build_vertex_list_terminator,
     JOINT_SIZE, MESH_SIZE, POBJECT_SIZE, ANIMJOINT_SIZE, SPLINE_SIZE, VERTEX_SIZE,
 )
@@ -15,6 +16,8 @@ from shared.Nodes.Classes.Joints.Joint import Joint
 from shared.Nodes.Classes.Mesh.Mesh import Mesh
 from shared.Nodes.Classes.Mesh.PObject import PObject
 from shared.Nodes.Classes.Animation.AnimationJoint import AnimationJoint
+from shared.Nodes.Classes.Animation.Animation import Animation
+from shared.Nodes.Classes.Rendering.RenderAnimation import RenderAnimation
 from shared.Nodes.Classes.Misc.Spline import Spline
 from shared.Nodes.Classes.Rendering.Particle import Particle
 from shared.Constants.hsd import JOBJ_HIDDEN, JOBJ_PTCL, JOBJ_SPLINE
@@ -334,3 +337,76 @@ class TestAnimationJointNode:
         assert isinstance(aj.child, AnimationJoint)
         assert aj.child.flags == 0x02
         assert aj.child.child is None
+
+    def test_animjoint_with_render_animation(self):
+        """AnimationJoint with a render_animation pointer to a RenderAnimation node."""
+        ra_offset = ANIMJOINT_SIZE  # RenderAnimation follows immediately
+        data = build_animjoint(render_animation_ptr=ra_offset) + build_render_animation()
+        aj = _parse(AnimationJoint, 0, data)
+
+        assert isinstance(aj.render_animation, RenderAnimation)
+        assert aj.render_animation.next is None
+        assert aj.render_animation.animation is None
+
+    def test_animjoint_with_render_animation_chain(self):
+        """RenderAnimation linked list (next pointer)."""
+        ra1_offset = ANIMJOINT_SIZE
+        ra2_offset = ANIMJOINT_SIZE + 8
+        data = (
+            build_animjoint(render_animation_ptr=ra1_offset)
+            + build_render_animation(next_ptr=ra2_offset)
+            + build_render_animation()
+        )
+        aj = _parse(AnimationJoint, 0, data)
+
+        assert isinstance(aj.render_animation, RenderAnimation)
+        assert isinstance(aj.render_animation.next, RenderAnimation)
+        assert aj.render_animation.next.next is None
+
+    def test_animjoint_render_animation_with_aobj(self):
+        """RenderAnimation pointing to an Animation (AOBJ) object."""
+        ra_offset = ANIMJOINT_SIZE
+        aobj_offset = ANIMJOINT_SIZE + 8  # Animation follows RenderAnimation
+        data = (
+            build_animjoint(render_animation_ptr=ra_offset)
+            + build_render_animation(animation_ptr=aobj_offset)
+            + build_animation(flags=0x20000000, end_frame=30.0)
+        )
+        aj = _parse(AnimationJoint, 0, data)
+
+        assert isinstance(aj.render_animation, RenderAnimation)
+        assert isinstance(aj.render_animation.animation, Animation)
+        assert aj.render_animation.animation.flags == 0x20000000
+        assert abs(aj.render_animation.animation.end_frame - 30.0) < 1e-5
+
+
+# ---------------------------------------------------------------------------
+# RenderAnimation — 8 bytes: next(4) animation(4)
+# ---------------------------------------------------------------------------
+
+class TestRenderAnimationNode:
+
+    def test_render_animation_solo(self):
+        """A RenderAnimation with all zeros should parse cleanly."""
+        data = build_render_animation()
+        ra = _parse(RenderAnimation, 0, data)
+
+        assert ra.next is None
+        assert ra.animation is None
+
+    def test_render_animation_with_next(self):
+        """Linked list of two RenderAnimation nodes."""
+        data = build_render_animation(next_ptr=8) + build_render_animation()
+        ra = _parse(RenderAnimation, 0, data)
+
+        assert isinstance(ra.next, RenderAnimation)
+        assert ra.next.next is None
+
+    def test_render_animation_with_animation(self):
+        """RenderAnimation pointing to an Animation (AOBJ)."""
+        data = build_render_animation(animation_ptr=8) + build_animation(flags=0x20000000, end_frame=60.0)
+        ra = _parse(RenderAnimation, 0, data)
+
+        assert isinstance(ra.animation, Animation)
+        assert ra.animation.flags == 0x20000000
+        assert abs(ra.animation.end_frame - 60.0) < 1e-5

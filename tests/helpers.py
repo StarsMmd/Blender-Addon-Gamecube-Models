@@ -873,9 +873,18 @@ def build_render(toon_texture_ptr=0, grad_texture_ptr=0, terminator=0):
     return data  # 12 bytes
 
 
-def build_render_animation():
-    """RenderAnimation has no fields; binary contribution is zero bytes."""
-    return b''
+def build_render_animation(next_ptr=0, animation_ptr=0):
+    """
+    Build binary for one RenderAnimation struct (8 bytes).
+
+    HSD_ROBJAnimJoint: linked list of animation objects for Reference Objects.
+
+      ptr  next      (4)  → RenderAnimation
+      ptr  animation (4)  → Animation
+    """
+    data  = struct.pack('>I', next_ptr)
+    data += struct.pack('>I', animation_ptr)
+    return data  # 8 bytes
 
 
 def build_wobject(name_ptr=0, position=(0.0, 0.0, 0.0), render_ptr=0):
