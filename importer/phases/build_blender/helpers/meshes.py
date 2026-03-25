@@ -21,10 +21,27 @@ def build_meshes(ir_model, armature, context, options, logger=StubLogger()):
         logger: Logger instance (defaults to StubLogger).
     """
     image_cache = {}
+    mesh_objects_by_bone = {}  # {bone_index: [mesh_objects]}
     for i, ir_mesh in enumerate(ir_model.meshes):
-        _build_mesh(ir_mesh, ir_model, armature, image_cache, logger, i)
+        mesh_obj = _build_mesh(ir_mesh, ir_model, armature, image_cache, logger, i)
+        if mesh_obj:
+            bone_idx = ir_mesh.parent_bone_index
+            mesh_objects_by_bone.setdefault(bone_idx, []).append(mesh_obj)
 
-    logger.info("  Created %d mesh objects, %d cached images", len(ir_model.meshes), len(image_cache))
+    # Copy meshes for instance bones (JOBJ_INSTANCE)
+    instance_count = 0
+    for bone in ir_model.bones:
+        if bone.instance_child_bone_index is not None:
+            child_meshes = mesh_objects_by_bone.get(bone.instance_child_bone_index, [])
+            for original in child_meshes:
+                copy = original.copy()
+                copy.parent = armature
+                copy.matrix_local = Matrix(bone.world_matrix)
+                bpy.context.scene.collection.objects.link(copy)
+                instance_count += 1
+
+    logger.info("  Created %d mesh objects, %d instances, %d cached images",
+                len(ir_model.meshes), instance_count, len(image_cache))
 
 
 def _build_mesh(ir_mesh, ir_model, armature, image_cache, logger, mesh_idx):
@@ -89,6 +106,8 @@ def _build_mesh(ir_mesh, ir_model, armature, image_cache, logger, mesh_idx):
     # Finalize
     mesh_data.update(calc_edges=True, calc_edges_loose=False)
     mesh_data.validate(verbose=False, clean_customdata=False)
+
+    return mesh_object
 
 
 def _apply_bone_weights(ir_mesh, ir_model, mesh_object, armature, logger, mesh_idx):

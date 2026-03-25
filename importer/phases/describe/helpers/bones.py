@@ -139,7 +139,24 @@ def describe_bones(root_joint, options=None):
             _walk(joint.next, parent_index, parent_data)
 
     _walk(root_joint, None, None)
+
+    # Set instance_child_bone_index for JOBJ_INSTANCE bones
+    _set_instance_refs(root_joint, bones, joint_to_bone_index)
+
     return bones, joint_to_bone_index
+
+
+def _set_instance_refs(joint, bones, jtb):
+    """Set instance_child_bone_index for JOBJ_INSTANCE bones."""
+    if joint.flags & JOBJ_INSTANCE and joint.child:
+        my_idx = jtb.get(joint.address)
+        child_idx = jtb.get(joint.child.address)
+        if my_idx is not None and child_idx is not None:
+            bones[my_idx].instance_child_bone_index = child_idx
+    if joint.child and not (joint.flags & JOBJ_INSTANCE):
+        _set_instance_refs(joint.child, bones, jtb)
+    if joint.next:
+        _set_instance_refs(joint.next, bones, jtb)
 
 
 def _compile_srt_matrix(scale, rotation, position, parent_scl=None):
