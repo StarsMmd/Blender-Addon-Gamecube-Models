@@ -63,11 +63,10 @@ def describe_material(mobj, image_cache=None):
     enable_specular = bool(render_mode & RENDER_SPECULAR)
     is_translucent = bool(render_mode & RENDER_XLU)
 
-    # Material colors — already normalized and linearized during parsing
-    # (Material.loadFromBinary calls .transform() which does normalize + linearize)
-    diffuse_color = tuple(material.diffuse.asRGBAList())
-    ambient_color = tuple(material.ambient.asRGBAList())
-    specular_color = tuple(material.specular.asRGBAList())
+    # Material colors (linearized from sRGB)
+    diffuse_color = _linearize_rgba(material.diffuse.asRGBAList())
+    ambient_color = _linearize_rgba(material.ambient.asRGBAList())
+    specular_color = _linearize_rgba(material.specular.asRGBAList())
 
     # Extract enabled textures
     texture_layers = []
@@ -192,6 +191,9 @@ def _build_ir_image(texture):
     Texture.decoded_pixels is set during Phase 3 (parsing) by
     Image.decodeFromRawData(). The data is already cropped and
     vertically flipped (bottom-to-top, matching Blender convention).
+
+    Stores raw u8 bytes in IRImage.pixels — the float conversion
+    happens in Phase 5A when assigning to bpy.data.images.pixels.
     """
     image_node = texture.image
     pixel_data = getattr(texture, 'decoded_pixels', None)
@@ -202,15 +204,11 @@ def _build_ir_image(texture):
     width = image_node.width
     height = image_node.height
 
-    # Convert raw RGBA u8 bytes to normalized floats [0, 1]
-    # Data is already vertically flipped by decodeFromRawData
-    pixels = [b / 255.0 for b in pixel_data]
-
     return IRImage(
         name=f"tex_{image_node.address:X}",
         width=width,
         height=height,
-        pixels=pixels,
+        pixels=bytes(pixel_data),
         image_id=image_node.address,
         palette_id=texture.palette.address if texture.palette else 0,
     )
