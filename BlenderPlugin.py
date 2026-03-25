@@ -7,7 +7,7 @@ from bpy_extras.io_utils import ImportHelper, ExportHelper
 from .legacy.importer import *
 from .legacy.exporter import *
 from .importer import Importer as IRImporter
-from .shared.helpers.logger import Logger
+from .shared.helpers.logger import Logger, StubLogger
 
 
 class ImportHSD(bpy.types.Operator, ImportHelper):
@@ -26,12 +26,14 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
                          description='Shrinks Bones down to 1e-3 to make IK work properly.')
     max_frame: IntProperty(default=1000, name='Max Anim Frame',
                           description='Cutoff frame after which animations aren\'t sampled. Use 0 For no limit.')
+    write_logs: BoolProperty(default=True, name='Write Logs',
+                            description='Write import logs to a temp file for debugging.')
     verbose: BoolProperty(default=False, name='Verbose',
-                         description='Print detailed logging output to the console for debugging.')
+                         description='Print all log output to the console (slow).')
     setup_workspace: BoolProperty(default=False, name='Setup Workspace',
                                  description='Split the viewport and open a Dope Sheet / Action Editor. Sets playback end frame to 60.')
-    use_ir: BoolProperty(default=True, name='Use Intermediate Representation Pipeline',
-                        description='Use the new Intermediate Representation-based import pipeline (experimental).')
+    use_legacy: BoolProperty(default=False, name='Use Legacy Importer',
+                            description='Use the old import pipeline instead of the new Intermediate Representation pipeline.')
 
     filename_ext = ".dat"
     filter_glob: StringProperty(default="*.fdat;*.dat;*.rdat;*.pkx", options={'HIDDEN'})
@@ -44,12 +46,12 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
 
         for path in paths:
             try:
-                if self.use_ir:
-                    self._import_ir(context, path)
-                else:
+                if self.use_legacy:
                     status = Importer.parseDAT(context, path, self.section, self.ik_hack, self.max_frame, self.verbose)
                     if 'FINISHED' not in status:
                         return status
+                else:
+                    self._import_ir(context, path)
             except Exception as error:
                 self.report({'ERROR'}, "Import failed: %s" % error)
                 return {'CANCELLED'}
@@ -66,11 +68,14 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
 
         filename = os.path.basename(path)
         model_name = filename.split('.')[0] if filename else "unknown"
-        logger = Logger(verbose=self.verbose, model_name=model_name)
+
+        if self.write_logs:
+            logger = Logger(verbose=self.verbose, model_name=model_name)
+        else:
+            logger = StubLogger()
 
         options = {
             "ik_hack": self.ik_hack,
-            "verbose": self.verbose,
             "max_frame": self.max_frame if self.max_frame > 0 else 1000000000,
             "section_names": [self.section] if len(self.section) > 0 else [],
             "filepath": path,
@@ -98,7 +103,17 @@ class ExportHSD(bpy.types.Operator, ExportHelper):
 
 
 def _setup_anim_workspace(context):
-    """Split the 3D viewport and open an Action Editor and NLA Editor. Set playback end to 60."""
+    """Split the 3D viewport and open an Action Editor and NLA Editor. Set playback end to 60.
+
+    Skips setup if a Dope Sheet / Action Editor is already visible.
+    """
+    # Check if an Action Editor is already showing
+    for area in context.screen.areas:
+        if area.type == 'DOPESHEET_EDITOR':
+            for space in area.spaces:
+                if space.type == 'DOPESHEET_EDITOR' and space.mode == 'ACTION':
+                    return  # Already set up
+
     context.scene.frame_end = 60
 
     screen = context.screen
