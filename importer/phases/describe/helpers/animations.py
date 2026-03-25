@@ -39,7 +39,7 @@ def describe_bone_animations(model_set, joint_to_bone_index, bones, options, log
     Returns:
         list[IRBoneAnimationSet] with decoded keyframes per bone per channel.
     """
-    animated_joints = getattr(model_set, 'animated_joints', [])
+    animated_joints = getattr(model_set, 'animated_joints', None) or []
     root_joint = model_set.root_joint
     anim_sets = []
 

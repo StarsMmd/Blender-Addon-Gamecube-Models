@@ -63,10 +63,11 @@ def describe_material(mobj, image_cache=None):
     enable_specular = bool(render_mode & RENDER_SPECULAR)
     is_translucent = bool(render_mode & RENDER_XLU)
 
-    # Material colors (linearized from sRGB)
-    diffuse_color = _linearize_rgba(material.diffuse.asRGBAList())
-    ambient_color = _linearize_rgba(material.ambient.asRGBAList())
-    specular_color = _linearize_rgba(material.specular.asRGBAList())
+    # Material colors — already normalized and linearized during parsing
+    # (Material.loadFromBinary calls transform() which does normalize + linearize)
+    diffuse_color = tuple(material.diffuse.asRGBAList())
+    ambient_color = tuple(material.ambient.asRGBAList())
+    specular_color = tuple(material.specular.asRGBAList())
 
     # Extract enabled textures
     texture_layers = []

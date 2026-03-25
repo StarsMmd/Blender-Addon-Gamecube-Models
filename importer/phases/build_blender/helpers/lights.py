@@ -38,6 +38,4 @@ def _build_light(ir_light):
     bpy.context.scene.collection.objects.link(lamp)
 
     # Coordinate system rotation (GameCube Y-up → Blender Z-up)
-    rx = ir_light.coordinate_rotation[0]
-    if rx != 0:
-        lamp.matrix_basis @= Matrix.Rotation(rx, 4, [1.0, 0.0, 0.0])
+    lamp.matrix_basis @= Matrix.Rotation(ir_light.coordinate_rotation[0], 4, [1.0, 0.0, 0.0])
