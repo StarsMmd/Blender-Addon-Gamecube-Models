@@ -1,14 +1,8 @@
-from .ArrayBoundsUnknownVariableError import ArrayBoundsUnknownVariableError
-from .InvalidEnvelopeError import InvalidEnvelopeError
-from .InvalidReadAddressError import InvalidReadAddressError
-from .MeshWithoutPositionError import MeshWithoutPositionError
-from .PixelEngineUnknownBlendModeError import PixelEngineUnknownBlendModeError
-from .ShapeSetDimensionMismatchError import ShapeSetDimensionMismatchError
-from .VertexErrors import UnknownVertexAttributeError
-from .VertexErrors import VertexListTerminatorError
-from .InvalidTypeError import InvalidPrimitiveTypeError
-from .InvalidTypeError import InvalidTypeError
-from .InvalidTypeError import StringTypeLengthError
-from .InvalidTypeError import StringTypeStructFormatError
-from .InvalidTypeError import MatrixTypeStructFormatError
-from .InvalidTypeError import VoidTypeStructFormatError
+"""Re-export parse errors so shared/Nodes/ and shared/Constants/ can import them.
+
+The canonical definitions live in importer/phases/parse/errors/parse_errors.py.
+"""
+try:
+    from ...importer.phases.parse.errors.parse_errors import *
+except (ImportError, SystemError):
+    from importer.phases.parse.errors.parse_errors import *

@@ -1,12 +1,6 @@
-import sys
-import struct
-import traceback
-
 from ..Nodes import *
-from ..Errors import *
 from ..Constants import *
 from ..helpers.file_io import *
-from ..helpers.logger import Logger, StubLogger
 
 # A class for managing the recursive writing of the Node tree. 
 # This happens in 3 steps:
