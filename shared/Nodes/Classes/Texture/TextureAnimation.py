@@ -1,6 +1,6 @@
 from ...Node import Node
 from ....Constants import *
-from ....IO.Logger import NullLogger
+from ....IO.Logger import StubLogger
 from ..Animation.Frame import read_fobjdesc
 
 # Mapping: HSD texture animation track type → (Mapping node input index, component index)

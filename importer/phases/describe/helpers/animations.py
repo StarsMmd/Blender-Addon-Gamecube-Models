@@ -8,10 +8,10 @@ import struct
 
 try:
     from .....shared.Constants.hsd import *
-    from .....shared.IO.Logger import NullLogger
+    from .....shared.IO.Logger import StubLogger
 except (ImportError, SystemError):
     from shared.Constants.hsd import *
-    from shared.IO.Logger import NullLogger
+    from shared.IO.Logger import StubLogger
 
 
 class RawBoneAnimation:
@@ -46,7 +46,7 @@ class RawAnimationSet:
         self.loop = False
 
 
-def describe_bone_animations(model_set, joint_to_bone_index, bones, bone_data_lookup, options, logger=NullLogger()):
+def describe_bone_animations(model_set, joint_to_bone_index, bones, bone_data_lookup, options, logger=StubLogger()):
     """Walk AnimationJoint trees and extract raw animation data.
 
     Args:

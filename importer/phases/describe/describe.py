@@ -10,7 +10,7 @@ try:
     from ....shared.Nodes.Classes.RootNodes.SceneData import SceneData
     from ....shared.Nodes.Classes.Animation.AnimationJoint import AnimationJoint
     from ....shared.Nodes.Classes.Material.MaterialAnimationJoint import MaterialAnimationJoint
-    from ....shared.IO.Logger import NullLogger
+    from ....shared.IO.Logger import StubLogger
 except (ImportError, SystemError):
     from shared.IR import IRScene
     from shared.IR.skeleton import IRModel
@@ -19,14 +19,14 @@ except (ImportError, SystemError):
     from shared.Nodes.Classes.RootNodes.SceneData import SceneData
     from shared.Nodes.Classes.Animation.AnimationJoint import AnimationJoint
     from shared.Nodes.Classes.Material.MaterialAnimationJoint import MaterialAnimationJoint
-    from shared.IO.Logger import NullLogger
+    from shared.IO.Logger import StubLogger
 
 from .helpers.bones import describe_bones, build_bone_data_lookup
 from .helpers.meshes import describe_meshes
 from .helpers.animations import describe_bone_animations
 
 
-def describe_scene(sections, options, logger=NullLogger()):
+def describe_scene(sections, options, logger=StubLogger()):
     """Converts parsed node tree sections into an IRScene.
 
     Routes sections to models/lights/cameras/fogs (matching ModelBuilder.__init__),
@@ -35,7 +35,7 @@ def describe_scene(sections, options, logger=NullLogger()):
     Args:
         sections: list of SectionInfo from DATParser.parseSections()
         options: dict of importer options
-        logger: Logger instance for output (defaults to NullLogger)
+        logger: Logger instance for output (defaults to StubLogger)
 
     Returns:
         IRScene with models populated. Lights/cameras/fogs are stubs for now.
@@ -83,7 +83,6 @@ def describe_scene(sections, options, logger=NullLogger()):
 
     # Describe each model
     ir_models = []
-    all_raw_anims = []
     for model_set in model_sets:
         root_joint = model_set.root_joint
         if root_joint is None:
@@ -140,10 +139,10 @@ def describe_scene(sections, options, logger=NullLogger()):
             name=model_name,
             bones=bones,
             meshes=meshes,
+            raw_bone_animations=raw_anims,
             coordinate_rotation=(math.pi / 2, 0.0, 0.0),
         )
         ir_models.append(ir_model)
-        all_raw_anims.append(raw_anims)
 
     logger.info("=== Phase 4 complete: %d model(s) ===", len(ir_models))
-    return IRScene(models=ir_models), all_raw_anims
+    return IRScene(models=ir_models)

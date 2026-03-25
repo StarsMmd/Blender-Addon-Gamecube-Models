@@ -1,7 +1,7 @@
 import struct
 from ...Node import Node
 from ....Constants import *
-from ....IO.Logger import NullLogger
+from ....IO.Logger import StubLogger
 
 # Frame (aka FObject)
 class Frame(Node):
@@ -48,7 +48,7 @@ _interpolation_dict = {
 }
 
 
-def read_fobjdesc(fobj, curve, bias, scale, logger=NullLogger()):
+def read_fobjdesc(fobj, curve, bias, scale, logger=StubLogger()):
     """Decode the compressed keyframe byte stream and insert points into a Blender fcurve."""
     current_frame = 0 - fobj.start_frame // 1
     cur_pos = 0

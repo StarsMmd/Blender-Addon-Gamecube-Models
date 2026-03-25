@@ -11,12 +11,12 @@ from mathutils import Matrix, Vector
 
 try:
     from .....shared.Constants.hsd import *
-    from .....shared.IO.Logger import NullLogger
+    from .....shared.IO.Logger import StubLogger
     from .....shared.Nodes.Classes.Animation.Frame import read_fobjdesc
     from .....shared.BlenderVersion import BlenderVersion
 except (ImportError, SystemError):
     from shared.Constants.hsd import *
-    from shared.IO.Logger import NullLogger
+    from shared.IO.Logger import StubLogger
     from shared.Nodes.Classes.Animation.Frame import read_fobjdesc
     from shared.BlenderVersion import BlenderVersion
 
@@ -32,7 +32,7 @@ _TYPE_MAP = {
 _TRANSFORMCOUNT = (HSD_A_J_SCAZ - HSD_A_J_ROTX) + 1
 
 
-def build_bone_animations(raw_animation_sets, ir_model, armature, options, logger=NullLogger()):
+def build_bone_animations(raw_animation_sets, ir_model, armature, options, logger=StubLogger()):
     """Create Blender Actions from raw animation data.
 
     Args:

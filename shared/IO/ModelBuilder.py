@@ -4,7 +4,7 @@ import math
 from ..Constants import *
 from ..Errors import *
 from ..Nodes import *
-from .Logger import NullLogger
+from .Logger import StubLogger
 
 class ModelBuilder(object):
 
@@ -14,7 +14,7 @@ class ModelBuilder(object):
 		# - "max_frame" : An integer for the maximum number of frames to read from an animation, 0 for no limit
 		# - "verbose"   : Prints more output for debugging purposes
 		self.options = options
-		self.logger = logger or NullLogger()
+		self.logger = logger or StubLogger()
 
 		self.context = context
 		self.sections = sections

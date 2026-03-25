@@ -4,13 +4,13 @@ from mathutils import Matrix, Vector
 
 try:
     from .....shared.IR.enums import SkinType
-    from .....shared.IO.Logger import NullLogger
+    from .....shared.IO.Logger import StubLogger
 except (ImportError, SystemError):
     from shared.IR.enums import SkinType
-    from shared.IO.Logger import NullLogger
+    from shared.IO.Logger import StubLogger
 
 
-def build_meshes(ir_model, armature, context, options, logger=NullLogger()):
+def build_meshes(ir_model, armature, context, options, logger=StubLogger()):
     """Create Blender meshes with materials, weights, and armature modifier.
 
     Args:
@@ -18,7 +18,7 @@ def build_meshes(ir_model, armature, context, options, logger=NullLogger()):
         armature: The Blender armature object (from build_skeleton).
         context: Blender context.
         options: dict of importer options.
-        logger: Logger instance (defaults to NullLogger).
+        logger: Logger instance (defaults to StubLogger).
     """
     image_cache = {}
     for i, ir_mesh in enumerate(ir_model.meshes):

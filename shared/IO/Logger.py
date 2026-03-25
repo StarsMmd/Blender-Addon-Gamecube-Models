@@ -4,7 +4,7 @@ import tempfile
 import time
 
 
-class NullLogger:
+class StubLogger:
     """A no-op logger that silently discards all messages.
 
     Used as the default logger so callers never need to guard against None.

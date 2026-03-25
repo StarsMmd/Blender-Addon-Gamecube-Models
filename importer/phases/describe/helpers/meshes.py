@@ -15,7 +15,7 @@ try:
         GX_VA_POS, GX_VA_NRM, GX_VA_NBT, GX_VA_CLR0, GX_VA_CLR1,
         GX_VA_TEX0, GX_VA_PNMTXIDX,
     )
-    from .....shared.IO.Logger import NullLogger
+    from .....shared.IO.Logger import StubLogger
 except (ImportError, SystemError):
     from shared.helpers.math_shim import Matrix, Vector
     from shared.IR.geometry import IRMesh, IRUVLayer, IRColorLayer, IRBoneWeights, IRShapeKey
@@ -28,10 +28,10 @@ except (ImportError, SystemError):
         GX_VA_POS, GX_VA_NRM, GX_VA_NBT, GX_VA_CLR0, GX_VA_CLR1,
         GX_VA_TEX0, GX_VA_PNMTXIDX,
     )
-    from shared.IO.Logger import NullLogger
+    from shared.IO.Logger import StubLogger
 
 
-def describe_meshes(root_joint, bones, joint_to_bone_index, image_cache=None, logger=NullLogger()):
+def describe_meshes(root_joint, bones, joint_to_bone_index, image_cache=None, logger=StubLogger()):
     """Walk Joint tree, extract geometry from Mesh→PObject chains.
 
     Args:
@@ -39,7 +39,7 @@ def describe_meshes(root_joint, bones, joint_to_bone_index, image_cache=None, lo
         bones: list[IRBone] from describe_bones().
         joint_to_bone_index: dict mapping Joint.address → index in bones list.
         image_cache: dict for deduplicating images by (image_id, palette_id).
-        logger: Logger instance (defaults to NullLogger).
+        logger: Logger instance (defaults to StubLogger).
 
     Returns:
         list[IRMesh] with geometry data extracted.

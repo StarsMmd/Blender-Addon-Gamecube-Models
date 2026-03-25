@@ -6,7 +6,7 @@ from ..Nodes import *
 from ..Errors import *
 from ..Constants import *
 from .file_io import *
-from .Logger import Logger, NullLogger
+from .Logger import Logger, StubLogger
 
 # A class for managing the recursive parsing of the Node tree. It handles caching
 # loaded nodes and reading the next node from the cache or calling its constructor.
@@ -24,7 +24,7 @@ class DATParser(BinaryReader):
 		# - "print_tree"    : Prints a tree representation of each section parsed
 		# - "section_names" : Only parses sections in this list. If empty, parses all sections possible
 		self.options = options
-		self.logger = logger or NullLogger()
+		self.logger = logger or StubLogger()
 
 		# Where in the file the dat model itself starts. E.g. .pkx files have extra metadata before the model
 		self.file_start_offset = 0

@@ -2,9 +2,9 @@
 import os
 
 try:
-    from ..shared.IO.Logger import Logger, NullLogger
+    from ..shared.IO.Logger import Logger, StubLogger
 except (ImportError, SystemError):
-    from shared.IO.Logger import Logger, NullLogger
+    from shared.IO.Logger import Logger, StubLogger
 
 from .phases.extract.extract import extract_dat
 from .phases.route.route import route_sections
@@ -17,7 +17,7 @@ class Importer:
     """Entry point for the Intermediate Representation import pipeline."""
 
     @staticmethod
-    def run(context, filepath, options, logger=NullLogger()):
+    def run(context, filepath, options, logger=StubLogger()):
         """Run the full import pipeline.
 
         Args:
@@ -45,13 +45,12 @@ class Importer:
             logger.info("Parsed %d section(s)", len(sections))
 
             # Phase 4 — Scene Description: node trees → Intermediate Representation
-            ir_scene, raw_animations = describe_scene(sections, options, logger=logger)
+            ir_scene = describe_scene(sections, options, logger=logger)
 
             # Phase 5A — Blender Build: Intermediate Representation → Blender scene
             if context is not None:
                 try:
-                    build_blender_scene(ir_scene, context, options, logger=logger,
-                                        raw_animations=raw_animations)
+                    build_blender_scene(ir_scene, context, options, logger=logger)
                 except Exception as error:
                     import traceback
                     traceback.print_exc()

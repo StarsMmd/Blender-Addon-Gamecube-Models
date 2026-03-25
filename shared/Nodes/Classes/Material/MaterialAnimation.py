@@ -2,7 +2,7 @@ import bpy
 
 from ...Node import Node
 from ....Constants import *
-from ....IO.Logger import NullLogger
+from ....IO.Logger import StubLogger
 from ..Animation.Frame import read_fobjdesc
 
 # Mapping: HSD material animation track type → (shader node name, component index)
@@ -108,7 +108,7 @@ def _create_action(material, action_name_base, builder):
     return action
 
 
-def _apply_material_track(fobj, aobj, material, action, max_frame, logger=NullLogger()):
+def _apply_material_track(fobj, aobj, material, action, max_frame, logger=StubLogger()):
     """Create fcurves for a single material color/alpha animation track."""
     mapping = _mat_color_map.get(fobj.type)
     if not mapping:

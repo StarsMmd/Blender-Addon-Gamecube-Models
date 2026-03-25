@@ -8,7 +8,7 @@ from ..Misc.Spline import Spline
 from ...Node import Node
 from ....Constants import *
 from ....BlenderVersion import BlenderVersion
-from ....IO.Logger import NullLogger
+from ....IO.Logger import StubLogger
 
 # Model Set
 class ModelSet(Node):
@@ -213,7 +213,7 @@ class ModelSet(Node):
                             pobj = pobj.next
                         mesh = mesh.next
 
-    def addConstraints(self, armature, bones, logger=NullLogger()):
+    def addConstraints(self, armature, bones, logger=StubLogger()):
         from .Joint import Joint
         from .BoneReference import BoneReference
 
@@ -305,7 +305,7 @@ class ModelSet(Node):
                 c.pole_subtarget = poletarget_robj.property.temp_name
                 c.pole_angle = pole_angle
 
-    def _addRegularConstraints(self, armature, hsd_joint, Joint, logger=NullLogger()):
+    def _addRegularConstraints(self, armature, hsd_joint, Joint, logger=StubLogger()):
         """Add non-IK constraints from Reference objects (Copy Location, Track To, Copy Rotation, Limits)."""
         if not hsd_joint.reference:
             return

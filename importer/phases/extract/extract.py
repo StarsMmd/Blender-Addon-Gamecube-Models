@@ -13,7 +13,6 @@ class ContainerMetadata:
     """Metadata about the source container."""
     source_path: str
     filename: str
-    is_xd_model: bool = False
 
 
 def extract_dat(filepath):
@@ -67,6 +66,5 @@ def _extract_pkx(raw, filepath, filename):
     metadata = ContainerMetadata(
         source_path=filepath,
         filename=filename,
-        is_xd_model=is_xd,
     )
     return [(dat_bytes, metadata)]

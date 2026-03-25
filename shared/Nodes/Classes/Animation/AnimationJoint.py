@@ -3,7 +3,7 @@ from mathutils import Matrix, Vector
 
 from ...Node import Node
 from ....Constants import *
-from ....IO.Logger import NullLogger
+from ....IO.Logger import StubLogger
 from .Frame import read_fobjdesc
 
 # Mapping: HSD animation type code → (temp data-path letter, component index)
@@ -71,7 +71,7 @@ class AnimationJoint(Node):
             self.next.build(joint.next, action, armature, builder)
 
 
-def _apply_animation_to_bone(joint, aobj, action, armature, max_frame, logger=NullLogger()):
+def _apply_animation_to_bone(joint, aobj, action, armature, max_frame, logger=StubLogger()):
     """Port of add_jointanim_to_armature_total from reference."""
     bone_name = getattr(joint, 'temp_name', '???')
 

@@ -5,19 +5,19 @@ import os
 from mathutils import Matrix, Vector
 
 try:
-    from .....shared.IO.Logger import NullLogger
+    from .....shared.IO.Logger import StubLogger
 except (ImportError, SystemError):
-    from shared.IO.Logger import NullLogger
+    from shared.IO.Logger import StubLogger
 
 
-def build_skeleton(ir_model, context, options, logger=NullLogger()):
+def build_skeleton(ir_model, context, options, logger=StubLogger()):
     """Create a Blender armature with bones from IRModel.
 
     Args:
         ir_model: IRModel with bones list populated.
         context: Blender context.
         options: dict of importer options.
-        logger: Logger instance (defaults to NullLogger).
+        logger: Logger instance (defaults to StubLogger).
 
     Returns:
         The armature object.

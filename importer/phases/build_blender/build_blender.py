@@ -4,36 +4,32 @@ from .helpers.meshes import build_meshes
 from .helpers.animations import build_bone_animations
 
 try:
-    from ....shared.IO.Logger import NullLogger
+    from ....shared.IO.Logger import StubLogger
 except (ImportError, SystemError):
-    from shared.IO.Logger import NullLogger
+    from shared.IO.Logger import StubLogger
 
 
-def build_blender_scene(ir_scene, context, options, logger=NullLogger(), raw_animations=None):
+def build_blender_scene(ir_scene, context, options, logger=StubLogger()):
     """Consumes an IRScene and creates Blender objects via bpy API.
 
     Args:
         ir_scene: IRScene dataclass hierarchy
         context: Blender context
         options: dict of importer options
-        logger: Logger instance (defaults to NullLogger)
-        raw_animations: list of list[RawAnimationSet] per model (from Phase 4)
+        logger: Logger instance (defaults to StubLogger)
     """
-    if raw_animations is None:
-        raw_animations = [[] for _ in ir_scene.models]
-
     logger.info("=== Phase 5A: Build Blender Scene ===")
 
-    for i, ir_model in enumerate(ir_scene.models):
+    for ir_model in ir_scene.models:
         logger.info("Building model: %s (%d bones, %d meshes)",
                     ir_model.name, len(ir_model.bones), len(ir_model.meshes))
 
         armature = build_skeleton(ir_model, context, options, logger=logger)
         build_meshes(ir_model, armature, context, options, logger=logger)
 
-        if i < len(raw_animations) and raw_animations[i]:
-            logger.info("  Building %d animation set(s)", len(raw_animations[i]))
-            build_bone_animations(raw_animations[i], ir_model, armature, options, logger=logger)
+        if ir_model.raw_bone_animations:
+            logger.info("  Building %d animation set(s)", len(ir_model.raw_bone_animations))
+            build_bone_animations(ir_model.raw_bone_animations, ir_model, armature, options, logger=logger)
 
     logger.info("=== Phase 5A complete ===")
 

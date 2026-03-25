@@ -49,7 +49,7 @@ def test_pkx_colo_header_stripped():
         entries = extract_dat(path)
         assert len(entries) == 1
         assert entries[0][0] == dat_body
-        assert entries[0][1].is_xd_model is False
+        assert entries[0][1].filename.endswith('.pkx')
     finally:
         os.unlink(path)
 
@@ -69,6 +69,6 @@ def test_pkx_xd_header_stripped():
         entries = extract_dat(path)
         assert len(entries) == 1
         assert entries[0][0] == dat_body
-        assert entries[0][1].is_xd_model is True
+        assert entries[0][1].filename.endswith('.pkx')
     finally:
         os.unlink(path)

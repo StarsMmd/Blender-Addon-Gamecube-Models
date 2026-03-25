@@ -8,13 +8,13 @@ import io
 
 try:
     from ....shared.IO.DAT_io import DATParser
-    from ....shared.IO.Logger import NullLogger
+    from ....shared.IO.Logger import StubLogger
 except (ImportError, SystemError):
     from shared.IO.DAT_io import DATParser
-    from shared.IO.Logger import NullLogger
+    from shared.IO.Logger import StubLogger
 
 
-def parse_sections(dat_bytes, section_map, options, logger=NullLogger()):
+def parse_sections(dat_bytes, section_map, options, logger=StubLogger()):
     """Parse DAT bytes into node trees using the section map.
 
     Args:
