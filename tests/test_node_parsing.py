@@ -41,7 +41,7 @@ def _parse(node_cls, address, data_section: bytes):
     """Parse a single node from the given data section bytes."""
     path = _write_dat(data_section)
     try:
-        parser = DATParser(path, {})
+        import io; parser = DATParser(io.BytesIO(open(path, "rb").read()), {})
         node = node_cls(address, None)
         node.loadFromBinary(parser)
         parser.close()
@@ -53,7 +53,7 @@ def _parse(node_cls, address, data_section: bytes):
 def _parse_keep_parser(node_cls, address, data_section: bytes):
     """Parse a node and return (node, parser, path) — caller must close parser and unlink path."""
     path = _write_dat(data_section)
-    parser = DATParser(path, {})
+    import io; parser = DATParser(io.BytesIO(open(path, "rb").read()), {})
     node = node_cls(address, None)
     node.loadFromBinary(parser)
     return node, parser, path

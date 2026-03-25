@@ -107,7 +107,9 @@ def _write_dat(data_section: bytes) -> str:
 def _parse(node_cls, address, data_section: bytes):
     path = _write_dat(data_section)
     try:
-        parser = DATParser(path, {})
+        import io
+        with open(path, 'rb') as f:
+            parser = DATParser(io.BytesIO(f.read()), {})
         node = node_cls(address, None)
         node.loadFromBinary(parser)
         parser.close()

@@ -32,7 +32,7 @@ def _parse_joint_tree(data_section, relocations, section_offset=0):
     )
     path = _write_dat(dat_bytes)
     try:
-        parser = DATParser(path, {"section_names": []})
+        import io; parser = DATParser(io.BytesIO(open(path, "rb").read()), {"section_names": []})
         joint = Joint(section_offset, None)
         joint.loadFromBinary(parser)
         parser.close()

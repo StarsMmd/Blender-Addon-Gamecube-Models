@@ -1,3 +1,2 @@
-# Prevent pytest from trying to import the Blender addon entry point,
-# which uses relative imports that are only valid inside Blender.
-collect_ignore = ['__init__.py']
+# Prevent pytest from trying to import Blender-specific entry points
+collect_ignore = ['__init__.py', 'BlenderPlugin.py', '__main__.py', 'CommandLineInterface.py']

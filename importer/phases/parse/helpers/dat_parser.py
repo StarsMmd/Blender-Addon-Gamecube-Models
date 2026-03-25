@@ -23,39 +23,14 @@ class DATParser(BinaryReader):
 	# Length of the Header data of a DAT model. Pointers in the data are relative to the end of this header
 	DAT_header_length = 32
 
-	def __init__(self, filepath_or_stream, options, logger=None):
-		super().__init__(filepath_or_stream)
+	def __init__(self, stream, options, logger=None):
+		super().__init__(stream)
 
-		# Settings chosen for the parser
-		# - "verbose"       : Prints more output for debugging purposes
-		# - "print_tree"    : Prints a tree representation of each section parsed
-		# - "section_names" : Only parses sections in this list. If empty, parses all sections possible
 		self.options = options
 		self.logger = logger or StubLogger()
-
-		# Where in the file the dat model itself starts. E.g. .pkx files have extra metadata before the model
 		self.file_start_offset = 0
-
-		# The relocation data section of the model. It's parsed after the calling class provides the offset
 		self.relocation_table = {}
-
-		# Nodes that have already been parsed. If a node is in the cache then return the cached
-		# one when that offset is parsed again
 		self.nodes_cache_by_offset = {}
-
-		filepath = filepath_or_stream if isinstance(filepath_or_stream, str) else ''
-		if filepath[-4:] == '.pkx':
-	        # check for byte pattern unique to Colosseum pkx models
-			self.isXDModel = self.read('uint', 0, 0, False) != self.read('uint', 0x40, 0, False)
-
-			pkx_header_size = 0xE60 if self.isXDModel else 0x40
-			gpt1SizeOffset = 8 if self.isXDModel else 4
-			gpt1Size = self.read('uint', gpt1SizeOffset, 0, False)
-
-			if (gpt1Size > 0) and self.isXDModel:
-			    pkx_header_size += gpt1Size + ((0x20 - (gpt1Size % 0x20)) % 0x20)
-
-			self.file_start_offset = pkx_header_size
 
 		self.header = self.read('ArchiveHeader', 0, 0, False)
 

@@ -7,23 +7,17 @@ from ..Constants import *
 class BinaryReader:
     """
     Wrapper class to simplify reading data of various types
-    from a binary file (assumes big-endian byte order).
+    from a binary stream (assumes big-endian byte order).
 
-    Accepts either a filepath (str) or a file-like object (e.g. io.BytesIO).
+    Accepts a file-like object (e.g. io.BytesIO).
     """
 
-    def __init__(self, filepath_or_stream):
-        if isinstance(filepath_or_stream, str):
-            self.filepath = filepath_or_stream
-            self.file = open(filepath_or_stream, 'rb')
-            self.filesize = os.path.getsize(filepath_or_stream)
-        else:
-            self.filepath = None
-            self.file = filepath_or_stream
-            pos = self.file.tell()
-            self.file.seek(0, 2)
-            self.filesize = self.file.tell()
-            self.file.seek(pos)
+    def __init__(self, stream):
+        self.file = stream
+        pos = self.file.tell()
+        self.file.seek(0, 2)
+        self.filesize = self.file.tell()
+        self.file.seek(pos)
 
     def read(self, type, address, offset=0, whence='start'):
         """

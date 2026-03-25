@@ -1,11 +1,10 @@
 """Import pipeline entry point."""
-import os
 import traceback
 
 try:
-    from ..shared.helpers.logger import Logger, StubLogger
+    from ..shared.helpers.logger import StubLogger
 except (ImportError, SystemError):
-    from shared.helpers.logger import Logger, StubLogger
+    from shared.helpers.logger import StubLogger
 
 from .phases.extract.extract import extract_dat
 from .phases.route.route import route_sections
@@ -19,19 +18,20 @@ class Importer:
     """Entry point for the Intermediate Representation import pipeline."""
 
     @staticmethod
-    def run(context, filepath, options, logger=StubLogger()):
+    def run(context, raw_bytes, filename, options, logger=StubLogger()):
         """Run the full import pipeline.
 
         Args:
             context: Blender context (or None for headless).
-            filepath: Path to the model file (.dat, .pkx, .fsys).
+            raw_bytes: Complete file contents as bytes.
+            filename: Original filename (for container detection and logging).
             options: dict of importer options.
             logger: Logger instance.
         """
-        # Phase 1 — Container Extraction: binary file → DAT bytes
+        # Phase 1 — Container Extraction: raw file bytes → DAT bytes
         logger.info("=== Phase 1: Container Extraction ===")
-        dat_entries = extract_dat(filepath)
-        logger.info("Extracted %d DAT entry(s) from %s", len(dat_entries), os.path.basename(filepath))
+        dat_entries = extract_dat(raw_bytes, filename)
+        logger.info("Extracted %d DAT entry(s) from %s", len(dat_entries), filename)
 
         for dat_bytes, metadata in dat_entries:
             logger.info("Processing: %s (%d bytes)", metadata.filename, len(dat_bytes))

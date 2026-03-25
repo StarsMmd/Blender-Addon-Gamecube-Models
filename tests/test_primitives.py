@@ -40,7 +40,7 @@ class TestBinaryReader:
     def test_read_uint(self):
         path = _write_tmp(struct.pack('>I', 0xDEADBEEF))
         try:
-            r = BinaryReader(path)
+            import io; r = BinaryReader(io.BytesIO(open(path, "rb").read()))
             assert r.read('uint', 0) == 0xDEADBEEF
         finally:
             os.unlink(path)
@@ -48,7 +48,7 @@ class TestBinaryReader:
     def test_read_float(self):
         path = _write_tmp(struct.pack('>f', 3.14))
         try:
-            r = BinaryReader(path)
+            import io; r = BinaryReader(io.BytesIO(open(path, "rb").read()))
             assert abs(r.read('float', 0) - 3.14) < 1e-5
         finally:
             os.unlink(path)
@@ -57,7 +57,7 @@ class TestBinaryReader:
         data = struct.pack('>fff', 1.0, 2.0, 3.0)
         path = _write_tmp(data)
         try:
-            r = BinaryReader(path)
+            import io; r = BinaryReader(io.BytesIO(open(path, "rb").read()))
             v = r.read('vec3', 0)
             assert abs(v[0] - 1.0) < 1e-6
             assert abs(v[1] - 2.0) < 1e-6
@@ -68,7 +68,7 @@ class TestBinaryReader:
     def test_read_uchar(self):
         path = _write_tmp(bytes([0xAB]))
         try:
-            r = BinaryReader(path)
+            import io; r = BinaryReader(io.BytesIO(open(path, "rb").read()))
             assert r.read('uchar', 0) == 0xAB
         finally:
             os.unlink(path)
@@ -76,7 +76,7 @@ class TestBinaryReader:
     def test_read_string(self):
         path = _write_tmp(b'hello\x00')
         try:
-            r = BinaryReader(path)
+            import io; r = BinaryReader(io.BytesIO(open(path, "rb").read()))
             assert r.read('string', 0) == 'hello'
         finally:
             os.unlink(path)
@@ -85,7 +85,7 @@ class TestBinaryReader:
         payload = bytes(range(8))
         path = _write_tmp(payload)
         try:
-            r = BinaryReader(path)
+            import io; r = BinaryReader(io.BytesIO(open(path, "rb").read()))
             chunk = r.read_chunk(4, 2)
             assert chunk == bytes([2, 3, 4, 5])
         finally:

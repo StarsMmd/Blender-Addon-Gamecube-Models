@@ -25,7 +25,7 @@ class TestFrameRoundtrip:
         """A Frame with all-zero fields should parse without error."""
         path = _make_dat_with_frame()
         try:
-            parser = DATParser(path, {})
+            import io; parser = DATParser(io.BytesIO(open(path, "rb").read()), {})
             frame = Frame(0, None)
             frame.loadFromBinary(parser)
             parser.close()
@@ -51,7 +51,7 @@ class TestFrameRoundtrip:
             ad_ptr=0,         # null → no chunk read
         )
         try:
-            parser = DATParser(path, {})
+            import io; parser = DATParser(io.BytesIO(open(path, "rb").read()), {})
             frame = Frame(0, None)
             frame.loadFromBinary(parser)
             parser.close()

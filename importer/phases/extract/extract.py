@@ -1,9 +1,8 @@
-"""Phase 1 — Container Extraction: binary file → DAT bytes.
+"""Phase 1 — Container Extraction: raw file bytes → DAT bytes.
 
 Detects the container format (.dat, .pkx, .fsys) and extracts
 the raw DAT model bytes, stripping any container headers.
 """
-import os
 from dataclasses import dataclass
 from shared.helpers.binary import read
 
@@ -11,38 +10,31 @@ from shared.helpers.binary import read
 @dataclass
 class ContainerMetadata:
     """Metadata about the source container."""
-    source_path: str
     filename: str
 
 
-def extract_dat(filepath):
-    """Extract DAT bytes from a container file.
+def extract_dat(raw_bytes, filename):
+    """Extract DAT bytes from raw file contents.
 
     Args:
-        filepath: Path to .dat, .pkx, or .fsys file.
+        raw_bytes: Complete file contents as bytes.
+        filename: Original filename (used to detect container type by extension).
 
     Returns:
         list of (dat_bytes, ContainerMetadata) tuples.
         A .dat/.pkx yields one entry. A .fsys would yield multiple (future).
     """
-    with open(filepath, 'rb') as f:
-        raw = f.read()
-
-    filename = os.path.basename(filepath)
-    ext = filepath.rsplit('.', 1)[-1].lower() if '.' in filepath else ''
+    ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
 
     if ext == 'pkx':
-        return _extract_pkx(raw, filepath, filename)
+        return _extract_pkx(raw_bytes, filename)
     else:
         # .dat, .fdat, .rdat — pass through unchanged
-        metadata = ContainerMetadata(
-            source_path=filepath,
-            filename=filename,
-        )
-        return [(raw, metadata)]
+        metadata = ContainerMetadata(filename=filename)
+        return [(raw_bytes, metadata)]
 
 
-def _extract_pkx(raw, filepath, filename):
+def _extract_pkx(raw, filename):
     """Extract DAT bytes from a PKX container.
 
     PKX files have a header before the DAT data:
@@ -63,8 +55,5 @@ def _extract_pkx(raw, filepath, filename):
         header_size = 0x40
 
     dat_bytes = raw[header_size:]
-    metadata = ContainerMetadata(
-        source_path=filepath,
-        filename=filename,
-    )
+    metadata = ContainerMetadata(filename=filename)
     return [(dat_bytes, metadata)]
