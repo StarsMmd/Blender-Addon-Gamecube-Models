@@ -167,7 +167,10 @@ def _bake_bone_track(track, action, bone_data, max_frame, logger):
     parent_edit_scale_correction = (
         bone_data[parent_idx]['edit_scale_correction'] if parent_idx is not None else None
     )
-    parent_scl = track.parent_accumulated_scale
+    # Note: parent_scl is NOT passed to compile_srt_matrix during animation baking.
+    # The aligned scale inheritance correction is already accounted for by the
+    # edit_scale_correction matrices. Legacy compileSRTMatrix is called with only
+    # 3 args (no parent_scl) during animation — matching this behavior.
 
     # Pass 2: frame-by-frame baking with scale correction
     end_frame = min(int(track.end_frame), max_frame)
@@ -183,7 +186,7 @@ def _bake_bone_track(track, action, bone_data, max_frame, logger):
              transform_list[5].evaluate(frame),
              transform_list[6].evaluate(frame)]
 
-        mtx = compile_srt_matrix(s, r, l, parent_scl)
+        mtx = compile_srt_matrix(s, r, l)
 
         try:
             if parent_idx is not None:
