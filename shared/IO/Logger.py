@@ -77,10 +77,8 @@ class Logger:
             self._write("INFO", msg, args)
 
     def debug(self, msg, *args):
-        if self.verbose:
-            self._print("DEBUG", msg, args)
-        else:
-            self._write("DEBUG", msg, args)
+        # Debug always goes to file only — too much output for console
+        self._write("DEBUG", msg, args)
 
     def _print(self, level, msg, args, file=None):
         if args:

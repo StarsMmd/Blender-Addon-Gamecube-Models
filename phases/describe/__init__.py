@@ -1,5 +1,6 @@
 """Phase 4: Convert node trees into an Intermediate Representation scene (pure dataclasses, no bpy)."""
 import math
+import time
 
 try:
     from ...shared.IR import IRScene
@@ -42,6 +43,7 @@ def describe_scene(sections, options, logger=None):
         logger = NullLogger()
 
     logger.info("=== Phase 4: Describe Scene ===")
+    t0 = time.time()
 
     # Route sections into model sets (matching legacy ModelBuilder logic)
     model_sets = []
@@ -54,7 +56,7 @@ def describe_scene(sections, options, logger=None):
             continue
 
         root = section.root_node
-        logger.debug("Section: %s → %s", section.name, type(root).__name__)
+        logger.debug("Section: %s -> %s", section.name, type(root).__name__)
 
         if isinstance(root, Joint):
             disjoint_root_joint = root
@@ -78,8 +80,7 @@ def describe_scene(sections, options, logger=None):
         })()
         model_sets.append(disjoint_set)
 
-    logger.info("Routed %d model set(s), %d disjoint animation(s), %d disjoint material animation(s)",
-                len(model_sets), len(disjoint_anim_joints), len(disjoint_mat_anim_joints))
+    logger.info("Routed %d model set(s) in %.3fs", len(model_sets), time.time() - t0)
 
     # Describe each model
     ir_models = []
@@ -91,11 +92,13 @@ def describe_scene(sections, options, logger=None):
         model_name = root_joint.name or "Model"
         logger.info("Describing model: %s", model_name)
 
+        t1 = time.time()
         bones, joint_to_bone_index = describe_bones(root_joint, options)
-        logger.info("  Bones: %d", len(bones))
+        logger.info("  Bones: %d (%.3fs)", len(bones), time.time() - t1)
 
+        t2 = time.time()
         meshes = describe_meshes(root_joint, bones, joint_to_bone_index, logger=logger)
-        logger.info("  Meshes: %d", len(meshes))
+        logger.info("  Meshes: %d (%.3fs)", len(meshes), time.time() - t2)
 
         for i, m in enumerate(meshes):
             uv_names = [uv.name for uv in m.uv_layers]
