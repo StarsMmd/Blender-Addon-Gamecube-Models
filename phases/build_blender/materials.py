@@ -251,7 +251,8 @@ def _get_or_create_bpy_image(ir_image, image_cache):
         ir_image.name, ir_image.width, ir_image.height, alpha=True
     )
 
-    bpy_image.pixels = [b / 255.0 for b in ir_image.pixels]
+    import numpy as np
+    bpy_image.pixels = np.frombuffer(ir_image.pixels, dtype=np.uint8).astype(np.float32) / 255.0
 
     bpy_image.alpha_mode = 'CHANNEL_PACKED'
     bpy_image.pack()

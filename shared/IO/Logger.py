@@ -59,6 +59,7 @@ class Logger:
 
     def close(self):
         if self._log_file and not self._log_file.closed:
+            self._log_file.flush()
             self._log_file.close()
 
     def error(self, msg, *args):
@@ -96,4 +97,3 @@ class Logger:
     def _write_line(self, line):
         if self._log_file and not self._log_file.closed:
             self._log_file.write(line + "\n")
-            self._log_file.flush()
