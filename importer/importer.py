@@ -49,6 +49,7 @@ class Importer:
 
             # Phase 5A — Blender Build: Intermediate Representation → Blender scene
             if context is not None:
+                from .phases.build_blender.errors.build_errors import ModelBuildError
                 try:
                     build_blender_scene(ir_scene, context, options, logger=logger)
                 except Exception as error:
@@ -57,7 +58,7 @@ class Importer:
                     logger.error("Failed to build model: %s", error)
                     logger.info("Log file: %s", logger.log_path)
                     logger.close()
-                    raise
+                    raise ModelBuildError(metadata.filename, error) from error
 
         logger.info("Log file: %s", logger.log_path)
         logger.close()

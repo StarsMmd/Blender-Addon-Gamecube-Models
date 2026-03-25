@@ -198,6 +198,8 @@ def _bake_bone_track(track, action, bone_data, max_frame, logger):
                         @ mtx
                         @ edit_scale_correction.inverted())
         except ValueError:
+            # Singular matrix — bone has zero/near-zero scale. Use safe fallback.
+            logger.debug("  %s: singular matrix at frame %d, using fallback", bone_name, frame)
             Bmtx = temp_matrix_local.inverted_safe() @ mtx
 
         trans, rot, scl = Bmtx.decompose()
