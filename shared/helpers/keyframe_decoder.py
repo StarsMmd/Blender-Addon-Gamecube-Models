@@ -3,7 +3,7 @@
 Decodes the opcode-packed keyframe byte format into IRKeyframe dataclasses.
 No Blender dependency — uses only the IR types and struct unpacking.
 """
-import struct
+from .binary import read_native
 
 from ..IR.animation import IRKeyframe
 from ..IR.enums import Interpolation
@@ -142,21 +142,23 @@ def _read_node_values(opcode, value_type, frac_value, slope_type, frac_slope, ad
     return val, slope, cur_pos
 
 
+_FRAC_TYPE_INFO = {
+    HSD_A_FRAC_FLOAT: ('float', 4, False),
+    HSD_A_FRAC_S16:   ('short', 2, True),
+    HSD_A_FRAC_U16:   ('ushort', 2, True),
+    HSD_A_FRAC_S8:    ('char', 1, True),
+    HSD_A_FRAC_U8:    ('uchar', 1, True),
+}
+
+
 def _read_typed_value(type_flag, frac_bits, ad, cur_pos):
     """Read a single value from the byte stream based on type encoding."""
-    if type_flag == HSD_A_FRAC_FLOAT:
-        val = struct.unpack('f', ad[cur_pos:cur_pos + 4])[0]
-        return val, cur_pos + 4
-    elif type_flag == HSD_A_FRAC_S16:
-        val = struct.unpack('h', ad[cur_pos:cur_pos + 2])[0] / (1 << frac_bits)
-        return val, cur_pos + 2
-    elif type_flag == HSD_A_FRAC_U16:
-        val = struct.unpack('H', ad[cur_pos:cur_pos + 2])[0] / (1 << frac_bits)
-        return val, cur_pos + 2
-    elif type_flag == HSD_A_FRAC_S8:
-        val = struct.unpack('b', ad[cur_pos:cur_pos + 1])[0] / (1 << frac_bits)
-        return val, cur_pos + 1
-    elif type_flag == HSD_A_FRAC_U8:
-        val = struct.unpack('B', ad[cur_pos:cur_pos + 1])[0] / (1 << frac_bits)
-        return val, cur_pos + 1
-    return 0, cur_pos
+    info = _FRAC_TYPE_INFO.get(type_flag)
+    if info is None:
+        return 0, cur_pos
+
+    type_name, size, use_frac = info
+    val = read_native(type_name, ad, cur_pos)
+    if use_frac:
+        val /= (1 << frac_bits)
+    return val, cur_pos + size

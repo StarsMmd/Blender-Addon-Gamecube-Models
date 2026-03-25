@@ -3,7 +3,7 @@
 Reads the archive header and section metadata from raw DAT bytes
 to determine which node type each section should be parsed as.
 """
-import struct
+from shared.helpers.binary import read, read_many
 
 # Default section name → node type mapping rules (checked in order)
 _DEFAULT_RULES = [
@@ -64,7 +64,7 @@ def _read_section_names(dat_bytes):
         return []
 
     # Archive header: file_size(4) data_size(4) reloc_count(4) pub_count(4) ext_count(4) pad(12)
-    file_size, data_size, reloc_count, pub_count, ext_count = struct.unpack_from('>5I', dat_bytes, 0)
+    file_size, data_size, reloc_count, pub_count, ext_count = read_many('uint', 5, dat_bytes, 0)
 
     total_sections = pub_count + ext_count
     if total_sections == 0:
@@ -83,7 +83,7 @@ def _read_section_names(dat_bytes):
             break
 
         # Each entry: root_offset(4) + name_string_offset(4)
-        _, name_str_offset = struct.unpack_from('>II', dat_bytes, entry_offset)
+        _, name_str_offset = read_many('uint', 2, dat_bytes, entry_offset)
 
         # Read null-terminated string
         abs_offset = names_block_offset + name_str_offset

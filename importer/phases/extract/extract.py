@@ -4,8 +4,8 @@ Detects the container format (.dat, .pkx, .fsys) and extracts
 the raw DAT model bytes, stripping any container headers.
 """
 import os
-import struct
 from dataclasses import dataclass
+from shared.helpers.binary import read
 
 
 @dataclass
@@ -50,13 +50,13 @@ def _extract_pkx(raw, filepath, filename):
     - XD: 0xE60 byte header + optional GPT1 chunk
     """
     # Detect XD vs Colosseum: compare first 4 bytes at offset 0 vs 0x40
-    val_0 = struct.unpack_from('>I', raw, 0)[0]
-    val_40 = struct.unpack_from('>I', raw, 0x40)[0]
+    val_0 = read('uint', raw, 0)
+    val_40 = read('uint', raw, 0x40)
     is_xd = val_0 != val_40
 
     if is_xd:
         header_size = 0xE60
-        gpt1_size = struct.unpack_from('>I', raw, 8)[0]
+        gpt1_size = read('uint', raw, 8)
         if gpt1_size > 0:
             header_size += gpt1_size + ((0x20 - (gpt1_size % 0x20)) % 0x20)
     else:
