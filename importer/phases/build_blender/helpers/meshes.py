@@ -136,8 +136,8 @@ def _apply_bone_weights(ir_mesh, ir_model, mesh_object, armature, logger, mesh_i
             for bone_name, weight in weight_list:
                 joint_groups[bone_name].add([vertex_idx], weight, 'REPLACE')
 
-        logger.debug("  mesh[%d] weights: WEIGHTED, %d assignments, %d groups",
-                     mesh_idx, len(bw.assignments), len(joint_groups))
+        logger.debug("  mesh[%d] weights: WEIGHTED, %d assignments, %d groups: %s",
+                     mesh_idx, len(bw.assignments), len(joint_groups), sorted(joint_groups.keys()))
 
     elif bw.type == SkinType.SINGLE_BONE and bw.bone_name:
         group = mesh_object.vertex_groups.new(name=bw.bone_name)

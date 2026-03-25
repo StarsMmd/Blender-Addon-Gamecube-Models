@@ -149,6 +149,14 @@ class ModelSet(Node):
         # Add bones
         bones = self.root_joint.buildBoneHierarchy(builder, None, None, armature_data)
 
+        # Debug: log bone rest matrices
+        for bone_data in list(armature_data.edit_bones)[:3]:
+            builder.logger.debug("  bone '%s' head=%s tail=%s matrix[0]=%s",
+                         bone_data.name,
+                         [round(x, 8) for x in bone_data.head],
+                         [round(x, 8) for x in bone_data.tail],
+                         [round(bone_data.matrix[0][j], 8) for j in range(4)])
+
         bpy.ops.object.mode_set(mode = 'POSE')
 
         # Add meshes

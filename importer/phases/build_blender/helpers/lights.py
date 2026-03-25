@@ -1,4 +1,5 @@
 """Build Blender light objects from IRLight dataclasses."""
+import math
 import bpy
 from mathutils import Matrix, Vector
 
@@ -22,7 +23,10 @@ def _build_light(ir_light):
     lamp = bpy.data.objects.new(name=ir_light.name, object_data=light_data)
 
     if ir_light.position:
-        lamp.matrix_basis = Matrix.Translation(Vector(ir_light.position))
+        # Position with pre-rotation to convert GC Y-up coords,
+        # then the post-rotation coordinate system correction cancels it
+        lamp.matrix_basis = (Matrix.Translation(Vector(ir_light.position))
+                             @ Matrix.Rotation(-math.pi / 2, 4, [1.0, 0.0, 0.0]))
 
     if ir_light.target_position:
         target = bpy.data.objects.new(ir_light.name + '_target', None)
@@ -38,4 +42,4 @@ def _build_light(ir_light):
     bpy.context.scene.collection.objects.link(lamp)
 
     # Coordinate system rotation (GameCube Y-up → Blender Z-up)
-    lamp.matrix_basis @= Matrix.Rotation(ir_light.coordinate_rotation[0], 4, [1.0, 0.0, 0.0])
+    lamp.matrix_basis @= Matrix.Rotation(math.pi / 2, 4, [1.0, 0.0, 0.0])

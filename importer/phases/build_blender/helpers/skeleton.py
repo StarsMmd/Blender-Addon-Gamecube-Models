@@ -66,6 +66,16 @@ def build_skeleton(ir_model, context, options, logger=StubLogger()):
 
         edit_bones.append(bone)
 
+    # Debug: log bone rest matrices
+    for bone_data in ir_model.bones[:3]:
+        eb = armature_data.edit_bones.get(bone_data.name)
+        if eb:
+            logger.debug("  bone '%s' head=%s tail=%s matrix[0]=%s",
+                         bone_data.name,
+                         [round(x, 8) for x in eb.head],
+                         [round(x, 8) for x in eb.tail],
+                         [round(eb.matrix[0][j], 8) for j in range(4)])
+
     logger.info("  Created armature '%s' with %d bones", armature_name, len(edit_bones))
 
     bpy.ops.object.mode_set(mode='POSE')
