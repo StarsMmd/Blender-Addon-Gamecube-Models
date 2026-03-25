@@ -56,7 +56,7 @@ if _bpy_available:
         section: bpy.props.StringProperty(default = '', name = 'Section Name', description = 'Name of the section that should be imported. Leave blank to import all.')
         ik_hack: bpy.props.BoolProperty(default = True, name = 'IK Hack', description = 'Shrinks Bones down to 1e-3 to make IK work properly.')
         max_frame: bpy.props.IntProperty(default = 1000, name = 'Max Anim Frame', description = 'Cutoff frame after which animations aren\'t sampled. Use 0 For no limit.')
-        verbose: bpy.props.BoolProperty(default = False, name = 'Verbose', description = 'Print detailed logging output to the console for debugging.')
+        verbose: bpy.props.BoolProperty(default = True, name = 'Verbose', description = 'Print detailed logging output to the console for debugging.')
         setup_workspace: bpy.props.BoolProperty(default = False, name = 'Setup Workspace', description = 'Split the viewport and open a Dope Sheet / Action Editor. Sets playback end frame to 60.')
         use_ir: bpy.props.BoolProperty(default = False, name = 'Use Intermediate Representation Pipeline', description = 'Use the new Intermediate Representation-based import pipeline (experimental).')
 

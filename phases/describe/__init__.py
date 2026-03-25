@@ -79,6 +79,21 @@ def describe_scene(sections, options):
         bones, joint_to_bone_index = describe_bones(root_joint, options)
         meshes = describe_meshes(root_joint, bones, joint_to_bone_index)
 
+        # Debug: log IR summary
+        print(f"[IR] Model: {root_joint.name or 'Model'}, bones={len(bones)}, meshes={len(meshes)}")
+        for i, m in enumerate(meshes):
+            mat_info = "no material"
+            if m.material:
+                tex_count = len(m.material.texture_layers)
+                mat_info = f"material with {tex_count} texture(s)"
+                for j, tl in enumerate(m.material.texture_layers):
+                    print(f"[IR]   mesh[{i}] tex[{j}]: image={tl.image.name if tl.image else 'None'} "
+                          f"{tl.image.width}x{tl.image.height if tl.image else 0} "
+                          f"uv_idx={tl.uv_index} coord={tl.coord_type} "
+                          f"color_blend={tl.color_blend} alpha_blend={tl.alpha_blend}")
+            print(f"[IR]   mesh[{i}]: {m.name}, verts={len(m.vertices)}, faces={len(m.faces)}, "
+                  f"uvs={len(m.uv_layers)}, colors={len(m.color_layers)}, {mat_info}")
+
         ir_model = IRModel(
             name=root_joint.name or "Model",
             bones=bones,
