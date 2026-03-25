@@ -68,13 +68,12 @@ class Logger:
 
     def warning(self, msg, *args):
         self.warning_count += 1
-        self._print("WARNING", msg, args)
+        self._print("WARNING", msg, args, file=sys.stderr)
 
     def info(self, msg, *args):
-        if self.verbose:
-            self._print("INFO", msg, args)
-        else:
-            self._write("INFO", msg, args)
+        # Write to file (flushed), only print to console if not in Blender
+        # (Blender's console can block when buffer is full)
+        self._write("INFO", msg, args, flush=True)
 
     def debug(self, msg, *args):
         # Debug always goes to file only — too much output for console
@@ -85,13 +84,15 @@ class Logger:
             msg = msg % args
         line = "[%s] %s" % (level, msg)
         print(line, file=file)
-        self._write_line(line)
+        self._write_line(line, flush=True)
 
-    def _write(self, level, msg, args):
+    def _write(self, level, msg, args, flush=False):
         if args:
             msg = msg % args
-        self._write_line("[%s] %s" % (level, msg))
+        self._write_line("[%s] %s" % (level, msg), flush=flush)
 
-    def _write_line(self, line):
+    def _write_line(self, line, flush=False):
         if self._log_file and not self._log_file.closed:
             self._log_file.write(line + "\n")
+            if flush:
+                self._log_file.flush()
