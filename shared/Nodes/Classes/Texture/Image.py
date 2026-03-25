@@ -65,7 +65,7 @@ class Image(Node):
                             self.address, self.width, self.height, self.format, self.data_address)
 
         # Store raw texture data for round-trip writing
-        if self.data_address and self.format in format_dict:
+        if self.data_address is not None and self.format in format_dict:
             bits_per_pixel, tile_S, tile_T, _ = format_dict[self.format]
             blocks_x = (self.width  // tile_S) + (1 if ((self.width  % tile_S) > 0) else 0)
             blocks_y = (self.height // tile_T) + (1 if ((self.height % tile_T) > 0) else 0)
