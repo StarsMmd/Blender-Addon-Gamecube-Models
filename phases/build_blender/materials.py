@@ -251,11 +251,7 @@ def _get_or_create_bpy_image(ir_image, image_cache):
         ir_image.name, ir_image.width, ir_image.height, alpha=True
     )
 
-    # IRImage.pixels can be raw u8 bytes or pre-normalized floats
-    pixels = ir_image.pixels
-    if isinstance(pixels, (bytes, bytearray)):
-        pixels = [b / 255.0 for b in pixels]
-    bpy_image.pixels = pixels
+    bpy_image.pixels = [b / 255.0 for b in ir_image.pixels]
 
     bpy_image.alpha_mode = 'CHANNEL_PACKED'
     bpy_image.pack()

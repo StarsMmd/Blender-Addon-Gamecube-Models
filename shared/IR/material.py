@@ -58,7 +58,7 @@ class IRImage:
     name: str
     width: int
     height: int
-    pixels: bytes | list[float]  # raw RGBA u8 bytes or normalized floats, row-major
+    pixels: bytes  # raw RGBA u8 bytes, row-major, bottom-to-top
     image_id: int
     palette_id: int
 

@@ -186,7 +186,7 @@ def test_ir_image():
     img = IRImage(
         name="tex_0",
         width=2, height=2,
-        pixels=[1.0] * 16,
+        pixels=bytes([255] * 16),
         image_id=0, palette_id=0,
     )
     assert img.width == 2
@@ -194,7 +194,7 @@ def test_ir_image():
 
 
 def test_ir_texture_layer():
-    img = IRImage(name="t", width=1, height=1, pixels=[1, 1, 1, 1], image_id=0, palette_id=0)
+    img = IRImage(name="t", width=1, height=1, pixels=bytes([255, 255, 255, 255]), image_id=0, palette_id=0)
     layer = IRTextureLayer(
         image=img,
         coord_type=CoordType.UV,
