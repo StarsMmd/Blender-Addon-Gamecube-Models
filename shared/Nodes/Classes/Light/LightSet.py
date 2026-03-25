@@ -15,6 +15,3 @@ class LightSet(Node):
         new_node.animations = []
         return new_node
 
-    def build(self, builder):
-        if self.light:
-            self.light.build(builder)

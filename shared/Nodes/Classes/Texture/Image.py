@@ -2,7 +2,6 @@ from ...Node import Node
 from ....Constants import *
 
 import array
-import bpy
 
 TILE_S_I4 =       8
 TILE_S_I8 =       8
@@ -163,38 +162,6 @@ class Image(Node):
             cropped[dst_start:dst_start + actual_stride] = out_data[src_start:src_start + actual_stride]
 
         return cropped
-
-    def build(self, builder, pixel_data):
-        if pixel_data is None:
-            return None
-        name = 'image_' + name_dict.get(self.format) + "_" + str(self.id)
-        image = bpy.data.images.new(name, self.width, self.height, alpha=True)
-        normalised_pixels = [intensity / 255 for intensity in pixel_data]
-        image.pixels = normalised_pixels
-        image.alpha_mode = 'CHANNEL_PACKED'
-
-        # Log alpha channel statistics for this image
-        total_pixels = self.width * self.height
-        alpha_values = pixel_data[3::4]  # every 4th byte starting at index 3
-        opaque_count = sum(1 for a in alpha_values if a == 255)
-        transparent_count = sum(1 for a in alpha_values if a == 0)
-        semi_count = total_pixels - opaque_count - transparent_count
-        builder.logger.debug('  Image %s: alpha stats: %d opaque, %d transparent, %d semi (%d total)',
-                             name, opaque_count, transparent_count, semi_count, total_pixels)
-
-        # Save decoded image to temp directory for visual debugging (before pack)
-        import os
-        debug_dir = os.path.join(builder.logger.log_dir, 'textures')
-        os.makedirs(debug_dir, exist_ok=True)
-        png_path = os.path.join(debug_dir, name + '.png')
-        image.filepath_raw = png_path
-        image.file_format = 'PNG'
-        image.save()
-        builder.logger.debug('  Image saved to: %s', png_path)
-
-        image.pack()
-
-        return image
 
 def get_palette_color(palette, fmt):
     color = [0,0,0,0]
@@ -392,7 +359,6 @@ def convert_CMPR_block(dst, src, blocks_x, _):
             c += 4 * CCC
         c += (blocks_x * 4 - 1) * TILE_S_CMPR * CCC
 
-
 def convert_C4_block(dst, src, blocks_x, tlut):
     palette = memoryview(tlut.raw_data)
     c = 0
@@ -456,5 +422,4 @@ name_dict = {
     gx.GX_TF_C8 : 'GX_TF_C8',
     gx.GX_TF_C14X2 : 'GX_TF_C14X2',
 }
-
 

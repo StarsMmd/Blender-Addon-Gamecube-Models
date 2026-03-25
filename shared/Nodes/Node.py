@@ -5,7 +5,6 @@ from ..Constants.RecursiveTypes import (
 )
 from ..Constants.PrimitiveTypes import is_primitive_type
 
-
 # Abstract node class
 class Node(object):
     # The name of this type of Node
@@ -41,30 +40,12 @@ class Node(object):
         # Prevent reference cycles when traversing tree
         self.is_being_printed = False
         self.is_being_listed = False
-        self.is_prepared_for_build = False
 
     # Parse struct from binary file.
     # Use the parser to read the binary for the fields and then do any conversions or calculations
     # required to update those values or set extra meta data
     def loadFromBinary(self, parser):
         parser.parseNode(self)
-
-    # Do any set up required to convert the node into a suitable representation in blender
-    def prepareForBlender(self, builder):
-        if self.is_prepared_for_build:
-            return
-        self.is_prepared_for_build = True
-
-        for field_info in self.fields:
-            field_name = field_info[0]
-            field = getattr(self, field_name)
-            if isinstance(field, Node):
-                field.prepareForBlender(builder)
-            elif isinstance(field, list) and len(field) > 0:
-                first_sub_field = field[0]
-                if isinstance(first_sub_field, Node):
-                    for sub_field in field:
-                        sub_field.prepareForBlender(builder)
 
     # Override in subclasses that have SHARED raw data (vertex buffers, image pixels,
     # palette data) that is written once in Phase 1 and referenced by multiple nodes.
@@ -272,7 +253,7 @@ class Node(object):
                 for index, sub_attr in enumerate(attr):
                     substring = stringRep(sub_attr)
                     sublines = substring.split("\n")
-                    
+
                     field_name_prefix = "    " + str(index + 1) + " "
                     if field_type == 'matrix':
                         field_name_prefix = "    "
@@ -288,7 +269,7 @@ class Node(object):
             else:
                 substring = stringRep(attr)
                 sublines = substring.split("\n")
-                
+
                 field_name_prefix = "  " + field_name.replace("_", " ") + ": "
                 spacing = "    "
 
@@ -337,7 +318,7 @@ class Node(object):
                 for index, sub_attr in enumerate(attr):
                     substring = str(sub_attr)
                     sublines = substring.split("\n")
-                    
+
                     field_name_prefix = "    " + str(index + 1) + " "
                     if field_type == 'matrix':
                         field_name_prefix = "    "
@@ -353,7 +334,7 @@ class Node(object):
             else:
                 substring = str(attr)
                 sublines = substring.split("\n")
-                
+
                 field_name_prefix = "  " + field_name.replace("_", " ") + ": "
                 spacing = "    "
 
@@ -368,13 +349,3 @@ class Node(object):
         self.is_being_printed = False
 
         return text
-
-
-
-
-
-
-
-
-
-
