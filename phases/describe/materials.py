@@ -117,7 +117,7 @@ def _describe_texture(texture, image_cache):
     # Get pre-decoded image pixels (decoded during parsing)
     ir_image = None
     if texture.image:
-        image_id = texture.texture_id if hasattr(texture, 'texture_id') else 0
+        image_id = texture.image.data_address
         palette_id = texture.palette.address if texture.palette else 0
         cache_key = (image_id, palette_id)
 
