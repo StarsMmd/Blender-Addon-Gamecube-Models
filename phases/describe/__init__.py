@@ -1,13 +1,22 @@
 """Phase 4: Convert node trees into an Intermediate Representation scene (pure dataclasses, no bpy)."""
 import math
 
-from shared.IR import IRScene
-from shared.IR.skeleton import IRModel
-from shared.Nodes.Classes.Joints.Joint import Joint
-from shared.Nodes.Classes.Joints.ModelSet import ModelSet
-from shared.Nodes.Classes.RootNodes.SceneData import SceneData
-from shared.Nodes.Classes.Animation.AnimationJoint import AnimationJoint
-from shared.Nodes.Classes.Material.MaterialAnimationJoint import MaterialAnimationJoint
+try:
+    from ...shared.IR import IRScene
+    from ...shared.IR.skeleton import IRModel
+    from ...shared.Nodes.Classes.Joints.Joint import Joint
+    from ...shared.Nodes.Classes.Joints.ModelSet import ModelSet
+    from ...shared.Nodes.Classes.RootNodes.SceneData import SceneData
+    from ...shared.Nodes.Classes.Animation.AnimationJoint import AnimationJoint
+    from ...shared.Nodes.Classes.Material.MaterialAnimationJoint import MaterialAnimationJoint
+except (ImportError, SystemError):
+    from shared.IR import IRScene
+    from shared.IR.skeleton import IRModel
+    from shared.Nodes.Classes.Joints.Joint import Joint
+    from shared.Nodes.Classes.Joints.ModelSet import ModelSet
+    from shared.Nodes.Classes.RootNodes.SceneData import SceneData
+    from shared.Nodes.Classes.Animation.AnimationJoint import AnimationJoint
+    from shared.Nodes.Classes.Material.MaterialAnimationJoint import MaterialAnimationJoint
 
 from .bones import describe_bones
 from .meshes import describe_meshes

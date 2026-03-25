@@ -2,7 +2,10 @@
 import bpy
 from mathutils import Matrix, Vector
 
-from shared.IR.enums import SkinType
+try:
+    from ...shared.IR.enums import SkinType
+except (ImportError, SystemError):
+    from shared.IR.enums import SkinType
 
 
 def build_meshes(ir_model, armature, context, options):

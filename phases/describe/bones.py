@@ -3,13 +3,22 @@
 Ports the pure-data computation from Joint.buildBoneHierarchy() and
 Joint.compileSRTMatrix(), producing IRBone instances without any bpy calls.
 """
-from shared.helpers.math_shim import Matrix, Vector, Euler
-from shared.IR.skeleton import IRBone
-from shared.IR.enums import ScaleInheritance
-from shared.Constants.hsd import (
-    JOBJ_HIDDEN, JOBJ_INSTANCE, JOBJ_EFFECTOR, JOBJ_SPLINE,
-    JOBJ_TYPE_MASK,
-)
+try:
+    from ...shared.helpers.math_shim import Matrix, Vector, Euler
+    from ...shared.IR.skeleton import IRBone
+    from ...shared.IR.enums import ScaleInheritance
+    from ...shared.Constants.hsd import (
+        JOBJ_HIDDEN, JOBJ_INSTANCE, JOBJ_EFFECTOR, JOBJ_SPLINE,
+        JOBJ_TYPE_MASK,
+    )
+except (ImportError, SystemError):
+    from shared.helpers.math_shim import Matrix, Vector, Euler
+    from shared.IR.skeleton import IRBone
+    from shared.IR.enums import ScaleInheritance
+    from shared.Constants.hsd import (
+        JOBJ_HIDDEN, JOBJ_INSTANCE, JOBJ_EFFECTOR, JOBJ_SPLINE,
+        JOBJ_TYPE_MASK,
+    )
 
 
 def describe_bones(root_joint, options=None):
