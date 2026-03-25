@@ -154,7 +154,7 @@ def describe_meshes(root_joint, bones, joint_to_bone_index, image_cache=None, lo
         # Extract bone weight info (may deform verts_out in-place for envelopes)
         bone_weights = _extract_bone_weights(
             pobj, joint, bone_index, bones, joint_to_bone_index, faces,
-            verts_out
+            verts_out, face_lists_copy
         )
 
         name = pobj.name if pobj.name else str(count)
@@ -245,7 +245,7 @@ def _extract_color_layers(source, face_list, faces, color_num):
 
 
 def _extract_bone_weights(pobj, joint, bone_index, bones, joint_to_bone_index, faces,
-                          vertices_out):
+                          vertices_out, validated_face_lists=None):
     """Extract bone weight data from PObject property.
 
     For envelope-weighted meshes, also deforms vertices_out in-place using
@@ -254,6 +254,9 @@ def _extract_bone_weights(pobj, joint, bone_index, bones, joint_to_bone_index, f
     Args:
         vertices_out: mutable list of vertex positions — may be modified in-place
                       for envelope deformation.
+        validated_face_lists: face lists with degenerate faces removed (must be
+                             used for envelope index lookup to stay in sync with
+                             the validated position faces).
     """
     if pobj.property is None:
         # Rigid: attached to parent bone
@@ -267,7 +270,7 @@ def _extract_bone_weights(pobj, joint, bone_index, bones, joint_to_bone_index, f
     if pobj_type == POBJ_ENVELOPE:
         return _extract_envelope_weights(
             pobj, joint, bone_index, bones, joint_to_bone_index, faces,
-            vertices_out
+            vertices_out, validated_face_lists
         )
     elif pobj_type == POBJ_SKIN:
         # Single bone deformation
@@ -341,7 +344,7 @@ def _envelope_coord_system(bone_index, bones):
 
 
 def _extract_envelope_weights(pobj, joint, bone_index, bones, joint_to_bone_index, faces,
-                              vertices_out):
+                              vertices_out, validated_face_lists=None):
     """Extract weighted envelope deformation data and deform vertices."""
     vertex_list = pobj.vertex_list.vertices
     envelope_list = pobj.property
@@ -357,7 +360,13 @@ def _extract_envelope_weights(pobj, joint, bone_index, bones, joint_to_bone_inde
         return IRBoneWeights(type=SkinType.RIGID, bone_name=bones[bone_index].name)
 
     env_source = pobj.sources[envelope_vertex_index]
-    env_faces = pobj.face_lists[envelope_vertex_index]
+    # Use validated face lists (degenerate faces removed) to stay in sync
+    # with the validated position faces. Legacy modifies face_lists in-place
+    # before calling make_deform_skin; we must use the same validated lists.
+    if validated_face_lists is not None:
+        env_faces = validated_face_lists[envelope_vertex_index]
+    else:
+        env_faces = pobj.face_lists[envelope_vertex_index]
 
     # Build vertex → envelope index mapping from face data
     indices = {}
