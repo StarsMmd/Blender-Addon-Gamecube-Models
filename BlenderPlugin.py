@@ -28,8 +28,6 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
                           description='Cutoff frame after which animations aren\'t sampled. Use 0 For no limit.')
     write_logs: BoolProperty(default=True, name='Write Logs',
                             description='Write import logs to a temp file for debugging.')
-    verbose: BoolProperty(default=False, name='Verbose',
-                         description='Print all log output to the console (slow).')
     setup_workspace: BoolProperty(default=False, name='Setup Workspace',
                                  description='Split the viewport and open a Dope Sheet / Action Editor. Sets playback end frame to 60.')
     use_legacy: BoolProperty(default=False, name='Use Legacy Importer',
@@ -47,7 +45,7 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
         for path in paths:
             try:
                 if self.use_legacy:
-                    status = Importer.parseDAT(context, path, self.section, self.ik_hack, self.max_frame, self.verbose)
+                    status = Importer.parseDAT(context, path, self.section, self.ik_hack, self.max_frame, verbose=False)
                     if 'FINISHED' not in status:
                         return status
                 else:
@@ -70,7 +68,7 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
         model_name = filename.split('.')[0] if filename else "unknown"
 
         if self.write_logs:
-            logger = Logger(verbose=self.verbose, model_name=model_name)
+            logger = Logger(model_name=model_name)
         else:
             logger = StubLogger()
 
