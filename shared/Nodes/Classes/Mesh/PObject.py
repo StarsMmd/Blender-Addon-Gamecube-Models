@@ -9,7 +9,6 @@ from ...Node import Node
 
 from ....Constants import *
 from ....BlenderVersion import BlenderVersion
-from ....Errors import *
 
 
 def _validate_mesh(facelists, faces):
@@ -174,7 +173,7 @@ class PObject(Node):
                 position_vertex_index = i
 
         if position_vertex_index == None:
-            raise MeshWithoutPositionError
+            raise ValueError('Vertex list does not contain vertex with attribute GX_VA_POS')
 
         #TODO: move the loop here to avoid redundancy
         vertices = self.sources[position_vertex_index]
@@ -211,7 +210,7 @@ class PObject(Node):
                 if envelope_vertex_index != None:
                     self.make_deform_skin(envelope_list, self.sources[envelope_vertex_index], self.face_lists[envelope_vertex_index], faces)
                 else:
-                    raise InvalidEnvelopeError
+                    raise ValueError('Vertex list does not contain vertex with attribute GX_VA_PNMTXIDX')
 
             else:
                 # Make skin

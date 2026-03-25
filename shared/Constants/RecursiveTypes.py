@@ -76,6 +76,6 @@ def getArrayTypeBound(field_type):
 	try:
 		bounds = int(bound_string)
 	except:
-		raise ArrayBoundsUnknownVariableError(bound_string)
+		raise ValueError('Array field with unknown variable name: %s' % bound_string)
 
 	return bounds

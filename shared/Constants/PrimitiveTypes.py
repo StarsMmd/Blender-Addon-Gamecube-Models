@@ -1,4 +1,3 @@
-from ..Errors import *
 
 primitive_field_types = [
     'void', 'uchar', 'ushort', 'uint', 'char', 'short', 'int', 'float', 'double', 'string', 'vec3', 'matrix'
@@ -25,13 +24,13 @@ def get_primitive_type_length(type_name):
 	elif type_name == 'matrix':
 		return 48
 	elif type_name == 'string':
-		raise StringTypeLengthError()
+		raise ValueError('Strings have varying lengths. Never stride by string type length.')
 	else:
-		raise InvalidPrimitiveTypeError(type_name)
+		raise ValueError('Unknown primitive type: %s' % type_name)
 
 def get_primitive_type_format(type_name):
 	if type_name == 'void':
-		raise VoidTypeStructFormatError()
+		raise ValueError('Void data cannot be unpacked from structs')
 	elif type_name == 'uchar':
 		return '>B'
 	elif type_name == 'ushort':
@@ -51,11 +50,11 @@ def get_primitive_type_format(type_name):
 	elif type_name == 'vec3':
 		return '>3f'
 	elif type_name == 'string':
-		raise StringTypeStructFormatError()
+		raise ValueError('Strings cannot be unpacked from structs')
 	elif type_name == 'matrix':
-		raise MatrixTypeStructFormatError()
+		raise ValueError('Matrices cannot be unpacked directly from structs')
 	else:
-		raise InvalidPrimitiveTypeError(type_name)
+		raise ValueError('Unknown primitive type: %s' % type_name)
 
 def get_primitive_alignment_at_offset(type_name, offset):
 	if type_name == 'string':

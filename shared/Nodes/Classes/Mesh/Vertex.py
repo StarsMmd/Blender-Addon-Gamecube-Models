@@ -1,7 +1,6 @@
 from ...Node import Node
 
 from ....Constants import *
-from ....Errors import *
 from ..Colors import *
 
 # Vertex (aka vtxdesc)
@@ -91,7 +90,7 @@ class Vertex(Node):
                 return type + '[3]'
             else:
                 return type + '[9]'
-        raise UnknownVertexAttributeError(self)
+        raise ValueError('Vertex with unknown attribute type: %s' % str(self.attribute))
         return 'void'
 
     def isMatrix(self):

@@ -4,13 +4,11 @@ import traceback
 
 try:
     from .....shared.Nodes import *
-    from .....shared.Errors import *
     from .....shared.Constants import *
     from .....shared.helpers.file_io import *
     from .....shared.helpers.logger import Logger, StubLogger
 except (ImportError, SystemError):
     from shared.Nodes import *
-    from shared.Errors import *
     from shared.Constants import *
     from shared.helpers.file_io import *
     from shared.helpers.logger import Logger, StubLogger
@@ -92,7 +90,7 @@ class DATParser(BinaryReader):
 			type_length = 1 if field_type == 'string' else get_type_length(field_type)
 
 			if address + final_offset + type_length > self.filesize:
-				raise InvalidReadAddressError(address + offset, field_type, self.filesize)
+				raise ValueError('Failed to read %s at address: 0x%X (file size: 0x%X)' % (field_type, address + offset, self.filesize))
 
 			return super().read(field_type, address, final_offset, whence)
 

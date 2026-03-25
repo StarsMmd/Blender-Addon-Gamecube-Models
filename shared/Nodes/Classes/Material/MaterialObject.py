@@ -2,7 +2,6 @@ import bpy
 import math
 
 from ...Node import Node
-from ....Errors import *
 from ....Constants import *
 from ....BlenderVersion import BlenderVersion
 
@@ -497,7 +496,7 @@ class MaterialObject(Node):
                 pass #not doable right now
 
             else:
-                raise PixelEngineUnknownBlendModeError(pixel_engine_data.type)
+                raise ValueError('Pixel Engine data with unknown blend mode: %s' % str(pixel_engine_data.type))
         else:
             # TODO: use the presets from the rendermode flags
             if self.render_mode & RENDER_XLU:

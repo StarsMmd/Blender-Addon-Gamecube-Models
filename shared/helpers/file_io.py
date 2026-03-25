@@ -46,7 +46,7 @@ class BinaryReader:
                 length = get_primitive_type_length(type)
                 return struct.unpack(format, self.file.read(length))[0]
         else:
-            raise InvalidPrimitiveTypeError()
+            raise ValueError('Unknown primitive type')
 
     def _read_string(self):
         """
@@ -142,7 +142,7 @@ class BinaryWriter:
                 format = get_primitive_type_format(type)
                 self.file.write(struct.pack(format, data))
         else:
-            raise InvalidPrimitiveTypeError()
+            raise ValueError('Unknown primitive type')
 
     def close(self):
         """Closes the BinaryWriter's file"""

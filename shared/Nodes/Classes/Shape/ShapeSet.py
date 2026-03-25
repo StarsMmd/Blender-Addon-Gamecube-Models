@@ -1,5 +1,4 @@
 from ...Node import Node
-from ....Errors import *
 
 # Shape Set
 class ShapeSet(Node):
@@ -54,7 +53,7 @@ class ShapeSet(Node):
     def writeBinary(self, builder):
         # TODO: set vt count, nt count, shape count based on dimension of vertex_set and normal_set
         if len(self.vertex_set) != len(self.normal_set):
-            raise ShapeSetDimensionMismatchError(len(self.vertex_set), len(self.normal_set))
+            raise ValueError('Shape set vertex/normal count mismatch: %d vertices, %d normals' % (len(self.vertex_set), len(self.normal_set)))
 
         if isinstance(self.vertex_set, list):
             self.shape_count = len(self.vertex_set)

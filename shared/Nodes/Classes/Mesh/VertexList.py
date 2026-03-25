@@ -1,5 +1,4 @@
 from ...Node import Node
-from ....Errors import *
 
 # Vertex List
 class VertexList(Node):
