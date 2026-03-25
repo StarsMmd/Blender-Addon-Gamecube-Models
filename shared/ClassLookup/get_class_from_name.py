@@ -1,6 +1,7 @@
 
 def get_class_from_name(name):
-    # This is a trick to get around circular imports
+    # Imports are deferred to call time to break a circular dependency:
+    # Node classes → Constants/NodeTypes → get_class_from_name → Node classes
 
     from ..Nodes.Classes.Animation import Animation, AnimationJoint, AnimationReference, Frame
     from ..Nodes.Classes.Camera import Camera, CameraAnimation, CameraSet, Viewport

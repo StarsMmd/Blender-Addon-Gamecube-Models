@@ -440,3 +440,33 @@ else:
             [2*(x*y + w*z),     1 - 2*(x*x + z*z), 2*(y*z - w*x)],
             [2*(x*z - w*y),     2*(y*z + w*x),     1 - 2*(x*x + y*y)],
         ]
+
+
+# --- Utility functions used by multiple pipeline phases ---
+
+def compile_srt_matrix(scale, rotation, position, parent_scl=None):
+    """Build a local SRT matrix matching the HSD Joint convention.
+
+    Composes: Translation @ RotZ @ RotY @ RotX @ ScaleZ @ ScaleY @ ScaleX
+    With optional aligned scale inheritance correction for non-uniform parent scales.
+    """
+    scale_x = Matrix.Scale(scale[0], 4, [1.0, 0.0, 0.0])
+    scale_y = Matrix.Scale(scale[1], 4, [0.0, 1.0, 0.0])
+    scale_z = Matrix.Scale(scale[2], 4, [0.0, 0.0, 1.0])
+    rotation_x = Matrix.Rotation(rotation[0], 4, 'X')
+    rotation_y = Matrix.Rotation(rotation[1], 4, 'Y')
+    rotation_z = Matrix.Rotation(rotation[2], 4, 'Z')
+    translation = Matrix.Translation(Vector(position))
+    mtx = translation @ rotation_z @ rotation_y @ rotation_x @ scale_z @ scale_y @ scale_x
+    if parent_scl:
+        for i in range(3):
+            for j in range(3):
+                mtx[i][j] *= parent_scl[j] / parent_scl[i]
+    return mtx
+
+
+def matrix_to_list(matrix):
+    """Convert a Matrix to list[list[float]] for IR storage."""
+    if hasattr(matrix, 'to_list'):
+        return matrix.to_list()
+    return [[matrix[i][j] for j in range(4)] for i in range(4)]

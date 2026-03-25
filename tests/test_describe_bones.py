@@ -6,7 +6,8 @@ from importer.phases.parse.helpers.dat_parser import DATParser
 from shared.Nodes.Classes.Joints.Joint import Joint
 from shared.IR.skeleton import IRBone
 from shared.IR.enums import ScaleInheritance
-from importer.phases.describe.helpers.bones import describe_bones, _compile_srt_matrix
+from importer.phases.describe.helpers.bones import describe_bones
+from shared.helpers.math_shim import compile_srt_matrix
 
 from helpers import (
     build_joint, build_dat_with_sections, build_minimal_dat,
@@ -217,20 +218,20 @@ class TestCompileSRTMatrix:
     def test_identity(self):
         """Identity SRT produces identity matrix."""
         from shared.helpers.math_shim import Matrix
-        m = _compile_srt_matrix((1, 1, 1), (0, 0, 0), (0, 0, 0))
+        m = compile_srt_matrix((1, 1, 1), (0, 0, 0), (0, 0, 0))
         for i in range(4):
             for j in range(4):
                 expected = 1.0 if i == j else 0.0
                 assert abs(m[i][j] - expected) < 1e-6
 
     def test_translation_only(self):
-        m = _compile_srt_matrix((1, 1, 1), (0, 0, 0), (7, 8, 9))
+        m = compile_srt_matrix((1, 1, 1), (0, 0, 0), (7, 8, 9))
         assert abs(m[0][3] - 7.0) < 1e-6
         assert abs(m[1][3] - 8.0) < 1e-6
         assert abs(m[2][3] - 9.0) < 1e-6
 
     def test_scale_only(self):
-        m = _compile_srt_matrix((2, 3, 4), (0, 0, 0), (0, 0, 0))
+        m = compile_srt_matrix((2, 3, 4), (0, 0, 0), (0, 0, 0))
         assert abs(m[0][0] - 2.0) < 1e-6
         assert abs(m[1][1] - 3.0) < 1e-6
         assert abs(m[2][2] - 4.0) < 1e-6

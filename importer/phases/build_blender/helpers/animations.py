@@ -16,7 +16,10 @@ except (ImportError, SystemError):
     from shared.helpers.logger import StubLogger
     from shared.BlenderVersion import BlenderVersion
 
-from ...describe.helpers.bones import _compile_srt_matrix
+try:
+    from .....shared.helpers.math_shim import compile_srt_matrix
+except (ImportError, SystemError):
+    from shared.helpers.math_shim import compile_srt_matrix
 
 
 def build_bone_animations(ir_model, armature, options, logger=StubLogger()):
@@ -185,7 +188,7 @@ def _bake_bone_track(track, action, bone_data, max_frame, logger):
              transform_list[5].evaluate(frame),
              transform_list[6].evaluate(frame)]
 
-        mtx = _compile_srt_matrix(s, r, l, parent_scl)
+        mtx = compile_srt_matrix(s, r, l, parent_scl)
 
         try:
             if parent_idx is not None:

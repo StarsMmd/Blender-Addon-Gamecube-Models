@@ -4,7 +4,7 @@ Ports the pure-data computation from Joint.buildBoneHierarchy() and
 Joint.compileSRTMatrix(), producing IRBone instances without any bpy calls.
 """
 try:
-    from .....shared.helpers.math_shim import Matrix, Vector, Euler
+    from .....shared.helpers.math_shim import Matrix, Vector, Euler, compile_srt_matrix, matrix_to_list
     from .....shared.IR.skeleton import IRBone
     from .....shared.IR.enums import ScaleInheritance
     from .....shared.Constants.hsd import (
@@ -12,7 +12,7 @@ try:
         JOBJ_TYPE_MASK,
     )
 except (ImportError, SystemError):
-    from shared.helpers.math_shim import Matrix, Vector, Euler
+    from shared.helpers.math_shim import Matrix, Vector, Euler, compile_srt_matrix, matrix_to_list
     from shared.IR.skeleton import IRBone
     from shared.IR.enums import ScaleInheritance
     from shared.Constants.hsd import (
@@ -68,7 +68,7 @@ def describe_bones(root_joint, options=None):
             parent_scl = None
 
         # Build local SRT matrix
-        local_matrix = _compile_srt_matrix(
+        local_matrix = compile_srt_matrix(
             joint.scale, joint.rotation, joint.position, parent_scl
         )
 
@@ -113,11 +113,11 @@ def describe_bones(root_joint, options=None):
             is_hidden=bool(joint.flags & JOBJ_HIDDEN),
             inherit_scale=ScaleInheritance.ALIGNED,
             ik_shrink=ik_shrink,
-            world_matrix=_matrix_to_list(world_matrix),
-            local_matrix=_matrix_to_list(local_matrix),
-            normalized_world_matrix=_matrix_to_list(normalized_world),
-            normalized_local_matrix=_matrix_to_list(normalized_local),
-            scale_correction=_matrix_to_list(scale_correction),
+            world_matrix=matrix_to_list(world_matrix),
+            local_matrix=matrix_to_list(local_matrix),
+            normalized_world_matrix=matrix_to_list(normalized_world),
+            normalized_local_matrix=matrix_to_list(normalized_local),
+            scale_correction=matrix_to_list(scale_correction),
             accumulated_scale=accumulated_scale,
         )
         bones.append(bone)
@@ -159,26 +159,3 @@ def _set_instance_refs(joint, bones, jtb):
         _set_instance_refs(joint.next, bones, jtb)
 
 
-def _compile_srt_matrix(scale, rotation, position, parent_scl=None):
-    """Build a local SRT matrix, matching Joint.compileSRTMatrix()."""
-    scale_x = Matrix.Scale(scale[0], 4, [1.0, 0.0, 0.0])
-    scale_y = Matrix.Scale(scale[1], 4, [0.0, 1.0, 0.0])
-    scale_z = Matrix.Scale(scale[2], 4, [0.0, 0.0, 1.0])
-    rotation_x = Matrix.Rotation(rotation[0], 4, 'X')
-    rotation_y = Matrix.Rotation(rotation[1], 4, 'Y')
-    rotation_z = Matrix.Rotation(rotation[2], 4, 'Z')
-    translation = Matrix.Translation(Vector(position))
-    mtx = translation @ rotation_z @ rotation_y @ rotation_x @ scale_z @ scale_y @ scale_x
-    # Aligned scale inheritance: corrects for non-uniform parent scales
-    if parent_scl:
-        for i in range(3):
-            for j in range(3):
-                mtx[i][j] *= parent_scl[j] / parent_scl[i]
-    return mtx
-
-
-def _matrix_to_list(matrix):
-    """Convert a Matrix to list[list[float]] for IR storage."""
-    if hasattr(matrix, 'to_list'):
-        return matrix.to_list()
-    return [[matrix[i][j] for j in range(4)] for i in range(4)]
