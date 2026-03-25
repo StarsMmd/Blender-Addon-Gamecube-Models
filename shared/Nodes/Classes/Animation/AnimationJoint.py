@@ -1,5 +1,4 @@
 from ...Node import Node
-from ....Constants import *
 
 # Animation Joint
 class AnimationJoint(Node):
