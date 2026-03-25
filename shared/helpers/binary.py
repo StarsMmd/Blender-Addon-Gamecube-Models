@@ -1,7 +1,7 @@
-"""Binary read helpers with descriptive type names.
+"""Binary read/write helpers with descriptive type names.
 
-Wraps struct.unpack with named primitive types for readability.
-All reads use big-endian (GameCube) byte order.
+Wraps struct.pack/unpack with named primitive types for readability.
+All operations use big-endian (GameCube) byte order unless native is specified.
 """
 import struct
 
@@ -65,3 +65,47 @@ def read_native(type_name, data, offset=0):
     }
     fmt, size = native_types[type_name]
     return struct.unpack(fmt, data[offset:offset + size])[0]
+
+
+# --- Write helpers ---
+
+def pack(type_name, value):
+    """Pack a single value into big-endian bytes.
+
+    Args:
+        type_name: One of 'uint', 'int', 'ushort', 'short', 'uchar', 'char', 'float'.
+        value: The value to pack.
+
+    Returns:
+        bytes of the packed value.
+    """
+    fmt, _ = _TYPES[type_name]
+    return struct.pack(fmt, value)
+
+
+def pack_many(type_name, *values):
+    """Pack multiple values of the same type into big-endian bytes.
+
+    Args:
+        type_name: Primitive type name.
+        *values: Values to pack.
+
+    Returns:
+        bytes of the packed values.
+    """
+    fmt, _ = _TYPES[type_name]
+    combined_fmt = '>' + fmt[1] * len(values)
+    return struct.pack(combined_fmt, *values)
+
+
+def write_into(type_name, value, buffer, offset):
+    """Write a single value into a mutable buffer at the given offset.
+
+    Args:
+        type_name: Primitive type name.
+        value: The value to write.
+        buffer: A mutable bytearray or memoryview.
+        offset: byte offset into buffer.
+    """
+    fmt, size = _TYPES[type_name]
+    struct.pack_into(fmt, buffer, offset, value)
