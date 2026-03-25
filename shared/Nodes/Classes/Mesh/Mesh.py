@@ -1,6 +1,4 @@
-
 from ...Node import Node
-from ....Constants import *
 
 # Mesh (aka DObject)
 class Mesh(Node):
@@ -15,5 +13,3 @@ class Mesh(Node):
     def loadFromBinary(self, parser):
         super().loadFromBinary(parser)
         self.id = self.address
-
-#This is needed for correctly applying all this envelope stuff

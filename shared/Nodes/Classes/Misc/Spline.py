@@ -1,4 +1,3 @@
-
 from ...Node import Node
 
 # Spline
