@@ -1,7 +1,6 @@
 """Comprehensive node parsing tests: every node type with binary round-trip verification."""
-import os
+import io
 import struct
-import tempfile
 import pytest
 
 from helpers import *
@@ -96,26 +95,13 @@ from shared.Constants.hsd import *
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _write_dat(data_section: bytes) -> str:
-    dat_bytes = build_minimal_dat(data_section)
-    f = tempfile.NamedTemporaryFile(delete=False, suffix='.dat')
-    f.write(dat_bytes)
-    f.close()
-    return f.name
-
-
 def _parse(node_cls, address, data_section: bytes):
-    path = _write_dat(data_section)
-    try:
-        import io
-        with open(path, 'rb') as f:
-            parser = DATParser(io.BytesIO(f.read()), {})
-        node = node_cls(address, None)
-        node.loadFromBinary(parser)
-        parser.close()
-        return node
-    finally:
-        os.unlink(path)
+    dat_bytes = build_minimal_dat(data_section)
+    parser = DATParser(io.BytesIO(dat_bytes), {})
+    node = node_cls(address, None)
+    node.loadFromBinary(parser)
+    parser.close()
+    return node
 
 
 # ===========================================================================

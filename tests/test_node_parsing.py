@@ -1,7 +1,6 @@
 """Node parsing tests: single node and single node with one level of children."""
-import os
+import io
 import struct
-import tempfile
 import pytest
 
 from helpers import (
@@ -28,35 +27,23 @@ from shared.Constants.hsd import POBJ_SKIN, POBJ_SHAPEANIM, POBJ_ENVELOPE
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _write_dat(data_section: bytes) -> str:
-    """Write a minimal DAT to a temp file and return its path."""
-    dat_bytes = build_minimal_dat(data_section)
-    f = tempfile.NamedTemporaryFile(delete=False, suffix='.dat')
-    f.write(dat_bytes)
-    f.close()
-    return f.name
-
-
 def _parse(node_cls, address, data_section: bytes):
     """Parse a single node from the given data section bytes."""
-    path = _write_dat(data_section)
-    try:
-        import io; parser = DATParser(io.BytesIO(open(path, "rb").read()), {})
-        node = node_cls(address, None)
-        node.loadFromBinary(parser)
-        parser.close()
-        return node
-    finally:
-        os.unlink(path)
+    dat_bytes = build_minimal_dat(data_section)
+    parser = DATParser(io.BytesIO(dat_bytes), {})
+    node = node_cls(address, None)
+    node.loadFromBinary(parser)
+    parser.close()
+    return node
 
 
 def _parse_keep_parser(node_cls, address, data_section: bytes):
-    """Parse a node and return (node, parser, path) — caller must close parser and unlink path."""
-    path = _write_dat(data_section)
-    import io; parser = DATParser(io.BytesIO(open(path, "rb").read()), {})
+    """Parse a node and return (node, parser) — caller must close parser."""
+    dat_bytes = build_minimal_dat(data_section)
+    parser = DATParser(io.BytesIO(dat_bytes), {})
     node = node_cls(address, None)
     node.loadFromBinary(parser)
-    return node, parser, path
+    return node, parser
 
 
 # ---------------------------------------------------------------------------

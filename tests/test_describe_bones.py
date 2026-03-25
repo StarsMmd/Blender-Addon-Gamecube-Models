@@ -1,7 +1,6 @@
 """Tests for phases/describe/bones.py — Joint tree to flat IRBone list."""
+import io
 import math
-import os
-import tempfile
 
 from importer.phases.parse.helpers.dat_parser import DATParser
 from shared.Nodes.Classes.Joints.Joint import Joint
@@ -15,13 +14,6 @@ from helpers import (
 )
 
 
-def _write_dat(data: bytes) -> str:
-    fd, path = tempfile.mkstemp(suffix='.dat')
-    os.write(fd, data)
-    os.close(fd)
-    return path
-
-
 def _parse_joint_tree(data_section, relocations, section_offset=0):
     """Parse a Joint tree from synthetic binary data."""
     dat_bytes = build_dat_with_sections(
@@ -30,15 +22,11 @@ def _parse_joint_tree(data_section, relocations, section_offset=0):
         sections=[(section_offset, True)],
         section_names=["test_joint"],
     )
-    path = _write_dat(dat_bytes)
-    try:
-        import io; parser = DATParser(io.BytesIO(open(path, "rb").read()), {"section_names": []})
-        joint = Joint(section_offset, None)
-        joint.loadFromBinary(parser)
-        parser.close()
-        return joint
-    finally:
-        os.unlink(path)
+    parser = DATParser(io.BytesIO(dat_bytes), {"section_names": []})
+    joint = Joint(section_offset, None)
+    joint.loadFromBinary(parser)
+    parser.close()
+    return joint
 
 
 class TestDescribeBonesBasic:

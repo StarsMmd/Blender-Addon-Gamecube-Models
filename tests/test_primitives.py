@@ -1,7 +1,6 @@
 """Smoke tests for parser primitives (no Blender required)."""
+import io
 import struct
-import tempfile
-import os
 import pytest
 
 from shared.helpers.file_io import BinaryReader
@@ -20,15 +19,8 @@ from shared.Constants.PrimitiveTypes import (
 )
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _write_tmp(data: bytes) -> str:
-    f = tempfile.NamedTemporaryFile(delete=False, suffix='.bin')
-    f.write(data)
-    f.close()
-    return f.name
+def _reader(data: bytes) -> BinaryReader:
+    return BinaryReader(io.BytesIO(data))
 
 
 # ---------------------------------------------------------------------------
@@ -38,58 +30,32 @@ def _write_tmp(data: bytes) -> str:
 class TestBinaryReader:
 
     def test_read_uint(self):
-        path = _write_tmp(struct.pack('>I', 0xDEADBEEF))
-        try:
-            import io; r = BinaryReader(io.BytesIO(open(path, "rb").read()))
-            assert r.read('uint', 0) == 0xDEADBEEF
-        finally:
-            os.unlink(path)
+        r = _reader(struct.pack('>I', 0xDEADBEEF))
+        assert r.read('uint', 0) == 0xDEADBEEF
 
     def test_read_float(self):
-        path = _write_tmp(struct.pack('>f', 3.14))
-        try:
-            import io; r = BinaryReader(io.BytesIO(open(path, "rb").read()))
-            assert abs(r.read('float', 0) - 3.14) < 1e-5
-        finally:
-            os.unlink(path)
+        r = _reader(struct.pack('>f', 3.14))
+        assert abs(r.read('float', 0) - 3.14) < 1e-5
 
     def test_read_vec3(self):
-        data = struct.pack('>fff', 1.0, 2.0, 3.0)
-        path = _write_tmp(data)
-        try:
-            import io; r = BinaryReader(io.BytesIO(open(path, "rb").read()))
-            v = r.read('vec3', 0)
-            assert abs(v[0] - 1.0) < 1e-6
-            assert abs(v[1] - 2.0) < 1e-6
-            assert abs(v[2] - 3.0) < 1e-6
-        finally:
-            os.unlink(path)
+        r = _reader(struct.pack('>fff', 1.0, 2.0, 3.0))
+        v = r.read('vec3', 0)
+        assert abs(v[0] - 1.0) < 1e-6
+        assert abs(v[1] - 2.0) < 1e-6
+        assert abs(v[2] - 3.0) < 1e-6
 
     def test_read_uchar(self):
-        path = _write_tmp(bytes([0xAB]))
-        try:
-            import io; r = BinaryReader(io.BytesIO(open(path, "rb").read()))
-            assert r.read('uchar', 0) == 0xAB
-        finally:
-            os.unlink(path)
+        r = _reader(bytes([0xAB]))
+        assert r.read('uchar', 0) == 0xAB
 
     def test_read_string(self):
-        path = _write_tmp(b'hello\x00')
-        try:
-            import io; r = BinaryReader(io.BytesIO(open(path, "rb").read()))
-            assert r.read('string', 0) == 'hello'
-        finally:
-            os.unlink(path)
+        r = _reader(b'hello\x00')
+        assert r.read('string', 0) == 'hello'
 
     def test_read_chunk(self):
-        payload = bytes(range(8))
-        path = _write_tmp(payload)
-        try:
-            import io; r = BinaryReader(io.BytesIO(open(path, "rb").read()))
-            chunk = r.read_chunk(4, 2)
-            assert chunk == bytes([2, 3, 4, 5])
-        finally:
-            os.unlink(path)
+        r = _reader(bytes(range(8)))
+        chunk = r.read_chunk(4, 2)
+        assert chunk == bytes([2, 3, 4, 5])
 
 
 # ---------------------------------------------------------------------------
@@ -112,10 +78,8 @@ class TestRecursiveTypes:
         assert isBoundedArrayType('float[4]')
         assert isBoundedArrayType('uchar[3]')
         assert not isBoundedArrayType('float')
-        # Unbounded arrays also satisfy isBoundedArrayType (the predicates overlap);
-        # use isUnboundedArrayType to distinguish the two.
         assert isUnboundedArrayType('Joint[]')
-        assert not isBoundedArrayType('*float[4]')  # pointer type excluded
+        assert not isBoundedArrayType('*float[4]')
 
     def test_isBracketedType(self):
         assert isBracketedType('(*Joint)')
@@ -143,17 +107,9 @@ class TestRecursiveTypes:
 class TestPrimitiveTypes:
 
     @pytest.mark.parametrize('type_name,expected', [
-        ('uchar',  1),
-        ('char',   1),
-        ('ushort', 2),
-        ('short',  2),
-        ('uint',   4),
-        ('int',    4),
-        ('float',  4),
-        ('double', 8),
-        ('vec3',   12),
-        ('matrix', 48),
-        ('void',   0),
+        ('uchar',  1), ('char', 1), ('ushort', 2), ('short', 2),
+        ('uint', 4), ('int', 4), ('float', 4), ('double', 8),
+        ('vec3', 12), ('matrix', 48), ('void', 0),
     ])
     def test_get_primitive_type_length(self, type_name, expected):
         assert get_primitive_type_length(type_name) == expected
