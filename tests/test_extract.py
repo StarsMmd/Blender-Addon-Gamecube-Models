@@ -20,7 +20,7 @@ def test_dat_passthrough():
         entries = extract_dat(path)
         assert len(entries) == 1
         assert entries[0][0] == dat_bytes
-        assert entries[0][1].container_type == 'dat'
+        assert entries[0][1].filename.endswith('.dat')
     finally:
         os.unlink(path)
 
@@ -33,7 +33,7 @@ def test_fdat_passthrough():
         entries = extract_dat(path)
         assert len(entries) == 1
         assert entries[0][0] == dat_bytes
-        assert entries[0][1].container_type == 'dat'
+        assert entries[0][1].filename.endswith('.fdat')
     finally:
         os.unlink(path)
 
@@ -49,7 +49,6 @@ def test_pkx_colo_header_stripped():
         entries = extract_dat(path)
         assert len(entries) == 1
         assert entries[0][0] == dat_body
-        assert entries[0][1].container_type == 'pkx_colo'
         assert entries[0][1].is_xd_model is False
     finally:
         os.unlink(path)
@@ -70,7 +69,6 @@ def test_pkx_xd_header_stripped():
         entries = extract_dat(path)
         assert len(entries) == 1
         assert entries[0][0] == dat_body
-        assert entries[0][1].container_type == 'pkx_xd'
         assert entries[0][1].is_xd_model is True
     finally:
         os.unlink(path)

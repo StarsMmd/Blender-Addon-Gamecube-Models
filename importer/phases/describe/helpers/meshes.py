@@ -15,6 +15,7 @@ try:
         GX_VA_POS, GX_VA_NRM, GX_VA_NBT, GX_VA_CLR0, GX_VA_CLR1,
         GX_VA_TEX0, GX_VA_PNMTXIDX,
     )
+    from .....shared.IO.Logger import NullLogger
 except (ImportError, SystemError):
     from shared.helpers.math_shim import Matrix, Vector
     from shared.IR.geometry import IRMesh, IRUVLayer, IRColorLayer, IRBoneWeights, IRShapeKey
@@ -27,9 +28,10 @@ except (ImportError, SystemError):
         GX_VA_POS, GX_VA_NRM, GX_VA_NBT, GX_VA_CLR0, GX_VA_CLR1,
         GX_VA_TEX0, GX_VA_PNMTXIDX,
     )
+    from shared.IO.Logger import NullLogger
 
 
-def describe_meshes(root_joint, bones, joint_to_bone_index, image_cache=None, logger=None):
+def describe_meshes(root_joint, bones, joint_to_bone_index, image_cache=None, logger=NullLogger()):
     """Walk Joint tree, extract geometry from Mesh→PObject chains.
 
     Args:
@@ -44,12 +46,6 @@ def describe_meshes(root_joint, bones, joint_to_bone_index, image_cache=None, lo
     """
     if image_cache is None:
         image_cache = {}
-    if logger is None:
-        try:
-            from .....shared.IO.Logger import NullLogger
-        except (ImportError, SystemError):
-            from shared.IO.Logger import NullLogger
-        logger = NullLogger()
     meshes = []
     mesh_count = [0]
 

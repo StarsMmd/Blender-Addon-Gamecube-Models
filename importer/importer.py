@@ -17,33 +17,27 @@ class Importer:
     """Entry point for the Intermediate Representation import pipeline."""
 
     @staticmethod
-    def run(context, filepath, options, logger=None):
+    def run(context, filepath, options, logger=NullLogger()):
         """Run the full import pipeline.
 
         Args:
             context: Blender context (or None for headless).
             filepath: Path to the model file (.dat, .pkx, .fsys).
             options: dict of importer options.
-            logger: Logger instance (created if not provided).
+            logger: Logger instance.
         """
-        if logger is None:
-            model_name = os.path.basename(filepath).split('.')[0] if filepath else "unknown"
-            logger = Logger(verbose=options.get("verbose", False), model_name=model_name)
-
         # Phase 1 — Container Extraction: binary file → DAT bytes
         logger.info("=== Phase 1: Container Extraction ===")
         dat_entries = extract_dat(filepath)
         logger.info("Extracted %d DAT entry(s) from %s", len(dat_entries), os.path.basename(filepath))
 
         for dat_bytes, metadata in dat_entries:
-            logger.info("Processing: %s (%d bytes)", metadata.container_type, len(dat_bytes))
+            logger.info("Processing: %s (%d bytes)", metadata.filename, len(dat_bytes))
 
             # Phase 2 — Section Routing: DAT bytes → section name→type map
             logger.info("=== Phase 2: Section Routing ===")
-            user_overrides = None  # TODO: expose via import dialog
-            section_map = route_sections(dat_bytes, user_overrides)
-            logger.info("Routed %d section(s): %s", len(section_map),
-                        {k: v for k, v in section_map.items()})
+            section_map = route_sections(dat_bytes)
+            logger.info("Routed %d section(s): %s", len(section_map), section_map)
 
             # Phase 3 — Node Tree Parsing: DAT bytes + map → parsed node trees
             logger.info("=== Phase 3: Node Tree Parsing ===")

@@ -9,7 +9,7 @@ except (ImportError, SystemError):
     from shared.IO.Logger import NullLogger
 
 
-def build_blender_scene(ir_scene, context, options, logger=None, raw_animations=None):
+def build_blender_scene(ir_scene, context, options, logger=NullLogger(), raw_animations=None):
     """Consumes an IRScene and creates Blender objects via bpy API.
 
     Args:
@@ -19,8 +19,6 @@ def build_blender_scene(ir_scene, context, options, logger=None, raw_animations=
         logger: Logger instance (defaults to NullLogger)
         raw_animations: list of list[RawAnimationSet] per model (from Phase 4)
     """
-    if logger is None:
-        logger = NullLogger()
     if raw_animations is None:
         raw_animations = [[] for _ in ir_scene.models]
 

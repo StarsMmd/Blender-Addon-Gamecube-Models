@@ -32,7 +32,7 @@ _TYPE_MAP = {
 _TRANSFORMCOUNT = (HSD_A_J_SCAZ - HSD_A_J_ROTX) + 1
 
 
-def build_bone_animations(raw_animation_sets, ir_model, armature, options, logger=None):
+def build_bone_animations(raw_animation_sets, ir_model, armature, options, logger=NullLogger()):
     """Create Blender Actions from raw animation data.
 
     Args:
@@ -42,8 +42,6 @@ def build_bone_animations(raw_animation_sets, ir_model, armature, options, logge
         options: importer options dict.
         logger: Logger instance.
     """
-    if logger is None:
-        logger = NullLogger()
 
     max_frame = options.get("max_frame", 1000)
     actions = []

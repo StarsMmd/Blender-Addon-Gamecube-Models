@@ -26,7 +26,7 @@ from .helpers.meshes import describe_meshes
 from .helpers.animations import describe_bone_animations
 
 
-def describe_scene(sections, options, logger=None):
+def describe_scene(sections, options, logger=NullLogger()):
     """Converts parsed node tree sections into an IRScene.
 
     Routes sections to models/lights/cameras/fogs (matching ModelBuilder.__init__),
@@ -40,8 +40,6 @@ def describe_scene(sections, options, logger=None):
     Returns:
         IRScene with models populated. Lights/cameras/fogs are stubs for now.
     """
-    if logger is None:
-        logger = NullLogger()
 
     logger.info("=== Phase 4: Describe Scene ===")
     t0 = time.time()

@@ -46,7 +46,7 @@ class RawAnimationSet:
         self.loop = False
 
 
-def describe_bone_animations(model_set, joint_to_bone_index, bones, bone_data_lookup, options, logger=None):
+def describe_bone_animations(model_set, joint_to_bone_index, bones, bone_data_lookup, options, logger=NullLogger()):
     """Walk AnimationJoint trees and extract raw animation data.
 
     Args:
@@ -60,8 +60,6 @@ def describe_bone_animations(model_set, joint_to_bone_index, bones, bone_data_lo
     Returns:
         list[RawAnimationSet] -- raw animation data for Phase 5A to bake.
     """
-    if logger is None:
-        logger = NullLogger()
 
     animated_joints = getattr(model_set, 'animated_joints', [])
     root_joint = model_set.root_joint

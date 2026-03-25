@@ -14,7 +14,7 @@ except (ImportError, SystemError):
     from shared.IO.Logger import NullLogger
 
 
-def parse_sections(dat_bytes, section_map, options, logger=None):
+def parse_sections(dat_bytes, section_map, options, logger=NullLogger()):
     """Parse DAT bytes into node trees using the section map.
 
     Args:
@@ -26,8 +26,6 @@ def parse_sections(dat_bytes, section_map, options, logger=None):
     Returns:
         list of SectionInfo with parsed root nodes.
     """
-    if logger is None:
-        logger = NullLogger()
 
     stream = io.BytesIO(dat_bytes)
 

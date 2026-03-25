@@ -4,8 +4,13 @@ import math
 import os
 from mathutils import Matrix, Vector
 
+try:
+    from .....shared.IO.Logger import NullLogger
+except (ImportError, SystemError):
+    from shared.IO.Logger import NullLogger
 
-def build_skeleton(ir_model, context, options, logger=None):
+
+def build_skeleton(ir_model, context, options, logger=NullLogger()):
     """Create a Blender armature with bones from IRModel.
 
     Args:
@@ -17,10 +22,6 @@ def build_skeleton(ir_model, context, options, logger=None):
     Returns:
         The armature object.
     """
-    if logger is None:
-        from shared.IO.Logger import NullLogger
-        logger = NullLogger()
-
     filepath = options.get("filepath", "")
     base_name = os.path.basename(filepath).split('.')[0] if filepath else "model"
     armature_name = f"{base_name}_{ir_model.name}" if ir_model.name else base_name
