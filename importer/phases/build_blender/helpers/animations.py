@@ -175,15 +175,6 @@ def _bake_bone_track(track, action, bone_data, max_frame, logger):
     # Pass 2: frame-by-frame baking with scale correction
     end_frame = min(int(track.end_frame), max_frame)
 
-    # Debug: log frame-0 raw values from temp curves
-    if end_frame > 0:
-        r0 = [transform_list[i].evaluate(0) if transform_list[i] else None for i in range(3)]
-        t0 = [transform_list[i+4].evaluate(0) if transform_list[i+4] else None for i in range(3)]
-        s0 = [transform_list[i+7].evaluate(0) if transform_list[i+7] else None for i in range(3)]
-        logger.debug("  %s: frame0 raw: rot=%s trans=%s scale=%s", bone_name, r0, t0, s0)
-        logger.debug("  %s: rest pose:  rot=%s trans=%s scale=%s",
-                     bone_name, list(track.rest_rotation), list(track.rest_position), list(track.rest_scale))
-
     for frame in range(end_frame):
         s = [transform_list[7].evaluate(frame),
              transform_list[8].evaluate(frame),
@@ -214,12 +205,6 @@ def _bake_bone_track(track, action, bone_data, max_frame, logger):
 
         trans, rot, scl = Bmtx.decompose()
         rot = rot.to_euler()
-
-        if frame == 0 or frame == 30:
-            logger.debug("  %s: frame%d raw: rot=[%.10f,%.10f,%.10f] trans=[%.10f,%.10f,%.10f] scale=[%.10f,%.10f,%.10f]",
-                         bone_name, frame, r[0], r[1], r[2], l[0], l[1], l[2], s[0], s[1], s[2])
-            logger.debug("  %s: frame%d final: rot=(%.10f,%.10f,%.10f) loc=(%.10f,%.10f,%.10f) scale=(%.10f,%.10f,%.10f)",
-                         bone_name, frame, rot[0], rot[1], rot[2], trans[0], trans[1], trans[2], scl[0], scl[1], scl[2])
 
         max_scl = 100.0
         scl = Vector((

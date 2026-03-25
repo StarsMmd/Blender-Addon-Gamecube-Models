@@ -29,10 +29,9 @@ def build_skeleton(ir_model, context, options, logger=StubLogger()):
     armature_data = bpy.data.armatures.new(name=armature_name)
     armature = bpy.data.objects.new(name=armature_name, object_data=armature_data)
 
-    # Apply coordinate system rotation (GameCube → Blender: pi/2 around X)
-    rx, ry, rz = ir_model.coordinate_rotation
+    # Coordinate system rotation: GameCube Y-up → Blender Z-up (pi/2 around X)
     armature.matrix_basis = Matrix.Translation(Vector((0, 0, 0)))
-    armature.matrix_basis @= Matrix.Rotation(rx, 4, [1.0, 0.0, 0.0])
+    armature.matrix_basis @= Matrix.Rotation(math.pi / 2, 4, [1.0, 0.0, 0.0])
 
     # Link to scene
     bpy.context.scene.collection.objects.link(armature)
@@ -65,16 +64,6 @@ def build_skeleton(ir_model, context, options, logger=StubLogger()):
         bone.inherit_scale = 'ALIGNED'
 
         edit_bones.append(bone)
-
-    # Debug: log bone rest matrices
-    for bone_data in ir_model.bones[:3]:
-        eb = armature_data.edit_bones.get(bone_data.name)
-        if eb:
-            logger.debug("  bone '%s' head=%s tail=%s matrix[0]=%s",
-                         bone_data.name,
-                         [round(x, 8) for x in eb.head],
-                         [round(x, 8) for x in eb.tail],
-                         [round(eb.matrix[0][j], 8) for j in range(4)])
 
     logger.info("  Created armature '%s' with %d bones", armature_name, len(edit_bones))
 

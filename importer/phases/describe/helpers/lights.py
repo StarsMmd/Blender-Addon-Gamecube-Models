@@ -1,6 +1,4 @@
 """Describe Light nodes into IRLight dataclasses."""
-import math
-
 try:
     from .....shared.Constants.hsd import LOBJ_TYPE_MASK, LOBJ_INFINITE, LOBJ_POINT, LOBJ_SPOT
     from .....shared.IR.lights import IRLight
@@ -54,5 +52,4 @@ def describe_light(light_node, light_index=0):
         color=color,
         position=position,
         target_position=target_position,
-        coordinate_rotation=(math.pi / 2, 0.0, 0.0),
     )

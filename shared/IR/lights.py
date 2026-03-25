@@ -12,4 +12,3 @@ class IRLight:
     color: tuple[float, float, float]
     position: tuple[float, float, float] | None = None
     target_position: tuple[float, float, float] | None = None
-    coordinate_rotation: tuple[float, float, float] = (0.0, 0.0, 0.0)

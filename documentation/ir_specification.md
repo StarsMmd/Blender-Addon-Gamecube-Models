@@ -70,7 +70,6 @@ class IRModel:
     copy_rotation_constraints: list[IRCopyRotationConstraint]
     limit_rotation_constraints: list[IRLimitConstraint]
     limit_location_constraints: list[IRLimitConstraint]
-    coordinate_rotation: tuple[float, float, float]   # Euler XYZ radians
 
 @dataclass
 class IRBone:
@@ -346,7 +345,6 @@ class IRLight:
     color: tuple[float, float, float]
     position: tuple[float, float, float] | None
     target_position: tuple[float, float, float] | None
-    coordinate_rotation: tuple[float, float, float]
 ```
 
 ---

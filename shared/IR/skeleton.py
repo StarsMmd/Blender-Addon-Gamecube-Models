@@ -48,5 +48,3 @@ class IRModel:
     copy_rotation_constraints: list = field(default_factory=list)
     limit_rotation_constraints: list = field(default_factory=list)
     limit_location_constraints: list = field(default_factory=list)
-    # Coordinate system transform
-    coordinate_rotation: tuple[float, float, float] = (0.0, 0.0, 0.0)

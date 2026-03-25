@@ -115,7 +115,7 @@ def test_ir_model():
     assert model.bones == []
     assert model.meshes == []
     assert model.bone_animations == []
-    assert model.coordinate_rotation == (0.0, 0.0, 0.0)
+    assert model.limit_location_constraints == []
 
 
 def test_ir_mesh():
@@ -326,7 +326,7 @@ def test_ir_limit_constraint():
 def test_ir_light():
     light = IRLight(name="sun_0", type=LightType.SUN, color=(1.0, 1.0, 1.0))
     assert light.position is None
-    assert light.coordinate_rotation == (0.0, 0.0, 0.0)
+    assert light.target_position is None
 
 
 def test_ir_camera_stub():

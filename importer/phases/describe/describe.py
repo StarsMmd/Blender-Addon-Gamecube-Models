@@ -1,5 +1,4 @@
 """Phase 4: Convert node trees into an Intermediate Representation scene (pure dataclasses, no bpy)."""
-import math
 import time
 
 try:
@@ -175,7 +174,6 @@ def describe_scene(sections, options, logger=StubLogger()):
             copy_rotation_constraints=cr_c,
             limit_rotation_constraints=lr_c,
             limit_location_constraints=ll_c,
-            coordinate_rotation=(math.pi / 2, 0.0, 0.0),
         )
         ir_models.append(ir_model)
 
