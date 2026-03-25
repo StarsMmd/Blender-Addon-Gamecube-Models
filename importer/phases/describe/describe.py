@@ -30,6 +30,7 @@ from .helpers.meshes import describe_meshes
 from .helpers.animations import describe_bone_animations
 from .helpers.constraints import describe_constraints
 from .helpers.lights import describe_light
+from .helpers.material_animations import describe_material_animations
 
 
 def describe_scene(sections, options, logger=StubLogger()):
@@ -158,11 +159,16 @@ def describe_scene(sections, options, logger=StubLogger()):
         total_c = len(ik_c) + len(cl_c) + len(tt_c) + len(cr_c) + len(lr_c) + len(ll_c)
         logger.info("  Constraints: %d (%.3fs)", total_c, time.time() - t4)
 
+        t5 = time.time()
+        mat_anims = describe_material_animations(model_set, joint_to_bone_index, bones, options, logger)
+        logger.info("  Material animations: %d sets (%.3fs)", len(mat_anims), time.time() - t5)
+
         ir_model = IRModel(
             name=model_name,
             bones=bones,
             meshes=meshes,
             bone_animations=bone_anims,
+            material_animations=mat_anims,
             ik_constraints=ik_c,
             copy_location_constraints=cl_c,
             track_to_constraints=tt_c,

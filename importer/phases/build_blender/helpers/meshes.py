@@ -21,12 +21,16 @@ def build_meshes(ir_model, armature, context, options, logger=StubLogger()):
         logger: Logger instance (defaults to StubLogger).
     """
     image_cache = {}
+    material_lookup = {}  # {mesh_name: bpy.types.Material} for material animations
     mesh_objects_by_bone = {}  # {bone_index: [mesh_objects]}
     for i, ir_mesh in enumerate(ir_model.meshes):
-        mesh_obj = _build_mesh(ir_mesh, ir_model, armature, image_cache, logger, i)
+        mesh_obj, mat = _build_mesh(ir_mesh, ir_model, armature, image_cache, logger, i)
         if mesh_obj:
             bone_idx = ir_mesh.parent_bone_index
             mesh_objects_by_bone.setdefault(bone_idx, []).append(mesh_obj)
+        if mat:
+            bone_name = ir_model.bones[ir_mesh.parent_bone_index].name if ir_mesh.parent_bone_index < len(ir_model.bones) else 'unknown'
+            material_lookup["mesh_%d_%s" % (i, bone_name)] = mat
 
     # Copy meshes for instance bones (JOBJ_INSTANCE)
     instance_count = 0
@@ -42,6 +46,8 @@ def build_meshes(ir_model, armature, context, options, logger=StubLogger()):
 
     logger.info("  Created %d mesh objects, %d instances, %d cached images",
                 len(ir_model.meshes), instance_count, len(image_cache))
+
+    return material_lookup
 
 
 def _build_mesh(ir_mesh, ir_model, armature, image_cache, logger, mesh_idx):
@@ -107,7 +113,7 @@ def _build_mesh(ir_mesh, ir_model, armature, image_cache, logger, mesh_idx):
     mesh_data.update(calc_edges=True, calc_edges_loose=False)
     mesh_data.validate(verbose=False, clean_customdata=False)
 
-    return mesh_object
+    return mesh_object, mat
 
 
 def _apply_bone_weights(ir_mesh, ir_model, mesh_object, armature, logger, mesh_idx):
