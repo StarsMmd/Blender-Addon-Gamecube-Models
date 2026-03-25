@@ -4,7 +4,7 @@ from .meshes import build_meshes
 from .animations import build_bone_animations
 
 try:
-    from ...shared.IO.Logger import NullLogger
+    from ....shared.IO.Logger import NullLogger
 except (ImportError, SystemError):
     from shared.IO.Logger import NullLogger
 

@@ -60,15 +60,27 @@ class DATParser(BinaryReader):
 	def parseSections(self):
 		self.sections = []
 		section_names_to_include = self.options.get("section_names")
+		section_map = self.options.get("section_map")
 		for (address, is_public) in self.header.section_addresses:
-			
+
 			# Recursively parse Node tree based on the section info
 		    # The top level node will recursively call parseNode() on any leaves
 			section = SectionInfo.readFromBinary(self, address, is_public, self.header.section_names_offset)
 
 			if (len(section_names_to_include) == 0) or (section.section_name in section_names_to_include):
 				try:
-					section.readNodeTree(self)
+					if section_map and section.section_name in section_map:
+						# Phase 2 provided the type mapping — use it directly
+						node_type = section_map[section.section_name]
+						if node_type != 'Dummy':
+							section.root_node = self.read(node_type, section.root_node)
+						else:
+							dummy = Dummy(section.root_node, None)
+							dummy.class_name = "Unrecognised: " + section.section_name
+							section.root_node = dummy
+					else:
+						# Legacy path — section resolves its own type
+						section.readNodeTree(self)
 				except Exception as error:
 					traceback.print_exc()
 					self.logger.error("Failed to parse section: %s — %s", section.section_name, error)

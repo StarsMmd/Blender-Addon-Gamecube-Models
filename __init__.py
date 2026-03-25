@@ -34,6 +34,7 @@ try:
     )
     from .legacy.importer import *
     from .legacy.exporter import *
+    from .importer import Importer as IRImporter
     _bpy_available = True
 except (ImportError, SystemError):
     _bpy_available = False
@@ -72,7 +73,16 @@ if _bpy_available:
             for path in paths:
                 try:
                     if self.use_ir:
-                        status = _import_ir(context, path, self.section, self.ik_hack, self.max_frame, self.verbose)
+                        importer_options = {
+                            "ik_hack": self.ik_hack,
+                            "verbose": self.verbose,
+                            "max_frame": self.max_frame if self.max_frame > 0 else 1000000000,
+                            "section_names": [self.section] if len(self.section) > 0 else [],
+                            "filepath": path,
+                        }
+                        if bpy.ops.object.select_all.poll():
+                            bpy.ops.object.select_all(action='DESELECT')
+                        status = IRImporter.run(context, path, importer_options)
                     else:
                         status = Importer.parseDAT(context, path, self.section, self.ik_hack, self.max_frame, self.verbose)
                 except Exception as error:
@@ -146,47 +156,6 @@ if _bpy_available:
             if area not in areas_before:
                 area.type = 'NLA_EDITOR'
                 break
-
-    def _import_ir(context, filepath, section_name='', ik_hack=True, max_frame=1000, verbose=False):
-        """New Intermediate Representation-based import pipeline."""
-        from .shared.IO.DAT_io import DATParser
-        from .shared.IO.Logger import Logger
-        from .phases.describe import describe_scene
-        from .phases.build_blender import build_blender_scene
-
-        model_name = os.path.basename(filepath).split('.')[0] if filepath else "unknown"
-        logger = Logger(verbose=verbose, model_name=model_name)
-
-        importer_options = {
-            "ik_hack": ik_hack,
-            "verbose": verbose,
-            "max_frame": max_frame if max_frame > 0 else 1000000000,
-            "section_names": [section_name] if len(section_name) > 0 else [],
-            "filepath": filepath,
-        }
-
-        if bpy.ops.object.select_all.poll():
-            bpy.ops.object.select_all(action='DESELECT')
-
-        parser = DATParser(filepath, importer_options, logger=logger)
-        parser.parseSections()
-        parser.close()
-
-        if context is not None and len(parser.sections) > 0:
-            ir_scene, raw_animations = describe_scene(parser.sections, importer_options, logger=logger)
-            try:
-                build_blender_scene(ir_scene, context, importer_options, logger=logger, raw_animations=raw_animations)
-            except Exception as error:
-                import traceback
-                traceback.print_exc()
-                logger.error("Failed to build model: %s", error)
-                logger.info("Log file: %s", logger.log_path)
-                logger.close()
-                raise
-
-        logger.info("Log file: %s", logger.log_path)
-        logger.close()
-        return {'FINISHED'}
 
     def menu_func_import(self, context):
         self.layout.operator(ImportHSD.bl_idname, text="Gamecube DAT Model - Refactor (.dat)")

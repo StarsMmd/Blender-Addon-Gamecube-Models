@@ -1,7 +1,7 @@
 """Tests for pipeline phase stubs."""
 from shared.IR import IRScene
-from phases.describe import describe_scene
-from phases.build_blender import build_blender_scene
+from importer.phases.describe import describe_scene
+from importer.phases.build_blender import build_blender_scene
 
 
 def test_describe_scene_returns_ir_scene():

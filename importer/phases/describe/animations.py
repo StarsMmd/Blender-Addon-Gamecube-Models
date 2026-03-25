@@ -7,8 +7,8 @@ space is deferred to Phase 5A since it requires fcurve evaluation.
 import struct
 
 try:
-    from ...shared.Constants.hsd import *
-    from ...shared.IO.Logger import NullLogger
+    from ....shared.Constants.hsd import *
+    from ....shared.IO.Logger import NullLogger
 except (ImportError, SystemError):
     from shared.Constants.hsd import *
     from shared.IO.Logger import NullLogger

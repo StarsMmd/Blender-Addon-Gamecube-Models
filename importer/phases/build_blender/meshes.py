@@ -3,7 +3,7 @@ import bpy
 from mathutils import Matrix, Vector
 
 try:
-    from ...shared.IR.enums import SkinType
+    from ....shared.IR.enums import SkinType
 except (ImportError, SystemError):
     from shared.IR.enums import SkinType
 

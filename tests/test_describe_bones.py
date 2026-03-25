@@ -7,7 +7,7 @@ from shared.IO.DAT_io import DATParser
 from shared.Nodes.Classes.Joints.Joint import Joint
 from shared.IR.skeleton import IRBone
 from shared.IR.enums import ScaleInheritance
-from phases.describe.bones import describe_bones, _compile_srt_matrix
+from importer.phases.describe.bones import describe_bones, _compile_srt_matrix
 
 from helpers import (
     build_joint, build_dat_with_sections, build_minimal_dat,

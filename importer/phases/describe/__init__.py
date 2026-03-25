@@ -3,14 +3,14 @@ import math
 import time
 
 try:
-    from ...shared.IR import IRScene
-    from ...shared.IR.skeleton import IRModel
-    from ...shared.Nodes.Classes.Joints.Joint import Joint
-    from ...shared.Nodes.Classes.Joints.ModelSet import ModelSet
-    from ...shared.Nodes.Classes.RootNodes.SceneData import SceneData
-    from ...shared.Nodes.Classes.Animation.AnimationJoint import AnimationJoint
-    from ...shared.Nodes.Classes.Material.MaterialAnimationJoint import MaterialAnimationJoint
-    from ...shared.IO.Logger import NullLogger
+    from ....shared.IR import IRScene
+    from ....shared.IR.skeleton import IRModel
+    from ....shared.Nodes.Classes.Joints.Joint import Joint
+    from ....shared.Nodes.Classes.Joints.ModelSet import ModelSet
+    from ....shared.Nodes.Classes.RootNodes.SceneData import SceneData
+    from ....shared.Nodes.Classes.Animation.AnimationJoint import AnimationJoint
+    from ....shared.Nodes.Classes.Material.MaterialAnimationJoint import MaterialAnimationJoint
+    from ....shared.IO.Logger import NullLogger
 except (ImportError, SystemError):
     from shared.IR import IRScene
     from shared.IR.skeleton import IRModel
