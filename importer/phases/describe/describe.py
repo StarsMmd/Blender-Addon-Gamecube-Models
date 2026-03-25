@@ -10,6 +10,8 @@ try:
     from ....shared.Nodes.Classes.RootNodes.SceneData import SceneData
     from ....shared.Nodes.Classes.Animation.AnimationJoint import AnimationJoint
     from ....shared.Nodes.Classes.Material.MaterialAnimationJoint import MaterialAnimationJoint
+    from ....shared.Nodes.Classes.Light.Light import Light
+    from ....shared.Nodes.Classes.Light.LightSet import LightSet
     from ....shared.helpers.logger import StubLogger
 except (ImportError, SystemError):
     from shared.IR import IRScene
@@ -19,12 +21,15 @@ except (ImportError, SystemError):
     from shared.Nodes.Classes.RootNodes.SceneData import SceneData
     from shared.Nodes.Classes.Animation.AnimationJoint import AnimationJoint
     from shared.Nodes.Classes.Material.MaterialAnimationJoint import MaterialAnimationJoint
+    from shared.Nodes.Classes.Light.Light import Light
+    from shared.Nodes.Classes.Light.LightSet import LightSet
     from shared.helpers.logger import StubLogger
 
 from .helpers.bones import describe_bones
 from .helpers.meshes import describe_meshes
 from .helpers.animations import describe_bone_animations
 from .helpers.constraints import describe_constraints
+from .helpers.lights import describe_light
 
 
 def describe_scene(sections, options, logger=StubLogger()):
@@ -45,8 +50,9 @@ def describe_scene(sections, options, logger=StubLogger()):
     logger.info("=== Phase 4: Describe Scene ===")
     t0 = time.time()
 
-    # Route sections into model sets (matching legacy ModelBuilder logic)
+    # Route sections into model sets and lights (matching legacy ModelBuilder logic)
     model_sets = []
+    light_nodes = []
     disjoint_root_joint = None
     disjoint_anim_joints = []
     disjoint_mat_anim_joints = []
@@ -67,9 +73,20 @@ def describe_scene(sections, options, logger=StubLogger()):
         elif isinstance(root, MaterialAnimationJoint):
             disjoint_mat_anim_joints.append(root)
 
+        elif isinstance(root, LightSet):
+            if hasattr(root, 'light') and root.light:
+                light_nodes.append(root.light)
+
+        elif isinstance(root, Light):
+            light_nodes.append(root)
+
         elif isinstance(root, SceneData):
             if root.models is not None:
                 model_sets.extend(root.models)
+            if root.lights is not None:
+                for light_set in root.lights:
+                    if hasattr(light_set, 'light') and light_set.light:
+                        light_nodes.append(light_set.light)
 
     # If we accumulated disjoint sections into a model set, create one
     if disjoint_root_joint is not None:
@@ -80,7 +97,8 @@ def describe_scene(sections, options, logger=StubLogger()):
         })()
         model_sets.append(disjoint_set)
 
-    logger.info("Routed %d model set(s) in %.3fs", len(model_sets), time.time() - t0)
+    logger.info("Routed %d model set(s), %d light(s) in %.3fs",
+                len(model_sets), len(light_nodes), time.time() - t0)
 
     # Describe each model
     ir_models = []
@@ -155,5 +173,14 @@ def describe_scene(sections, options, logger=StubLogger()):
         )
         ir_models.append(ir_model)
 
-    logger.info("=== Phase 4 complete: %d model(s) ===", len(ir_models))
-    return IRScene(models=ir_models)
+    # Describe lights
+    ir_lights = []
+    for i, light_node in enumerate(light_nodes):
+        ir_light = describe_light(light_node, i)
+        if ir_light:
+            ir_lights.append(ir_light)
+    if ir_lights:
+        logger.info("Lights: %d", len(ir_lights))
+
+    logger.info("=== Phase 4 complete: %d model(s), %d light(s) ===", len(ir_models), len(ir_lights))
+    return IRScene(models=ir_models, lights=ir_lights)

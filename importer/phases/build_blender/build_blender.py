@@ -3,6 +3,7 @@ from .helpers.skeleton import build_skeleton
 from .helpers.meshes import build_meshes
 from .helpers.animations import build_bone_animations
 from .helpers.constraints import build_constraints
+from .helpers.lights import build_lights
 
 try:
     from ....shared.helpers.logger import StubLogger
@@ -34,6 +35,7 @@ def build_blender_scene(ir_scene, context, options, logger=StubLogger()):
 
         build_constraints(ir_model, armature, logger)
 
-    logger.info("=== Phase 5A complete ===")
+    if ir_scene.lights:
+        build_lights(ir_scene.lights, logger)
 
-    # TODO: build lights, cameras, fogs
+    logger.info("=== Phase 5A complete ===")
