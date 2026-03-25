@@ -23,6 +23,7 @@ except (ImportError, SystemError):
 
 from .bones import describe_bones
 from .meshes import describe_meshes
+from .animations import describe_bone_animations
 
 
 def describe_scene(sections, options, logger=None):
@@ -84,6 +85,7 @@ def describe_scene(sections, options, logger=None):
 
     # Describe each model
     ir_models = []
+    all_raw_anims = []
     for model_set in model_sets:
         root_joint = model_set.root_joint
         if root_joint is None:
@@ -131,6 +133,10 @@ def describe_scene(sections, options, logger=None):
                     logger.debug("    fragment: effect=%s, src=%s, dst=%s",
                                  fb.effect.value, fb.source_factor.value, fb.dest_factor.value)
 
+        t3 = time.time()
+        raw_anims = describe_bone_animations(model_set, joint_to_bone_index, bones, options, logger)
+        logger.info("  Animations: %d sets (%.3fs)", len(raw_anims), time.time() - t3)
+
         ir_model = IRModel(
             name=model_name,
             bones=bones,
@@ -138,6 +144,7 @@ def describe_scene(sections, options, logger=None):
             coordinate_rotation=(math.pi / 2, 0.0, 0.0),
         )
         ir_models.append(ir_model)
+        all_raw_anims.append(raw_anims)
 
     logger.info("=== Phase 4 complete: %d model(s) ===", len(ir_models))
-    return IRScene(models=ir_models)
+    return IRScene(models=ir_models), all_raw_anims

@@ -67,16 +67,21 @@ def describe_meshes(root_joint, bones, joint_to_bone_index, image_cache=None, lo
 
     def _walk_mesh_chain(mesh_node, joint, bone_index):
         """Walk the Mesh (DObject) linked list."""
+        import time
         while mesh_node:
             # Describe the material for this DObject
             ir_material = None
             if mesh_node.mobject:
                 from .materials import describe_material
+                t = time.time()
                 ir_material = describe_material(mesh_node.mobject, image_cache=image_cache)
+                logger.debug("    describe_material for DObj 0x%X: %.3fs", mesh_node.address, time.time() - t)
 
             pobj = mesh_node.pobject
             while pobj:
+                t = time.time()
                 ir_mesh = _describe_pobj(pobj, joint, bone_index, mesh_count[0], ir_material)
+                logger.debug("    describe_pobj 0x%X: %.3fs", pobj.address, time.time() - t)
                 if ir_mesh is not None:
                     bones[bone_index].mesh_indices.append(len(meshes))
                     meshes.append(ir_mesh)
