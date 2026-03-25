@@ -1,4 +1,6 @@
 """Phase 5A: Build Blender scene objects from an Intermediate Representation scene."""
+from .skeleton import build_skeleton
+from .meshes import build_meshes
 
 
 def build_blender_scene(ir_scene, context, options):
@@ -9,5 +11,8 @@ def build_blender_scene(ir_scene, context, options):
         context: Blender context
         options: dict of importer options
     """
-    # TODO: Implement as features are ported from legacy build() methods
-    pass
+    for ir_model in ir_scene.models:
+        armature = build_skeleton(ir_model, context, options)
+        build_meshes(ir_model, armature, context, options)
+
+    # TODO: build lights, cameras, fogs
