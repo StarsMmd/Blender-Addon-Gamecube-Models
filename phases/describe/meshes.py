@@ -29,7 +29,7 @@ except (ImportError, SystemError):
     )
 
 
-def describe_meshes(root_joint, bones, joint_to_bone_index, image_cache=None):
+def describe_meshes(root_joint, bones, joint_to_bone_index, image_cache=None, logger=None):
     """Walk Joint tree, extract geometry from Mesh→PObject chains.
 
     Args:
@@ -37,12 +37,19 @@ def describe_meshes(root_joint, bones, joint_to_bone_index, image_cache=None):
         bones: list[IRBone] from describe_bones().
         joint_to_bone_index: dict mapping Joint.address → index in bones list.
         image_cache: dict for deduplicating images by (image_id, palette_id).
+        logger: Logger instance (defaults to NullLogger).
 
     Returns:
         list[IRMesh] with geometry data extracted.
     """
     if image_cache is None:
         image_cache = {}
+    if logger is None:
+        try:
+            from ...shared.IO.Logger import NullLogger
+        except (ImportError, SystemError):
+            from shared.IO.Logger import NullLogger
+        logger = NullLogger()
     meshes = []
     mesh_count = [0]
 
@@ -182,12 +189,17 @@ def _validate_mesh(face_lists, faces):
 
 
 def _extract_uv_layer(source, face_list, faces, tex_index):
-    """Extract UV coordinates with V-flip, per-loop order."""
+    """Extract UV coordinates with V-flip, per-loop order.
+
+    Iterates over faces (position face list) for polygon structure,
+    using face_list (UV attribute face list) for source index lookup.
+    This matches how Blender loops correspond to polygon vertices.
+    """
     uvs = []
     for face_id, face in enumerate(faces):
-        attr_face = face_list[face_id] if face_id < len(face_list) else face
+        uv_face = face_list[face_id] if face_id < len(face_list) else face
         for vert_idx_in_face in range(len(face)):
-            src_idx = attr_face[vert_idx_in_face]
+            src_idx = uv_face[vert_idx_in_face]
             coords = source[src_idx]
             uvs.append((coords[0], 1.0 - coords[1]))
     return IRUVLayer(name=f'uvtex_{tex_index}', uvs=uvs)

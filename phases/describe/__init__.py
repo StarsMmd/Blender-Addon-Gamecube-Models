@@ -9,6 +9,7 @@ try:
     from ...shared.Nodes.Classes.RootNodes.SceneData import SceneData
     from ...shared.Nodes.Classes.Animation.AnimationJoint import AnimationJoint
     from ...shared.Nodes.Classes.Material.MaterialAnimationJoint import MaterialAnimationJoint
+    from ...shared.IO.Logger import NullLogger
 except (ImportError, SystemError):
     from shared.IR import IRScene
     from shared.IR.skeleton import IRModel
@@ -17,12 +18,13 @@ except (ImportError, SystemError):
     from shared.Nodes.Classes.RootNodes.SceneData import SceneData
     from shared.Nodes.Classes.Animation.AnimationJoint import AnimationJoint
     from shared.Nodes.Classes.Material.MaterialAnimationJoint import MaterialAnimationJoint
+    from shared.IO.Logger import NullLogger
 
 from .bones import describe_bones
 from .meshes import describe_meshes
 
 
-def describe_scene(sections, options):
+def describe_scene(sections, options, logger=None):
     """Converts parsed node tree sections into an IRScene.
 
     Routes sections to models/lights/cameras/fogs (matching ModelBuilder.__init__),
@@ -31,10 +33,16 @@ def describe_scene(sections, options):
     Args:
         sections: list of SectionInfo from DATParser.parseSections()
         options: dict of importer options
+        logger: Logger instance for output (defaults to NullLogger)
 
     Returns:
         IRScene with models populated. Lights/cameras/fogs are stubs for now.
     """
+    if logger is None:
+        logger = NullLogger()
+
+    logger.info("=== Phase 4: Describe Scene ===")
+
     # Route sections into model sets (matching legacy ModelBuilder logic)
     model_sets = []
     disjoint_root_joint = None
@@ -46,6 +54,7 @@ def describe_scene(sections, options):
             continue
 
         root = section.root_node
+        logger.debug("Section: %s → %s", section.name, type(root).__name__)
 
         if isinstance(root, Joint):
             disjoint_root_joint = root
@@ -69,6 +78,9 @@ def describe_scene(sections, options):
         })()
         model_sets.append(disjoint_set)
 
+    logger.info("Routed %d model set(s), %d disjoint animation(s), %d disjoint material animation(s)",
+                len(model_sets), len(disjoint_anim_joints), len(disjoint_mat_anim_joints))
+
     # Describe each model
     ir_models = []
     for model_set in model_sets:
@@ -76,30 +88,53 @@ def describe_scene(sections, options):
         if root_joint is None:
             continue
 
-        bones, joint_to_bone_index = describe_bones(root_joint, options)
-        meshes = describe_meshes(root_joint, bones, joint_to_bone_index)
+        model_name = root_joint.name or "Model"
+        logger.info("Describing model: %s", model_name)
 
-        # Debug: log IR summary
-        print(f"[IR] Model: {root_joint.name or 'Model'}, bones={len(bones)}, meshes={len(meshes)}")
+        bones, joint_to_bone_index = describe_bones(root_joint, options)
+        logger.info("  Bones: %d", len(bones))
+
+        meshes = describe_meshes(root_joint, bones, joint_to_bone_index, logger=logger)
+        logger.info("  Meshes: %d", len(meshes))
+
         for i, m in enumerate(meshes):
-            mat_info = "no material"
+            uv_names = [uv.name for uv in m.uv_layers]
+            color_names = [cl.name for cl in m.color_layers]
+            logger.debug("  mesh[%d] '%s': verts=%d, faces=%d, uvs=%s, colors=%s, hidden=%s",
+                         i, m.name, len(m.vertices), len(m.faces), uv_names, color_names, m.is_hidden)
+            if m.bone_weights:
+                logger.debug("    weights: type=%s, bone=%s, assignments=%d",
+                             m.bone_weights.type.value,
+                             m.bone_weights.bone_name or '-',
+                             len(m.bone_weights.assignments) if m.bone_weights.assignments else 0)
             if m.material:
-                tex_count = len(m.material.texture_layers)
-                mat_info = f"material with {tex_count} texture(s)"
-                for j, tl in enumerate(m.material.texture_layers):
-                    print(f"[IR]   mesh[{i}] tex[{j}]: image={tl.image.name if tl.image else 'None'} "
-                          f"{tl.image.width}x{tl.image.height if tl.image else 0} "
-                          f"uv_idx={tl.uv_index} coord={tl.coord_type} "
-                          f"color_blend={tl.color_blend} alpha_blend={tl.alpha_blend}")
-            print(f"[IR]   mesh[{i}]: {m.name}, verts={len(m.vertices)}, faces={len(m.faces)}, "
-                  f"uvs={len(m.uv_layers)}, colors={len(m.color_layers)}, {mat_info}")
+                mat = m.material
+                logger.debug("    material: color_src=%s, alpha_src=%s, lighting=%s, specular=%s, "
+                             "alpha=%.3f, textures=%d",
+                             mat.color_source.value, mat.alpha_source.value,
+                             mat.lighting.value, mat.enable_specular, mat.alpha,
+                             len(mat.texture_layers))
+                for j, tl in enumerate(mat.texture_layers):
+                    img = tl.image
+                    logger.debug("    tex[%d]: %s %dx%d, uv_idx=%d, coord=%s, "
+                                 "color_blend=%s, alpha_blend=%s, blend=%.2f, bump=%s",
+                                 j, img.name if img else 'None',
+                                 img.width if img else 0, img.height if img else 0,
+                                 tl.uv_index, tl.coord_type.value,
+                                 tl.color_blend.value, tl.alpha_blend.value,
+                                 tl.blend_factor, tl.is_bump)
+                if mat.fragment_blending:
+                    fb = mat.fragment_blending
+                    logger.debug("    fragment: effect=%s, src=%s, dst=%s",
+                                 fb.effect.value, fb.source_factor.value, fb.dest_factor.value)
 
         ir_model = IRModel(
-            name=root_joint.name or "Model",
+            name=model_name,
             bones=bones,
             meshes=meshes,
             coordinate_rotation=(math.pi / 2, 0.0, 0.0),
         )
         ir_models.append(ir_model)
 
+    logger.info("=== Phase 4 complete: %d model(s) ===", len(ir_models))
     return IRScene(models=ir_models)

@@ -1,22 +1,27 @@
 """Build a Blender armature from IRModel.bones."""
 import bpy
 import math
+import os
 from mathutils import Matrix, Vector
 
 
-def build_skeleton(ir_model, context, options):
+def build_skeleton(ir_model, context, options, logger=None):
     """Create a Blender armature with bones from IRModel.
 
     Args:
         ir_model: IRModel with bones list populated.
         context: Blender context.
         options: dict of importer options.
+        logger: Logger instance (defaults to NullLogger).
 
     Returns:
         The armature object.
     """
+    if logger is None:
+        from shared.IO.Logger import NullLogger
+        logger = NullLogger()
+
     filepath = options.get("filepath", "")
-    import os
     base_name = os.path.basename(filepath).split('.')[0] if filepath else "model"
     armature_name = f"{base_name}_{ir_model.name}" if ir_model.name else base_name
 
@@ -59,6 +64,8 @@ def build_skeleton(ir_model, context, options):
         bone.inherit_scale = 'ALIGNED'
 
         edit_bones.append(bone)
+
+    logger.info("  Created armature '%s' with %d bones", armature_name, len(edit_bones))
 
     bpy.ops.object.mode_set(mode='POSE')
 

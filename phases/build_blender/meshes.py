@@ -8,7 +8,7 @@ except (ImportError, SystemError):
     from shared.IR.enums import SkinType
 
 
-def build_meshes(ir_model, armature, context, options):
+def build_meshes(ir_model, armature, context, options, logger=None):
     """Create Blender meshes with materials, weights, and armature modifier.
 
     Args:
@@ -16,13 +16,20 @@ def build_meshes(ir_model, armature, context, options):
         armature: The Blender armature object (from build_skeleton).
         context: Blender context.
         options: dict of importer options.
+        logger: Logger instance (defaults to NullLogger).
     """
+    if logger is None:
+        from shared.IO.Logger import NullLogger
+        logger = NullLogger()
+
     image_cache = {}
-    for ir_mesh in ir_model.meshes:
-        _build_mesh(ir_mesh, ir_model, armature, image_cache)
+    for i, ir_mesh in enumerate(ir_model.meshes):
+        _build_mesh(ir_mesh, ir_model, armature, image_cache, logger, i)
+
+    logger.info("  Created %d mesh objects, %d cached images", len(ir_model.meshes), len(image_cache))
 
 
-def _build_mesh(ir_mesh, ir_model, armature, image_cache):
+def _build_mesh(ir_mesh, ir_model, armature, image_cache, logger, mesh_idx):
     """Create a single Blender mesh object from an IRMesh."""
     # Create mesh data
     mesh_data = bpy.data.meshes.new('Mesh_' + ir_mesh.name)
@@ -64,19 +71,29 @@ def _build_mesh(ir_mesh, ir_model, armature, image_cache):
     if ir_mesh.material is not None:
         from .materials import build_material
         mat = build_material(ir_mesh.material, image_cache=image_cache)
+        logger.debug("  mesh[%d] '%s': material '%s' with %d textures",
+                     mesh_idx, ir_mesh.name, mat.name, len(ir_mesh.material.texture_layers))
     else:
         mat = bpy.data.materials.new(name=f'mat_{ir_mesh.name}')
+        logger.debug("  mesh[%d] '%s': placeholder material (no IR material)", mesh_idx, ir_mesh.name)
     mesh_data.materials.append(mat)
 
+    # Log UV layer info
+    uv_names = [uv.name for uv in mesh_data.uv_layers]
+    clr_names = [vc.name for vc in mesh_data.vertex_colors]
+    logger.debug("  mesh[%d] '%s': uv_layers=%s, vertex_colors=%s, verts=%d, faces=%d",
+                 mesh_idx, ir_mesh.name, uv_names, clr_names,
+                 len(mesh_data.vertices), len(mesh_data.polygons))
+
     # Bone weights
-    _apply_bone_weights(ir_mesh, ir_model, mesh_object, armature)
+    _apply_bone_weights(ir_mesh, ir_model, mesh_object, armature, logger, mesh_idx)
 
     # Finalize
     mesh_data.update(calc_edges=True, calc_edges_loose=False)
     mesh_data.validate(verbose=False, clean_customdata=False)
 
 
-def _apply_bone_weights(ir_mesh, ir_model, mesh_object, armature):
+def _apply_bone_weights(ir_mesh, ir_model, mesh_object, armature, logger, mesh_idx):
     """Apply bone weights and armature modifier from IRBoneWeights."""
     bw = ir_mesh.bone_weights
     if bw is None:
@@ -96,10 +113,14 @@ def _apply_bone_weights(ir_mesh, ir_model, mesh_object, armature):
             for bone_name, weight in weight_list:
                 joint_groups[bone_name].add([vertex_idx], weight, 'REPLACE')
 
+        logger.debug("  mesh[%d] weights: WEIGHTED, %d assignments, %d groups",
+                     mesh_idx, len(bw.assignments), len(joint_groups))
+
     elif bw.type == SkinType.SINGLE_BONE and bw.bone_name:
         group = mesh_object.vertex_groups.new(name=bw.bone_name)
         all_verts = [v.index for v in mesh_object.data.vertices]
         group.add(all_verts, 1.0, 'REPLACE')
+        logger.debug("  mesh[%d] weights: SINGLE_BONE '%s'", mesh_idx, bw.bone_name)
 
     elif bw.type == SkinType.RIGID and bw.bone_name:
         # Rigid: attach all vertices to parent bone
@@ -110,6 +131,7 @@ def _apply_bone_weights(ir_mesh, ir_model, mesh_object, armature):
         group = mesh_object.vertex_groups.new(name=bw.bone_name)
         all_verts = [v.index for v in mesh_object.data.vertices]
         group.add(all_verts, 1.0, 'REPLACE')
+        logger.debug("  mesh[%d] weights: RIGID '%s'", mesh_idx, bw.bone_name)
 
     # Armature modifier
     mod = mesh_object.modifiers.new('Skinmod', 'ARMATURE')
