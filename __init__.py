@@ -174,7 +174,15 @@ if _bpy_available:
 
         if context is not None and len(parser.sections) > 0:
             ir_scene, raw_animations = describe_scene(parser.sections, importer_options, logger=logger)
-            build_blender_scene(ir_scene, context, importer_options, logger=logger, raw_animations=raw_animations)
+            try:
+                build_blender_scene(ir_scene, context, importer_options, logger=logger, raw_animations=raw_animations)
+            except Exception as error:
+                import traceback
+                traceback.print_exc()
+                logger.error("Failed to build model: %s", error)
+                logger.info("Log file: %s", logger.log_path)
+                logger.close()
+                raise
 
         logger.info("Log file: %s", logger.log_path)
         logger.close()

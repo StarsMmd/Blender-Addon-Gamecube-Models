@@ -160,6 +160,36 @@ def _compile_srt_matrix(scale, rotation, position, parent_scl=None):
     return mtx
 
 
+def stamp_joint_temp_attributes(root_joint, bones, joint_to_bone_index):
+    """Set temp_* attributes on Joint nodes from pre-computed IRBone data.
+
+    The legacy animation baking code (AnimationJoint._apply_animation_to_bone)
+    reads temp_name, temp_parent, temp_matrix, temp_matrix_local,
+    local_edit_matrix, edit_scale_correction from Joint nodes. These are
+    normally set by Joint.buildBoneHierarchy() which we don't call in the
+    IR path. This function stamps them from the IRBone data instead.
+    """
+    def _stamp(joint, parent_joint):
+        bone_index = joint_to_bone_index.get(joint.address, 0)
+        bone = bones[bone_index]
+
+        joint.temp_name = bone.name
+        joint.temp_parent = parent_joint
+        joint.temp_matrix = Matrix(bone.world_matrix)
+        joint.temp_matrix_local = Matrix(bone.local_matrix)
+        joint.edit_matrix = Matrix(bone.normalized_world_matrix)
+        joint.local_edit_matrix = Matrix(bone.normalized_local_matrix)
+        joint.edit_scale_correction = Matrix(bone.scale_correction)
+        joint.scl = list(bone.accumulated_scale)
+
+        if joint.child and not (joint.flags & JOBJ_INSTANCE):
+            _stamp(joint.child, joint)
+        if joint.next:
+            _stamp(joint.next, parent_joint)
+
+    _stamp(root_joint, None)
+
+
 def _matrix_to_list(matrix):
     """Convert a Matrix to list[list[float]] for IR storage."""
     if hasattr(matrix, 'to_list'):

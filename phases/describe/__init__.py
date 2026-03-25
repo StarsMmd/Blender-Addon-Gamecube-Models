@@ -21,7 +21,7 @@ except (ImportError, SystemError):
     from shared.Nodes.Classes.Material.MaterialAnimationJoint import MaterialAnimationJoint
     from shared.IO.Logger import NullLogger
 
-from .bones import describe_bones
+from .bones import describe_bones, stamp_joint_temp_attributes
 from .meshes import describe_meshes
 from .animations import describe_bone_animations
 
@@ -96,6 +96,7 @@ def describe_scene(sections, options, logger=None):
 
         t1 = time.time()
         bones, joint_to_bone_index = describe_bones(root_joint, options)
+        stamp_joint_temp_attributes(root_joint, bones, joint_to_bone_index)
         logger.info("  Bones: %d (%.3fs)", len(bones), time.time() - t1)
 
         t2 = time.time()
