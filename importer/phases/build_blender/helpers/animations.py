@@ -215,9 +215,11 @@ def _bake_bone_track(track, action, bone_data, max_frame, logger):
         trans, rot, scl = Bmtx.decompose()
         rot = rot.to_euler()
 
-        if frame == 0:
-            logger.debug("  %s: frame0 final: rot=(%.4f,%.4f,%.4f) loc=(%.4f,%.4f,%.4f) scale=(%.4f,%.4f,%.4f)",
-                         bone_name, rot[0], rot[1], rot[2], trans[0], trans[1], trans[2], scl[0], scl[1], scl[2])
+        if frame == 0 or frame == 30:
+            logger.debug("  %s: frame%d raw: rot=[%.10f,%.10f,%.10f] trans=[%.10f,%.10f,%.10f] scale=[%.10f,%.10f,%.10f]",
+                         bone_name, frame, r[0], r[1], r[2], l[0], l[1], l[2], s[0], s[1], s[2])
+            logger.debug("  %s: frame%d final: rot=(%.10f,%.10f,%.10f) loc=(%.10f,%.10f,%.10f) scale=(%.10f,%.10f,%.10f)",
+                         bone_name, frame, rot[0], rot[1], rot[2], trans[0], trans[1], trans[2], scl[0], scl[1], scl[2])
 
         max_scl = 100.0
         scl = Vector((

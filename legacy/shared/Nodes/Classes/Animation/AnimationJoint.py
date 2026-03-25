@@ -193,9 +193,14 @@ def _apply_animation_to_bone(joint, aobj, action, armature, max_frame, logger=Nu
             max(-max_scale, min(max_scale, scale[1])),
             max(-max_scale, min(max_scale, scale[2])),
         ))
-        if frame == 0:
-            logger.debug("  %s: frame0 final: rot=(%.4f,%.4f,%.4f) loc=(%.4f,%.4f,%.4f) scale=(%.4f,%.4f,%.4f)",
-                         bone_name, rot[0], rot[1], rot[2], trans[0], trans[1], trans[2], scale[0], scale[1], scale[2])
+        if frame == 0 or frame == 30:
+            logger.debug("  %s: frame%d raw: rot=[%.10f,%.10f,%.10f] trans=[%.10f,%.10f,%.10f] scale=[%.10f,%.10f,%.10f]",
+                         bone_name, frame,
+                         transform_list[0].evaluate(frame), transform_list[1].evaluate(frame), transform_list[2].evaluate(frame),
+                         transform_list[4].evaluate(frame), transform_list[5].evaluate(frame), transform_list[6].evaluate(frame),
+                         transform_list[7].evaluate(frame), transform_list[8].evaluate(frame), transform_list[9].evaluate(frame))
+            logger.debug("  %s: frame%d final: rot=(%.10f,%.10f,%.10f) loc=(%.10f,%.10f,%.10f) scale=(%.10f,%.10f,%.10f)",
+                         bone_name, frame, rot[0], rot[1], rot[2], trans[0], trans[1], trans[2], scale[0], scale[1], scale[2])
         new_transform_list[0].keyframe_points.insert(frame, rot[0]).interpolation = 'BEZIER'
         new_transform_list[1].keyframe_points.insert(frame, rot[1]).interpolation = 'BEZIER'
         new_transform_list[2].keyframe_points.insert(frame, rot[2]).interpolation = 'BEZIER'
