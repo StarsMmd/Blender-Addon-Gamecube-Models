@@ -3,7 +3,10 @@
 Reads the archive header and section metadata from raw DAT bytes
 to determine which node type each section should be parsed as.
 """
-from shared.helpers.binary import read, read_many
+try:
+    from ....shared.helpers.binary import read, read_many
+except (ImportError, SystemError):
+    from shared.helpers.binary import read, read_many
 
 # Default section name → node type mapping rules (checked in order)
 _DEFAULT_RULES = [

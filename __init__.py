@@ -8,7 +8,4 @@ bl_info = {
     "category": "Import-Export",
 }
 
-try:
-    from .BlenderPlugin import register, unregister
-except (ImportError, SystemError):
-    pass
+from .BlenderPlugin import register, unregister

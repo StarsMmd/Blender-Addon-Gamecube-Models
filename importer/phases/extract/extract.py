@@ -4,7 +4,11 @@ Detects the container format (.dat, .pkx, .fsys) and extracts
 the raw DAT model bytes, stripping any container headers.
 """
 from dataclasses import dataclass
-from shared.helpers.binary import read
+
+try:
+    from ....shared.helpers.binary import read
+except (ImportError, SystemError):
+    from shared.helpers.binary import read
 
 
 @dataclass
