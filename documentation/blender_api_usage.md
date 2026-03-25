@@ -2,7 +2,7 @@
 
 Every Blender Python API call used by this addon, with the Blender version range that supports it.
 
-**Addon declared minimum:** `(4, 5, 0)` (in `bl_info`)
+**Addon declared minimum:** `4.5.0` (in `blender_manifest.toml` and `bl_info`)
 **Effective minimum (ignoring version guards):** 4.5.0
 
 | Min | Max | API Call | File(s) | Notes |
@@ -268,6 +268,10 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.80 | current | `vector.length` | `PObject.py:490,496` | |
 | 2.80 | current | `quaternion.to_euler()` | `AnimationJoint.py:183` | |
 | 2.80 | current | `Euler(...)` | `Joint.py:3` | Imported but used indirectly |
+| | | | | |
+| | | **Third-Party Libraries** | | |
+| — | — | `numpy.frombuffer(bytes, dtype=np.uint8)` | `materials.py:254` | Image pixel conversion; bundled with Blender |
+| — | — | `ndarray.astype(np.float32) / 255.0` | `materials.py:255` | u8 → float32 normalization |
 
 ## Version-Guarded Code Paths
 

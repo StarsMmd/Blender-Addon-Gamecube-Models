@@ -83,6 +83,7 @@ shared/
   BlenderVersion.py              # Version comparison utility
 
 legacy/                          # Pre-refactor code (functional, used when "Use Legacy" is checked)
+documentation/                   # Pipeline docs, API reference, compatibility tables, IR spec
 ```
 
 ### Dependency Rules

@@ -1,65 +1,93 @@
 # Blender SysDolphin Addon
-A Blender addon for importing gamecube .dat models into Blender. This addon is currently developed predominantly for `Pokemon Colosseum` and `Pokemon XD: Gale of Darkness` but may have some compatibility with other games that use the format (based on the sysdolphin library) such as `Super Smash Bros. Melee`, `Kirby Air ride`, `Chibi-Robo! Plug Into Adventure!` and `Killer7`.
-Original implementation provided by Made. 
 
-# How to use
-Compress the the contents of this repository into a .zip file and then add that .zip file as an addon in Blender. This addon is targeted at Blender versions 3.1 and above, older versions may not work as intended. When the addon is enabled, navigate to File > Import > Gamecube model (.dat) and select your .dat model.
+A Blender addon for importing GameCube `.dat` models into Blender. This addon is currently developed predominantly for `Pokemon Colosseum` and `Pokemon XD: Gale of Darkness` but may have some compatibility with other games that use the format (based on the SysDolphin library) such as `Super Smash Bros. Melee`, `Kirby Air Ride`, `Chibi-Robo! Plug Into Adventure!` and `Killer7`.
 
-# Milestone Tracker
+The importer uses a 5-phase pipeline with an Intermediate Representation (IR) that decouples binary parsing from Blender object creation. A legacy import path is also available via a toggle for comparison.
 
-### 1. Animation Import
-- [x] Frame / keyframe data parsing
-- [x] Bone animation import
-- [ ] Material animation import
+Original implementation provided by Made.
+
+**Supported file extensions:** `.dat`, `.fdat`, `.rdat`, `.pkx`
+
+**Target Blender version:** 4.5.7 LTS
+
+## Installation
+
+This addon uses Blender's extensions system. Compress the contents of this repository into a `.zip` file and install it via **Edit > Preferences > Extensions** (drag-and-drop the `.zip` into Blender also works). When the addon is enabled, navigate to **File > Import > Gamecube model (.dat)** and select your model file.
+
+## What's Working
+
+- Full skeleton import with bone hierarchy, IK, copy location/rotation, track-to, and limit constraints
+- Static mesh import with UV mapping, vertex colors, custom normals, and envelope deformation
+- Bone animation import with keyframe decoding, path/spline animation, and looping
+- Material pipeline with TEV color combiners, pixel engine blending, and texture mapping
+- Material animation import (color, alpha, texture UV) with NLA support
+- Light import (SUN, POINT, SPOT)
+- Bone instances (JOBJ_INSTANCE)
+
+## Remaining Work
+
 - [ ] Shape animation import
-- [ ] Animation looping (CYCLES modifier)
-
-### 2. Geometry Details
-- [ ] Bone weights / envelope deformation
-- [ ] Shape keys / morph targets
-- [ ] Custom normals assignment
-- [ ] sRGB to linear colour conversion
-- [ ] IK constraints
-- [ ] Bone instances (`JOBJ_INSTANCE`)
-
-### 3. Advanced Materials
-- [ ] TEV colour multiply / comparison ops
-- [ ] Environment mapping
-- [ ] Pixel engine blending
-
-### 4. Lights / Cameras / Fog
-- [ ] Light import
 - [ ] Camera import
 - [ ] Fog import
+- [ ] FSYS archive extraction
+- [ ] Blender scene to IR (export describe phase)
+- [ ] IR to node tree (export build phase)
 
-### 5. Exporter
-- [ ] Blender scene to node tree
-- [ ] Address pre-allocation
-- [ ] Binary write + relocation table
-- [ ] Round-trip validation (parse → write → identical binary)
+## Code Structure
 
-# Running Tests
+```
+importer/
+  importer.py              # Pipeline entry point: Importer.run()
+  phases/
+    extract/               # Phase 1: container detection, PKX header stripping
+    route/                 # Phase 2: section name -> node type mapping
+    parse/                 # Phase 3: binary -> node trees (DATParser)
+    describe/              # Phase 4: node trees -> IR dataclasses
+    build_blender/         # Phase 5A: IR -> Blender objects
 
-Tests use **pytest** and run outside of Blender (no Blender installation required).
+shared/
+  IR/                      # Intermediate Representation dataclasses
+  Nodes/                   # Node class definitions (parsing + writing only, no bpy)
+  Constants/               # HSD/GX format constants
+  helpers/                 # Binary I/O, logging, math utilities, sRGB conversion
+  IO/                      # DATBuilder (binary export), BinaryReader/Writer
 
-```bash
-# Install pytest (once)
-pip install pytest
-
-# Run all tests from the addon directory
-cd Blender-Addon-Gamecube-Models
-pytest
-
-# Run a specific test file
-pytest tests/test_primitives.py
-
-# Run with verbose output
-pytest -v
+legacy/                    # Pre-refactor importer (available via "Use Legacy" toggle)
+documentation/             # Pipeline docs, API reference, compatibility table, IR spec
+tests/                     # pytest suite (261 tests, no game files required)
 ```
 
-Tests live in the `tests/` directory. Test data is generated programmatically — no game files are needed or should ever be committed.
+## Developer Instructions
 
-# Community
+### Running the CLI Pipeline
+
+The pipeline can run outside of Blender for parsing and testing:
+
+```bash
+# Install Blender as a Python module (optional — without it, phases 1-4 run but phase 5A is skipped)
+pip install bpy mathutils
+
+# Run the pipeline on a model file
+python -m colo_xd model.dat
+
+# Verbose mode (writes detailed log)
+python -m colo_xd model.dat -v
+```
+
+The CLI entry point is `CommandLineInterface.py` (invoked via `__main__.py`). Without `bpy` installed, the pipeline runs phases 1-4 (parse and describe) and outputs the IR without creating Blender objects.
+
+### Running Tests
+
+Tests use **pytest** and run outside of Blender (no Blender installation required). All test data is generated programmatically — no game files are needed or should ever be committed.
+
+```bash
+pip install pytest
+
+cd colo_xd
+python3 -m pytest tests/ -q
+```
+
+## Community
 
 If you're interested in reverse engineering the Pokemon games on the Gamecube/Wii consoles you can find us on discord:
 www.discord.gg/xCPjjnv

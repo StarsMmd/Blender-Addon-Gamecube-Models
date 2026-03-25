@@ -21,10 +21,10 @@ This table tracks every feature in the GameCube SysDolphin `.dat` format and its
 | Meshes (tris, quads, tri-strips) | ✅ | `IRMesh` | ✅ | ⚠️ Round-trip only | |
 | UV coordinates (up to 8 layers) | ✅ | `IRUVLayer` | ✅ | ⚠️ | |
 | Vertex colors (CLR0, CLR1) | ✅ | `IRColorLayer` | ✅ | ⚠️ | |
-| Custom normals | ✅ | `IRMesh.normals` | ⚠️ Partial | ⚠️ | |
+| Custom normals | ✅ | `IRMesh.normals` | ✅ | ⚠️ | Normalized in describe phase |
 | Bone weights / envelopes | ✅ | `IRBoneWeights` | ✅ | ⚠️ | |
 | Single-bone skinning | ✅ | `IRBoneWeights` | ✅ | ⚠️ | |
-| Shape keys / morph targets | ✅ | `IRShapeKey` | ⚠️ Keys only, no anim | ❌ | |
+| Shape keys / morph targets | ⚠️ | `IRShapeKey` | ❌ | ❌ | Dataclass exists but never populated |
 | Bone instances (JOBJ_INSTANCE) | ✅ | `IRBone.instance_child` | ✅ | ❌ | |
 | Spline curves | ✅ | via path animation | ⚠️ Path only | ❌ | |
 
@@ -32,19 +32,19 @@ This table tracks every feature in the GameCube SysDolphin `.dat` format and its
 
 | Feature | DAT Parse (Phase 3) | IR Type (Phase 4) | Import (Phase 5A) | Export | Notes |
 |---------|---------------------|--------------------|--------------------|--------|-------|
-| Diffuse/alpha render modes | ✅ | `IRMaterial.render_mode` | ✅ | ❌ | |
+| Diffuse/alpha render modes | ✅ | `IRMaterial` (`color_source`, `alpha_source`, `lighting`, `is_translucent`) | ✅ | ❌ | Decomposed from render_mode bits |
 | Material colors (diffuse) | ✅ | `IRMaterial.diffuse_color` | ✅ | ❌ | Linearized from sRGB |
 | Material colors (ambient) | ✅ | `IRMaterial.ambient_color` | ❌ | ❌ | Parsed, not used in shader |
 | Material colors (specular) | ✅ | `IRMaterial.specular_color` | ❌ | ❌ | Parsed, not used in shader |
-| Texture mapping (UV) | ✅ | `IRTexture` with `CoordType.UV` | ✅ | ❌ | |
-| Texture mapping (reflection) | ✅ | `IRTexture` with `CoordType.REFLECTION` | ⚠️ | ❌ | Partial |
-| Texture colormap blend ops | ✅ | `ColormapOp` enum | ✅ | ❌ | |
-| Texture alphamap blend ops | ✅ | `AlphamapOp` enum | ✅ | ❌ | |
-| TEV color combiners (ADD/SUB) | ✅ | `IRTextureTEV` | ✅ | ❌ | |
-| TEV comparison ops | ✅ | `IRTextureTEV` | ❌ | ❌ | Stubbed |
-| Pixel engine (BLEND mode) | ✅ | `IRPixelEngine` | ✅ | ❌ | |
-| Pixel engine (LOGIC mode) | ✅ | `IRPixelEngine` | ❌ | ❌ | Not implemented |
-| Pixel engine (SUBTRACT) | ✅ | `IRPixelEngine` | ❌ | ❌ | Not implemented |
+| Texture mapping (UV) | ✅ | `IRTextureLayer` with `CoordType.UV` | ✅ | ❌ | |
+| Texture mapping (reflection) | ✅ | `IRTextureLayer` with `CoordType.REFLECTION` | ⚠️ | ❌ | Partial |
+| Texture colormap blend ops | ✅ | `LayerBlendMode` enum | ✅ | ❌ | |
+| Texture alphamap blend ops | ✅ | `LayerBlendMode` enum | ✅ | ❌ | |
+| TEV color combiners (ADD/SUB) | ✅ | `ColorCombiner` | ✅ | ❌ | |
+| TEV comparison ops | ✅ | `ColorCombiner` | ❌ | ❌ | Stubbed |
+| Pixel engine (BLEND mode) | ✅ | `FragmentBlending` | ✅ | ❌ | |
+| Pixel engine (LOGIC mode) | ✅ | `FragmentBlending` | ✅ | ❌ | Maps to BLACK/WHITE/INVERT/INVISIBLE/OPAQUE |
+| Pixel engine (SUBTRACT) | ✅ | `FragmentBlending` | ⚠️ | ❌ | Maps to CUSTOM, best-effort in build |
 | Image decoding (all GX formats) | ✅ | `IRImage` | ✅ | ⚠️ Round-trip only | |
 
 ## Animations
