@@ -27,9 +27,9 @@ def build_blender_scene(ir_scene, context, options, logger=StubLogger()):
         armature = build_skeleton(ir_model, context, options, logger=logger)
         build_meshes(ir_model, armature, context, options, logger=logger)
 
-        if ir_model.raw_bone_animations:
-            logger.info("  Building %d animation set(s)", len(ir_model.raw_bone_animations))
-            build_bone_animations(ir_model.raw_bone_animations, ir_model, armature, options, logger=logger)
+        if ir_model.bone_animations:
+            logger.info("  Building %d animation set(s)", len(ir_model.bone_animations))
+            build_bone_animations(ir_model, armature, options, logger=logger)
 
     logger.info("=== Phase 5A complete ===")
 

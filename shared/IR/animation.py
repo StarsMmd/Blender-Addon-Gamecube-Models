@@ -16,11 +16,25 @@ class IRKeyframe:
 
 @dataclass
 class IRBoneTrack:
-    """Baked animation data for one bone, in bone-local space."""
+    """Decoded animation keyframes for one bone in HSD world-space SRT.
+
+    Channels contain decoded keyframes (not compressed bytes, not Blender-baked).
+    The target-specific baking (e.g. Blender scale correction + Euler decomposition)
+    happens in the build phase.
+    """
     bone_name: str
-    rotation: list[list[tuple[int, float]]]  # [X, Y, Z] Euler channels
-    location: list[list[tuple[int, float]]]  # [X, Y, Z] location channels
-    scale: list[list[tuple[int, float]]]  # [X, Y, Z] scale channels
+    bone_index: int
+    rotation: list[list[IRKeyframe]]  # [X, Y, Z] channels
+    location: list[list[IRKeyframe]]  # [X, Y, Z] channels
+    scale: list[list[IRKeyframe]]     # [X, Y, Z] channels
+    # Rest pose (needed by build phase for baking)
+    rest_rotation: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    rest_position: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    rest_scale: tuple[float, float, float] = (1.0, 1.0, 1.0)
+    parent_accumulated_scale: tuple[float, float, float] | None = None
+    # Path animation (mutually exclusive with SRT channels)
+    path_keyframes: list[IRKeyframe] | None = None
+    spline_points: list[list[float]] | None = None
 
 
 @dataclass

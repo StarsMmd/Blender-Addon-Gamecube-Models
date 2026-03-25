@@ -21,7 +21,7 @@ except (ImportError, SystemError):
     from shared.Nodes.Classes.Material.MaterialAnimationJoint import MaterialAnimationJoint
     from shared.IO.Logger import StubLogger
 
-from .helpers.bones import describe_bones, build_bone_data_lookup
+from .helpers.bones import describe_bones
 from .helpers.meshes import describe_meshes
 from .helpers.animations import describe_bone_animations
 
@@ -93,7 +93,6 @@ def describe_scene(sections, options, logger=StubLogger()):
 
         t1 = time.time()
         bones, joint_to_bone_index = describe_bones(root_joint, options)
-        bone_data_lookup = build_bone_data_lookup(bones)
         logger.info("  Bones: %d (%.3fs)", len(bones), time.time() - t1)
 
         t2 = time.time()
@@ -132,14 +131,14 @@ def describe_scene(sections, options, logger=StubLogger()):
                                  fb.effect.value, fb.source_factor.value, fb.dest_factor.value)
 
         t3 = time.time()
-        raw_anims = describe_bone_animations(model_set, joint_to_bone_index, bones, bone_data_lookup, options, logger)
-        logger.info("  Animations: %d sets (%.3fs)", len(raw_anims), time.time() - t3)
+        bone_anims = describe_bone_animations(model_set, joint_to_bone_index, bones, options, logger)
+        logger.info("  Animations: %d sets (%.3fs)", len(bone_anims), time.time() - t3)
 
         ir_model = IRModel(
             name=model_name,
             bones=bones,
             meshes=meshes,
-            raw_bone_animations=raw_anims,
+            bone_animations=bone_anims,
             coordinate_rotation=(math.pi / 2, 0.0, 0.0),
         )
         ir_models.append(ir_model)

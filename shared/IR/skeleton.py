@@ -38,8 +38,7 @@ class IRModel:
     name: str
     bones: list[IRBone] = field(default_factory=list)
     meshes: list = field(default_factory=list)  # list[IRMesh]
-    bone_animations: list = field(default_factory=list)  # list[IRBoneAnimationSet] (future: fully baked)
-    raw_bone_animations: list = field(default_factory=list)  # list[RawAnimationSet] (pre-baked, for Phase 5A)
+    bone_animations: list = field(default_factory=list)  # list[IRBoneAnimationSet]
     material_animations: list = field(default_factory=list)  # list[IRMaterialAnimationSet]
     shape_animations: list = field(default_factory=list)  # list[IRShapeAnimationSet]
     # Constraints

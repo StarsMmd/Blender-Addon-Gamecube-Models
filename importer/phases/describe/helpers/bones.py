@@ -160,26 +160,6 @@ def _compile_srt_matrix(scale, rotation, position, parent_scl=None):
     return mtx
 
 
-def build_bone_data_lookup(bones):
-    """Build a dict of pre-computed bone data for animation baking.
-
-    Returns a dict keyed by bone index with Matrix objects needed by
-    the baking code (local_edit_matrix, edit_scale_correction, etc.).
-    This avoids mutating the parsed Joint nodes with temp attributes.
-    """
-    lookup = {}
-    for i, bone in enumerate(bones):
-        parent_idx = bone.parent_index
-        lookup[i] = {
-            'name': bone.name,
-            'parent_index': parent_idx,
-            'local_edit_matrix': Matrix(bone.normalized_local_matrix),
-            'edit_scale_correction': Matrix(bone.scale_correction),
-            'temp_matrix_local': Matrix(bone.local_matrix),
-        }
-    return lookup
-
-
 def _matrix_to_list(matrix):
     """Convert a Matrix to list[list[float]] for IR storage."""
     if hasattr(matrix, 'to_list'):

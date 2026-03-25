@@ -250,6 +250,7 @@ def test_ir_keyframe():
 def test_ir_bone_track():
     track = IRBoneTrack(
         bone_name="bone_0",
+        bone_index=0,
         rotation=[[], [], []],
         location=[[], [], []],
         scale=[[], [], []],
