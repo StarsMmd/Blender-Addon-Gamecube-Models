@@ -6,11 +6,11 @@ try:
 except (ImportError, SystemError):
     from shared.IO.Logger import Logger, NullLogger
 
-from .phases.extract import extract_dat
-from .phases.route import route_sections
-from .phases.parse import parse_sections
-from .phases.describe import describe_scene
-from .phases.build_blender import build_blender_scene
+from .phases.extract.extract import extract_dat
+from .phases.route.route import route_sections
+from .phases.parse.parse import parse_sections
+from .phases.describe.describe import describe_scene
+from .phases.build_blender.build_blender import build_blender_scene
 
 
 class Importer:

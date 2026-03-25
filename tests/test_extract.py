@@ -2,7 +2,7 @@
 import struct
 import tempfile
 import os
-from importer.phases.extract import extract_dat, ContainerMetadata
+from importer.phases.extract.extract import extract_dat, ContainerMetadata
 
 
 def _write_tmp(data, suffix='.dat'):
