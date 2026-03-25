@@ -56,7 +56,7 @@ def describe_scene(sections, options, logger=None):
             continue
 
         root = section.root_node
-        logger.debug("Section: %s -> %s", section.name, type(root).__name__)
+        logger.debug("Section: %s -> %s", section.section_name, type(root).__name__)
 
         if isinstance(root, Joint):
             disjoint_root_joint = root
