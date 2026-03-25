@@ -88,6 +88,45 @@ class Image(Node):
         else:
             self.data_address = 0
 
+    def decodeFromRawData(self, palette):
+        """Decode raw_image_data into RGBA pixels without needing the parser.
+
+        Uses self.raw_image_data stored during loadFromBinary().
+        Returns cropped, vertically-flipped RGBA byte array, or None if no data.
+        """
+        if not self.raw_image_data or self.format not in format_dict:
+            return None
+
+        width = self.width
+        height = self.height
+
+        bits_per_pixel, tile_S, tile_T, func = format_dict[self.format]
+        blocks_x = (width  // tile_S) + (1 if ((width  % tile_S) > 0) else 0)
+        blocks_y = (height // tile_T) + (1 if ((height % tile_T) > 0) else 0)
+
+        out_data = array.array('B', [0] * (blocks_x * tile_S * blocks_y * tile_T * CCC))
+        buffer = memoryview(out_data)
+
+        image_data = memoryview(bytearray(self.raw_image_data))
+
+        for i in range(blocks_y):
+            for j in range(blocks_x):
+                func(buffer, image_data, blocks_x, palette)
+                image_data = image_data[(tile_S * tile_T * bits_per_pixel) >> 3:]
+                buffer = buffer[CCC * tile_S:]
+            buffer = buffer[CCC * blocks_x * tile_S * (tile_T - 1):]
+
+        # Crop and flip vertically (GX top-to-bottom → bottom-to-top)
+        decoded_stride = blocks_x * tile_S * CCC
+        actual_stride = width * CCC
+        cropped = array.array('B', [0] * (width * height * CCC))
+        for row in range(height):
+            src_start = row * decoded_stride
+            dst_start = (height - 1 - row) * actual_stride
+            cropped[dst_start:dst_start + actual_stride] = out_data[src_start:src_start + actual_stride]
+
+        return cropped
+
     def loadDataWithPalette(self, parser, palette):
         width = self.width
         height = self.height

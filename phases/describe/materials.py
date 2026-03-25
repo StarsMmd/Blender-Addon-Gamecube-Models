@@ -31,12 +31,11 @@ except (ImportError, SystemError):
     from shared.Constants.gx import *
 
 
-def describe_material(mobj, parser=None, image_cache=None):
+def describe_material(mobj, image_cache=None):
     """Extract material data from a MaterialObject node into IRMaterial.
 
     Args:
         mobj: MaterialObject node from parsed node tree.
-        parser: DATParser for reading image data (needed for image decoding).
         image_cache: dict for deduplicating images by (image_id, palette_id).
 
     Returns:
@@ -75,7 +74,7 @@ def describe_material(mobj, parser=None, image_cache=None):
     texture_number = 0
     while texture:
         if render_mode & (1 << (texture_number + 4)):
-            ir_tex = _describe_texture(texture, parser, image_cache)
+            ir_tex = _describe_texture(texture, image_cache)
             if ir_tex is not None:
                 texture_layers.append(ir_tex)
         texture = texture.next
@@ -113,9 +112,9 @@ def describe_material(mobj, parser=None, image_cache=None):
     )
 
 
-def _describe_texture(texture, parser, image_cache):
+def _describe_texture(texture, image_cache):
     """Extract one Texture node into IRTextureLayer."""
-    # Decode image
+    # Get pre-decoded image pixels (decoded during parsing)
     ir_image = None
     if texture.image:
         image_id = texture.texture_id if hasattr(texture, 'texture_id') else 0
@@ -125,7 +124,7 @@ def _describe_texture(texture, parser, image_cache):
         if cache_key in image_cache:
             ir_image = image_cache[cache_key]
         else:
-            ir_image = _decode_image(texture.image, texture.palette, parser)
+            ir_image = _build_ir_image(texture)
             if ir_image is not None:
                 image_cache[cache_key] = ir_image
 
@@ -186,39 +185,25 @@ def _describe_texture(texture, parser, image_cache):
     )
 
 
-def _decode_image(image_node, palette_node, parser):
-    """Decode image pixel data into IRImage."""
-    if image_node is None or not hasattr(image_node, 'data_address'):
-        return None
-    if image_node.data_address == 0 and image_node.width == 0:
-        return None
+def _build_ir_image(texture):
+    """Build an IRImage from a Texture node's pre-decoded pixel data.
 
-    # Use the image's existing decode method if available
-    try:
-        pixel_data = image_node.loadDataWithPalette(parser, palette_node)
-    except Exception:
-        return None
+    Texture.decoded_pixels is set during Phase 3 (parsing) by
+    Image.decodeFromRawData(). The data is already cropped and
+    vertically flipped (bottom-to-top, matching Blender convention).
+    """
+    image_node = texture.image
+    pixel_data = getattr(texture, 'decoded_pixels', None)
 
-    if pixel_data is None:
+    if pixel_data is None or image_node is None:
         return None
 
     width = image_node.width
     height = image_node.height
 
-    # Convert raw RGBA bytes to normalized floats [0, 1]
-    # Flip vertically (GX top-to-bottom → IR bottom-to-top, matching Blender)
-    pixels = []
-    for y in range(height - 1, -1, -1):
-        for x in range(width):
-            idx = (y * width + x) * 4
-            if idx + 3 < len(pixel_data):
-                r = pixel_data[idx] / 255.0
-                g = pixel_data[idx + 1] / 255.0
-                b = pixel_data[idx + 2] / 255.0
-                a = pixel_data[idx + 3] / 255.0
-                pixels.extend([r, g, b, a])
-            else:
-                pixels.extend([0.0, 0.0, 0.0, 1.0])
+    # Convert raw RGBA u8 bytes to normalized floats [0, 1]
+    # Data is already vertically flipped by decodeFromRawData
+    pixels = [b / 255.0 for b in pixel_data]
 
     return IRImage(
         name=f"tex_{image_node.address:X}",
@@ -226,7 +211,7 @@ def _decode_image(image_node, palette_node, parser):
         height=height,
         pixels=pixels,
         image_id=image_node.address,
-        palette_id=palette_node.address if palette_node else 0,
+        palette_id=texture.palette.address if texture.palette else 0,
     )
 
 

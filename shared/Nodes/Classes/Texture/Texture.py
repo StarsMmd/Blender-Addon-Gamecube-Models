@@ -37,7 +37,7 @@ class Texture(Node):
                                 wrap_names.get(self.wrap_s, str(self.wrap_s)),
                                 wrap_names.get(self.wrap_t, str(self.wrap_t)),
                                 self.repeat_s, self.repeat_t)
-            self.decoded_pixels = self.image.loadDataWithPalette(parser, self.palette)
+            self.decoded_pixels = self.image.decodeFromRawData(self.palette)
         else:
             parser.logger.debug("Texture 0x%X: no image", self.address)
             self.decoded_pixels = None
