@@ -4,10 +4,10 @@ from mathutils import Matrix, Vector
 
 try:
     from .....shared.IR.enums import SkinType
-    from .....shared.IO.Logger import StubLogger
+    from .....shared.helpers.logger import StubLogger
 except (ImportError, SystemError):
     from shared.IR.enums import SkinType
-    from shared.IO.Logger import StubLogger
+    from shared.helpers.logger import StubLogger
 
 
 def build_meshes(ir_model, armature, context, options, logger=StubLogger()):

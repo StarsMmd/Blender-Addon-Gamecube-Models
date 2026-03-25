@@ -3,7 +3,7 @@ import math
 import os
 import tempfile
 
-from shared.IO.DAT_io import DATParser
+from importer.phases.parse.helpers.dat_parser import DATParser
 from shared.Nodes.Classes.Joints.Joint import Joint
 from shared.IR.skeleton import IRBone
 from shared.IR.enums import ScaleInheritance

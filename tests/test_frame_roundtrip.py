@@ -5,7 +5,7 @@ import os
 import pytest
 
 from helpers import build_minimal_dat, build_frame
-from shared.IO.DAT_io import DATParser
+from importer.phases.parse.helpers.dat_parser import DATParser
 from shared.Nodes.Classes.Animation.Frame import Frame
 
 

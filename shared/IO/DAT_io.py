@@ -5,14 +5,8 @@ import traceback
 from ..Nodes import *
 from ..Errors import *
 from ..Constants import *
-from .file_io import *
-from .Logger import Logger, StubLogger
-
-# Re-export DATParser from its new home so existing tests/code don't break
-try:
-    from ...importer.phases.parse.helpers.dat_parser import DATParser
-except (ImportError, SystemError):
-    from importer.phases.parse.helpers.dat_parser import DATParser
+from ..helpers.file_io import *
+from ..helpers.logger import Logger, StubLogger
 
 # A class for managing the recursive writing of the Node tree. 
 # This happens in 3 steps:

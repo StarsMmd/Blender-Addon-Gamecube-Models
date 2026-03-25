@@ -1,5 +1,5 @@
 from ...Node import Node
-from ....IO.Logger import StubLogger
+from ....helpers.logger import StubLogger
 
 # Material Animation Joint
 class MaterialAnimationJoint(Node):

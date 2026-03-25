@@ -17,8 +17,9 @@ from helpers import (
     POBJECT_SIZE,
     VERTEX_SIZE,
 )
-from shared.IO.file_io import BinaryReader, BinaryWriter
-from shared.IO.DAT_io import DATParser, DATBuilder
+from shared.helpers.file_io import BinaryReader, BinaryWriter
+from importer.phases.parse.helpers.dat_parser import DATParser
+from shared.IO.DAT_io import DATBuilder
 from shared.Nodes.Classes.Joints.Joint import Joint
 
 

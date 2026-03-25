@@ -4,9 +4,9 @@ from .helpers.meshes import build_meshes
 from .helpers.animations import build_bone_animations
 
 try:
-    from ....shared.IO.Logger import StubLogger
+    from ....shared.helpers.logger import StubLogger
 except (ImportError, SystemError):
-    from shared.IO.Logger import StubLogger
+    from shared.helpers.logger import StubLogger
 
 
 def build_blender_scene(ir_scene, context, options, logger=StubLogger()):

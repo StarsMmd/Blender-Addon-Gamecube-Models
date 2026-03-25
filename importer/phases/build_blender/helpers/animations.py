@@ -9,11 +9,11 @@ from mathutils import Matrix, Vector
 
 try:
     from .....shared.Constants.hsd import *
-    from .....shared.IO.Logger import StubLogger
+    from .....shared.helpers.logger import StubLogger
     from .....shared.BlenderVersion import BlenderVersion
 except (ImportError, SystemError):
     from shared.Constants.hsd import *
-    from shared.IO.Logger import StubLogger
+    from shared.helpers.logger import StubLogger
     from shared.BlenderVersion import BlenderVersion
 
 from ...describe.helpers.bones import _compile_srt_matrix

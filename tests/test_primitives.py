@@ -4,7 +4,7 @@ import tempfile
 import os
 import pytest
 
-from shared.IO.file_io import BinaryReader
+from shared.helpers.file_io import BinaryReader
 from shared.Constants.RecursiveTypes import (
     isPointerType,
     isUnboundedArrayType,

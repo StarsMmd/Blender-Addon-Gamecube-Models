@@ -6,14 +6,14 @@ try:
     from .....shared.Nodes import *
     from .....shared.Errors import *
     from .....shared.Constants import *
-    from .....shared.IO.file_io import *
-    from .....shared.IO.Logger import Logger, StubLogger
+    from .....shared.helpers.file_io import *
+    from .....shared.helpers.logger import Logger, StubLogger
 except (ImportError, SystemError):
     from shared.Nodes import *
     from shared.Errors import *
     from shared.Constants import *
-    from shared.IO.file_io import *
-    from shared.IO.Logger import Logger, StubLogger
+    from shared.helpers.file_io import *
+    from shared.helpers.logger import Logger, StubLogger
 
 # A class for managing the recursive parsing of the Node tree. It handles caching
 # loaded nodes and reading the next node from the cache or calling its constructor.

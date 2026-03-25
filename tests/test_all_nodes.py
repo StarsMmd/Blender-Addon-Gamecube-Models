@@ -5,8 +5,8 @@ import tempfile
 import pytest
 
 from helpers import *
-from shared.IO.DAT_io import DATParser
-from shared.IO.Logger import Logger
+from importer.phases.parse.helpers.dat_parser import DATParser
+from shared.helpers.logger import Logger
 
 # -- Node class imports (grouped by category) --
 

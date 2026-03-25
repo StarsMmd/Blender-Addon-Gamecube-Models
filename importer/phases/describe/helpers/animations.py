@@ -5,13 +5,13 @@ keyframes into generic IRBoneAnimationSet / IRBoneTrack / IRKeyframe.
 """
 try:
     from .....shared.Constants.hsd import *
-    from .....shared.IO.Logger import StubLogger
+    from .....shared.helpers.logger import StubLogger
     from .....shared.IR.animation import IRBoneAnimationSet, IRBoneTrack, IRKeyframe
     from .....shared.IR.enums import Interpolation
     from .keyframe_decoder import decode_fobjdesc
 except (ImportError, SystemError):
     from shared.Constants.hsd import *
-    from shared.IO.Logger import StubLogger
+    from shared.helpers.logger import StubLogger
     from shared.IR.animation import IRBoneAnimationSet, IRBoneTrack, IRKeyframe
     from shared.IR.enums import Interpolation
     from importer.phases.describe.helpers.keyframe_decoder import decode_fobjdesc

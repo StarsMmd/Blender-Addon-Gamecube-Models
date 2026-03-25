@@ -9,9 +9,9 @@ import io
 from .helpers.dat_parser import DATParser
 
 try:
-    from ....shared.IO.Logger import StubLogger
+    from ....shared.helpers.logger import StubLogger
 except (ImportError, SystemError):
-    from shared.IO.Logger import StubLogger
+    from shared.helpers.logger import StubLogger
 
 
 def parse_sections(dat_bytes, section_map, options, logger=StubLogger()):

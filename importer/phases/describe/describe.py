@@ -10,7 +10,7 @@ try:
     from ....shared.Nodes.Classes.RootNodes.SceneData import SceneData
     from ....shared.Nodes.Classes.Animation.AnimationJoint import AnimationJoint
     from ....shared.Nodes.Classes.Material.MaterialAnimationJoint import MaterialAnimationJoint
-    from ....shared.IO.Logger import StubLogger
+    from ....shared.helpers.logger import StubLogger
 except (ImportError, SystemError):
     from shared.IR import IRScene
     from shared.IR.skeleton import IRModel
@@ -19,7 +19,7 @@ except (ImportError, SystemError):
     from shared.Nodes.Classes.RootNodes.SceneData import SceneData
     from shared.Nodes.Classes.Animation.AnimationJoint import AnimationJoint
     from shared.Nodes.Classes.Material.MaterialAnimationJoint import MaterialAnimationJoint
-    from shared.IO.Logger import StubLogger
+    from shared.helpers.logger import StubLogger
 
 from .helpers.bones import describe_bones
 from .helpers.meshes import describe_meshes

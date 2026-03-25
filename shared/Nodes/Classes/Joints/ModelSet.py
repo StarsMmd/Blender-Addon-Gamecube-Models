@@ -8,7 +8,7 @@ from ..Misc.Spline import Spline
 from ...Node import Node
 from ....Constants import *
 from ....BlenderVersion import BlenderVersion
-from ....IO.Logger import StubLogger
+from ....helpers.logger import StubLogger
 
 # Model Set
 class ModelSet(Node):

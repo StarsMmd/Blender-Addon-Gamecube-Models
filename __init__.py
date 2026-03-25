@@ -82,7 +82,7 @@ if _bpy_available:
                         }
                         if bpy.ops.object.select_all.poll():
                             bpy.ops.object.select_all(action='DESELECT')
-                        from .shared.IO.Logger import Logger
+                        from .shared.helpers.logger import Logger
                         model_name = os.path.basename(path).split('.')[0] if path else "unknown"
                         logger = Logger(verbose=self.verbose, model_name=model_name)
                         status = IRImporter.run(context, path, importer_options, logger=logger)

@@ -1,7 +1,7 @@
 import struct
 from ...Node import Node
 from ....Constants import *
-from ....IO.Logger import StubLogger
+from ....helpers.logger import StubLogger
 
 # Frame (aka FObject)
 class Frame(Node):

@@ -15,7 +15,7 @@ try:
         GX_VA_POS, GX_VA_NRM, GX_VA_NBT, GX_VA_CLR0, GX_VA_CLR1,
         GX_VA_TEX0, GX_VA_PNMTXIDX,
     )
-    from .....shared.IO.Logger import StubLogger
+    from .....shared.helpers.logger import StubLogger
 except (ImportError, SystemError):
     from shared.helpers.math_shim import Matrix, Vector
     from shared.IR.geometry import IRMesh, IRUVLayer, IRColorLayer, IRBoneWeights, IRShapeKey
@@ -28,7 +28,7 @@ except (ImportError, SystemError):
         GX_VA_POS, GX_VA_NRM, GX_VA_NBT, GX_VA_CLR0, GX_VA_CLR1,
         GX_VA_TEX0, GX_VA_PNMTXIDX,
     )
-    from shared.IO.Logger import StubLogger
+    from shared.helpers.logger import StubLogger
 
 
 def describe_meshes(root_joint, bones, joint_to_bone_index, image_cache=None, logger=StubLogger()):

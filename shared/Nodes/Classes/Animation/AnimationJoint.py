@@ -3,7 +3,7 @@ from mathutils import Matrix, Vector
 
 from ...Node import Node
 from ....Constants import *
-from ....IO.Logger import StubLogger
+from ....helpers.logger import StubLogger
 from .Frame import read_fobjdesc
 
 # Mapping: HSD animation type code → (temp data-path letter, component index)

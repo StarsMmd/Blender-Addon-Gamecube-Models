@@ -11,7 +11,7 @@ from helpers import (
     build_vertex_list_terminator,
     JOINT_SIZE, MESH_SIZE, POBJECT_SIZE, ANIMJOINT_SIZE, SPLINE_SIZE, VERTEX_SIZE,
 )
-from shared.IO.DAT_io import DATParser
+from importer.phases.parse.helpers.dat_parser import DATParser
 from shared.Nodes.Classes.Joints.Joint import Joint
 from shared.Nodes.Classes.Mesh.Mesh import Mesh
 from shared.Nodes.Classes.Mesh.PObject import PObject

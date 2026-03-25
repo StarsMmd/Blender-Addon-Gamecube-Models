@@ -5,9 +5,9 @@ import os
 from mathutils import Matrix, Vector
 
 try:
-    from .....shared.IO.Logger import StubLogger
+    from .....shared.helpers.logger import StubLogger
 except (ImportError, SystemError):
-    from shared.IO.Logger import StubLogger
+    from shared.helpers.logger import StubLogger
 
 
 def build_skeleton(ir_model, context, options, logger=StubLogger()):
