@@ -29,17 +29,20 @@ except (ImportError, SystemError):
     )
 
 
-def describe_meshes(root_joint, bones, joint_to_bone_index):
+def describe_meshes(root_joint, bones, joint_to_bone_index, image_cache=None):
     """Walk Joint tree, extract geometry from Mesh→PObject chains.
 
     Args:
         root_joint: Root Joint node from the parsed node tree.
         bones: list[IRBone] from describe_bones().
         joint_to_bone_index: dict mapping Joint.address → index in bones list.
+        image_cache: dict for deduplicating images by (image_id, palette_id).
 
     Returns:
         list[IRMesh] with geometry data extracted.
     """
+    if image_cache is None:
+        image_cache = {}
     meshes = []
     mesh_count = [0]
 
@@ -58,9 +61,15 @@ def describe_meshes(root_joint, bones, joint_to_bone_index):
     def _walk_mesh_chain(mesh_node, joint, bone_index):
         """Walk the Mesh (DObject) linked list."""
         while mesh_node:
+            # Describe the material for this DObject
+            ir_material = None
+            if mesh_node.mobject:
+                from .materials import describe_material
+                ir_material = describe_material(mesh_node.mobject, image_cache=image_cache)
+
             pobj = mesh_node.pobject
             while pobj:
-                ir_mesh = _describe_pobj(pobj, joint, bone_index, mesh_count[0])
+                ir_mesh = _describe_pobj(pobj, joint, bone_index, mesh_count[0], ir_material)
                 if ir_mesh is not None:
                     bones[bone_index].mesh_indices.append(len(meshes))
                     meshes.append(ir_mesh)
@@ -68,7 +77,7 @@ def describe_meshes(root_joint, bones, joint_to_bone_index):
                 pobj = pobj.next
             mesh_node = mesh_node.next
 
-    def _describe_pobj(pobj, joint, bone_index, count):
+    def _describe_pobj(pobj, joint, bone_index, count, ir_material=None):
         """Extract geometry from a single PObject into an IRMesh."""
         vertex_list = pobj.vertex_list.vertices
 
@@ -149,7 +158,7 @@ def describe_meshes(root_joint, bones, joint_to_bone_index):
             uv_layers=uv_layers,
             color_layers=color_layers,
             normals=normals,
-            material=None,  # Filled in Step 2
+            material=ir_material,
             bone_weights=bone_weights,
             is_hidden=bool(joint.flags & JOBJ_HIDDEN),
             parent_bone_index=bone_index,

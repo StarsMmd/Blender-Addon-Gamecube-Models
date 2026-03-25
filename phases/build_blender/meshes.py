@@ -17,11 +17,12 @@ def build_meshes(ir_model, armature, context, options):
         context: Blender context.
         options: dict of importer options.
     """
+    image_cache = {}
     for ir_mesh in ir_model.meshes:
-        _build_mesh(ir_mesh, ir_model, armature)
+        _build_mesh(ir_mesh, ir_model, armature, image_cache)
 
 
-def _build_mesh(ir_mesh, ir_model, armature):
+def _build_mesh(ir_mesh, ir_model, armature, image_cache):
     """Create a single Blender mesh object from an IRMesh."""
     # Create mesh data
     mesh_data = bpy.data.meshes.new('Mesh_' + ir_mesh.name)
@@ -59,8 +60,12 @@ def _build_mesh(ir_mesh, ir_model, armature):
     # Parent to armature
     mesh_object.parent = armature
 
-    # Placeholder material (solid gray)
-    mat = bpy.data.materials.new(name=f'mat_{ir_mesh.name}')
+    # Build material from IR
+    if ir_mesh.material is not None:
+        from .materials import build_material
+        mat = build_material(ir_mesh.material, image_cache=image_cache)
+    else:
+        mat = bpy.data.materials.new(name=f'mat_{ir_mesh.name}')
     mesh_data.materials.append(mat)
 
     # Bone weights
