@@ -32,6 +32,7 @@ class IRBoneTrack:
     rest_position: tuple[float, float, float] = (0.0, 0.0, 0.0)
     rest_scale: tuple[float, float, float] = (1.0, 1.0, 1.0)
     parent_accumulated_scale: tuple[float, float, float] | None = None
+    end_frame: float = 0  # animation duration from the source Animation object
     # Path animation (mutually exclusive with SRT channels)
     path_keyframes: list[IRKeyframe] | None = None
     spline_points: list[list[float]] | None = None

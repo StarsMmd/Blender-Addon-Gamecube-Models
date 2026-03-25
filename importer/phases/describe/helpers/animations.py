@@ -132,6 +132,7 @@ def _describe_bone_track(aobj, joint, bone, bone_index, bones):
         rest_position=tuple(joint.position),
         rest_scale=tuple(joint.scale),
         parent_accumulated_scale=parent_scl,
+        end_frame=aobj.end_frame,
         path_keyframes=path_keyframes if has_path else None,
         spline_points=spline_points if has_path else None,
     )

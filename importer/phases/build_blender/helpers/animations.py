@@ -170,12 +170,7 @@ def _bake_bone_track(track, action, bone_data, max_frame, logger):
     parent_scl = track.parent_accumulated_scale
 
     # Pass 2: frame-by-frame baking with scale correction
-    end_frame = 0
-    for curve in transform_list:
-        if curve and len(curve.keyframe_points) > 0:
-            last = curve.keyframe_points[-1].co[0]
-            end_frame = max(end_frame, int(last) + 1)
-    end_frame = min(end_frame, max_frame)
+    end_frame = min(int(track.end_frame), max_frame)
 
     for frame in range(end_frame):
         s = [transform_list[7].evaluate(frame),
@@ -261,7 +256,7 @@ def _apply_path_animation(track, action, bone_data_entry, max_frame):
     invmtx = bone_data_entry['temp_matrix_local'].inverted()
     points = track.spline_points
 
-    end = min(int(track.path_keyframes[-1].frame) + 1 if track.path_keyframes else 0, max_frame)
+    end = min(int(track.end_frame), max_frame) if track.end_frame > 0 else 0
 
     for frame in range(end):
         t = param_curve.evaluate(frame)
