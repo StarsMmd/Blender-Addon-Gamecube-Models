@@ -134,9 +134,10 @@ def describe_meshes(root_joint, bones, joint_to_bone_index):
                 colors=[(1.0, 1.0, 1.0, 1.0)] * total_loops,
             ))
 
-        # Extract bone weight info
+        # Extract bone weight info (may deform verts_out in-place for envelopes)
         bone_weights = _extract_bone_weights(
-            pobj, joint, bone_index, bones, joint_to_bone_index, faces
+            pobj, joint, bone_index, bones, joint_to_bone_index, faces,
+            verts_out
         )
 
         name = pobj.name if pobj.name else str(count)
@@ -221,8 +222,17 @@ def _extract_color_layers(source, face_list, faces, color_num):
     return color_layer, alpha_layer
 
 
-def _extract_bone_weights(pobj, joint, bone_index, bones, joint_to_bone_index, faces):
-    """Extract bone weight data from PObject property."""
+def _extract_bone_weights(pobj, joint, bone_index, bones, joint_to_bone_index, faces,
+                          vertices_out):
+    """Extract bone weight data from PObject property.
+
+    For envelope-weighted meshes, also deforms vertices_out in-place using
+    the envelope matrices (matching legacy Mesh.apply_bone_weights).
+
+    Args:
+        vertices_out: mutable list of vertex positions — may be modified in-place
+                      for envelope deformation.
+    """
     if pobj.property is None:
         # Rigid: attached to parent bone
         return IRBoneWeights(
@@ -234,7 +244,8 @@ def _extract_bone_weights(pobj, joint, bone_index, bones, joint_to_bone_index, f
 
     if pobj_type == POBJ_ENVELOPE:
         return _extract_envelope_weights(
-            pobj, joint, bone_index, bones, joint_to_bone_index, faces
+            pobj, joint, bone_index, bones, joint_to_bone_index, faces,
+            vertices_out
         )
     elif pobj_type == POBJ_SKIN:
         # Single bone deformation
@@ -254,8 +265,62 @@ def _extract_bone_weights(pobj, joint, bone_index, bones, joint_to_bone_index, f
     return IRBoneWeights(type=SkinType.RIGID, bone_name=bones[bone_index].name)
 
 
-def _extract_envelope_weights(pobj, joint, bone_index, bones, joint_to_bone_index, faces):
-    """Extract weighted envelope deformation data."""
+# --- Envelope helper functions (ported from legacy Mesh.py) ---
+
+def _find_skeleton_bone(bone_index, bones):
+    """Walk up the parent chain to find the first bone with SKELETON or SKELETON_ROOT flag."""
+    idx = bone_index
+    while idx is not None:
+        bone = bones[idx]
+        if bone.flags & (JOBJ_SKELETON_ROOT | JOBJ_SKELETON):
+            return idx
+        idx = bone.parent_index
+    return None
+
+
+def _get_invbind_matrix(bone_index, bones):
+    """Get the inverse bind matrix, walking up parents if the bone doesn't have one."""
+    idx = bone_index
+    while idx is not None:
+        bone = bones[idx]
+        if bone.inverse_bind_matrix:
+            return Matrix(bone.inverse_bind_matrix)
+        idx = bone.parent_index
+    return Matrix.Identity(4)
+
+
+def _envelope_coord_system(bone_index, bones):
+    """Compute envelope coordinate system matrix for a bone.
+
+    Ports legacy envelope_coord_system() to work with flat IRBone list.
+    """
+    bone = bones[bone_index]
+    if bone.flags & JOBJ_SKELETON_ROOT:
+        return None
+
+    skel_idx = _find_skeleton_bone(bone_index, bones)
+    if skel_idx is None:
+        return None
+
+    inv_bind = _get_invbind_matrix(bone_index, bones)
+    bone_world = Matrix(bone.world_matrix)
+
+    if skel_idx == bone_index:
+        # Skeleton root == this bone
+        return inv_bind.inverted()
+    elif bones[skel_idx].flags & JOBJ_SKELETON_ROOT:
+        # Skeleton root is the actual root
+        skel_world = Matrix(bones[skel_idx].world_matrix)
+        return skel_world.inverted() @ bone_world
+    else:
+        # General case
+        skel_world = Matrix(bones[skel_idx].world_matrix)
+        return (skel_world @ inv_bind).inverted() @ bone_world
+
+
+def _extract_envelope_weights(pobj, joint, bone_index, bones, joint_to_bone_index, faces,
+                              vertices_out):
+    """Extract weighted envelope deformation data and deform vertices."""
     vertex_list = pobj.vertex_list.vertices
     envelope_list = pobj.property
 
@@ -269,16 +334,10 @@ def _extract_envelope_weights(pobj, joint, bone_index, bones, joint_to_bone_inde
     if envelope_vertex_index is None:
         return IRBoneWeights(type=SkinType.RIGID, bone_name=bones[bone_index].name)
 
-    # Build vertex → envelope index mapping from face data
-    pos_idx = None
-    for i, vertex in enumerate(vertex_list):
-        if vertex.attribute == GX_VA_POS:
-            pos_idx = i
-            break
-
     env_source = pobj.sources[envelope_vertex_index]
     env_faces = pobj.face_lists[envelope_vertex_index]
 
+    # Build vertex → envelope index mapping from face data
     indices = {}
     for face_id, face in enumerate(faces):
         if face_id < len(env_faces):
@@ -286,6 +345,48 @@ def _extract_envelope_weights(pobj, joint, bone_index, bones, joint_to_bone_inde
             for vert_idx, global_vert in enumerate(face):
                 if vert_idx < len(env_face):
                     indices[global_vert] = env_source[env_face[vert_idx]] // 3
+
+    # Compute envelope coord system for the owning bone
+    coord = _envelope_coord_system(bone_index, bones)
+
+    # Compute per-envelope deformation matrices (matching legacy Mesh.apply_bone_weights)
+    deform_matrices = []
+    for envelope in envelope_list:
+        entries = [(entry.weight, entry.joint) for entry in envelope.envelopes]
+        zero = [[0] * 4 for _ in range(4)]
+        matrix = Matrix(zero)
+
+        if entries[0][0] == 1.0:
+            # Single-weight envelope
+            entry_joint = entries[0][1]
+            entry_bone_idx = joint_to_bone_index.get(entry_joint.address, 0)
+            entry_world = Matrix(bones[entry_bone_idx].world_matrix)
+            entry_invbind = _get_invbind_matrix(entry_bone_idx, bones)
+            if coord:
+                matrix = entry_world @ entry_invbind
+            else:
+                matrix = entry_world
+        else:
+            # Multi-weight envelope
+            for weight, entry_joint in entries:
+                entry_bone_idx = joint_to_bone_index.get(entry_joint.address, 0)
+                entry_world = Matrix(bones[entry_bone_idx].world_matrix)
+                entry_invbind = _get_invbind_matrix(entry_bone_idx, bones)
+                contrib = entry_world @ entry_invbind
+                for i in range(4):
+                    for j in range(4):
+                        matrix[i][j] += weight * contrib[i][j]
+
+        if coord:
+            matrix = matrix @ coord
+        deform_matrices.append(matrix)
+
+    # Deform vertex positions in-place
+    for vertex_idx, env_idx in indices.items():
+        if env_idx < len(deform_matrices):
+            old_pos = vertices_out[vertex_idx]
+            new_pos = deform_matrices[env_idx] @ Vector(old_pos)
+            vertices_out[vertex_idx] = tuple(new_pos)
 
     # Build per-vertex bone weight assignments
     assignments = []
