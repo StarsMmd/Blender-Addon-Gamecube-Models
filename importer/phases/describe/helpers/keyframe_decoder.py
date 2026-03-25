@@ -1,22 +1,36 @@
 """Pure-data keyframe decoder for HSD compressed animation streams.
 
 Decodes the opcode-packed keyframe byte format into IRKeyframe dataclasses.
-No Blender dependency — uses only the IR types and struct unpacking.
+No Blender dependency — uses only the IR types and binary helpers.
 """
-from .binary import read_native
-
-from ..IR.animation import IRKeyframe
-from ..IR.enums import Interpolation
-from ..Constants.hsd import (
-    HSD_A_OP_MASK, HSD_A_OP_NONE, HSD_A_OP_CON, HSD_A_OP_LIN,
-    HSD_A_OP_SPL0, HSD_A_OP_SPL, HSD_A_OP_KEY, HSD_A_OP_SLP,
-    HSD_A_PACK0_MASK, HSD_A_PACK0_SHIFT, HSD_A_PACK_EXT,
-    HSD_A_PACK1_MASK, HSD_A_PACK1_BIT,
-    HSD_A_WAIT_MASK, HSD_A_WAIT_BIT, HSD_A_WAIT_EXT,
-    HSD_A_FRAC_TYPE_MASK, HSD_A_FRAC_MASK,
-    HSD_A_FRAC_FLOAT, HSD_A_FRAC_S16, HSD_A_FRAC_U16,
-    HSD_A_FRAC_S8, HSD_A_FRAC_U8,
-)
+try:
+    from .....shared.helpers.binary import read_native
+    from .....shared.IR.animation import IRKeyframe
+    from .....shared.IR.enums import Interpolation
+    from .....shared.Constants.hsd import (
+        HSD_A_OP_MASK, HSD_A_OP_NONE, HSD_A_OP_CON, HSD_A_OP_LIN,
+        HSD_A_OP_SPL0, HSD_A_OP_SPL, HSD_A_OP_KEY, HSD_A_OP_SLP,
+        HSD_A_PACK0_MASK, HSD_A_PACK0_SHIFT, HSD_A_PACK_EXT,
+        HSD_A_PACK1_MASK, HSD_A_PACK1_BIT,
+        HSD_A_WAIT_MASK, HSD_A_WAIT_BIT, HSD_A_WAIT_EXT,
+        HSD_A_FRAC_TYPE_MASK, HSD_A_FRAC_MASK,
+        HSD_A_FRAC_FLOAT, HSD_A_FRAC_S16, HSD_A_FRAC_U16,
+        HSD_A_FRAC_S8, HSD_A_FRAC_U8,
+    )
+except (ImportError, SystemError):
+    from shared.helpers.binary import read_native
+    from shared.IR.animation import IRKeyframe
+    from shared.IR.enums import Interpolation
+    from shared.Constants.hsd import (
+        HSD_A_OP_MASK, HSD_A_OP_NONE, HSD_A_OP_CON, HSD_A_OP_LIN,
+        HSD_A_OP_SPL0, HSD_A_OP_SPL, HSD_A_OP_KEY, HSD_A_OP_SLP,
+        HSD_A_PACK0_MASK, HSD_A_PACK0_SHIFT, HSD_A_PACK_EXT,
+        HSD_A_PACK1_MASK, HSD_A_PACK1_BIT,
+        HSD_A_WAIT_MASK, HSD_A_WAIT_BIT, HSD_A_WAIT_EXT,
+        HSD_A_FRAC_TYPE_MASK, HSD_A_FRAC_MASK,
+        HSD_A_FRAC_FLOAT, HSD_A_FRAC_S16, HSD_A_FRAC_U16,
+        HSD_A_FRAC_S8, HSD_A_FRAC_U8,
+    )
 
 _INTERPOLATION_MAP = {
     HSD_A_OP_NONE: Interpolation.CONSTANT,

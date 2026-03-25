@@ -8,13 +8,13 @@ try:
     from .....shared.IO.Logger import StubLogger
     from .....shared.IR.animation import IRBoneAnimationSet, IRBoneTrack, IRKeyframe
     from .....shared.IR.enums import Interpolation
-    from .....shared.helpers.keyframe_decoder import decode_fobjdesc
+    from .keyframe_decoder import decode_fobjdesc
 except (ImportError, SystemError):
     from shared.Constants.hsd import *
     from shared.IO.Logger import StubLogger
     from shared.IR.animation import IRBoneAnimationSet, IRBoneTrack, IRKeyframe
     from shared.IR.enums import Interpolation
-    from shared.helpers.keyframe_decoder import decode_fobjdesc
+    from importer.phases.describe.helpers.keyframe_decoder import decode_fobjdesc
 
 
 # HSD channel type → (category, component_index)

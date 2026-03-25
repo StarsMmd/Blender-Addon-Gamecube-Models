@@ -1,16 +1,16 @@
 """Phase 3 — Node Tree Parsing: DAT bytes + section map → parsed node trees.
 
-Thin wrapper around the existing DATParser. Creates a parser from
-in-memory bytes, resolves sections using the provided section map,
-and returns the parsed section list.
+Thin wrapper around DATParser. Creates a parser from in-memory bytes,
+resolves sections using the provided section map, and returns the
+parsed section list.
 """
 import io
 
+from .helpers.dat_parser import DATParser
+
 try:
-    from ....shared.IO.DAT_io import DATParser
     from ....shared.IO.Logger import StubLogger
 except (ImportError, SystemError):
-    from shared.IO.DAT_io import DATParser
     from shared.IO.Logger import StubLogger
 
 
@@ -26,7 +26,6 @@ def parse_sections(dat_bytes, section_map, options, logger=StubLogger()):
     Returns:
         list of SectionInfo with parsed root nodes.
     """
-
     stream = io.BytesIO(dat_bytes)
 
     parse_options = dict(options)
