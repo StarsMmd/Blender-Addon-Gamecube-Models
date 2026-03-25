@@ -299,8 +299,8 @@ def test_ir_ik_constraint():
 
 
 def test_ir_bone_reposition():
-    r = IRBoneReposition(bone_name="arm", head_offset=(0, 0, 0), tail_offset=(0, 1, 0))
-    assert r.tail_offset == (0, 1, 0)
+    r = IRBoneReposition(bone_name="arm", bone_length=5.0)
+    assert r.bone_length == 5.0
 
 
 def test_ir_copy_location_constraint():

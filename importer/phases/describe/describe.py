@@ -24,6 +24,7 @@ except (ImportError, SystemError):
 from .helpers.bones import describe_bones
 from .helpers.meshes import describe_meshes
 from .helpers.animations import describe_bone_animations
+from .helpers.constraints import describe_constraints
 
 
 def describe_scene(sections, options, logger=StubLogger()):
@@ -134,11 +135,22 @@ def describe_scene(sections, options, logger=StubLogger()):
         bone_anims = describe_bone_animations(model_set, joint_to_bone_index, bones, options, logger)
         logger.info("  Animations: %d sets (%.3fs)", len(bone_anims), time.time() - t3)
 
+        t4 = time.time()
+        ik_c, cl_c, tt_c, cr_c, lr_c, ll_c = describe_constraints(root_joint, bones, joint_to_bone_index)
+        total_c = len(ik_c) + len(cl_c) + len(tt_c) + len(cr_c) + len(lr_c) + len(ll_c)
+        logger.info("  Constraints: %d (%.3fs)", total_c, time.time() - t4)
+
         ir_model = IRModel(
             name=model_name,
             bones=bones,
             meshes=meshes,
             bone_animations=bone_anims,
+            ik_constraints=ik_c,
+            copy_location_constraints=cl_c,
+            track_to_constraints=tt_c,
+            copy_rotation_constraints=cr_c,
+            limit_rotation_constraints=lr_c,
+            limit_location_constraints=ll_c,
             coordinate_rotation=(math.pi / 2, 0.0, 0.0),
         )
         ir_models.append(ir_model)

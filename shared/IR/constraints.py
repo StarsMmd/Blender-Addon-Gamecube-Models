@@ -4,10 +4,13 @@ from dataclasses import dataclass, field
 
 @dataclass
 class IRBoneReposition:
-    """Bone position offset applied during IK chain setup."""
+    """Bone length data for IK chain repositioning.
+
+    The target-specific build phase computes the actual head/tail offsets
+    from the bone_length and parent bone direction.
+    """
     bone_name: str
-    head_offset: tuple[float, float, float]
-    tail_offset: tuple[float, float, float]
+    bone_length: float
 
 
 @dataclass
