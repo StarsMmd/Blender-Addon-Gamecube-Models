@@ -10,17 +10,17 @@ import bpy
 from mathutils import Matrix, Vector
 
 try:
-    from ....shared.Constants.hsd import *
-    from ....shared.IO.Logger import NullLogger
-    from ....shared.Nodes.Classes.Animation.Frame import read_fobjdesc
-    from ....shared.BlenderVersion import BlenderVersion
+    from .....shared.Constants.hsd import *
+    from .....shared.IO.Logger import NullLogger
+    from .....shared.Nodes.Classes.Animation.Frame import read_fobjdesc
+    from .....shared.BlenderVersion import BlenderVersion
 except (ImportError, SystemError):
     from shared.Constants.hsd import *
     from shared.IO.Logger import NullLogger
     from shared.Nodes.Classes.Animation.Frame import read_fobjdesc
     from shared.BlenderVersion import BlenderVersion
 
-from ..describe.bones import _compile_srt_matrix
+from ...describe.helpers.bones import _compile_srt_matrix
 
 # HSD type → (temp data-path letter, component index)
 _TYPE_MAP = {

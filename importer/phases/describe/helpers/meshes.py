@@ -4,14 +4,14 @@ Extracts geometry (vertices, faces, UVs, colors, normals) and bone weight
 classification from parsed PObject nodes without any bpy calls.
 """
 try:
-    from ....shared.helpers.math_shim import Matrix, Vector
-    from ....shared.IR.geometry import IRMesh, IRUVLayer, IRColorLayer, IRBoneWeights, IRShapeKey
-    from ....shared.IR.enums import SkinType
-    from ....shared.Constants.hsd import (
+    from .....shared.helpers.math_shim import Matrix, Vector
+    from .....shared.IR.geometry import IRMesh, IRUVLayer, IRColorLayer, IRBoneWeights, IRShapeKey
+    from .....shared.IR.enums import SkinType
+    from .....shared.Constants.hsd import (
         POBJ_TYPE_MASK, POBJ_SKIN, POBJ_ENVELOPE, POBJ_SHAPEANIM,
         JOBJ_SKELETON, JOBJ_SKELETON_ROOT, JOBJ_HIDDEN,
     )
-    from ....shared.Constants.gx import (
+    from .....shared.Constants.gx import (
         GX_VA_POS, GX_VA_NRM, GX_VA_NBT, GX_VA_CLR0, GX_VA_CLR1,
         GX_VA_TEX0, GX_VA_PNMTXIDX,
     )
@@ -46,7 +46,7 @@ def describe_meshes(root_joint, bones, joint_to_bone_index, image_cache=None, lo
         image_cache = {}
     if logger is None:
         try:
-            from ....shared.IO.Logger import NullLogger
+            from .....shared.IO.Logger import NullLogger
         except (ImportError, SystemError):
             from shared.IO.Logger import NullLogger
         logger = NullLogger()

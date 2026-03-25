@@ -1,5 +1,5 @@
 """Tests for phases/describe/meshes.py — geometry extraction helpers."""
-from importer.phases.describe.meshes import (
+from importer.phases.describe.helpers.meshes import (
     _validate_mesh, _extract_uv_layer, _extract_normals,
 )
 from shared.IR.geometry import IRUVLayer

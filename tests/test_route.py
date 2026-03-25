@@ -1,6 +1,6 @@
 """Tests for Phase 2 — Section Routing."""
 import struct
-from importer.phases.route import route_sections, _resolve_type
+from importer.phases.route.route import route_sections, _resolve_type
 
 
 class TestResolveType:

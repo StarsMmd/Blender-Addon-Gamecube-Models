@@ -8,12 +8,12 @@ import bpy
 from mathutils import Vector
 
 try:
-    from ....shared.IR.enums import (
+    from .....shared.IR.enums import (
         ColorSource, LightingModel, CoordType, WrapMode, TextureInterpolation,
         LayerBlendMode, LightmapChannel, CombinerInputSource, CombinerOp,
         CombinerBias, CombinerScale, OutputBlendEffect, BlendFactor,
     )
-    from ....shared.BlenderVersion import BlenderVersion
+    from .....shared.BlenderVersion import BlenderVersion
 except (ImportError, SystemError):
     from shared.IR.enums import (
         ColorSource, LightingModel, CoordType, WrapMode, TextureInterpolation,

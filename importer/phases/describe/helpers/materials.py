@@ -4,18 +4,18 @@ Extracts render_mode flags, material colors, texture chain parameters,
 and decoded image pixel data into IR dataclasses without any bpy calls.
 """
 try:
-    from ....shared.IR.material import (
+    from .....shared.IR.material import (
         IRMaterial, IRTextureLayer, IRImage, FragmentBlending,
         CombinerInput, CombinerStage, ColorCombiner,
     )
-    from ....shared.IR.enums import (
+    from .....shared.IR.enums import (
         ColorSource, LightingModel, CoordType, WrapMode, TextureInterpolation,
         LayerBlendMode, LightmapChannel, CombinerInputSource, CombinerOp,
         CombinerBias, CombinerScale, OutputBlendEffect, BlendFactor,
     )
-    from ....shared.helpers.srgb import srgb_to_linear
-    from ....shared.Constants.hsd import *
-    from ....shared.Constants.gx import *
+    from .....shared.helpers.srgb import srgb_to_linear
+    from .....shared.Constants.hsd import *
+    from .....shared.Constants.gx import *
 except (ImportError, SystemError):
     from shared.IR.material import (
         IRMaterial, IRTextureLayer, IRImage, FragmentBlending,
