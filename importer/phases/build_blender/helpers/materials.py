@@ -192,31 +192,29 @@ def _build_texture_sampling(tex_layer, nodes, links, image_cache, tex_idx=0):
         uv = nodes.new('ShaderNodeTexCoord')
         uv_output = uv.outputs[6]
 
-    # Mapping node
+    # Mapping node — match legacy approach: bake repeat into scale so
+    # material animation V offsets work correctly with the Mapping node.
     mapping = nodes.new('ShaderNodeMapping')
     mapping.name = 'Mapping_%d' % tex_idx
     mapping.vector_type = 'TEXTURE'
     mapping.inputs[2].default_value = tex_layer.rotation
     mapping.inputs[1].default_value = list(tex_layer.translation)
-    mapping.inputs[3].default_value = tex_layer.scale
+    mapping.inputs[3].default_value = list(tex_layer.scale)
+
+    # Bake repeat into scale (legacy divides scale by repeat)
+    mapping.inputs[3].default_value[0] /= tex_layer.repeat_s
+    mapping.inputs[3].default_value[1] /= tex_layer.repeat_t
 
     # Blender UV origin is bottom-left; GX is top-left — flip V
-    mapping.inputs[1].default_value[1] = 1 - tex_layer.scale[1] - tex_layer.translation[1]
+    # Uses raw scale * repeat (before repeat division) to match legacy formula
+    mapping.inputs[1].default_value[1] = (
+        (1.0 - tex_layer.scale[1] * tex_layer.repeat_t) - tex_layer.translation[1]
+    )
 
     if tex_layer.coord_type == CoordType.REFLECTION:
         mapping.inputs[2].default_value[0] -= math.pi / 2
 
-    # Repeat UV scaling
-    if uv_output and (tex_layer.repeat_s > 1 or tex_layer.repeat_t > 1):
-        multiply = nodes.new('ShaderNodeVectorMath')
-        multiply.operation = 'MULTIPLY'
-        multiply.inputs[1].default_value = (
-            tex_layer.repeat_s if tex_layer.repeat_s > 1 else 1,
-            tex_layer.repeat_t if tex_layer.repeat_t > 1 else 1,
-            1)
-        links.new(uv_output, multiply.inputs[0])
-        links.new(multiply.outputs[0], mapping.inputs[0])
-    elif uv_output:
+    if uv_output:
         links.new(uv_output, mapping.inputs[0])
 
     # Texture image node

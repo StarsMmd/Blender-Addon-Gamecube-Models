@@ -3,11 +3,13 @@
 Walks MaterialAnimationJoint tree parallel to Joint tree, decoding
 material color/alpha and texture UV keyframes into IR types.
 """
+from types import SimpleNamespace
+
 try:
     from .....shared.Constants.hsd import *
     from .....shared.helpers.srgb import srgb_to_linear
     from .....shared.IR.animation import (
-        IRMaterialAnimationSet, IRMaterialTrack, IRTextureUVTrack, IRKeyframe,
+        IRMaterialTrack, IRTextureUVTrack, IRKeyframe,
     )
     from .....shared.IR.enums import Interpolation
     from .keyframe_decoder import decode_fobjdesc
@@ -15,7 +17,7 @@ except (ImportError, SystemError):
     from shared.Constants.hsd import *
     from shared.helpers.srgb import srgb_to_linear
     from shared.IR.animation import (
-        IRMaterialAnimationSet, IRMaterialTrack, IRTextureUVTrack, IRKeyframe,
+        IRMaterialTrack, IRTextureUVTrack, IRKeyframe,
     )
     from shared.IR.enums import Interpolation
     from importer.phases.describe.helpers.keyframe_decoder import decode_fobjdesc
@@ -43,10 +45,10 @@ _TEX_UV_MAP = {
 
 
 def describe_material_animations(model_set, joint_to_bone_index, bones, options, logger, model_name=None):
-    """Walk MaterialAnimationJoint trees and produce IRMaterialAnimationSet list.
+    """Walk MaterialAnimationJoint trees and produce material animation sets.
 
     Returns:
-        list[IRMaterialAnimationSet]
+        list of objects with .name and .tracks attributes (for pairing into IRBoneAnimationSet).
     """
     mat_anim_joints = getattr(model_set, 'animated_material_joints', None) or []
     root_joint = model_set.root_joint
@@ -60,7 +62,7 @@ def describe_material_animations(model_set, joint_to_bone_index, bones, options,
         _walk_parallel(mat_anim_root, root_joint, tracks, joint_to_bone_index, bones, logger)
 
         if tracks:
-            anim_sets.append(IRMaterialAnimationSet(name=name, tracks=tracks))
+            anim_sets.append(SimpleNamespace(name=name, tracks=tracks))
             logger.debug("  Material animation set '%s': %d tracks", name, len(tracks))
 
     return anim_sets

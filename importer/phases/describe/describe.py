@@ -168,12 +168,18 @@ def describe_scene(sections, options, logger=StubLogger()):
         mat_anims = describe_material_animations(model_set, joint_to_bone_index, bones, options, logger, model_name=model_name)
         logger.info("  Material animations: %d sets (%.3fs)", len(mat_anims), time.time() - t5)
 
+        # Pair material animations into bone animation sets by index
+        for i, mat_anim_set in enumerate(mat_anims):
+            if i < len(bone_anims):
+                bone_anims[i].material_tracks = mat_anim_set.tracks
+                logger.debug("  Paired material anim '%s' → '%s' (%d tracks)",
+                             mat_anim_set.name, bone_anims[i].name, len(mat_anim_set.tracks))
+
         ir_model = IRModel(
             name=model_name,
             bones=bones,
             meshes=meshes,
             bone_animations=bone_anims,
-            material_animations=mat_anims,
             ik_constraints=ik_c,
             copy_location_constraints=cl_c,
             track_to_constraints=tt_c,

@@ -54,9 +54,10 @@ class IRBoneTrack:
 
 @dataclass
 class IRBoneAnimationSet:
-    """One complete bone animation set."""
+    """One complete animation set (bone + optional paired material animations)."""
     name: str
     tracks: list[IRBoneTrack] = field(default_factory=list)
+    material_tracks: list[IRMaterialTrack] = field(default_factory=list)
     loop: bool = False
     is_static: bool = False
 
@@ -84,13 +85,6 @@ class IRMaterialTrack:
     alpha: list[IRKeyframe] | None = None
     texture_uv_tracks: list[IRTextureUVTrack] = field(default_factory=list)
     loop: bool = False
-
-
-@dataclass
-class IRMaterialAnimationSet:
-    """One material animation set."""
-    name: str
-    tracks: list[IRMaterialTrack] = field(default_factory=list)
 
 
 @dataclass

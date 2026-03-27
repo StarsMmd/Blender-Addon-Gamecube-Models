@@ -10,7 +10,7 @@ from .material import (
 )
 from .animation import (
     IRKeyframe, IRSplinePath, IRBoneAnimationSet, IRBoneTrack,
-    IRMaterialAnimationSet, IRMaterialTrack, IRTextureUVTrack,
+    IRMaterialTrack, IRTextureUVTrack,
     IRShapeAnimationSet, IRShapeTrack,
 )
 from .constraints import (

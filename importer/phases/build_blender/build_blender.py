@@ -4,7 +4,6 @@ from .helpers.meshes import build_meshes
 from .helpers.animations import build_bone_animations
 from .helpers.constraints import build_constraints
 from .helpers.lights import build_lights
-from .helpers.material_animations import build_material_animations
 
 try:
     from ....shared.helpers.logger import StubLogger
@@ -32,11 +31,7 @@ def build_blender_scene(ir_scene, context, options, logger=StubLogger()):
 
         if ir_model.bone_animations:
             logger.info("  Building %d animation set(s)", len(ir_model.bone_animations))
-            build_bone_animations(ir_model, armature, options, logger=logger)
-
-        if ir_model.material_animations:
-            logger.info("  Building %d material animation set(s)", len(ir_model.material_animations))
-            build_material_animations(ir_model, material_lookup, options, logger=logger)
+            build_bone_animations(ir_model, armature, options, logger=logger, material_lookup=material_lookup)
 
         build_constraints(ir_model, armature, logger)
 

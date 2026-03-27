@@ -23,25 +23,33 @@ except (ImportError, SystemError):
     from shared.helpers.math_shim import compile_srt_matrix
 
 
-def build_bone_animations(ir_model, armature, options, logger=StubLogger()):
+def build_bone_animations(ir_model, armature, options, logger=StubLogger(), material_lookup=None):
     """Create Blender Actions from IRBoneAnimationSet list.
+
+    Each Action contains an OBJECT slot for bone fcurves, plus MATERIAL slots
+    for any paired material animation tracks (unified multi-slot actions).
 
     Args:
         ir_model: IRModel with bone_animations and bones populated.
         armature: Blender armature object.
         options: importer options dict.
         logger: Logger instance.
+        material_lookup: dict mapping mesh_name → bpy.types.Material (for material animations).
     """
+    from .material_animations import apply_color_tracks, apply_texture_uv_tracks
+
     max_frame = options.get("max_frame", 1000)
     bone_data = _build_bone_data_lookup(ir_model.bones)
     actions = []
+    # Track (material, slot_index) for final assignment to the first action
+    mat_slot_indices = {}  # {material: slot_index_in_action}
 
     for anim_set in ir_model.bone_animations:
         action = bpy.data.actions.new(anim_set.name)
         action.use_fake_user = True
-        if bpy.app.version >= BlenderVersion(4, 5, 0):
-            action.slots.new('OBJECT', 'Armature')
-            action.slots.active = action.slots[0]
+
+        armature_slot = action.slots.new('OBJECT', 'Armature')
+        action.slots.active = armature_slot
 
         bpy.context.view_layer.objects.active = armature
         bpy.ops.object.mode_set(mode='POSE')
@@ -53,11 +61,44 @@ def build_bone_animations(ir_model, armature, options, logger=StubLogger()):
 
         armature.animation_data_create()
         armature.animation_data.action = action
-        if bpy.app.version >= BlenderVersion(4, 4, 0):
-            armature.animation_data.action_slot = action.slots[0]
+        armature.animation_data.action_slot = armature_slot
 
         for track in anim_set.tracks:
             _bake_bone_track(track, action, bone_data, max_frame, logger, armature)
+
+        # Build paired material animation tracks into the same action
+        # using channelbag API so fcurves are associated with the correct slot
+        mat_fcurve_count = 0
+        if anim_set.material_tracks and material_lookup:
+            # Get the existing layer/strip (created by bone fcurves via action.fcurves proxy)
+            layer = action.layers[0]
+            strip = layer.strips[0]
+
+            for mat_track in anim_set.material_tracks:
+                mat = material_lookup.get(mat_track.material_mesh_name)
+                if not mat:
+                    continue
+
+                # Create a MATERIAL slot and its channelbag in the same action
+                mat_slot = action.slots.new('MATERIAL', mat.name or 'Material')
+                channelbag = strip.channelbag(mat_slot, ensure=True)
+
+                # Temporarily assign so Blender can resolve the slot
+                if not mat.animation_data:
+                    mat.animation_data_create()
+                mat.animation_data.action = action
+                mat.animation_data.action_slot = mat_slot
+
+                before = len(channelbag.fcurves)
+                apply_color_tracks(mat_track, mat, channelbag.fcurves, max_frame, logger)
+                apply_texture_uv_tracks(mat_track, mat, channelbag.fcurves, logger)
+                mat_fcurve_count += len(channelbag.fcurves) - before
+                # All actions use the same slot layout, so record the index once
+                if mat not in mat_slot_indices:
+                    mat_slot_indices[mat] = len(action.slots) - 1
+
+            # Restore armature slot as active
+            action.slots.active = armature_slot
 
         # Detect static poses
         is_static = True
@@ -75,7 +116,8 @@ def build_bone_animations(ir_model, armature, options, logger=StubLogger()):
             action.name = anim_set.name.replace('Anim', 'Pose')
 
         actions.append(action)
-        logger.info("  Action '%s': %d fcurves, static=%s", action.name, len(action.fcurves), is_static)
+        logger.info("  Action '%s': %d bone fcurves, %d material fcurves, static=%s",
+                    action.name, len(action.fcurves), mat_fcurve_count, is_static)
 
         bpy.ops.object.mode_set(mode='OBJECT')
 
@@ -91,8 +133,59 @@ def build_bone_animations(ir_model, armature, options, logger=StubLogger()):
 
     if actions:
         first_anim = next((a for a in actions if '_Anim_' in a.name), None)
-        armature.animation_data.action = first_anim or actions[0]
+        active_action = first_anim or actions[0]
+        armature.animation_data.action = active_action
+
+        # Assign each animated material to the same action using stored slot index
+        for mat, slot_idx in mat_slot_indices.items():
+            if not mat.animation_data:
+                continue
+            mat.animation_data.action = active_action
+            mat.animation_data.action_slot = active_action.slots[slot_idx]
+
+        # Register a handler to sync material actions when the armature's action changes
+        if mat_slot_indices:
+            _register_action_sync_handler(armature, mat_slot_indices)
+
     bpy.context.scene.frame_set(0)
+
+
+def _register_action_sync_handler(armature, mat_slot_indices):
+    """Register a depsgraph handler that syncs material actions when the armature's action changes.
+
+    When the user switches the armature's active action, all materials that have
+    MATERIAL slots in the new action are automatically switched to match.
+    """
+    armature_name = armature.name
+    # Store material names and slot indices (not references, which can go stale)
+    mat_info = [(mat.name, slot_idx) for mat, slot_idx in mat_slot_indices.items()]
+    last_action = [armature.animation_data.action]
+
+    def on_depsgraph_update(scene):
+        arm = bpy.data.objects.get(armature_name)
+        if not arm or not arm.animation_data or not arm.animation_data.action:
+            return
+        current_action = arm.animation_data.action
+        if current_action == last_action[0]:
+            return
+        last_action[0] = current_action
+
+        # Sync all tracked materials to the new action
+        for mat_name, slot_idx in mat_info:
+            mat = bpy.data.materials.get(mat_name)
+            if not mat or not mat.animation_data:
+                continue
+            if slot_idx < len(current_action.slots):
+                mat.animation_data.action = current_action
+                mat.animation_data.action_slot = current_action.slots[slot_idx]
+
+    # Remove any existing sync handler for this armature
+    for handler in list(bpy.app.handlers.depsgraph_update_post):
+        if hasattr(handler, '_dat_sync_armature') and handler._dat_sync_armature == armature_name:
+            bpy.app.handlers.depsgraph_update_post.remove(handler)
+
+    on_depsgraph_update._dat_sync_armature = armature_name
+    bpy.app.handlers.depsgraph_update_post.append(on_depsgraph_update)
 
 
 def _bake_bone_track(track, action, bone_data, max_frame, logger, armature=None):
@@ -130,16 +223,6 @@ def _bake_bone_track(track, action, bone_data, max_frame, logger, armature=None)
                     point = curve.keyframe_points.insert(kf.frame, kf.value)
                     point.interpolation = kf.interpolation.value
                 transform_list[idx] = curve
-
-                # Apply bezier handles after all points are inserted
-                kf_count = len(curve.keyframe_points)
-                offset = kf_count - len(keyframes)
-                for i, kf in enumerate(keyframes):
-                    point = curve.keyframe_points[offset + i]
-                    if kf.handle_left:
-                        point.handle_left[:] = kf.handle_left
-                    if kf.handle_right:
-                        point.handle_right[:] = kf.handle_right
 
     # Fill missing channels with rest-pose constants
     rest = {

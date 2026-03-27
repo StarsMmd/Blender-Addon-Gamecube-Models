@@ -12,7 +12,7 @@ from shared.IR import (
     CombinerInput, CombinerStage, ColorCombiner, FragmentBlending,
     # Animation
     IRKeyframe, IRSplinePath, IRBoneAnimationSet, IRBoneTrack,
-    IRMaterialAnimationSet, IRMaterialTrack, IRTextureUVTrack,
+    IRMaterialTrack, IRTextureUVTrack,
     IRShapeAnimationSet, IRShapeTrack,
     # Constraints
     IRIKConstraint, IRBoneReposition, IRCopyLocationConstraint,
@@ -276,19 +276,22 @@ def test_ir_bone_track():
 def test_ir_bone_animation_set():
     anim = IRBoneAnimationSet(name="walk")
     assert anim.tracks == []
+    assert anim.material_tracks == []
     assert anim.loop is False
     assert anim.is_static is False
+
+
+def test_ir_bone_animation_set_with_material_tracks():
+    mat_track = IRMaterialTrack(material_mesh_name="mesh_0_Bone")
+    anim = IRBoneAnimationSet(name="Test_Anim_00", material_tracks=[mat_track])
+    assert len(anim.material_tracks) == 1
+    assert anim.material_tracks[0].material_mesh_name == "mesh_0_Bone"
 
 
 def test_ir_material_track():
     track = IRMaterialTrack(material_mesh_name="mesh_0_mat")
     assert track.diffuse_r is None
     assert track.texture_uv_tracks == []
-
-
-def test_ir_material_animation_set():
-    anim = IRMaterialAnimationSet(name="mat_anim_0")
-    assert anim.tracks == []
 
 
 def test_ir_texture_uv_track():
