@@ -85,17 +85,24 @@ def _walk_parallel(mat_anim_joint, joint, tracks, jtb, bones, logger):
         # mesh_indices by counting PObjs per DObj.
         pobj_offset = 0  # cumulative PObj count within this bone's meshes
         while mat_anim and mesh:
-            global_idx = bone.mesh_indices[pobj_offset] if pobj_offset < len(bone.mesh_indices) else 0
-            track = _describe_material_track(mat_anim, mesh, bone.name, global_idx, logger)
-            if track:
-                tracks.append(track)
-            # Count PObjs in this DObj to advance past them
+            # Count PObjs in this DObj
             pobj_count = 0
             pobj = mesh.pobject
             while pobj:
                 pobj_count += 1
                 pobj = pobj.next
-            pobj_offset += max(pobj_count, 1)
+            pobj_count = max(pobj_count, 1)
+
+            # Create a track for EACH PObj in this DObj, since each PObj
+            # becomes a separate IRMesh with its own Blender material.
+            for p in range(pobj_count):
+                idx = pobj_offset + p
+                global_idx = bone.mesh_indices[idx] if idx < len(bone.mesh_indices) else 0
+                track = _describe_material_track(mat_anim, mesh, bone.name, global_idx, logger)
+                if track:
+                    tracks.append(track)
+
+            pobj_offset += pobj_count
             mat_anim = mat_anim.next
             mesh = mesh.next
 

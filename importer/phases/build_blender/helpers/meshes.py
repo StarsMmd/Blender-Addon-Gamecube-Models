@@ -31,7 +31,9 @@ def build_meshes(ir_model, armature, context, options, logger=StubLogger()):
             mesh_objects_by_bone.setdefault(bone_idx, []).append(mesh_obj)
         if mat:
             bone_name = ir_model.bones[ir_mesh.parent_bone_index].name if ir_mesh.parent_bone_index < len(ir_model.bones) else 'unknown'
-            material_lookup["mesh_%d_%s" % (i, bone_name)] = mat
+            key = "mesh_%d_%s" % (i, bone_name)
+            material_lookup[key] = mat
+            logger.debug("  material_lookup['%s'] = '%s'", key, mat.name)
 
     # Copy meshes for instance bones (JOBJ_INSTANCE)
     instance_count = 0

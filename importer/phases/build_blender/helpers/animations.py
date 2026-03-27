@@ -76,6 +76,7 @@ def build_bone_animations(ir_model, armature, options, logger=StubLogger(), mate
 
             for mat_track in anim_set.material_tracks:
                 mat = material_lookup.get(mat_track.material_mesh_name)
+                logger.debug("    MatTrack lookup: '%s' → %s", mat_track.material_mesh_name, mat.name if mat else 'NOT FOUND')
                 if not mat:
                     continue
 
@@ -223,6 +224,16 @@ def _bake_bone_track(track, action, bone_data, max_frame, logger, armature=None)
                     point = curve.keyframe_points.insert(kf.frame, kf.value)
                     point.interpolation = kf.interpolation.value
                 transform_list[idx] = curve
+
+                # Apply bezier handles after all points are inserted
+                kf_count = len(curve.keyframe_points)
+                offset = kf_count - len(keyframes)
+                for i, kf in enumerate(keyframes):
+                    point = curve.keyframe_points[offset + i]
+                    if kf.handle_left:
+                        point.handle_left[:] = kf.handle_left
+                    if kf.handle_right:
+                        point.handle_right[:] = kf.handle_right
 
     # Fill missing channels with rest-pose constants
     rest = {
