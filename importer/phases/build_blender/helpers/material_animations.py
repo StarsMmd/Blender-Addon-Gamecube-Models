@@ -145,7 +145,5 @@ def _apply_texture_uv_tracks(track, material, action, logger):
 
 def _find_mapping_node(material, texture_index):
     """Find the Mapping shader node for a given texture index."""
-    mapping_nodes = [n for n in material.node_tree.nodes if n.name.startswith('Mapping_')]
-    if texture_index < len(mapping_nodes):
-        return mapping_nodes[texture_index]
-    return None
+    target_name = 'Mapping_%d' % texture_index
+    return material.node_tree.nodes.get(target_name)

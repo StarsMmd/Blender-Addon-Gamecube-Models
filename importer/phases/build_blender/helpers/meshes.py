@@ -20,11 +20,12 @@ def build_meshes(ir_model, armature, context, options, logger=StubLogger()):
         options: dict of importer options.
         logger: Logger instance (defaults to StubLogger).
     """
+    model_name = ir_model.name or "Model"
     image_cache = {}
     material_lookup = {}  # {mesh_name: bpy.types.Material} for material animations
     mesh_objects_by_bone = {}  # {bone_index: [mesh_objects]}
     for i, ir_mesh in enumerate(ir_model.meshes):
-        mesh_obj, mat = _build_mesh(ir_mesh, ir_model, armature, image_cache, logger, i)
+        mesh_obj, mat = _build_mesh(ir_mesh, ir_model, armature, image_cache, logger, i, model_name)
         if mesh_obj:
             bone_idx = ir_mesh.parent_bone_index
             mesh_objects_by_bone.setdefault(bone_idx, []).append(mesh_obj)
@@ -50,11 +51,12 @@ def build_meshes(ir_model, armature, context, options, logger=StubLogger()):
     return material_lookup
 
 
-def _build_mesh(ir_mesh, ir_model, armature, image_cache, logger, mesh_idx):
+def _build_mesh(ir_mesh, ir_model, armature, image_cache, logger, mesh_idx, model_name="Model"):
     """Create a single Blender mesh object from an IRMesh."""
     # Create mesh data
-    mesh_data = bpy.data.meshes.new('Mesh_' + ir_mesh.name)
-    mesh_object = bpy.data.objects.new(ir_mesh.name, mesh_data)
+    mesh_name = '%s_mesh_%s' % (model_name, ir_mesh.name)
+    mesh_data = bpy.data.meshes.new(mesh_name)
+    mesh_object = bpy.data.objects.new(mesh_name, mesh_data)
     mesh_object.location = Vector((0, 0, 0))
 
     bpy.context.scene.collection.objects.link(mesh_object)
@@ -91,11 +93,12 @@ def _build_mesh(ir_mesh, ir_model, armature, image_cache, logger, mesh_idx):
     # Build material from IR
     if ir_mesh.material is not None:
         from .materials import build_material
-        mat = build_material(ir_mesh.material, image_cache=image_cache)
+        mat_name = '%s_mat_%d' % (model_name, mesh_idx)
+        mat = build_material(ir_mesh.material, image_cache=image_cache, name=mat_name)
         logger.debug("  mesh[%d] '%s': material '%s' with %d textures",
                      mesh_idx, ir_mesh.name, mat.name, len(ir_mesh.material.texture_layers))
     else:
-        mat = bpy.data.materials.new(name=f'mat_{ir_mesh.name}')
+        mat = bpy.data.materials.new(name='%s_mat_%d' % (model_name, mesh_idx))
         logger.debug("  mesh[%d] '%s': placeholder material (no IR material)", mesh_idx, ir_mesh.name)
     mesh_data.materials.append(mat)
 

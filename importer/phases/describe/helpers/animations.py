@@ -28,7 +28,7 @@ _CHANNEL_MAP = {
 }
 
 
-def describe_bone_animations(model_set, joint_to_bone_index, bones, options, logger=StubLogger()):
+def describe_bone_animations(model_set, joint_to_bone_index, bones, options, logger=StubLogger(), model_name=None):
     """Walk AnimationJoint trees and produce IRBoneAnimationSet list.
 
     Args:
@@ -37,16 +37,18 @@ def describe_bone_animations(model_set, joint_to_bone_index, bones, options, log
         bones: list[IRBone] from describe_bones().
         options: importer options dict.
         logger: Logger instance.
+        model_name: Name to use for animation naming (defaults to root joint name).
 
     Returns:
         list[IRBoneAnimationSet] with decoded keyframes per bone per channel.
     """
     animated_joints = getattr(model_set, 'animated_joints', None) or []
     root_joint = model_set.root_joint
+    name_prefix = model_name or root_joint.name or "Model"
     anim_sets = []
 
     for i, anim_joint_root in enumerate(animated_joints):
-        name = "%s_Anim_%02d" % (root_joint.name or "Model", i)
+        name = "%s_Anim_%02d" % (name_prefix, i)
         tracks = []
         loop = [False]  # mutable for closure
 

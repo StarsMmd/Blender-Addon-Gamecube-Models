@@ -23,12 +23,13 @@ except (ImportError, SystemError):
     from shared.BlenderVersion import BlenderVersion
 
 
-def build_material(ir_material, image_cache=None):
+def build_material(ir_material, image_cache=None, name=''):
     """Create a Blender material from IRMaterial.
 
     Args:
         ir_material: IRMaterial dataclass.
         image_cache: dict for caching bpy.data.images by (image_id, palette_id).
+        name: Material name.
 
     Returns:
         bpy.types.Material.
@@ -36,7 +37,7 @@ def build_material(ir_material, image_cache=None):
     if image_cache is None:
         image_cache = {}
 
-    mat = bpy.data.materials.new('')
+    mat = bpy.data.materials.new(name)
     mat.use_nodes = True
     nodes = mat.node_tree.nodes
     links = mat.node_tree.links
@@ -53,8 +54,8 @@ def build_material(ir_material, image_cache=None):
     bump_map = None
 
     # --- Texture chain ---
-    for tex_layer in ir_material.texture_layers:
-        cur_color, cur_alpha, uv_output = _build_texture_sampling(tex_layer, nodes, links, image_cache)
+    for tex_idx, tex_layer in enumerate(ir_material.texture_layers):
+        cur_color, cur_alpha, uv_output = _build_texture_sampling(tex_layer, nodes, links, image_cache, tex_idx)
 
         # TEV combiner
         if tex_layer.combiner:
@@ -179,7 +180,7 @@ def _build_base_color_alpha(ir_mat, nodes, links):
     return color.outputs[0], alpha.outputs[0]
 
 
-def _build_texture_sampling(tex_layer, nodes, links, image_cache):
+def _build_texture_sampling(tex_layer, nodes, links, image_cache, tex_idx=0):
     """Build UV mapping + texture sampling nodes for one texture layer."""
     # UV coordinate source
     uv_output = None
@@ -193,6 +194,7 @@ def _build_texture_sampling(tex_layer, nodes, links, image_cache):
 
     # Mapping node
     mapping = nodes.new('ShaderNodeMapping')
+    mapping.name = 'Mapping_%d' % tex_idx
     mapping.vector_type = 'TEXTURE'
     mapping.inputs[2].default_value = tex_layer.rotation
     mapping.inputs[1].default_value = list(tex_layer.translation)

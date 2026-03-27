@@ -107,7 +107,13 @@ def describe_scene(sections, options, logger=StubLogger()):
         if root_joint is None:
             continue
 
-        model_name = root_joint.name or "Model"
+        filepath = options.get("filepath", "")
+        if filepath:
+            import os
+            base_name = os.path.basename(filepath).split('.')[0]
+        else:
+            base_name = None
+        model_name = base_name or root_joint.name or "Model"
         logger.info("Describing model: %s", model_name)
 
         t1 = time.time()
@@ -150,7 +156,7 @@ def describe_scene(sections, options, logger=StubLogger()):
                                  fb.effect.value, fb.source_factor.value, fb.dest_factor.value)
 
         t3 = time.time()
-        bone_anims = describe_bone_animations(model_set, joint_to_bone_index, bones, options, logger)
+        bone_anims = describe_bone_animations(model_set, joint_to_bone_index, bones, options, logger, model_name=model_name)
         logger.info("  Animations: %d sets (%.3fs)", len(bone_anims), time.time() - t3)
 
         t4 = time.time()
@@ -159,7 +165,7 @@ def describe_scene(sections, options, logger=StubLogger()):
         logger.info("  Constraints: %d (%.3fs)", total_c, time.time() - t4)
 
         t5 = time.time()
-        mat_anims = describe_material_animations(model_set, joint_to_bone_index, bones, options, logger)
+        mat_anims = describe_material_animations(model_set, joint_to_bone_index, bones, options, logger, model_name=model_name)
         logger.info("  Material animations: %d sets (%.3fs)", len(mat_anims), time.time() - t5)
 
         ir_model = IRModel(

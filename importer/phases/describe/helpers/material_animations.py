@@ -42,7 +42,7 @@ _TEX_UV_MAP = {
 }
 
 
-def describe_material_animations(model_set, joint_to_bone_index, bones, options, logger):
+def describe_material_animations(model_set, joint_to_bone_index, bones, options, logger, model_name=None):
     """Walk MaterialAnimationJoint trees and produce IRMaterialAnimationSet list.
 
     Returns:
@@ -50,10 +50,11 @@ def describe_material_animations(model_set, joint_to_bone_index, bones, options,
     """
     mat_anim_joints = getattr(model_set, 'animated_material_joints', None) or []
     root_joint = model_set.root_joint
+    name_prefix = model_name or root_joint.name or "Model"
     anim_sets = []
 
     for i, mat_anim_root in enumerate(mat_anim_joints):
-        name = "%s_MatAnim_%02d" % (root_joint.name or "Model", i)
+        name = "%s_MatAnim_%02d" % (name_prefix, i)
         tracks = []
 
         _walk_parallel(mat_anim_root, root_joint, tracks, joint_to_bone_index, bones, logger)
@@ -75,15 +76,26 @@ def _walk_parallel(mat_anim_joint, joint, tracks, jtb, bones, logger):
     if mat_anim_joint.animation and joint.property and isinstance(joint.property, Mesh):
         mat_anim = mat_anim_joint.animation
         mesh = joint.property
-        mesh_idx = 0
+        bone_idx = jtb.get(joint.address, 0)
+        bone = bones[bone_idx]
+        # Use global mesh indices from IRBone to match build phase keying.
+        # Each DObj may produce multiple PObjs (IRMeshes), so step through
+        # mesh_indices by counting PObjs per DObj.
+        pobj_offset = 0  # cumulative PObj count within this bone's meshes
         while mat_anim and mesh:
-            bone_idx = jtb.get(joint.address, 0)
-            track = _describe_material_track(mat_anim, mesh, bones[bone_idx].name, mesh_idx, logger)
+            global_idx = bone.mesh_indices[pobj_offset] if pobj_offset < len(bone.mesh_indices) else 0
+            track = _describe_material_track(mat_anim, mesh, bone.name, global_idx, logger)
             if track:
                 tracks.append(track)
+            # Count PObjs in this DObj to advance past them
+            pobj_count = 0
+            pobj = mesh.pobject
+            while pobj:
+                pobj_count += 1
+                pobj = pobj.next
+            pobj_offset += max(pobj_count, 1)
             mat_anim = mat_anim.next
             mesh = mesh.next
-            mesh_idx += 1
 
     if mat_anim_joint.child and joint.child:
         _walk_parallel(mat_anim_joint.child, joint.child, tracks, jtb, bones, logger)
