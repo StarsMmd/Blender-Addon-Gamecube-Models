@@ -22,7 +22,7 @@ File reading happens at the entry points (`BlenderPlugin.py` / `CommandLineInter
 
 ## Phase 1: Container Extraction
 
-**File:** `importer/phases/extract/extract.py`
+**Files:** `importer/phases/extract/extract.py`, `helpers/fsys.py`, `helpers/lzss.py`
 
 ### Function
 
@@ -32,18 +32,63 @@ def extract_dat(raw_bytes: bytes, filename: str) -> list[tuple[bytes, ContainerM
 
 ### Purpose
 
-GameCube model data is often wrapped in container formats (PKX archives for Pokémon games). This phase strips container headers to expose the raw DAT binary.
+GameCube model data is often wrapped in container formats (PKX archives, FSYS archives). This phase detects the container format, strips headers, decompresses LZSS payloads, and exposes the raw DAT binaries.
 
 ### Container Detection
 
-Routes by file extension (case-insensitive):
+Routes by file extension or magic bytes:
 
-| Extension | Behavior |
+| Extension / Magic | Behavior |
 |-----------|----------|
 | `.dat`, `.fdat`, `.rdat` | Pass-through unchanged |
 | `.pkx` | Strip PKX header (see below) |
+| `.fsys` or `FSYS` magic at offset 0 | Parse FSYS archive, extract model entries (see below) |
 
-Returns a list of `(dat_bytes, ContainerMetadata)` tuples. Currently always returns a single entry, but the list structure supports future multi-model containers (e.g., FSYS archives).
+Returns a list of `(dat_bytes, ContainerMetadata)` tuples. A `.dat`/`.pkx` yields one entry. An FSYS archive yields one entry per model file inside.
+
+### FSYS Archive Parsing
+
+**Files:** `helpers/fsys.py`, `helpers/lzss.py`
+
+FSYS is a custom archive format used by Pokémon Colosseum and XD — a bundle of multiple files, optionally LZSS-compressed. The parser extracts model-relevant files (dat, mdat, pkx) and skips non-model types (scripts, textures, sounds, etc.).
+
+**FSYS header** (big-endian, 0x60 bytes):
+
+| Offset | Size | Field |
+|--------|------|-------|
+| 0x00 | 4 | Magic `"FSYS"` |
+| 0x0C | 4 | `entry_count` (uint32) |
+| 0x40 | 4 | `file_metadata_list` pointer (uint32) |
+
+**Pointer table** at `file_metadata_list`: array of `entry_count` uint32 offsets, each pointing to a file metadata entry.
+
+**File metadata entry** (at each pointer offset):
+
+| Offset | Size | Field |
+|--------|------|-------|
+| 0x02 | 1 | `file_type` (uint8) — determines file extension |
+| 0x04 | 4 | `data_address` (uint32) — absolute offset to file data |
+| 0x0C | 4 | `flags` (uint32) — bit 31 = LZSS compressed |
+| 0x14 | 4 | `file_size` (uint32) |
+| 0x1C | 4 | `full_filename_pointer` (uint32) — complete filename if debug flag set |
+| 0x24 | 4 | `filename_pointer` (uint32) — short entry name |
+
+**Model-relevant file type IDs:**
+
+| ID | Extension | Handling |
+|----|-----------|----------|
+| 0x02 | mdat (→ dat) | Pass-through |
+| 0x04 | dat | Pass-through |
+| 0x1E | pkx | Strip PKX header after extraction |
+
+**LZSS decompression** (ported from GoD-Tool's `LZSSCompressor.swift`): Sliding-window algorithm with 4096-byte ring buffer. 16-byte header: magic `"LZSS"` + uncompressed_size + compressed_size + unknown. Flags byte processed LSB-first: bit=1 → literal byte, bit=0 → 2-byte (position, length) back-reference.
+
+**Entry filename resolution** (matches GoD-Tool logic):
+1. If `full_filename_pointer` is non-zero → use it (includes extension)
+2. Otherwise → short name from `filename_pointer` + file type extension (e.g., `.dat`, `.pkx`)
+3. Fallback → `{archive_name}_entry_{index}.dat`
+
+The pipeline sets `options["filepath"]` to each entry's filename before processing, so downstream phases (skeleton naming, logging) use the correct per-model name.
 
 ### PKX Header Parsing
 

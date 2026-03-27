@@ -6,7 +6,7 @@ A Blender addon that imports and exports `.dat` 3D model files used in GameCube 
 
 **Target Blender version:** 4.5
 
-**Supported file extensions:** `.dat`, `.fdat`, `.rdat`, `.pkx`
+**Supported file extensions:** `.dat`, `.fdat`, `.rdat`, `.pkx`, `.fsys`
 
 **Reference implementation:** [Ploaj/HSDLib](https://github.com/Ploaj/HSDLib) — a C# Super Smash Bros. Melee model viewer/editor for the same SysDolphin format. **Caveat:** HSDLib targets Melee; this plugin targets Pokémon Colosseum/XD — struct fields, flag semantics, and node types may not match exactly.
 
@@ -56,6 +56,8 @@ importer/
   importer.py                    # Importer.run() — pipeline entry point
   phases/
     extract/extract.py           # Phase 1: container detection + header stripping
+      helpers/fsys.py            # FSYS archive parser (header, metadata, LZSS decompression)
+      helpers/lzss.py            # LZSS decompression algorithm
     route/route.py               # Phase 2: section name → node type mapping
     parse/
       parse.py                   # Phase 3: wrapper around DATParser
@@ -141,7 +143,8 @@ Nodes are cached by file offset (`nodes_cache_by_offset`). Nodes with `is_cachab
 | Camera / Fog import | ❌ Stubs only |
 | Exporter (binary round-trip) | ✅ Functional (0 value mismatches) |
 | IR pipeline | ✅ Default path (legacy available via toggle) |
-| Unit tests | ✅ 261 passing |
+| FSYS archive import | ✅ Working (multi-model extraction + LZSS decompression) |
+| Unit tests | ✅ 280 passing |
 
 ---
 

@@ -98,3 +98,12 @@ This table tracks every feature in the GameCube SysDolphin `.dat` format and its
 | Float value encoding | ✅ | `IRKeyframe.value` | 32-bit float |
 | S16/U16 value encoding | ✅ | `IRKeyframe.value` | Decoded to float |
 | S8/U8 value encoding | ✅ | `IRKeyframe.value` | Decoded to float |
+
+## Container Formats (Phase 1)
+
+| Format | Detection | Extraction | Notes |
+|--------|-----------|------------|-------|
+| `.dat` / `.fdat` / `.rdat` | Extension | ✅ Pass-through | Raw DAT bytes |
+| `.pkx` (Colosseum) | Extension | ✅ Strip 0x40 header | |
+| `.pkx` (XD) | Extension | ✅ Strip 0xE60+ header | With optional GPT1 chunk |
+| `.fsys` archive | Extension or `FSYS` magic | ✅ Multi-model extraction | LZSS decompression, filters to dat/mdat/pkx entries |
