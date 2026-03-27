@@ -35,6 +35,7 @@ class Importer:
 
         for dat_bytes, metadata in dat_entries:
             logger.info("Processing: %s (%d bytes)", metadata.filename, len(dat_bytes))
+            options["filepath"] = metadata.filename
 
             try:
                 # Phase 2 — Section Routing: DAT bytes → section name→type map

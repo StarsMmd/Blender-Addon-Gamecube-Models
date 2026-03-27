@@ -10,6 +10,11 @@ try:
 except (ImportError, SystemError):
     from shared.helpers.binary import read
 
+try:
+    from .helpers.fsys import is_fsys, parse_fsys
+except (ImportError, SystemError):
+    from importer.phases.extract.helpers.fsys import is_fsys, parse_fsys
+
 
 @dataclass
 class ContainerMetadata:
@@ -26,11 +31,13 @@ def extract_dat(raw_bytes, filename):
 
     Returns:
         list of (dat_bytes, ContainerMetadata) tuples.
-        A .dat/.pkx yields one entry. A .fsys would yield multiple (future).
+        A .dat/.pkx yields one entry. A .fsys yields one per model inside.
     """
     ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
 
-    if ext == 'pkx':
+    if ext == 'fsys' or is_fsys(raw_bytes):
+        return _extract_fsys(raw_bytes, filename)
+    elif ext == 'pkx':
         return _extract_pkx(raw_bytes, filename)
     else:
         # .dat, .fdat, .rdat — pass through unchanged
@@ -61,3 +68,18 @@ def _extract_pkx(raw, filename):
     dat_bytes = raw[header_size:]
     metadata = ContainerMetadata(filename=filename)
     return [(dat_bytes, metadata)]
+
+
+def _extract_fsys(raw_bytes, archive_filename):
+    """Extract all model entries from an FSYS archive.
+
+    Decompresses LZSS if needed, and strips PKX headers for pkx entries.
+    """
+    entries = parse_fsys(raw_bytes, archive_filename)
+    results = []
+    for file_data, file_ext, entry_filename in entries:
+        if file_ext == 'pkx':
+            results.extend(_extract_pkx(file_data, entry_filename))
+        else:
+            results.append((file_data, ContainerMetadata(filename=entry_filename)))
+    return results

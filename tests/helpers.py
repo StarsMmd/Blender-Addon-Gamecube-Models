@@ -1207,3 +1207,131 @@ def build_texture(name_ptr=0, next_ptr=0, texture_id=0, source=0,
     data += struct.pack('>I',   lod_ptr)
     data += struct.pack('>I',   tev_ptr)
     return data  # 92 bytes
+
+
+# ---------------------------------------------------------------------------
+# FSYS archive builder
+# ---------------------------------------------------------------------------
+
+def build_fsys_archive(entries):
+    """Build a synthetic FSYS archive from a list of entry dicts.
+
+    Each entry: {
+        'file_type': int,   # e.g. 0x04 for dat, 0x1E for pkx
+        'data': bytes,      # raw file data (already compressed if 'compressed' is True)
+        'compressed': bool,
+        'filename': str,    # entry name in the string table
+    }
+
+    Returns the complete FSYS archive as bytes.
+    """
+    entry_count = len(entries)
+
+    # --- Phase 1: Build the string table ---
+    string_table = bytearray()
+    name_offsets = []
+    for entry in entries:
+        name_offsets.append(len(string_table))  # relative, fixed up later
+        string_table.extend(entry['filename'].encode('ascii') + b'\x00')
+
+    # Align string table to 16 bytes
+    while len(string_table) % 0x10 != 0:
+        string_table.append(0)
+
+    # --- Phase 2: Calculate layout offsets ---
+    header_size = 0x60
+    pointer_table_size = entry_count * 4
+    # Align pointer table to 16 bytes
+    pointer_table_size += (0x10 - (pointer_table_size % 0x10)) % 0x10
+
+    metadata_entry_size = 0x30  # 48 bytes per entry struct
+    metadata_section_size = metadata_entry_size * entry_count
+
+    pointer_table_offset = header_size
+    string_table_offset = pointer_table_offset + pointer_table_size
+    metadata_offset = string_table_offset + len(string_table)
+    # Align to 0x20 before file data
+    data_section_offset = metadata_offset + metadata_section_size
+    data_section_offset += (0x20 - (data_section_offset % 0x20)) % 0x20
+
+    # Fix up name offsets to be absolute
+    for i in range(len(name_offsets)):
+        name_offsets[i] += string_table_offset
+
+    # --- Phase 3: Layout file data and build metadata entries ---
+    file_data_block = bytearray()
+    metadata_entries = []
+    pointer_table = bytearray()
+
+    for i, entry in enumerate(entries):
+        file_data_start = data_section_offset + len(file_data_block)
+        file_data_block.extend(entry['data'])
+        # Align each file to 0x20
+        while len(file_data_block) % 0x20 != 0:
+            file_data_block.append(0)
+
+        # Pointer table entry
+        entry_metadata_offset = metadata_offset + i * metadata_entry_size
+        pointer_table.extend(struct.pack('>I', entry_metadata_offset))
+
+        # Metadata entry (0x30 bytes)
+        flags = 0x80000000 if entry.get('compressed', False) else 0
+        meta = bytearray(metadata_entry_size)
+        struct.pack_into('>H', meta, 0x00, i)                  # identifier
+        struct.pack_into('>B', meta, 0x02, entry['file_type'])  # file_type
+        struct.pack_into('>I', meta, 0x04, file_data_start)     # data_address
+        struct.pack_into('>I', meta, 0x08, len(entry['data']))  # uncompressed_size
+        struct.pack_into('>I', meta, 0x0C, flags)               # flags
+        struct.pack_into('>I', meta, 0x14, len(entry['data']))  # file_size
+        struct.pack_into('>I', meta, 0x24, name_offsets[i])     # filename_pointer
+        metadata_entries.append(bytes(meta))
+
+    # Pad pointer table to aligned size
+    while len(pointer_table) < (pointer_table_size):
+        pointer_table.append(0)
+
+    # --- Phase 4: Build the header ---
+    total_size = data_section_offset + len(file_data_block)
+    header = bytearray(header_size)
+    header[0:4] = b'FSYS'
+    struct.pack_into('>I', header, 0x0C, entry_count)
+    struct.pack_into('>I', header, 0x20, total_size)
+    struct.pack_into('>I', header, 0x40, pointer_table_offset)
+    struct.pack_into('>I', header, 0x44, string_table_offset)
+    struct.pack_into('>I', header, 0x48, data_section_offset)
+
+    # --- Assemble ---
+    result = bytearray(header)
+    result.extend(pointer_table)
+    result.extend(string_table)
+    for meta in metadata_entries:
+        result.extend(meta)
+    # Pad to data section start
+    while len(result) < data_section_offset:
+        result.append(0)
+    result.extend(file_data_block)
+
+    return bytes(result)
+
+
+def build_lzss_compressed(data):
+    """Build an LZSS-compressed stream where every byte is a literal.
+
+    This produces valid LZSS output but with no actual compression
+    (all-literals mode). Useful for testing decompression without
+    needing a real compressor.
+    """
+    payload = bytearray()
+    pos = 0
+    while pos < len(data):
+        chunk_size = min(8, len(data) - pos)
+        # flags byte: set bits for each literal (LSB first)
+        flags = (1 << chunk_size) - 1
+        payload.append(flags)
+        payload.extend(data[pos:pos + chunk_size])
+        pos += chunk_size
+
+    compressed_size = 16 + len(payload)  # header + payload
+    header = b'LZSS'
+    header += struct.pack('>III', len(data), compressed_size, 0)
+    return header + bytes(payload)

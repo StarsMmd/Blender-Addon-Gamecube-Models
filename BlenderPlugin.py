@@ -34,7 +34,7 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
                             description='Use the old import pipeline instead of the new Intermediate Representation pipeline.')
 
     filename_ext = ".dat"
-    filter_glob: StringProperty(default="*.fdat;*.dat;*.rdat;*.pkx", options={'HIDDEN'})
+    filter_glob: StringProperty(default="*.fdat;*.dat;*.rdat;*.pkx;*.fsys", options={'HIDDEN'})
 
     def execute(self, context):
         if self.files and self.directory:
