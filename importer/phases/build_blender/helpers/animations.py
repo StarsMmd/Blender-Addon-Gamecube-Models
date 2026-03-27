@@ -4,6 +4,7 @@ Reads generic decoded keyframes from the IR and performs Blender-specific
 baking: inserts into temp fcurves, samples frame-by-frame with scale
 correction, decomposes to bone-local Euler, creates final Actions.
 """
+import math
 import bpy
 from mathutils import Matrix, Vector
 
@@ -56,7 +57,7 @@ def build_bone_animations(ir_model, armature, options, logger=StubLogger()):
             armature.animation_data.action_slot = action.slots[0]
 
         for track in anim_set.tracks:
-            _bake_bone_track(track, action, bone_data, max_frame, logger)
+            _bake_bone_track(track, action, bone_data, max_frame, logger, armature)
 
         # Detect static poses
         is_static = True
@@ -94,16 +95,20 @@ def build_bone_animations(ir_model, armature, options, logger=StubLogger()):
     bpy.context.scene.frame_set(0)
 
 
-def _bake_bone_track(track, action, bone_data, max_frame, logger):
+def _bake_bone_track(track, action, bone_data, max_frame, logger, armature=None):
     """Bake one bone's IRBoneTrack into Blender fcurves."""
     bone_name = track.bone_name
     bone_idx = track.bone_index
     bd = bone_data[bone_idx]
     parent_idx = bd['parent_index']
 
-    if track.path_keyframes is not None:
-        _apply_path_animation(track, action, bd, max_frame)
-        return
+    has_path = track.path_keyframes is not None and track.spline_points is not None
+
+    # Path animation: create a Blender curve and FOLLOW_PATH constraint.
+    # SRT baking continues below — LIMIT_LOCATION zeroes the baked location
+    # at runtime, but rotation/scale from SRT baking still take effect.
+    if has_path and armature:
+        _apply_path_constraint(track, action, armature, logger)
 
     # Pass 1: insert decoded IR keyframes into temporary fcurves
     TRANSFORM_COUNT = 10
@@ -188,6 +193,12 @@ def _bake_bone_track(track, action, bone_data, max_frame, logger):
 
         mtx = compile_srt_matrix(s, r, l)
 
+        # Path bones: the curve is in unrotated GameCube space while the
+        # armature has a π/2 X rotation. This rotation on the SRT matrix
+        # compensates so the walk animation aligns with the path direction.
+        if has_path:
+            mtx = Matrix.Rotation(-math.pi / 2, 4, 'X') @ mtx
+
         try:
             if parent_idx is not None:
                 Bmtx = (local_edit_matrix.inverted()
@@ -205,6 +216,15 @@ def _bake_bone_track(track, action, bone_data, max_frame, logger):
 
         trans, rot, scl = Bmtx.decompose()
         rot = rot.to_euler()
+
+        if frame == 0:
+            logger.info("  SRT_BAKE bone=%s frame=0 uses_path=%s", bone_name, has_path)
+            logger.info("    srt_in: r=(%.6f,%.6f,%.6f) l=(%.6f,%.6f,%.6f) s=(%.6f,%.6f,%.6f)",
+                        r[0], r[1], r[2], l[0], l[1], l[2], s[0], s[1], s[2])
+            logger.info("    blender_out: loc=(%.6f,%.6f,%.6f) rot=(%.6f,%.6f,%.6f) scl=(%.6f,%.6f,%.6f)",
+                        trans[0], trans[1], trans[2], rot[0], rot[1], rot[2], scl[0], scl[1], scl[2])
+            logger.info("    local_edit_matrix[0]=%s", [round(local_edit_matrix[i][0], 6) for i in range(4)])
+            logger.info("    has_parent=%s", parent_idx is not None)
 
         max_scl = 100.0
         scl = Vector((
@@ -229,59 +249,138 @@ def _bake_bone_track(track, action, bone_data, max_frame, logger):
             action.fcurves.remove(c)
 
 
-def _apply_path_animation(track, action, bone_data_entry, max_frame):
-    """Apply spline path-based animation from IRBoneTrack."""
-    if not track.path_keyframes or not track.spline_points:
+_SPLINE_TYPE_MAP = {
+    0: 'POLY',
+    2: 'NURBS',
+}
+
+
+def _apply_path_constraint(track, action, armature, logger):
+    """Create a Blender curve from spline points and add a FOLLOW_PATH constraint.
+
+    Matches the main branch approach: the bone follows the curve via a constraint,
+    and the path parameter is animated via the constraint's offset fcurve.
+    """
+    bone_name = track.bone_name
+    points = track.spline_points
+    spline_type = track.spline_type
+    num_cvs = track.spline_num_cvs
+    tension = track.spline_tension
+
+    # Create Blender curve object parented to the armature.
+    # The armature has a π/2 X rotation, so parenting transforms the raw
+    # GameCube Y-up curve coordinates to Blender Z-up automatically.
+    curve_data = bpy.data.curves.new('path_' + bone_name, 'CURVE')
+    curve_data.use_path = True
+    curve_data.dimensions = '3D'
+    curve_obj = bpy.data.objects.new('Path_' + bone_name, curve_data)
+    curve_obj.parent = armature
+    # Position curve at the spline joint's location in the armature
+    if track.spline_world_matrix:
+        curve_obj.matrix_local = Matrix(track.spline_world_matrix)
+    bpy.context.scene.collection.objects.link(curve_obj)
+    # Force Blender to recalculate world matrix after parenting
+    bpy.context.view_layer.update()
+
+    if spline_type == 0:
+        # Linear spline
+        spline = curve_data.splines.new('POLY')
+        spline.points.add(len(points) - 1)
+        for i, pt in enumerate(points):
+            spline.points[i].co = (pt[0], pt[1], pt[2], 1.0)
+
+    elif spline_type == 1:
+        # Cubic bezier
+        spline = curve_data.splines.new('BEZIER')
+        spline.bezier_points.add(num_cvs - 1)
+        for i in range(num_cvs):
+            spline.bezier_points[i].co = points[3 * i]
+            if i > 0:
+                spline.bezier_points[i].handle_left = points[3 * (i - 1) + 2]
+            if i < num_cvs - 1:
+                spline.bezier_points[i].handle_right = points[3 * i + 1]
+
+    elif spline_type == 2:
+        # B-spline (NURBS in Blender)
+        spline = curve_data.splines.new('NURBS')
+        spline.points.add(len(points) - 1)
+        spline.order_u = 4
+        for i, pt in enumerate(points):
+            spline.points[i].co = (pt[0], pt[1], pt[2], 1.0)
+
+    elif spline_type == 3:
+        # Cardinal spline → convert to bezier with computed handles
+        spline = curve_data.splines.new('BEZIER')
+        spline.bezier_points.add(num_cvs - 1)
+        for i in range(num_cvs):
+            cp = points[i + 1]  # cardinal CVs have +1 offset
+            spline.bezier_points[i].co = cp
+            if i > 0:
+                p_prev = Vector(points[i])
+                p_next = Vector(points[i + 2])
+                spline.bezier_points[i].handle_left = (Vector(cp) - tension / 3.0 * (p_next - p_prev))[:]
+            if i < num_cvs - 1:
+                p_prev = Vector(points[i])
+                p_next = Vector(points[i + 2])
+                spline.bezier_points[i].handle_right = (Vector(cp) + tension / 3.0 * (p_next - p_prev))[:]
+
+    else:
+        logger.info("  PATH %s: unsupported spline type %d", bone_name, spline_type)
         return
 
-    bone_name = track.bone_name
+    # Add FOLLOW_PATH constraint (already in POSE mode from caller)
+    pose_bone = armature.pose.bones[bone_name]
 
-    # Create temp fcurve for path parameter
-    param_curve = action.fcurves.new('pose.bones["%s"].path_param' % bone_name, index=0)
+    path_constr = pose_bone.constraints.new('FOLLOW_PATH')
+    # Move constraint to top so it's evaluated first
+    pose_bone.constraints.move(len(pose_bone.constraints) - 1, 0)
+    path_constr.target = curve_obj
+
+    # Zero out bone's local translation so position comes entirely from
+    # FOLLOW_PATH. The SRT baking still produces location keyframes but
+    # LIMIT_LOCATION overrides them at runtime. Rotation/scale still apply.
+    limit_constr = pose_bone.constraints.new('LIMIT_LOCATION')
+    pose_bone.constraints.move(len(pose_bone.constraints) - 1, 0)
+    for axis in ['x', 'y', 'z']:
+        setattr(limit_constr, 'use_min_' + axis, True)
+        setattr(limit_constr, 'use_max_' + axis, True)
+        setattr(limit_constr, 'min_' + axis, 0.0)
+        setattr(limit_constr, 'max_' + axis, 0.0)
+
+    # Animate constraint offset with path parameter keyframes
+    # Scale: normalized (0-1) → negative path duration (Blender convention)
+    path_duration = curve_data.path_duration
+    data_path = 'pose.bones["%s"].constraints["%s"].offset' % (bone_name, path_constr.name)
+    offset_curve = action.fcurves.new(data_path)
     for kf in track.path_keyframes:
-        point = param_curve.keyframe_points.insert(kf.frame, kf.value)
+        scaled_value = kf.value * -path_duration
+        point = offset_curve.keyframe_points.insert(kf.frame, scaled_value)
         point.interpolation = kf.interpolation.value
-    # Apply handles
-    kf_count = len(param_curve.keyframe_points)
-    offset = kf_count - len(track.path_keyframes)
+    # Apply bezier handles (scaled)
+    kf_count = len(offset_curve.keyframe_points)
+    kf_offset = kf_count - len(track.path_keyframes)
     for i, kf in enumerate(track.path_keyframes):
-        point = param_curve.keyframe_points[offset + i]
+        point = offset_curve.keyframe_points[kf_offset + i]
         if kf.handle_left:
-            point.handle_left[:] = kf.handle_left
+            point.handle_left = (kf.handle_left[0], kf.handle_left[1] * -path_duration)
         if kf.handle_right:
-            point.handle_right[:] = kf.handle_right
+            point.handle_right = (kf.handle_right[0], kf.handle_right[1] * -path_duration)
 
-    loc_curves = [
-        action.fcurves.new('pose.bones["%s"].location' % bone_name, index=i)
-        for i in range(3)
-    ]
-
-    invmtx = bone_data_entry['temp_matrix_local'].inverted()
-    points = track.spline_points
-
-    end = min(int(track.end_frame), max_frame) if track.end_frame > 0 else 0
-
-    for frame in range(end):
-        t = param_curve.evaluate(frame)
-        t = max(0.0, min(t, len(points) - 1))
-        idx = int(t)
-        frac = t - idx
-        if idx >= len(points) - 1:
-            pos = points[-1]
-        else:
-            p0 = points[idx]
-            p1 = points[idx + 1]
-            pos = [p0[j] + frac * (p1[j] - p0[j]) for j in range(3)]
-
-        world_pos = Vector(pos)
-        local_mtx = Matrix.Translation(world_pos)
-        Bmtx = invmtx @ local_mtx
-        trans = Bmtx.to_translation()
-
-        for i in range(3):
-            loc_curves[i].keyframe_points.insert(frame, trans[i]).interpolation = 'BEZIER'
-
-    action.fcurves.remove(param_curve)
+    logger.info("  PATH_SETUP bone=%s curve_obj=%s path_duration=%d", bone_name, curve_obj.name, path_duration)
+    logger.info("    curve_world_matrix=%s", [list(row) for row in curve_obj.matrix_world])
+    logger.info("    curve_parent=%s", curve_obj.parent.name if curve_obj.parent else 'None')
+    logger.info("    offset_kf_count=%d", len(offset_curve.keyframe_points))
+    if len(offset_curve.keyframe_points) > 0:
+        logger.info("    offset_kf[0]=(%.4f, %.4f) offset_kf[-1]=(%.4f, %.4f)",
+                    offset_curve.keyframe_points[0].co[0], offset_curve.keyframe_points[0].co[1],
+                    offset_curve.keyframe_points[-1].co[0], offset_curve.keyframe_points[-1].co[1])
+    for si, sp in enumerate(curve_data.splines):
+        pt_count = len(sp.points) if sp.type != 'BEZIER' else len(sp.bezier_points)
+        logger.info("    spline[%d] type=%s pts=%d", si, sp.type, pt_count)
+        if sp.type != 'BEZIER':
+            for pi in range(min(3, len(sp.points))):
+                logger.info("      pt[%d]=(%.4f,%.4f,%.4f)", pi, sp.points[pi].co[0], sp.points[pi].co[1], sp.points[pi].co[2])
+    logger.info("    constraints=[%s]", ', '.join('%s(%s)' % (c.type, c.name) for c in pose_bone.constraints))
 
 
 def _build_bone_data_lookup(bones):

@@ -18,39 +18,38 @@ class Spline(Node):
         spline_type = self.flags >> 8
         parser.logger.debug("Spline 0x%X: type=%d, n=%d, s1=0x%X, s2=0x%X, s3=0x%X",
                             self.address, spline_type, self.n, self.s1 or 0, self.s2 or 0, self.s3 or 0)
-        if (self.flags >> 8) == 0:
-            if self.s1:
-                s1_address = self.s1
+
+        # Read control points (s1/cv) — count depends on spline type
+        if self.s1:
+            s1_address = self.s1
+            if spline_type == 0:
+                total_cvs = self.n
+            elif spline_type == 1:
+                total_cvs = 3 * self.n - 2  # cubic bezier
+            elif spline_type == 2:
+                total_cvs = self.n + 2       # B-spline
+            elif spline_type == 3:
+                total_cvs = self.n + 2       # cardinal
+            else:
+                parser.logger.debug("Spline 0x%X: unknown type %d, skipping CV read",
+                                    self.address, spline_type)
+                self.s1 = None
+                total_cvs = 0
+
+            if total_cvs > 0:
                 self.s1 = []
-                for i in range(self.n):
+                for i in range(total_cvs):
                     v = []
                     for j in range(3):
                         offset = i * 12 + j * 4
                         value = parser.read('float', s1_address, offset)
                         v.append(value)
                     self.s1.append(v)
+        else:
+            self.s1 = None
 
-            else:
-                self.s1 = None
-
-            if not self.s3:
-                self.s3 = None
-
-        elif (self.flags >> 8) == 3:
-            if self.s1:
-                s1_address = self.s1
-                self.s1 = []
-                for i in range(self.n + 2):
-                    v = []
-                    for j in range(3):
-                        offset = i * 12 + j * 4
-                        value = parser.read('float', s1_address, offset)
-                        v.append(value)
-                    self.s1.append(v)
-
-            else:
-                self.s1 = None
-
+        # Read polynomial segment coefficients (s3) — used for types 0 and 3
+        if spline_type in (0, 3):
             if self.s3:
                 s3_address = self.s3
                 self.s3 = []
@@ -61,12 +60,10 @@ class Spline(Node):
                         value = parser.read('float', s3_address, offset)
                         v.append(value)
                     self.s3.append(v)
-
             else:
                 self.s3 = None
-
-        else:
-            pass
+        elif not isinstance(self.s3, list):
+            self.s3 = None
 
         if self.s2:
             s2_address = self.s2

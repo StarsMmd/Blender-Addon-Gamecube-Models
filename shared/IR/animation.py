@@ -33,9 +33,13 @@ class IRBoneTrack:
     rest_scale: tuple[float, float, float] = (1.0, 1.0, 1.0)
     parent_accumulated_scale: tuple[float, float, float] | None = None
     end_frame: float = 0  # animation duration from the source Animation object
-    # Path animation (mutually exclusive with SRT channels)
+    # Path animation (mutually exclusive with SRT location channels)
     path_keyframes: list[IRKeyframe] | None = None
     spline_points: list[list[float]] | None = None
+    spline_type: int = 0       # 0=linear, 1=cubic bezier, 2=B-spline, 3=cardinal
+    spline_tension: float = 0.0  # tension for cardinal splines
+    spline_num_cvs: int = 0    # original control point count (before type-specific extras)
+    spline_world_matrix: list[list[float]] | None = None  # 4x4 world matrix of the spline joint
 
 
 @dataclass

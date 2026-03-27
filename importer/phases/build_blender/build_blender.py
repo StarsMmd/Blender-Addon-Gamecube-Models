@@ -23,11 +23,11 @@ def build_blender_scene(ir_scene, context, options, logger=StubLogger()):
     """
     logger.info("=== Phase 5A: Build Blender Scene ===")
 
-    for ir_model in ir_scene.models:
+    for model_idx, ir_model in enumerate(ir_scene.models):
         logger.info("Building model: %s (%d bones, %d meshes)",
                     ir_model.name, len(ir_model.bones), len(ir_model.meshes))
 
-        armature = build_skeleton(ir_model, context, options, logger=logger)
+        armature = build_skeleton(ir_model, context, options, logger=logger, model_index=model_idx)
         material_lookup = build_meshes(ir_model, armature, context, options, logger=logger)
 
         if ir_model.bone_animations:

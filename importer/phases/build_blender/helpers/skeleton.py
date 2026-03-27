@@ -10,7 +10,7 @@ except (ImportError, SystemError):
     from shared.helpers.logger import StubLogger
 
 
-def build_skeleton(ir_model, context, options, logger=StubLogger()):
+def build_skeleton(ir_model, context, options, logger=StubLogger(), model_index=0):
     """Create a Blender armature with bones from IRModel.
 
     Args:
@@ -18,13 +18,17 @@ def build_skeleton(ir_model, context, options, logger=StubLogger()):
         context: Blender context.
         options: dict of importer options.
         logger: Logger instance (defaults to StubLogger).
+        model_index: Index of this model in the scene (for unique naming).
 
     Returns:
         The armature object.
     """
     filepath = options.get("filepath", "")
     base_name = os.path.basename(filepath).split('.')[0] if filepath else "model"
-    armature_name = f"{base_name}_{ir_model.name}" if ir_model.name else base_name
+    if ir_model.name:
+        armature_name = f"{base_name}_{ir_model.name}_{model_index}"
+    else:
+        armature_name = f"{base_name}_{model_index}"
 
     armature_data = bpy.data.armatures.new(name=armature_name)
     armature = bpy.data.objects.new(name=armature_name, object_data=armature_data)
