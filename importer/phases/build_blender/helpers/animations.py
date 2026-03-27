@@ -102,7 +102,7 @@ def _bake_bone_track(track, action, bone_data, max_frame, logger, armature=None)
     bd = bone_data[bone_idx]
     parent_idx = bd['parent_index']
 
-    has_path = track.path_keyframes is not None and track.spline_points is not None
+    has_path = track.spline_path is not None
 
     # Path animation: create a Blender curve and FOLLOW_PATH constraint.
     # SRT baking continues below — LIMIT_LOCATION zeroes the baked location
@@ -262,10 +262,11 @@ def _apply_path_constraint(track, action, armature, logger):
     and the path parameter is animated via the constraint's offset fcurve.
     """
     bone_name = track.bone_name
-    points = track.spline_points
-    spline_type = track.spline_type
-    num_cvs = track.spline_num_cvs
-    tension = track.spline_tension
+    path = track.spline_path
+    points = path.control_points
+    spline_type = path.curve_type
+    num_cvs = path.num_control_points
+    tension = path.tension
 
     # Create Blender curve object parented to the armature.
     # The armature has a π/2 X rotation, so parenting transforms the raw
@@ -276,8 +277,8 @@ def _apply_path_constraint(track, action, armature, logger):
     curve_obj = bpy.data.objects.new('Path_' + bone_name, curve_data)
     curve_obj.parent = armature
     # Position curve at the spline joint's location in the armature
-    if track.spline_world_matrix:
-        curve_obj.matrix_local = Matrix(track.spline_world_matrix)
+    if path.world_matrix:
+        curve_obj.matrix_local = Matrix(path.world_matrix)
     bpy.context.scene.collection.objects.link(curve_obj)
     # Force Blender to recalculate world matrix after parenting
     bpy.context.view_layer.update()
@@ -352,14 +353,14 @@ def _apply_path_constraint(track, action, armature, logger):
     path_duration = curve_data.path_duration
     data_path = 'pose.bones["%s"].constraints["%s"].offset' % (bone_name, path_constr.name)
     offset_curve = action.fcurves.new(data_path)
-    for kf in track.path_keyframes:
+    for kf in path.parameter_keyframes:
         scaled_value = kf.value * -path_duration
         point = offset_curve.keyframe_points.insert(kf.frame, scaled_value)
         point.interpolation = kf.interpolation.value
     # Apply bezier handles (scaled)
     kf_count = len(offset_curve.keyframe_points)
-    kf_offset = kf_count - len(track.path_keyframes)
-    for i, kf in enumerate(track.path_keyframes):
+    kf_offset = kf_count - len(path.parameter_keyframes)
+    for i, kf in enumerate(path.parameter_keyframes):
         point = offset_curve.keyframe_points[kf_offset + i]
         if kf.handle_left:
             point.handle_left = (kf.handle_left[0], kf.handle_left[1] * -path_duration)

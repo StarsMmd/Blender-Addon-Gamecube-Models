@@ -9,7 +9,7 @@ from .material import (
     CombinerInput, CombinerStage, ColorCombiner, FragmentBlending,
 )
 from .animation import (
-    IRKeyframe, IRBoneAnimationSet, IRBoneTrack,
+    IRKeyframe, IRSplinePath, IRBoneAnimationSet, IRBoneTrack,
     IRMaterialAnimationSet, IRMaterialTrack, IRTextureUVTrack,
     IRShapeAnimationSet, IRShapeTrack,
 )

@@ -15,6 +15,21 @@ class IRKeyframe:
 
 
 @dataclass
+class IRSplinePath:
+    """A spline curve that a bone follows.
+
+    Generic representation: control points, curve type, and parameter keyframes.
+    The build phase creates the target-specific curve object and constraint.
+    """
+    control_points: list[list[float]]     # 3D control points
+    parameter_keyframes: list[IRKeyframe]  # path parameter over time
+    curve_type: int = 0                    # 0=linear, 1=cubic bezier, 2=B-spline, 3=cardinal
+    tension: float = 0.0                   # tension for cardinal splines
+    num_control_points: int = 0            # original CV count (before type-specific extras)
+    world_matrix: list[list[float]] | None = None  # 4x4 world matrix for curve positioning
+
+
+@dataclass
 class IRBoneTrack:
     """Decoded animation keyframes for one bone in HSD world-space SRT.
 
@@ -33,13 +48,8 @@ class IRBoneTrack:
     rest_scale: tuple[float, float, float] = (1.0, 1.0, 1.0)
     parent_accumulated_scale: tuple[float, float, float] | None = None
     end_frame: float = 0  # animation duration from the source Animation object
-    # Path animation (mutually exclusive with SRT location channels)
-    path_keyframes: list[IRKeyframe] | None = None
-    spline_points: list[list[float]] | None = None
-    spline_type: int = 0       # 0=linear, 1=cubic bezier, 2=B-spline, 3=cardinal
-    spline_tension: float = 0.0  # tension for cardinal splines
-    spline_num_cvs: int = 0    # original control point count (before type-specific extras)
-    spline_world_matrix: list[list[float]] | None = None  # 4x4 world matrix of the spline joint
+    # Path animation — bone follows a spline curve (mutually exclusive with SRT location)
+    spline_path: IRSplinePath | None = None
 
 
 @dataclass

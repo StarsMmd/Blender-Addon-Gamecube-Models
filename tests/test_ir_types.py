@@ -11,7 +11,7 @@ from shared.IR import (
     IRMaterial, IRTextureLayer, IRImage,
     CombinerInput, CombinerStage, ColorCombiner, FragmentBlending,
     # Animation
-    IRKeyframe, IRBoneAnimationSet, IRBoneTrack,
+    IRKeyframe, IRSplinePath, IRBoneAnimationSet, IRBoneTrack,
     IRMaterialAnimationSet, IRMaterialTrack, IRTextureUVTrack,
     IRShapeAnimationSet, IRShapeTrack,
     # Constraints
@@ -247,6 +247,19 @@ def test_ir_keyframe():
     assert kf.handle_left is None
 
 
+def test_ir_spline_path():
+    path = IRSplinePath(
+        control_points=[[0, 0, 0], [1, 0, 0], [2, 0, 0]],
+        parameter_keyframes=[IRKeyframe(frame=0, value=0, interpolation=Interpolation.LINEAR)],
+        curve_type=2,
+        num_control_points=3,
+    )
+    assert len(path.control_points) == 3
+    assert path.curve_type == 2
+    assert path.tension == 0.0
+    assert path.world_matrix is None
+
+
 def test_ir_bone_track():
     track = IRBoneTrack(
         bone_name="bone_0",
@@ -257,6 +270,7 @@ def test_ir_bone_track():
     )
     assert track.bone_name == "bone_0"
     assert len(track.rotation) == 3
+    assert track.spline_path is None
 
 
 def test_ir_bone_animation_set():
