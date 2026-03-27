@@ -29,7 +29,7 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
     write_logs: BoolProperty(default=True, name='Write Logs',
                             description='Write import logs to a temp file for debugging.')
     setup_workspace: BoolProperty(default=False, name='Setup Workspace',
-                                 description='Split the viewport and open a Dope Sheet / Action Editor. Sets playback end frame to 60.')
+                                 description='Split the viewport and open an Action Editor. Sets playback end frame to 60.')
     use_legacy: BoolProperty(default=False, name='Use Legacy Importer',
                             description='Use the old import pipeline instead of the new Intermediate Representation pipeline.')
 
@@ -101,7 +101,7 @@ class ExportHSD(bpy.types.Operator, ExportHelper):
 
 
 def _setup_anim_workspace(context):
-    """Split the 3D viewport and open an Action Editor and NLA Editor. Set playback end to 60.
+    """Split the 3D viewport and open an Action Editor. Set playback end to 60.
 
     Skips setup if a Dope Sheet / Action Editor is already visible.
     """
@@ -127,26 +127,12 @@ def _setup_anim_workspace(context):
     with context.temp_override(area=view3d_area):
         bpy.ops.screen.area_split(direction='VERTICAL', factor=0.6)
 
-    dopesheet_area = None
     for area in screen.areas:
         if area.type == 'VIEW_3D' and area != view3d_area:
             area.type = 'DOPESHEET_EDITOR'
             for space in area.spaces:
                 if space.type == 'DOPESHEET_EDITOR':
                     space.mode = 'ACTION'
-            dopesheet_area = area
-            break
-
-    if not dopesheet_area:
-        return
-
-    areas_before = set(screen.areas)
-    with context.temp_override(area=dopesheet_area):
-        bpy.ops.screen.area_split(direction='HORIZONTAL', factor=0.5)
-
-    for area in screen.areas:
-        if area not in areas_before:
-            area.type = 'NLA_EDITOR'
             break
 
 
