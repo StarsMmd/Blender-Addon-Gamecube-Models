@@ -117,6 +117,7 @@ def build_material(ir_material, image_cache=None, name=''):
     )
 
     links.new(shader.outputs[0], output.inputs[0])
+    _auto_layout(nodes, links)
     return mat
 
 
@@ -680,3 +681,71 @@ def _build_output_shader(ir_mat, nodes, links, last_color, last_alpha, bump_map,
         shader = t
 
     return shader
+
+
+def _auto_layout(nodes, links):
+    """Arrange shader nodes left-to-right via topological sort from output.
+
+    Walks backward from the Output node through links, assigns each node a
+    column (depth from output), then spaces columns left-to-right with nodes
+    stacked vertically within each column.
+    """
+    NODE_WIDTH = 300
+    NODE_HEIGHT = 200
+
+    # Find the output node
+    output = None
+    for node in nodes:
+        if node.type == 'OUTPUT_MATERIAL':
+            output = node
+            break
+    if output is None:
+        return
+
+    # Build reverse adjacency: for each node, which nodes feed into it?
+    # We want to walk from output → inputs, so we need: node → set of source nodes
+    inputs_of = {}  # node → list of source nodes (ordered by input index)
+    for link in links:
+        target = link.to_node
+        source = link.from_node
+        if target not in inputs_of:
+            inputs_of[target] = []
+        if source not in inputs_of[target]:
+            inputs_of[target].append(source)
+
+    # Assign columns via BFS — column = max distance from output
+    # Nodes feeding multiple consumers get placed at the deepest column needed
+    column_of = {output: 0}
+    queue = [output]
+    while queue:
+        node = queue.pop(0)
+        col = column_of[node]
+        for source in inputs_of.get(node, []):
+            new_col = col + 1
+            if source not in column_of or column_of[source] < new_col:
+                column_of[source] = new_col
+                queue.append(source)
+
+    # Any disconnected nodes get placed in the leftmost column
+    max_col = max(column_of.values()) if column_of else 0
+    for node in nodes:
+        if node not in column_of:
+            max_col += 1
+            column_of[node] = max_col
+
+    # Group nodes by column, sort within column for stable vertical order
+    columns = {}
+    for node, col in column_of.items():
+        columns.setdefault(col, []).append(node)
+
+    # Sort nodes within each column by their name for deterministic ordering
+    for col in columns:
+        columns[col].sort(key=lambda n: n.name)
+
+    # Position: column 0 (output) on the right, increasing columns go left
+    max_column = max(columns.keys()) if columns else 0
+    for col, col_nodes in columns.items():
+        x = (max_column - col) * NODE_WIDTH
+        for i, node in enumerate(col_nodes):
+            y = -i * NODE_HEIGHT
+            node.location = (x, y)
