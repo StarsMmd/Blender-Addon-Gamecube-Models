@@ -165,6 +165,12 @@ GameCube → Blender requires a π/2 rotation around the X-axis. Applied once at
 
 ---
 
+## Vertex Color Gamma
+
+The original importer (`colo_xd_legacy`) applied a `ShaderNodeGamma` (1/2.2) to vertex colors before multiplying with the texture. This was a workaround for double linearization: material colors were linearized during parsing AND Blender's shader pipeline linearized them again. The refactored pipeline fixed the double linearization at the source, so the gamma correction node is intentionally removed — do not re-add it.
+
+---
+
 ## Coding Conventions
 
 - **Logger parameter:** Functions default to `StubLogger()`, never `None`.
