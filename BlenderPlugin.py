@@ -28,7 +28,7 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
                           description='Cutoff frame after which animations aren\'t sampled. Use 0 For no limit.')
     write_logs: BoolProperty(default=True, name='Write Logs',
                             description='Write import logs to a temp file for debugging.')
-    setup_workspace: BoolProperty(default=False, name='Setup Workspace',
+    setup_workspace: BoolProperty(default=True, name='Setup Workspace',
                                  description='Split the viewport and open an Action Editor. Sets playback end frame to 60.')
     use_legacy: BoolProperty(default=False, name='Use Legacy Importer',
                             description='Use the old import pipeline instead of the new Intermediate Representation pipeline.')
