@@ -25,10 +25,11 @@ def build_skeleton(ir_model, context, options, logger=StubLogger(), model_index=
     """
     filepath = options.get("filepath", "")
     base_name = os.path.basename(filepath).split('.')[0] if filepath else "model"
-    if ir_model.name:
-        armature_name = f"{base_name}_{ir_model.name}_{model_index}"
+    model_name = ir_model.name or ""
+    if model_name and model_name != base_name:
+        armature_name = f"{base_name}_{model_name}_skeleton_{model_index}"
     else:
-        armature_name = f"{base_name}_{model_index}"
+        armature_name = f"{base_name}_skeleton_{model_index}"
 
     armature_data = bpy.data.armatures.new(name=armature_name)
     armature = bpy.data.objects.new(name=armature_name, object_data=armature_data)
