@@ -149,17 +149,21 @@ def _apply_animation_to_bone(joint, aobj, action, armature, max_frame, logger=Nu
 
     end = min(int(aobj.end_frame), max_frame)
     for frame in range(end):
-        mtx = joint.compileSRTMatrix(
-            [transform_list[7].evaluate(frame),
-             transform_list[8].evaluate(frame),
-             transform_list[9].evaluate(frame)],
-            [transform_list[0].evaluate(frame),
-             transform_list[1].evaluate(frame),
-             transform_list[2].evaluate(frame)],
-            [transform_list[4].evaluate(frame),
-             transform_list[5].evaluate(frame),
-             transform_list[6].evaluate(frame)],
-        )
+        _s = [transform_list[7].evaluate(frame),
+              transform_list[8].evaluate(frame),
+              transform_list[9].evaluate(frame)]
+        _r = [transform_list[0].evaluate(frame),
+              transform_list[1].evaluate(frame),
+              transform_list[2].evaluate(frame)]
+        _l = [transform_list[4].evaluate(frame),
+              transform_list[5].evaluate(frame),
+              transform_list[6].evaluate(frame)]
+
+        if frame <= 3 or frame == end - 1:
+            logger.info("  EVAL %s f=%d r=(%.6f,%.6f,%.6f) l=(%.6f,%.6f,%.6f) s=(%.6f,%.6f,%.6f)",
+                        bone_name, frame, _r[0], _r[1], _r[2], _l[0], _l[1], _l[2], _s[0], _s[1], _s[2])
+
+        mtx = joint.compileSRTMatrix(_s, _r, _l)
         # Scale correction: Blender edit bones are normalized (no scale),
         # so we must account for the scale that was stripped.
         # Formula: local_edit_matrix^-1 @ [parent_scale_correction @] mtx @ scale_correction^-1
@@ -173,6 +177,9 @@ def _apply_animation_to_bone(joint, aobj, action, armature, max_frame, logger=Nu
             Bmtx = joint.temp_matrix_local.inverted_safe() @ mtx
         trans, rot, scale = Bmtx.decompose()
         rot = rot.to_euler()
+        if frame <= 3 or frame == end - 1:
+            logger.info("  BAKE %s f=%d loc=(%.6f,%.6f,%.6f) rot=(%.6f,%.6f,%.6f) scl=(%.6f,%.6f,%.6f)",
+                        bone_name, frame, trans[0], trans[1], trans[2], rot[0], rot[1], rot[2], scale[0], scale[1], scale[2])
         # TODO: Temporary mitigation — clamp extreme scale values while investigating
         # the root cause on models like Deoxys where edit_scale_correction becomes
         # near-singular due to bones with very small cumulative rest-pose scales.

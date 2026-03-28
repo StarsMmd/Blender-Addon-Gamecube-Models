@@ -66,7 +66,7 @@ def decode_fobjdesc(fobj, bias=0, scale=1):
     slope_type = fobj.frac_slope & HSD_A_FRAC_TYPE_MASK
     frac_slope = fobj.frac_slope & HSD_A_FRAC_MASK
 
-    decoded = []  # (frame, value, interpolation)
+    decoded = []  # (frame, value, interpolation, opcode)
     slopes = []   # (slope_in, slope_out) per keyframe
     cur_slope = 0
 
@@ -98,7 +98,7 @@ def decode_fobjdesc(fobj, bias=0, scale=1):
 
                 interp = _INTERPOLATION_MAP.get(opcode, Interpolation.CONSTANT)
                 scaled_val = (val + bias) * scale
-                decoded.append((current_frame, scaled_val, interp))
+                decoded.append((current_frame, scaled_val, interp, opcode))
 
                 if opcode != HSD_A_OP_NONE:
                     shift = 0
@@ -112,28 +112,17 @@ def decode_fobjdesc(fobj, bias=0, scale=1):
                     cur_pos += 1
                     current_frame += wait
 
-    # Build IRKeyframes with bezier handles computed from slopes
+    # Build IRKeyframes without explicit bezier handles.
+    # The temp fcurves use Blender's AUTO_CLAMPED handle algorithm which
+    # produces smooth interpolation matching the original importer's output.
+    # (The slope data from the HSD stream is not used for temp curve handles;
+    # the frame-by-frame SRT baking evaluates the auto-handled curves instead.)
     keyframes = []
-    for i, (frame, value, interp) in enumerate(decoded):
-        handle_left = None
-        handle_right = None
-
-        if i > 0:
-            prev_frame = decoded[i - 1][0]
-            l_delta = frame - prev_frame
-            handle_left = (frame - l_delta / 3, value - slopes[i][0] * l_delta / 3)
-
-        if i < len(decoded) - 1:
-            next_frame = decoded[i + 1][0]
-            r_delta = next_frame - frame
-            handle_right = (frame + r_delta / 3, value + slopes[i][1] * r_delta / 3)
-
+    for i, (frame, value, interp, _opcode) in enumerate(decoded):
         keyframes.append(IRKeyframe(
             frame=frame,
             value=value,
             interpolation=interp,
-            handle_left=handle_left,
-            handle_right=handle_right,
         ))
 
     return keyframes

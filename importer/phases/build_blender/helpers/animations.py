@@ -285,6 +285,10 @@ def _bake_bone_track(track, action, bone_data, max_frame, logger, armature=None)
              transform_list[5].evaluate(frame),
              transform_list[6].evaluate(frame)]
 
+        if frame <= 3 or frame == end_frame - 1:
+            logger.info("  EVAL %s f=%d r=(%.6f,%.6f,%.6f) l=(%.6f,%.6f,%.6f) s=(%.6f,%.6f,%.6f)",
+                        bone_name, frame, r[0], r[1], r[2], l[0], l[1], l[2], s[0], s[1], s[2])
+
         mtx = compile_srt_matrix(s, r, l)
 
         # Path bones: the curve is in unrotated GameCube space while the
@@ -311,6 +315,9 @@ def _bake_bone_track(track, action, bone_data, max_frame, logger, armature=None)
         trans, rot, scl = Bmtx.decompose()
         rot = rot.to_euler()
 
+        if frame <= 3 or frame == end_frame - 1:
+            logger.info("  BAKE %s f=%d loc=(%.6f,%.6f,%.6f) rot=(%.6f,%.6f,%.6f) scl=(%.6f,%.6f,%.6f)",
+                        bone_name, frame, trans[0], trans[1], trans[2], rot[0], rot[1], rot[2], scl[0], scl[1], scl[2])
         if frame == 0:
             logger.info("  SRT_BAKE bone=%s frame=0 uses_path=%s", bone_name, has_path)
             logger.info("    srt_in: r=(%.6f,%.6f,%.6f) l=(%.6f,%.6f,%.6f) s=(%.6f,%.6f,%.6f)",
