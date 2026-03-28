@@ -145,6 +145,7 @@ Nodes are cached by file offset (`nodes_cache_by_offset`). Nodes with `is_cachab
 | IR pipeline | ✅ Default path (legacy available via toggle) |
 | FSYS archive import | ✅ Working (multi-model extraction + LZSS decompression) |
 | Unit tests | ✅ 280 passing |
+| Shader node auto-layout | ❌ TODO: topological sort from output→inputs, arrange left-to-right |
 
 ---
 
@@ -173,8 +174,9 @@ The original importer (`colo_xd_legacy`) applied a `ShaderNodeGamma` (1/2.2) to 
 
 ## Coding Conventions
 
-- **Logger parameter:** Functions default to `StubLogger()`, never `None`.
+- **Logger parameter:** Functions default to `StubLogger()`, never `None`. Always use `logger.info()`/`logger.debug()` instead of `print()` — logger output is written to log files on disk that persist after import and can be read directly for investigation. `print()` only goes to the Blender console which is transient.
 - **Imports:** Phase files use try/except for Blender (relative) vs pytest (absolute) imports.
 - **Binary reads:** Use `shared/helpers/binary.py` helpers (`read('uint', data, offset)`) instead of raw `struct.unpack`.
 - **Errors:** Use `ValueError("descriptive message")` instead of custom exception classes. Only `ModelBuildError` (in build phase) carries structured data.
 - **No bpy in shared/:** All Blender-specific code lives in `importer/phases/build_blender/`.
+- **Fail loud over silent fallbacks:** When looking up Blender objects we created (nodes, bones, materials), raise `ValueError` with the actual names if the lookup fails — don't silently skip or fall back. Silent failures mask bugs and make debugging much harder.
