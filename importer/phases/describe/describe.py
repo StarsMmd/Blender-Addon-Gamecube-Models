@@ -144,12 +144,14 @@ def describe_scene(sections, options, logger=StubLogger()):
                 for j, tl in enumerate(mat.texture_layers):
                     img = tl.image
                     logger.debug("    tex[%d]: %s %dx%d, uv_idx=%d, coord=%s, "
-                                 "color_blend=%s, alpha_blend=%s, blend=%.2f, bump=%s",
+                                 "color_blend=%s, alpha_blend=%s, blend=%.2f, bump=%s, "
+                                 "scale=%s, trans=%s",
                                  j, img.name if img else 'None',
                                  img.width if img else 0, img.height if img else 0,
                                  tl.uv_index, tl.coord_type.value,
                                  tl.color_blend.value, tl.alpha_blend.value,
-                                 tl.blend_factor, tl.is_bump)
+                                 tl.blend_factor, tl.is_bump,
+                                 list(tl.scale), list(tl.translation))
                 if mat.fragment_blending:
                     fb = mat.fragment_blending
                     logger.debug("    fragment: effect=%s, src=%s, dst=%s",

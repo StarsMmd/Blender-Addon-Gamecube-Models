@@ -192,9 +192,10 @@ def _build_texture_sampling(tex_layer, nodes, links, image_cache, tex_idx=0):
         uv = nodes.new('ShaderNodeTexCoord')
         uv_output = uv.outputs[6]
 
-    # Mapping node
+    # Mapping node — use 'TexMapping_N' to avoid Blender deduplicating
+    # the name with the default 'Mapping' label
     mapping = nodes.new('ShaderNodeMapping')
-    mapping.name = 'Mapping_%d' % tex_idx
+    mapping.name = 'TexMapping_%d' % tex_idx
     mapping.vector_type = 'TEXTURE'
     mapping.inputs[2].default_value = tex_layer.rotation
     mapping.inputs[1].default_value = list(tex_layer.translation)

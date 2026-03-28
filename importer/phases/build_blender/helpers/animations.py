@@ -41,7 +41,6 @@ def build_bone_animations(ir_model, armature, options, logger=StubLogger(), mate
     max_frame = options.get("max_frame", 1000)
     bone_data = _build_bone_data_lookup(ir_model.bones)
     actions = []
-    # Track (material, slot_index) for final assignment to the first action
     mat_slot_indices = {}  # {material: slot_index_in_action}
 
     for anim_set in ir_model.bone_animations:
@@ -94,6 +93,7 @@ def build_bone_animations(ir_model, armature, options, logger=StubLogger(), mate
                 apply_color_tracks(mat_track, mat, channelbag.fcurves, max_frame, logger)
                 apply_texture_uv_tracks(mat_track, mat, channelbag.fcurves, logger)
                 mat_fcurve_count += len(channelbag.fcurves) - before
+
                 # All actions use the same slot layout, so record the index once
                 if mat not in mat_slot_indices:
                     mat_slot_indices[mat] = len(action.slots) - 1
