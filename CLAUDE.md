@@ -145,7 +145,7 @@ Nodes are cached by file offset (`nodes_cache_by_offset`). Nodes with `is_cachab
 | IR pipeline | ✅ Default path (legacy available via toggle) |
 | FSYS archive import | ✅ Working (multi-model extraction + LZSS decompression) |
 | Unit tests | ✅ 280 passing |
-| Shader node auto-layout | ❌ TODO: topological sort from output→inputs, arrange left-to-right |
+| Shader node auto-layout | ✅ Working (topological sort from output→inputs, left-to-right) |
 
 ---
 
