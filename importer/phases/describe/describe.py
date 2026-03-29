@@ -4,6 +4,7 @@ import time
 try:
     from ....shared.IR import IRScene
     from ....shared.IR.skeleton import IRModel
+    from ....shared.IR.animation import IRBoneAnimationSet
     from ....shared.Nodes.Classes.Joints.Joint import Joint
     from ....shared.Nodes.Classes.Joints.ModelSet import ModelSet
     from ....shared.Nodes.Classes.RootNodes.SceneData import SceneData
@@ -15,6 +16,7 @@ try:
 except (ImportError, SystemError):
     from shared.IR import IRScene
     from shared.IR.skeleton import IRModel
+    from shared.IR.animation import IRBoneAnimationSet
     from shared.Nodes.Classes.Joints.Joint import Joint
     from shared.Nodes.Classes.Joints.ModelSet import ModelSet
     from shared.Nodes.Classes.RootNodes.SceneData import SceneData
@@ -170,12 +172,25 @@ def describe_scene(sections, options, logger=StubLogger()):
         mat_anims = describe_material_animations(model_set, joint_to_bone_index, bones, options, logger, model_name=model_name)
         logger.info("  Material animations: %d sets (%.3fs)", len(mat_anims), time.time() - t5)
 
-        # Pair material animations into bone animation sets by index
+        # Pair material animations into bone animation sets by index.
+        # If there are more material animation sets than bone animation sets,
+        # create placeholder bone animation sets for the unpaired ones so
+        # material-only animations (e.g. water UV scrolling) aren't dropped.
         for i, mat_anim_set in enumerate(mat_anims):
             if i < len(bone_anims):
                 bone_anims[i].material_tracks = mat_anim_set.tracks
                 logger.debug("  Paired material anim '%s' → '%s' (%d tracks)",
                              mat_anim_set.name, bone_anims[i].name, len(mat_anim_set.tracks))
+            else:
+                placeholder_name = mat_anim_set.name.replace('MatAnim', 'Anim')
+                placeholder = IRBoneAnimationSet(
+                    name=placeholder_name,
+                    tracks=[],
+                    material_tracks=mat_anim_set.tracks,
+                )
+                bone_anims.append(placeholder)
+                logger.debug("  Created placeholder anim '%s' for material anim '%s' (%d tracks)",
+                             placeholder_name, mat_anim_set.name, len(mat_anim_set.tracks))
 
         ir_model = IRModel(
             name=model_name,

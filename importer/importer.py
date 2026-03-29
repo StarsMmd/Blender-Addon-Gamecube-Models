@@ -35,6 +35,9 @@ class Importer:
         dat_entries = extract_dat(raw_bytes, filename, options=options)
         logger.info("Extracted %d DAT entry(s) from %s", len(dat_entries), filename)
 
+        any_succeeded = False
+        errors = []
+
         for dat_bytes, metadata in dat_entries:
             logger.info("Processing: %s (%d bytes)", metadata.filename, len(dat_bytes))
             options["filepath"] = metadata.filename
@@ -66,13 +69,18 @@ class Importer:
                                         if obj.type == 'ARMATURE' and obj.name not in existing)
                     post_process(new_armatures, metadata.shiny_params, options, logger=logger)
 
+                any_succeeded = True
+
             except Exception as error:
                 traceback.print_exc()
                 logger.error("Failed to import %s: %s", metadata.filename, error)
-                logger.info("Log file: %s", logger.log_path)
-                logger.close()
-                raise ModelBuildError(metadata.filename, error) from error
+                errors.append((metadata.filename, error))
 
         logger.info("Log file: %s", logger.log_path)
         logger.close()
+
+        if not any_succeeded:
+            first_file, first_error = errors[0]
+            raise ModelBuildError(first_file, first_error) from first_error
+
         return {'FINISHED'}

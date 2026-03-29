@@ -69,9 +69,14 @@ def build_bone_animations(ir_model, armature, options, logger=StubLogger(), mate
         # using channelbag API so fcurves are associated with the correct slot
         mat_fcurve_count = 0
         if anim_set.material_tracks and material_lookup:
-            # Get the existing layer/strip (created by bone fcurves via action.fcurves proxy)
-            layer = action.layers[0]
-            strip = layer.strips[0]
+            # Get the existing layer/strip, or create one if no bone tracks exist
+            # (e.g. material-only animations like water UV scrolling)
+            if action.layers:
+                layer = action.layers[0]
+                strip = layer.strips[0]
+            else:
+                layer = action.layers.new("Layer")
+                strip = layer.strips.new(type='KEYFRAME')
 
             for mat_track in anim_set.material_tracks:
                 mat = material_lookup.get(mat_track.material_mesh_name)
