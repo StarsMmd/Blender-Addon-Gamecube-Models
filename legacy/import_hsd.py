@@ -122,50 +122,6 @@ def _debug_log(msg):
         _debug_log_file.write(msg + '\n')
         _debug_log_file.flush()
 
-class BlenderVersion:
-    def __init__(self, *ver):
-        self.version = ver
-
-    def __eq__(self, other):
-        equal = True
-        for v, v_ in zip(self.version, other):
-            if v != v_:
-                equal = False
-                break
-        return equal
-
-    def __ge__(self, other):
-        ge = True
-        for v, v_ in zip(self.version, other):
-            if v == v_:
-                continue
-            elif v < v_:
-                ge = False
-                break
-            else:
-                break
-        return ge
-
-    def __lt__(self, other):
-        return not (self >= other)
-
-    def __gt__(self, other):
-        gt = False
-        for v, v_ in zip(self.version, other):
-            if v == v_:
-                continue
-            elif v < v_:
-                gt = False
-                break
-            else:
-                gt = True
-                break
-        return gt
-
-    def __le__(self, other):
-        return not (self > other)
-
-
 def error_output(string):
     _debug_log('[ERROR] ' + string)
     print('Error: ' + string)
