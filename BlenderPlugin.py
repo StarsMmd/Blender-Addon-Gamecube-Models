@@ -1,12 +1,20 @@
 """Blender addon operators and registration for the DAT model importer/exporter."""
 import os
 import bpy
-from bpy.props import StringProperty, BoolProperty, IntProperty, FloatProperty, EnumProperty, CollectionProperty
+from bpy.props import StringProperty, BoolProperty, FloatProperty, EnumProperty, CollectionProperty
 from bpy_extras.io_utils import ImportHelper, ExportHelper
 
 from .legacy import import_hsd as legacy_import_hsd
 from .importer import Importer as IRImporter
+from .importer.phases.extract.extract import extract_dat
+from .importer.phases.route.route import route_sections
 from .shared.helpers.logger import Logger, StubLogger
+
+# Routing node types compatible with the legacy importer
+_LEGACY_TYPE_MAP = {
+    'SceneData': 'SCENE',
+    'Joint': 'BONE',
+}
 
 
 class ImportHSD(bpy.types.Operator, ImportHelper):
@@ -19,12 +27,8 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
                           description="File path used for importing the HSD file",
                           type=bpy.types.OperatorFileListElement)
     directory: StringProperty(subtype="DIR_PATH")
-    section: StringProperty(default='', name='Section Name',
-                           description='Name of the section that should be imported. Leave blank to import all.')
     ik_hack: BoolProperty(default=True, name='IK Hack',
                          description='Shrinks Bones down to 1e-3 to make IK work properly.')
-    max_frame: IntProperty(default=1000, name='Max Anim Frame',
-                          description='Cutoff frame after which animations aren\'t sampled. Use 0 For no limit.')
     write_logs: BoolProperty(default=True, name='Write Logs',
                             description='Write import logs to a temp file for debugging.')
     setup_workspace: BoolProperty(default=True, name='Setup Workspace',
@@ -48,15 +52,7 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
         for path in paths:
             try:
                 if self.use_legacy:
-                    status = legacy_import_hsd.load(
-                        self, context, path,
-                        scene_name=self.section if self.section else 'scene_data',
-                        ik_hack=self.ik_hack,
-                        max_frame=self.max_frame if self.max_frame > 0 else 1000000000,
-                        use_max_frame=self.max_frame > 0,
-                    )
-                    if 'FINISHED' not in status:
-                        return status
+                    self._import_legacy(context, path)
                 else:
                     self._import_ir(context, path)
             except Exception as error:
@@ -83,8 +79,7 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
 
         options = {
             "ik_hack": self.ik_hack,
-            "max_frame": self.max_frame if self.max_frame > 0 else 1000000000,
-            "section_names": [self.section] if len(self.section) > 0 else [],
+            "max_frame": 10000,
             "filepath": path,
             "import_lights": self.import_lights,
             "include_shiny": self.include_shiny,
@@ -94,6 +89,50 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
             bpy.ops.object.select_all(action='DESELECT')
 
         IRImporter.run(context, raw_bytes, filename, options, logger=logger)
+
+    def _import_legacy(self, context, path):
+        """Run Phase 1 (extract) + Phase 2 (route), legacy import, then Phase 6 (post-process)."""
+        from .importer.phases.post_process.post_process import post_process
+
+        with open(path, 'rb') as f:
+            raw_bytes = f.read()
+
+        filename = os.path.basename(path)
+        entries = extract_dat(raw_bytes, filename)
+
+        legacy_import_hsd.ikhack = self.ik_hack
+        legacy_import_hsd.anim_max_frame = 10000
+        legacy_import_hsd.write_logs = self.write_logs
+        legacy_import_hsd.import_lights = self.import_lights
+
+        options = {"include_shiny": False}
+
+        for dat_bytes, metadata in entries:
+            section_map = route_sections(dat_bytes)
+
+            # Record which armatures exist before the legacy import so we can
+            # diff afterwards to find newly created ones for Phase 6
+            existing = set(obj.name for obj in bpy.data.objects if obj.type == 'ARMATURE')
+
+            for section_name, node_type in section_map.items():
+                data_type = _LEGACY_TYPE_MAP.get(node_type)
+                if data_type is None:
+                    continue
+
+                status = legacy_import_hsd.load_dat_bytes(
+                    dat_bytes, metadata.filename, context,
+                    scene_name=section_name,
+                    data_type=data_type,
+                )
+                if status and 'FINISHED' not in status:
+                    raise ValueError("Legacy import failed for %s section '%s'" % (
+                        metadata.filename, section_name))
+
+            # Diff armatures against the pre-import snapshot to find newly created ones
+            new_armatures = set(obj.name for obj in bpy.data.objects
+                                if obj.type == 'ARMATURE' and obj.name not in existing)
+
+            post_process(new_armatures, metadata.shiny_params, options)
 
 
 class ExportHSD(bpy.types.Operator, ExportHelper):
@@ -213,7 +252,7 @@ def _on_shiny_toggle_update(obj, context):
 
 def _on_shiny_param_update(obj, context):
     """Rebuild the shiny node group and refresh the viewport when a parameter changes."""
-    from .importer.phases.build_blender.helpers.shiny_filter import rebuild_shiny_node_group
+    from .importer.phases.post_process.shiny_filter import rebuild_shiny_node_group
     rebuild_shiny_node_group(obj)
     obj.update_tag()
     for child in obj.children:

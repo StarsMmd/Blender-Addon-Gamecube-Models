@@ -122,7 +122,10 @@ def build_bone_animations(ir_model, armature, options, logger=StubLogger(), mate
 
         bpy.ops.object.mode_set(mode='OBJECT')
 
-    # Reset pose to rest position and select the first animation
+    # Reset pose to rest position — the new pipeline's edit bones encode
+    # the rest pose, so zeroing pose transforms gives the correct rest shape.
+    # This is specific to how Phase 5 builds bones and does not apply to
+    # legacy-built armatures.
     bpy.context.view_layer.objects.active = armature
     bpy.ops.object.mode_set(mode='POSE')
     for bone in armature.pose.bones:
@@ -132,61 +135,7 @@ def build_bone_animations(ir_model, armature, options, logger=StubLogger(), mate
         bone.scale = (1, 1, 1)
     bpy.ops.object.mode_set(mode='OBJECT')
 
-    if actions:
-        first_anim = next((a for a in actions if '_Anim_' in a.name), None)
-        active_action = first_anim or actions[0]
-        armature.animation_data.action = active_action
-
-        # Assign each animated material to the same action using stored slot index
-        for mat, slot_idx in mat_slot_indices.items():
-            if not mat.animation_data:
-                continue
-            mat.animation_data.action = active_action
-            mat.animation_data.action_slot = active_action.slots[slot_idx]
-
-        # Register a handler to sync material actions when the armature's action changes
-        if mat_slot_indices:
-            _register_action_sync_handler(armature, mat_slot_indices)
-
-    bpy.context.scene.frame_set(0)
-
-
-def _register_action_sync_handler(armature, mat_slot_indices):
-    """Register a depsgraph handler that syncs material actions when the armature's action changes.
-
-    When the user switches the armature's active action, all materials that have
-    MATERIAL slots in the new action are automatically switched to match.
-    """
-    armature_name = armature.name
-    # Store material names and slot indices (not references, which can go stale)
-    mat_info = [(mat.name, slot_idx) for mat, slot_idx in mat_slot_indices.items()]
-    last_action = [armature.animation_data.action]
-
-    def on_depsgraph_update(scene):
-        arm = bpy.data.objects.get(armature_name)
-        if not arm or not arm.animation_data or not arm.animation_data.action:
-            return
-        current_action = arm.animation_data.action
-        if current_action == last_action[0]:
-            return
-        last_action[0] = current_action
-
-        # Sync all tracked materials to the new action
-        for mat_name, slot_idx in mat_info:
-            mat = bpy.data.materials.get(mat_name)
-            if not mat or not mat.animation_data:
-                continue
-            if slot_idx < len(current_action.slots):
-                mat.animation_data.action = current_action
-                mat.animation_data.action_slot = current_action.slots[slot_idx]
-
-    # Remove any existing sync handler for this armature
-    for handler in list(bpy.app.handlers.depsgraph_update_post):
-        if hasattr(handler, '_dat_sync_armature') and handler._dat_sync_armature == armature_name:
-            bpy.app.handlers.depsgraph_update_post.remove(handler)
-
-    on_depsgraph_update._dat_sync_armature = armature_name
-    bpy.app.handlers.depsgraph_update_post.append(on_depsgraph_update)
+    return actions, mat_slot_indices
 
 
 def _bake_bone_track(track, action, bone_data, max_frame, logger, armature=None):

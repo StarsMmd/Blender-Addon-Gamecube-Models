@@ -50,7 +50,9 @@ bone_count = 0
 armature_count = 0
 light_count = 0
 image_count = 0
-anim_max_frame = 1000
+anim_max_frame = 10000
+write_logs = True
+import_lights = True
 
 class BlenderVersion:
     def __init__(self, *ver):
@@ -104,6 +106,9 @@ _debug_log_file = None
 
 def _debug_log_open(filepath):
     global _debug_log_dir, _debug_log_path, _debug_log_file
+    if not write_logs:
+        _debug_log_file = None
+        return
     model_name = os.path.splitext(os.path.basename(filepath))[0] or "unknown"
     _debug_log_dir = os.path.join(_tempfile.gettempdir(), "blender_dat_import", model_name)
     os.makedirs(_debug_log_dir, exist_ok=True)
@@ -125,6 +130,25 @@ def error_output(string):
 def notice_output(string):
     _debug_log('[INFO] ' + string)
     print(string)
+
+def load_dat_bytes(dat_bytes, display_name, context=None, scene_name='scene_data', data_type='SCENE', import_animation=True):
+    """Import already-extracted DAT bytes (no file reading or PKX stripping).
+
+    Called by the new pipeline's extract phase to feed individual DAT entries
+    into the legacy importer.
+    """
+    _debug_log_open(display_name)
+    _debug_log("=== LEGACY IMPORT (from extract): %s ===" % display_name)
+
+    data = memoryview(bytearray(dat_bytes))
+
+    hsd.HSD_reset_created_structs()
+    if len(data) < hsd.HSD_get_struct_size('HSD_ArchiveHeader'):
+        error_output("Invalid data: Smaller than Header size")
+        return {'CANCELLED'}
+
+    return _load_dat_data(data, 0, display_name, context, scene_name, data_type, import_animation)
+
 
 def load_hsd(filepath, context = None, offset = 0, scene_name = 'scene_data', data_type = 'SCENE', import_animation = True):
     _debug_log_open(filepath)
@@ -158,6 +182,11 @@ def load_hsd(filepath, context = None, offset = 0, scene_name = 'scene_data', da
             pkx_header_size += gpt1Size + ((0x20 - (gpt1Size % 0x20)) % 0x20)
         data = data[pkx_header_size:]
 
+    return _load_dat_data(data, offset, filepath, context, scene_name, data_type, import_animation)
+
+
+def _load_dat_data(data, offset, display_name, context, scene_name, data_type, import_animation):
+    """Shared implementation for loading DAT data from memory."""
     #this is where our header should be
     header_data = data[offset:]
 
@@ -190,9 +219,9 @@ def load_hsd(filepath, context = None, offset = 0, scene_name = 'scene_data', da
         bpy.ops.object.select_all(action='DESELECT')
 
     if data_type == 'BONE':
-        load_bone(data, scene_info, info[0:], filepath)
+        load_bone(data, scene_info, info[0:], display_name)
     else:
-        load_scene(data, scene_info, info[0:], filepath, import_animation)
+        load_scene(data, scene_info, info[0:], display_name, import_animation)
 
     return {'FINISHED'}
 
@@ -269,10 +298,11 @@ def load_scene(data, scene_info, rel, filepath, import_animation = True):
             notice_output("Empty Light")
             continue
 
-        light = load_light(light)
+        if import_lights:
+            light = load_light(light)
         _light_count += 1
     if _light_count:
-        _debug_log("Built %d light(s)" % _light_count)
+        _debug_log("Found %d light(s), imported=%s" % (_light_count, import_lights))
 
 cur_anim = 0
 

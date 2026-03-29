@@ -39,7 +39,7 @@ class DATParser(BinaryReader):
 
 	def parseSections(self):
 		self.sections = []
-		section_names_to_include = self.options.get("section_names")
+		section_names_to_include = self.options.get("section_names") or []
 		section_map = self.options.get("section_map")
 		for (address, is_public) in self.header.section_addresses:
 

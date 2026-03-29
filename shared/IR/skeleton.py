@@ -2,7 +2,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .enums import ScaleInheritance
-from .shiny import IRShinyFilter
 
 
 @dataclass
@@ -48,5 +47,3 @@ class IRModel:
     copy_rotation_constraints: list = field(default_factory=list)
     limit_rotation_constraints: list = field(default_factory=list)
     limit_location_constraints: list = field(default_factory=list)
-    # Shiny variant filter (PKX only)
-    shiny_filter: IRShinyFilter | None = None

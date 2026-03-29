@@ -23,7 +23,8 @@ Phase 1 (extract)        raw file bytes → DAT bytes (strip PKX/FSYS headers)
 Phase 2 (route)          DAT bytes → {section_name: node_type} map
 Phase 3 (parse)          DAT bytes + map → parsed node trees
 Phase 4 (describe)       node trees → IRScene (Intermediate Representation)
-Phase 5A (build_blender) IRScene → Blender scene objects
+Phase 5 (build_blender)  IRScene → Blender scene objects
+Phase 6 (post_process)   Reset poses, select animations, apply shiny filters
 ```
 
 File reading happens at the entry points (`BlenderPlugin.py` / `CommandLineInterface.py`), not inside the pipeline. The pipeline takes `bytes` and a `filename`.
@@ -34,7 +35,8 @@ The IR is a platform-agnostic dataclass hierarchy (`shared/IR/`) that decouples 
 
 - `IRScene` → `IRModel` → `IRBone`, `IRMesh`, `IRMaterial`, `IRBoneAnimationSet`, `IRMaterialAnimationSet`
 - `IRKeyframe` stores decoded frame/value/interpolation/handles — not compressed HSD bytes
-- Blender-specific baking (scale correction, Euler decomposition) happens in Phase 5A only
+- Blender-specific baking (scale correction, Euler decomposition) happens in Phase 5 only
+- **When modifying the IR**, update `documentation/ir_spec.md` to match
 
 ### Export Pipeline
 
@@ -67,9 +69,12 @@ importer/
       describe.py                # Phase 4: node trees → IRScene
       helpers/                   # bones, meshes, materials, animations, constraints, lights, material_animations, keyframe_decoder
     build_blender/
-      build_blender.py           # Phase 5A: IRScene → Blender objects
-      helpers/                   # skeleton, meshes, materials, animations, constraints, lights, material_animations, shiny_filter
+      build_blender.py           # Phase 5: IRScene → Blender objects
+      helpers/                   # skeleton, meshes, materials, animations, constraints, lights, material_animations
       errors/build_errors.py     # ModelBuildError
+    post_process/
+      post_process.py            # Phase 6: reset poses, select animations, apply shiny filters
+      shiny_filter.py            # Shiny node group building, property setup, material insertion
 
 shared/
   IR/                            # Intermediate Representation dataclasses
@@ -177,7 +182,9 @@ The original importer (`colo_xd_legacy`) applied a `ShaderNodeGamma` (1/2.2) to 
 
 ## Shiny Filter Shader Nodes
 
-The shiny filter inserts two named nodes into each material's node tree:
+The shiny filter is applied entirely in Phase 6 (post-processing), independent of the parsing/IR/build phases. Raw shiny parameters are extracted from PKX headers in Phase 1 and passed directly to Phase 6. There is no shiny data in the IR.
+
+The filter inserts two named nodes into each material's node tree:
 
 - **`shiny_filter_shader`** — the ShaderNodeGroup instance referencing the `ShinyFilter_{model_name}` node group
 - **`shiny_filter_mix`** — the MixRGB node blending between normal and shiny output

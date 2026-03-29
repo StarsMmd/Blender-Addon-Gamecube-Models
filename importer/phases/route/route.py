@@ -5,8 +5,10 @@ to determine which node type each section should be parsed as.
 """
 try:
     from ....shared.helpers.binary import read, read_many
+    from ....shared.helpers.logger import StubLogger
 except (ImportError, SystemError):
     from shared.helpers.binary import read, read_many
+    from shared.helpers.logger import StubLogger
 
 # Default section name → node type mapping rules (checked in order)
 _DEFAULT_RULES = [
@@ -20,12 +22,13 @@ _DEFAULT_RULES = [
 ]
 
 
-def route_sections(dat_bytes, user_overrides=None):
+def route_sections(dat_bytes, user_overrides=None, logger=StubLogger()):
     """Map section names to node types from raw DAT bytes.
 
     Args:
         dat_bytes: Raw DAT binary (no container header).
         user_overrides: Optional dict of {section_name: node_type} overrides.
+        logger: Logger instance.
 
     Returns:
         dict of {section_name: node_type_name} for all sections.
@@ -43,6 +46,7 @@ def route_sections(dat_bytes, user_overrides=None):
         node_type = _resolve_type(name)
         section_map[name] = node_type
 
+    logger.info("Routed %d section(s): %s", len(section_map), section_map)
     return section_map
 
 

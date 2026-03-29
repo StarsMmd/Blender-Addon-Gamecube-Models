@@ -3,7 +3,6 @@
 from .enums import *
 from .scene import IRScene
 from .skeleton import IRModel, IRBone
-from .shiny import IRShinyFilter
 from .geometry import IRMesh, IRUVLayer, IRColorLayer, IRBoneWeights, IRShapeKey
 from .material import (
     IRMaterial, IRTextureLayer, IRImage,

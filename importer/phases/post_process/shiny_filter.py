@@ -10,7 +10,7 @@ so all 8 parameters (4 routing + 4 brightness) can be tweaked live.
 import bpy
 
 try:
-    from .....shared.IR.enums import ShinyChannel
+    from ....shared.IR.enums import ShinyChannel
 except (ImportError, SystemError):
     from shared.IR.enums import ShinyChannel
 
@@ -236,15 +236,26 @@ def insert_shiny_filter(material, node_group, armature):
 def _find_color_input(nodes):
     """Find the main color input on the output shader.
 
+    Checks Principled BSDF first, but only if its Base Color has an incoming
+    link. Unlit materials (e.g. legacy importer) set Base Color to black and
+    route the actual color through an Emission node instead.
+
     Returns (node, input_socket, is_emission) or (None, None, False).
     """
     for node in nodes:
         if node.type == 'BSDF_PRINCIPLED':
-            return node, node.inputs['Base Color'], False
+            base_color = node.inputs['Base Color']
+            if base_color.is_linked:
+                return node, base_color, False
 
     for node in nodes:
         if node.type == 'EMISSION':
             return node, node.inputs['Color'], True
+
+    # Fallback: Principled BSDF with no link (solid color)
+    for node in nodes:
+        if node.type == 'BSDF_PRINCIPLED':
+            return node, node.inputs['Base Color'], False
 
     return None, None, False
 

@@ -2,7 +2,7 @@
 
 A Blender addon for importing GameCube `.dat` models into Blender. This addon is currently developed predominantly for `Pokemon Colosseum` and `Pokemon XD: Gale of Darkness` but may have some compatibility with other games that use the format (based on the SysDolphin library) such as `Super Smash Bros. Melee`, `Kirby Air Ride`, `Chibi-Robo! Plug Into Adventure!` and `Killer7`.
 
-The importer uses a 5-phase pipeline with an Intermediate Representation (IR) that decouples binary parsing from Blender object creation. A legacy import path is also available via a toggle for comparison.
+The importer uses a 6-phase pipeline with an Intermediate Representation (IR) that decouples binary parsing from Blender object creation. A legacy import path is also available via a toggle for comparison.
 
 Original implementation provided by Made.
 
@@ -23,7 +23,7 @@ This addon uses Blender's extensions system. Compress the contents of this repos
 - Material animation import (color, alpha, texture UV) with NLA support
 - Light import (SUN, POINT, SPOT) — toggle with "Import Lights" setting
 - Bone instances (JOBJ_INSTANCE)
-- Shiny variant color filter (PKX models)
+- [Shiny variant color filter](#shiny-variants) (PKX models)
 - FSYS archive import (multi-model extraction + LZSS decompression)
 
 ## Shiny Variants
@@ -62,7 +62,8 @@ importer/
     route/                 # Phase 2: section name -> node type mapping
     parse/                 # Phase 3: binary -> node trees (DATParser)
     describe/              # Phase 4: node trees -> IR dataclasses
-    build_blender/         # Phase 5A: IR -> Blender objects
+    build_blender/         # Phase 5: IR -> Blender objects
+    post_process/          # Phase 6: reset poses, select animations, apply shiny
 
 shared/
   IR/                      # Intermediate Representation dataclasses

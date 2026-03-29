@@ -4,7 +4,6 @@ import pytest
 from importer.phases.extract.extract import extract_dat, _extract_shiny_params
 from shared.IR.shiny import IRShinyFilter
 from shared.IR.enums import ShinyChannel
-from importer.phases.describe.describe import _build_shiny_filter
 
 
 # ---------------------------------------------------------------------------
@@ -226,29 +225,3 @@ def test_shiny_channel_enum_values():
     assert len(ShinyChannel) == 4
 
 
-def test_build_shiny_filter_from_params():
-    """_build_shiny_filter converts raw dict to IRShinyFilter."""
-    options = {
-        "shiny_params": {
-            "route_r": 2,
-            "route_g": 1,
-            "route_b": 0,
-            "route_a": 3,
-            "brightness_r": 0.5,
-            "brightness_g": -0.3,
-            "brightness_b": 1.0,
-            "brightness_a": 0.0,
-        }
-    }
-    result = _build_shiny_filter(options)
-
-    assert result is not None
-    assert isinstance(result, IRShinyFilter)
-    assert result.channel_routing == (ShinyChannel.BLUE, ShinyChannel.GREEN, ShinyChannel.RED, ShinyChannel.ALPHA)
-    assert result.brightness == (0.5, -0.3, 1.0, 0.0)
-
-
-def test_build_shiny_filter_returns_none_without_params():
-    """_build_shiny_filter returns None when shiny_params is absent."""
-    assert _build_shiny_filter({}) is None
-    assert _build_shiny_filter({"shiny_params": None}) is None
