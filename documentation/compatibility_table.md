@@ -12,7 +12,7 @@ This table tracks every feature in the GameCube SysDolphin `.dat` format and its
 
 ## Geometry
 
-| Feature | DAT Parse (Phase 3) | IR Type (Phase 4) | Import (Phase 5A) | Export | Notes |
+| Feature | DAT Parse (Phase 3) | IR Type (Phase 4) | Import (Phase 5) | Export | Notes |
 |---------|---------------------|--------------------|--------------------|--------|-------|
 | Skeleton / Bone hierarchy | ✅ | `IRBone` | ✅ | ⚠️ Round-trip only | |
 | Bone transforms (SRT) | ✅ | `IRBone` matrices | ✅ | ⚠️ Round-trip only | |
@@ -30,7 +30,7 @@ This table tracks every feature in the GameCube SysDolphin `.dat` format and its
 
 ## Materials
 
-| Feature | DAT Parse (Phase 3) | IR Type (Phase 4) | Import (Phase 5A) | Export | Notes |
+| Feature | DAT Parse (Phase 3) | IR Type (Phase 4) | Import (Phase 5) | Export | Notes |
 |---------|---------------------|--------------------|--------------------|--------|-------|
 | Diffuse/alpha render modes | ✅ | `IRMaterial` (`color_source`, `alpha_source`, `lighting`, `is_translucent`) | ✅ | ❌ | Decomposed from render_mode bits |
 | Material colors (diffuse) | ✅ | `IRMaterial.diffuse_color` | ✅ | ❌ | Linearized from sRGB |
@@ -49,7 +49,7 @@ This table tracks every feature in the GameCube SysDolphin `.dat` format and its
 
 ## Animations
 
-| Feature | DAT Parse (Phase 3) | IR Type (Phase 4) | Import (Phase 5A) | Export | Notes |
+| Feature | DAT Parse (Phase 3) | IR Type (Phase 4) | Import (Phase 5) | Export | Notes |
 |---------|---------------------|--------------------|--------------------|--------|-------|
 | Bone animation (SRT keyframes) | ✅ | `IRBoneAnimationSet` | ✅ | ❌ | |
 | Path animation (spline-based) | ✅ | `IRBoneTrack` | ✅ | ❌ | |
@@ -67,7 +67,7 @@ This table tracks every feature in the GameCube SysDolphin `.dat` format and its
 
 ## Constraints
 
-| Feature | DAT Parse (Phase 3) | IR Type (Phase 4) | Import (Phase 5A) | Export | Notes |
+| Feature | DAT Parse (Phase 3) | IR Type (Phase 4) | Import (Phase 5) | Export | Notes |
 |---------|---------------------|--------------------|--------------------|--------|-------|
 | IK constraints | ✅ | `IRIKConstraint` | ✅ | ❌ | |
 | Copy Location | ✅ | `IRCopyLocationConstraint` | ✅ | ❌ | Weighted multi-source |
@@ -78,7 +78,7 @@ This table tracks every feature in the GameCube SysDolphin `.dat` format and its
 
 ## Scene Objects
 
-| Feature | DAT Parse (Phase 3) | IR Type (Phase 4) | Import (Phase 5A) | Export | Notes |
+| Feature | DAT Parse (Phase 3) | IR Type (Phase 4) | Import (Phase 5) | Export | Notes |
 |---------|---------------------|--------------------|--------------------|--------|-------|
 | Lights (SUN) | ✅ | `IRLight` | ✅ | ❌ | |
 | Lights (POINT) | ✅ | `IRLight` | ✅ | ❌ | |

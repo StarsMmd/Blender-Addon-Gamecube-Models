@@ -5,7 +5,7 @@ Every Blender Python API call used by this addon, with the Blender version range
 **Addon declared minimum:** `4.5.0` (in `blender_manifest.toml` and `bl_info`)
 **Effective minimum (ignoring version guards):** 4.5.0
 
-> **Note:** File references use both refactored paths (`BlenderPlugin.py`, `importer/phases/build_blender/helpers/`) and legacy paths (`legacy/` files like `ModelSet.py`, `MaterialObject.py`). Legacy files are only active when "Use Legacy Importer" is checked.
+> **Note:** File references use refactored paths (`BlenderPlugin.py`, `importer/phases/build_blender/helpers/`, `importer/phases/post_process/`) and legacy paths (`legacy/` files like `ModelSet.py`, `MaterialObject.py`). Legacy files are only active when "Use Legacy Importer" is checked. Phase 5 (build_blender) and Phase 6 (post_process) only run when a Blender context is available (i.e., `context` is not `None`). The `shiny_filter.py` helper lives in `importer/phases/post_process/` (Phase 6), not in `build_blender/helpers/`.
 
 | Min | Max | API Call | File(s) | Notes |
 |-----|-----|----------|---------|-------|

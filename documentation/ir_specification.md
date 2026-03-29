@@ -1,6 +1,8 @@
 # Intermediate Representation (IR) Specification
 
-The IR is the output of Phase 4 (Scene Description) and the input to Phase 5A (Build). It is a pure-Python dataclass hierarchy with no dependencies on `bpy` or the Node system.
+The IR is the output of Phase 4 (Scene Description) and the input to Phase 5 (Build). It is a pure-Python dataclass hierarchy with no dependencies on `bpy` or the Node system.
+
+> **Note:** Shiny variant data bypasses the IR entirely. Raw shiny parameters are extracted in Phase 1 (extract) and passed directly to Phase 6 (post_process), which applies them to Blender materials after the main build is complete.
 
 **Design principles:**
 - All types are `@dataclass` from the standard library
@@ -28,7 +30,6 @@ shared/IR/
                           # IRShapeAnimationSet, IRShapeTrack
   constraints.py          # IRIKConstraint, IRBoneReposition, IRCopyLocationConstraint,
                           # IRTrackToConstraint, IRCopyRotationConstraint, IRLimitConstraint
-  shiny.py                # IRShinyFilter (shiny variant color filter)
   lights.py               # IRLight
   camera.py               # IRCamera (stub)
   fog.py                  # IRFog (stub)
@@ -209,7 +210,7 @@ class FragmentBlending:
 
 **File:** `shared/IR/animation.py`
 
-All keyframes are fully decoded from compressed HSD format into explicit frame/value pairs with interpolation and bezier handles. Values are in HSD world-space SRT — target-specific baking (e.g. Blender scale correction + Euler decomposition) happens in Phase 5A.
+All keyframes are fully decoded from compressed HSD format into explicit frame/value pairs with interpolation and bezier handles. Values are in HSD world-space SRT — target-specific baking (e.g. Blender scale correction + Euler decomposition) happens in Phase 5.
 
 ```python
 @dataclass

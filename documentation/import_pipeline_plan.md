@@ -2,19 +2,20 @@
 
 ## Overview
 
-The import pipeline converts GameCube `.dat` binary files into Blender scene objects through 5 sequential phases. Each phase is a pure function with defined inputs and outputs. No shared mutable state crosses phase boundaries.
+The import pipeline converts GameCube `.dat` binary files into Blender scene objects through 6 sequential phases. Each phase is a pure function with defined inputs and outputs. No shared mutable state crosses phase boundaries.
 
 ```
 Phase 1 (extract)        raw file bytes + filename → list[(DAT bytes, metadata)]
 Phase 2 (route)          DAT bytes → {section_name: node_type_name}
 Phase 3 (parse)          DAT bytes + section_map → list[SectionInfo]
 Phase 4 (describe)       sections → IRScene
-Phase 5A (build_blender) IRScene → Blender scene objects
+Phase 5 (build_blender)  IRScene → Blender scene objects
+Phase 6 (post_process)   reset poses, select animations, apply shiny filters
 ```
 
 **Entry point:** `Importer.run(context, raw_bytes, filename, options, logger)` in `importer/importer.py`
 
-Phase 5A only runs when `context is not None`. The CLI can run phases 1–4 without Blender installed, producing an IRScene for inspection or testing.
+Phases 5 and 6 only run when `context is not None`. The CLI can run phases 1–4 without Blender installed, producing an IRScene for inspection or testing.
 
 File reading happens at the entry points (`BlenderPlugin.py` / `CommandLineInterface.py`), not inside the pipeline. The pipeline receives `bytes` and a `filename`.
 
@@ -520,7 +521,7 @@ Extracts color (normalized to 0–1 float), position, and target position from t
 
 ---
 
-## Phase 5A: Blender Build
+## Phase 5: Blender Build
 
 **File:** `importer/phases/build_blender/build_blender.py`
 
@@ -530,7 +531,7 @@ Extracts color (normalized to 0–1 float), position, and target position from t
 def build_blender_scene(ir_scene: IRScene, context, options: dict, logger) -> None
 ```
 
-Only runs when `context is not None` (skipped in CLI mode without bpy). Mutates the Blender scene via bpy API calls.
+Only runs when `context is not None` (skipped in CLI mode without bpy). Mutates the Blender scene via bpy API calls. Does not return model results — it just creates Blender objects.
 
 ### Build Order (sequential, order matters)
 
@@ -706,6 +707,28 @@ For each IRLight:
 1. Create light data (SUN/POINT/SPOT) with color
 2. Position with dual rotation: `Translation(pos) @ Rotation(-π/2, X)` then `@= Rotation(π/2, X)`. The pre-rotation and post-rotation cancel for the orientation but correctly transform the position from GameCube Y-up to Blender Z-up coordinates.
 3. SPOT lights with a target position get a target empty + TRACK_TO constraint (`TRACK_NEGATIVE_Z`, `UP_Y`).
+
+---
+
+## Phase 6: Post-Processing
+
+Phase 6 runs after Phase 5 completes, or after the legacy import path finishes. It handles tasks that operate on the already-created Blender objects rather than on IR data.
+
+### Armature Discovery
+
+Phase 6 discovers newly created armatures by diffing `bpy.data.objects` — it compares the set of objects before import to the set after, identifying any new armature objects that were added during Phase 5 (or legacy import).
+
+### Animation Selection and Sync
+
+For each discovered armature, Phase 6 selects the first animation action and syncs material animation slots so that all materials on the model are ready for playback.
+
+### Shiny Filter Application
+
+If the original file was a PKX container, Phase 6 applies shiny filters from the raw PKX parameters extracted during Phase 1. This step has no dependency on the IR — it works directly with the extracted PKX color parameters and the Blender materials on the discovered armatures.
+
+### Pose Reset
+
+Note: pose reset happens in Phase 5's `animations.py`, not in Phase 6. By the time Phase 6 runs, poses have already been reset to their rest position.
 
 ---
 

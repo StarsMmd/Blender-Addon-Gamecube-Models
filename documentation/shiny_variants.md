@@ -40,36 +40,19 @@ Models without a meaningful shiny variant (e.g. legendaries and starters, which 
 ### Pipeline Flow
 
 ```
-Phase 1 (Extract)    PKX header bytes → raw shiny params dict (routing ints + brightness floats)
-                     Default parameter detection (unchanged routing + neutral brightness)
-                     Returns None if defaults detected, skipping all downstream shiny logic
+Phase 1 (Extract)        PKX header bytes → raw shiny params dict (routing ints + brightness floats)
+                         Default parameter detection (unchanged routing + neutral brightness)
+                         Returns None if defaults detected, skipping all downstream shiny logic
 
-Phase 4 (Describe)   Raw dict → IRShinyFilter dataclass
-                     Converts routing ints to ShinyChannel enum
-                     Brightness already converted to [-1.0, 1.0] floats by Phase 1
-
-Phase 5A (Build)     IRShinyFilter → Blender shader node group + armature properties + UI panel
+Phase 6 (Post-Process)   Raw params dict → Blender shader node group + armature properties + UI panel
+                         Converts routing ints to node group connections
+                         Sets up armature properties from brightness/routing values
+                         Inserts shiny filter nodes into each material
 ```
 
-### IR Representation
+Raw shiny params bypass the IR entirely — they go from Phase 1 (Extract) directly to Phase 6 (Post-Process), since the shiny filter is a Blender-only display feature that does not belong in the platform-agnostic intermediate representation.
 
-```python
-class ShinyChannel(Enum):
-    RED = 0
-    GREEN = 1
-    BLUE = 2
-    ALPHA = 3
-
-@dataclass
-class IRShinyFilter:
-    channel_routing: tuple[ShinyChannel, ShinyChannel, ShinyChannel, ShinyChannel]
-    brightness: tuple[float, float, float, float]  # [-1.0, 1.0]
-```
-
-The filter lives as an optional field on `IRModel`:
-```python
-shiny_filter: IRShinyFilter | None = None
-```
+**Note:** The legacy import path disables shiny entirely (`include_shiny=False`).
 
 ### Alpha Handling
 
@@ -104,7 +87,7 @@ All shiny parameters are registered as `bpy.props` properties on `bpy.types.Obje
 | `dat_shiny_brightness_b` | FloatProperty | Blue brightness offset |
 | `dat_shiny_brightness_a` | FloatProperty | Alpha brightness offset |
 
-On import, these are initialized from the extracted `IRShinyFilter` values. Users can then tweak any parameter and see the result in real time.
+On import, these are initialized from the extracted raw shiny param values. Users can then tweak any parameter and see the result in real time.
 
 ### UI Panel
 
@@ -125,12 +108,10 @@ The `dat_shiny` toggle uses a driver on the MixRGB factor input, with an update 
 | File | Role |
 |---|---|
 | `importer/phases/extract/extract.py` | `_extract_shiny_params()`, `_is_noop_shiny()` |
-| `shared/IR/shiny.py` | `IRShinyFilter` dataclass |
-| `shared/IR/enums.py` | `ShinyChannel` enum |
-| `importer/phases/describe/describe.py` | `_build_shiny_filter()` — dict → IR conversion |
-| `importer/phases/build_blender/helpers/shiny_filter.py` | Node group building, property setup, material insertion |
-| `importer/phases/build_blender/build_blender.py` | Orchestrates shiny setup in Phase 5A |
+| `importer/phases/post_process/post_process.py` | `_apply_shiny()` — orchestrates shiny setup in Phase 6 |
+| `importer/phases/post_process/shiny_filter.py` | Node group building, property setup, material insertion |
 | `BlenderPlugin.py` | Property registration, UI panel, update callbacks |
+| `scripts/add_shiny_filter.py` | Standalone script for manual shiny filter application (uses the same `_find_color_input` logic) |
 
 ## Reference
 

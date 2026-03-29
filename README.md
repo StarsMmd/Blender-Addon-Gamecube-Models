@@ -74,7 +74,7 @@ shared/
 
 legacy/                    # Pre-refactor importer (available via "Use Legacy" toggle)
 documentation/             # Pipeline docs, API reference, compatibility table, IR spec
-tests/                     # pytest suite (296 tests, no game files required)
+tests/                     # pytest suite (292 tests, no game files required)
 ```
 
 ## Developer Instructions
@@ -84,7 +84,7 @@ tests/                     # pytest suite (296 tests, no game files required)
 The pipeline can run outside of Blender for parsing and testing:
 
 ```bash
-# Install Blender as a Python module (optional — without it, phases 1-4 run but phase 5A is skipped)
+# Install Blender as a Python module (optional — without it, phases 1-4 run but phases 5-6 are skipped)
 pip install bpy mathutils
 
 # From within the addon folder, run the pipeline on a model file
@@ -111,7 +111,7 @@ python3 -m pytest tests/ -q
 
 Detailed documentation lives in the `documentation/` folder:
 
-- [**Import Pipeline Plan**](documentation/import_pipeline_plan.md) — design and architecture of the 5-phase import pipeline
+- [**Import Pipeline Plan**](documentation/import_pipeline_plan.md) — design and architecture of the 6-phase import pipeline
 - [**Export Pipeline Plan**](documentation/export_pipeline_plan.md) — design for the export pipeline (DAT writing)
 - [**IR Specification**](documentation/ir_specification.md) — the Intermediate Representation dataclass hierarchy and design principles
 - [**Compatibility Table**](documentation/compatibility_table.md) — feature support across different games and file types
