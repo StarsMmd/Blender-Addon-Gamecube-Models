@@ -31,9 +31,9 @@ Four contiguous bytes representing a per-channel brightness multiplier. Raw byte
 | Color data offset | `file_length - 0x11` | Fixed at `0x73` |
 | Color2 byte order | ABGR (reversed) | RGBA |
 
-### No-Op Detection
+### Default Parameter Detection
 
-Models without a meaningful shiny variant (e.g. legendaries and starters, which use separate shiny models) store identity routing `(0, 1, 2, 3)` and neutral brightness bytes near `128`. The addon detects this pattern on raw byte values (before conversion to floats) and skips the shiny filter entirely for these models.
+Models without a meaningful shiny variant (e.g. legendaries and starters, which use separate shiny models) store default routing `(0, 1, 2, 3)` (each channel maps to itself) and neutral brightness bytes near `128`. The addon detects this pattern on raw byte values (before conversion to floats) and skips the shiny filter entirely for these models.
 
 ## Implementation in the Addon
 
@@ -41,8 +41,8 @@ Models without a meaningful shiny variant (e.g. legendaries and starters, which 
 
 ```
 Phase 1 (Extract)    PKX header bytes → raw shiny params dict (routing ints + brightness floats)
-                     No-op detection on raw bytes (identity routing + brightness within 1 of 128)
-                     Returns None if no-op, skipping all downstream shiny logic
+                     Default parameter detection (unchanged routing + neutral brightness)
+                     Returns None if defaults detected, skipping all downstream shiny logic
 
 Phase 4 (Describe)   Raw dict → IRShinyFilter dataclass
                      Converts routing ints to ShinyChannel enum

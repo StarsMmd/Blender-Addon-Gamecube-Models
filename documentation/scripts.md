@@ -15,7 +15,7 @@ All scripts require the DAT plugin addon to be enabled, since they depend on reg
 
 ## add_shiny_filter.py
 
-**Purpose:** Add a shiny color filter to any armature, including models that weren't imported from PKX files or that had no-op shiny parameters.
+**Purpose:** Add a shiny color filter to any armature, including models that weren't imported from PKX files or that had default (unchanged) shiny parameters.
 
 **Usage:**
 1. Select an armature in the viewport
@@ -24,13 +24,13 @@ All scripts require the DAT plugin addon to be enabled, since they depend on reg
 4. Click **Run Script**
 
 **What it does:**
-- Creates a `ShinyFilter_{armature_name}` node group with identity (no-op) parameters
+- Creates a `ShinyFilter_{armature_name}` node group with default parameters (no visible change)
 - Inserts the filter into every material on the armature's child meshes
 - Sets up the `dat_shiny` properties on the armature so the Shiny Variant panel appears
 - Skips materials that already have a `shiny_filter_shader` node to avoid duplicates
 
 **Initial parameters:**
-- Channel routing: R→Red, G→Green, B→Blue, A→Alpha (identity)
+- Channel routing: R→Red, G→Green, B→Blue, A→Alpha (each channel maps to itself)
 - Brightness: 0.0 for all channels (no change)
 
 After running, use the **Shiny Variant** panel in Object Properties to tweak parameters and toggle the filter on/off.
