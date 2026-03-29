@@ -154,11 +154,22 @@ def _describe_material_track(mat_anim, mesh, bone_name, mesh_idx, logger):
                 setattr(track, field, keyframes)
             fobj = fobj.next
 
+    # Build lookup of static texture nodes by index
+    static_textures = {}
+    if mesh.mobject and mesh.mobject.texture:
+        tex = mesh.mobject.texture
+        tex_idx = 0
+        while tex:
+            static_textures[tex_idx] = tex
+            tex = tex.next
+            tex_idx += 1
+
     # Decode texture UV tracks
     if has_tex:
         ta = tex_anim
         while ta:
-            uv_track = _describe_texture_uv_track(ta, logger)
+            static_tex = static_textures.get(ta.id)
+            uv_track = _describe_texture_uv_track(ta, static_tex, logger)
             if uv_track:
                 track.texture_uv_tracks.append(uv_track)
             ta = ta.next
@@ -166,8 +177,14 @@ def _describe_material_track(mat_anim, mesh, bone_name, mesh_idx, logger):
     return track
 
 
-def _describe_texture_uv_track(tex_anim, logger):
-    """Extract one TextureAnimation into IRTextureUVTrack."""
+def _describe_texture_uv_track(tex_anim, static_texture, logger):
+    """Extract one TextureAnimation into IRTextureUVTrack.
+
+    Applies V-flip to translation_v keyframes so the IR stores standard
+    bottom-left UV origin values. When scale_v is also animated, the scale
+    track is evaluated at each translation keyframe's frame to get the
+    correct per-keyframe correction.
+    """
     if not tex_anim.animation or (tex_anim.animation.flags & AOBJ_NO_ANIM):
         return None
 
@@ -181,4 +198,102 @@ def _describe_texture_uv_track(tex_anim, logger):
             setattr(uv_track, field, keyframes)
         fobj = fobj.next
 
+    # Apply V-flip: v_corrected = 1 - scale_v - translation_v
+    # GX UV origin is top-left, IR uses bottom-left (standard).
+    if uv_track.translation_v:
+        static_scale_v = static_texture.scale[1] if static_texture else 1.0
+        uv_track.translation_v = _flip_translation_v(
+            uv_track.translation_v, uv_track.scale_v, static_scale_v)
+
     return uv_track
+
+
+def _flip_translation_v(translation_kfs, scale_kfs, static_scale_v):
+    """Flip translation_v keyframes from GX top-left to standard bottom-left origin.
+
+    Formula: v_corrected = 1 - scale_v - translation_v
+
+    When scale_v is not animated, scale_v is a constant. When scale_v IS animated,
+    we evaluate the scale track at each translation keyframe's frame.
+    """
+    if not scale_kfs:
+        # Static scale — simple offset
+        return [IRKeyframe(
+            frame=kf.frame,
+            value=1.0 - static_scale_v - kf.value,
+            interpolation=kf.interpolation,
+            handle_left=(kf.handle_left[0], 1.0 - static_scale_v - kf.handle_left[1]) if kf.handle_left else None,
+            handle_right=(kf.handle_right[0], 1.0 - static_scale_v - kf.handle_right[1]) if kf.handle_right else None,
+        ) for kf in translation_kfs]
+
+    # Animated scale — evaluate scale at each translation keyframe's frame
+    result = []
+    for kf in translation_kfs:
+        scale_at_frame = _evaluate_track(scale_kfs, kf.frame)
+        corrected = 1.0 - scale_at_frame - kf.value
+
+        # For handles: evaluate scale at the handle's frame position too
+        left = None
+        if kf.handle_left:
+            scale_at_left = _evaluate_track(scale_kfs, kf.handle_left[0])
+            left = (kf.handle_left[0], 1.0 - scale_at_left - kf.handle_left[1])
+
+        right = None
+        if kf.handle_right:
+            scale_at_right = _evaluate_track(scale_kfs, kf.handle_right[0])
+            right = (kf.handle_right[0], 1.0 - scale_at_right - kf.handle_right[1])
+
+        result.append(IRKeyframe(
+            frame=kf.frame,
+            value=corrected,
+            interpolation=kf.interpolation,
+            handle_left=left,
+            handle_right=right,
+        ))
+
+    return result
+
+
+def _evaluate_track(keyframes, frame):
+    """Evaluate a keyframe track at a given frame using the keyframes' interpolation.
+
+    Supports CONSTANT, LINEAR, and BEZIER interpolation.
+    """
+    if not keyframes:
+        return 0.0
+
+    # Before first keyframe
+    if frame <= keyframes[0].frame:
+        return keyframes[0].value
+
+    # After last keyframe
+    if frame >= keyframes[-1].frame:
+        return keyframes[-1].value
+
+    # Find surrounding keyframes
+    for i in range(len(keyframes) - 1):
+        kf0 = keyframes[i]
+        kf1 = keyframes[i + 1]
+        if kf0.frame <= frame <= kf1.frame:
+            if kf0.interpolation == Interpolation.CONSTANT:
+                return kf0.value
+
+            t = (frame - kf0.frame) / (kf1.frame - kf0.frame) if kf1.frame != kf0.frame else 0.0
+
+            if kf0.interpolation == Interpolation.LINEAR:
+                return kf0.value + t * (kf1.value - kf0.value)
+
+            if kf0.interpolation == Interpolation.BEZIER:
+                if kf0.handle_right and kf1.handle_left:
+                    # Cubic bezier: P0, P1 (handle_right of kf0), P2 (handle_left of kf1), P3
+                    p0 = kf0.value
+                    p1 = kf0.handle_right[1]
+                    p2 = kf1.handle_left[1]
+                    p3 = kf1.value
+                    u = 1 - t
+                    return u*u*u*p0 + 3*u*u*t*p1 + 3*u*t*t*p2 + t*t*t*p3
+                else:
+                    # No handles — fall back to linear
+                    return kf0.value + t * (kf1.value - kf0.value)
+
+    return keyframes[-1].value

@@ -202,9 +202,6 @@ def _build_texture_sampling(tex_layer, nodes, links, image_cache, tex_idx=0):
     mapping.inputs[1].default_value = list(tex_layer.translation)
     mapping.inputs[3].default_value = tex_layer.scale
 
-    # Blender UV origin is bottom-left; GX is top-left — flip V
-    mapping.inputs[1].default_value[1] = 1 - tex_layer.scale[1] - tex_layer.translation[1]
-
     if tex_layer.coord_type == CoordType.REFLECTION:
         mapping.inputs[2].default_value[0] -= math.pi / 2
 

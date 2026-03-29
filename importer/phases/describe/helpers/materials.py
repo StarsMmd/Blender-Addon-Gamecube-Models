@@ -165,13 +165,21 @@ def _describe_texture(texture, image_cache):
     if texture.tev:
         combiner = _describe_tev(texture.tev)
 
+    # Flip V translation: GX UV origin is top-left, IR uses bottom-left (standard).
+    # Formula: v_corrected = 1 - scale_v - translation_v
+    corrected_translation = (
+        texture.translation[0],
+        1.0 - texture.scale[1] - texture.translation[1],
+        texture.translation[2],
+    )
+
     return IRTextureLayer(
         image=ir_image,
         coord_type=coord_type,
         uv_index=uv_index,
         rotation=tuple(texture.rotation),
         scale=tuple(texture.scale),
-        translation=tuple(texture.translation),
+        translation=corrected_translation,
         wrap_s=wrap_s,
         wrap_t=wrap_t,
         repeat_s=texture.repeat_s,

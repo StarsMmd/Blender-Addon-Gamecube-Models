@@ -56,34 +56,28 @@ def apply_color_tracks(track, material, fcurves, max_frame, logger):
 
 
 def apply_texture_uv_tracks(track, material, fcurves, logger):
-    """Insert texture UV animation keyframes into fcurves."""
+    """Insert texture UV animation keyframes into fcurves.
+
+    The IR stores V-flipped translation_v values (standard bottom-left origin),
+    so no coordinate correction is needed here — values are written directly.
+    """
     for uv_track in track.texture_uv_tracks:
         mapping_node = find_mapping_node(material, uv_track.texture_index)
         if not mapping_node:
             continue
 
         mapping_name = mapping_node.name
-        # Read scale_y for V-flip transformation on translation_v keyframes.
-        # The mapping node default V uses: 1 - scale_y - translation_y
-        # Animation keyframes are raw HSD values that need the same flip.
-        scale_y = mapping_node.inputs[3].default_value[1]
 
         for field_name, (input_index, component) in UV_TRACK_MAP.items():
             keyframes = getattr(uv_track, field_name)
             if not keyframes:
                 continue
 
-            # V-flip: transform HSD translation_v to Blender space
-            needs_v_flip = (field_name == 'translation_v')
-
             data_path = 'node_tree.nodes["%s"].inputs[%d].default_value' % (mapping_name, input_index)
             curve = fcurves.new(data_path, index=component)
 
             for kf in keyframes:
-                value = kf.value
-                if needs_v_flip:
-                    value = 1 - scale_y - value
-                point = curve.keyframe_points.insert(kf.frame, value)
+                point = curve.keyframe_points.insert(kf.frame, kf.value)
                 point.interpolation = kf.interpolation.value
                 if kf.handle_left:
                     point.handle_left[:] = kf.handle_left
