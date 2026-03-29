@@ -9,6 +9,7 @@ try:
     from .....shared.IR.enums import SkinType
     from .....shared.Constants.hsd import (
         POBJ_TYPE_MASK, POBJ_SKIN, POBJ_ENVELOPE, POBJ_SHAPEANIM,
+        POBJ_CULLFRONT, POBJ_CULLBACK,
         JOBJ_SKELETON, JOBJ_SKELETON_ROOT, JOBJ_HIDDEN,
     )
     from .....shared.Constants.gx import (
@@ -22,6 +23,7 @@ except (ImportError, SystemError):
     from shared.IR.enums import SkinType
     from shared.Constants.hsd import (
         POBJ_TYPE_MASK, POBJ_SKIN, POBJ_ENVELOPE, POBJ_SHAPEANIM,
+        POBJ_CULLFRONT, POBJ_CULLBACK,
         JOBJ_SKELETON, JOBJ_SKELETON_ROOT, JOBJ_HIDDEN,
     )
     from shared.Constants.gx import (
@@ -174,6 +176,8 @@ def describe_meshes(root_joint, bones, joint_to_bone_index, image_cache=None, lo
             bone_weights=bone_weights,
             is_hidden=bool(joint.flags & JOBJ_HIDDEN),
             parent_bone_index=bone_index,
+            cull_front=bool(pobj.flags & POBJ_CULLFRONT),
+            cull_back=bool(pobj.flags & POBJ_CULLBACK),
         )
 
     _walk_joints(root_joint)

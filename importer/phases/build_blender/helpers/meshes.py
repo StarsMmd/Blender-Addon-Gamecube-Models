@@ -106,6 +106,13 @@ def _build_mesh(ir_mesh, ir_model, armature, image_cache, logger, mesh_idx, mode
     else:
         mat = bpy.data.materials.new(name='%s_mat_%d' % (model_name, mesh_idx))
         logger.debug("  mesh[%d] '%s': placeholder material (no IR material)", mesh_idx, ir_mesh.name)
+    # Backface culling — GameCube POBJ cull flags control which face sides are visible.
+    # CULL_BACK (default) = only front faces, CULL_FRONT = only back faces,
+    # both = nothing visible, neither = double-sided.
+    # This prevents z-fighting on double-layered geometry (e.g. skirt inner/outer surfaces).
+    if ir_mesh.cull_front or ir_mesh.cull_back:
+        mat.use_backface_culling = True
+
     mesh_data.materials.append(mat)
 
     # Log UV layer info

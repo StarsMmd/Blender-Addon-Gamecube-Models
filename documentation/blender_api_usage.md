@@ -112,6 +112,7 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.80 | current | `object.modifiers.new(name, 'ARMATURE')` | `meshes.py` | |
 | | | | | |
 | | | **Material & Shader Nodes** | | |
+| 2.80 | current | `material.use_backface_culling = True` | `meshes.py` | From POBJ cull flags; prevents z-fighting on double-sided geometry |
 | 2.80 | current | `material.use_nodes = True` | `materials.py` | |
 | 2.80 | current | `material.node_tree.nodes` / `.links` | `materials.py`, `shiny_filter.py` | |
 | 2.80 | current | `material.node_tree.update_tag()` | `BlenderPlugin.py` | Force material refresh |
