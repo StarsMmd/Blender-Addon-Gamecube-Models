@@ -43,10 +43,6 @@ class Importer:
             options["filepath"] = metadata.filename
 
             try:
-                # Record which armatures exist before building so we can diff
-                # after Phase 5 to find the newly created ones for Phase 6
-                existing = set(obj.name for obj in bpy.data.objects if obj.type == 'ARMATURE')
-
                 # Phase 2 — Section Routing: DAT bytes → section name→type map
                 logger.info("=== Phase 2: Section Routing ===")
                 section_map = route_sections(dat_bytes, logger=logger)
@@ -61,13 +57,11 @@ class Importer:
 
                 # Phase 5 — Blender Build: Intermediate Representation → Blender scene
                 if context is not None:
-                    build_blender_scene(ir_scene, context, options, logger=logger)
+                    build_results = build_blender_scene(ir_scene, context, options, logger=logger)
 
-                    # Phase 6 — Post-Processing: reset poses, select animations, apply shiny
-                    # Diff armatures against the pre-build snapshot to find newly created ones
-                    new_armatures = set(obj.name for obj in bpy.data.objects
-                                        if obj.type == 'ARMATURE' and obj.name not in existing)
-                    post_process(new_armatures, metadata.shiny_params, options, logger=logger)
+                    # Phase 6 — Post-Processing: select animations, apply shiny
+                    post_process(set(), metadata.shiny_params, options, logger=logger,
+                                 build_results=build_results)
 
                 any_succeeded = True
 

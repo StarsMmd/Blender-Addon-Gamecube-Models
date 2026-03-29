@@ -40,11 +40,16 @@ def build_skeleton(ir_model, context, options, logger=StubLogger(), model_index=
 
     # Link to scene
     bpy.context.scene.collection.objects.link(armature)
-    armature.select_set(True)
 
     if options.get("ik_hack"):
         armature_data.display_type = 'STICK'
 
+    # Ensure only this armature is selected/active before entering EDIT mode,
+    # otherwise Blender enters multi-armature edit mode.
+    if bpy.context.mode != 'OBJECT':
+        bpy.ops.object.mode_set(mode='OBJECT')
+    bpy.ops.object.select_all(action='DESELECT')
+    armature.select_set(True)
     bpy.context.view_layer.objects.active = armature
 
     # Create edit bones

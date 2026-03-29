@@ -136,15 +136,15 @@ def reset_pose(armature):
     The new pipeline's edit bones encode the rest pose, so zeroing pose
     transforms gives the correct rest shape. Must run after skeleton build,
     regardless of whether animations exist.
+
+    Uses direct property assignment instead of mode-switching operators,
+    which are fragile when prior imports leave Blender in unexpected state.
     """
-    bpy.context.view_layer.objects.active = armature
-    bpy.ops.object.mode_set(mode='POSE')
     for bone in armature.pose.bones:
         bone.location = (0, 0, 0)
         bone.rotation_euler = (0, 0, 0)
         bone.rotation_quaternion = (1, 0, 0, 0)
         bone.scale = (1, 1, 1)
-    bpy.ops.object.mode_set(mode='OBJECT')
 
 
 def _bake_bone_track(track, action, bone_data, max_frame, logger, armature=None):

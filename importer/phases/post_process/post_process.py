@@ -15,33 +15,50 @@ except (ImportError, SystemError):
     from shared.helpers.logger import StubLogger
 
 
-def post_process(armature_names, shiny_params=None, options=None, logger=StubLogger()):
+def post_process(armature_names, shiny_params=None, options=None, logger=StubLogger(),
+                 build_results=None):
     """Post-process imported models: reset poses, select animations, apply shiny.
 
     Args:
-        armature_names: set of armature object names to post-process.
+        armature_names: set of armature object names to post-process (used for legacy path).
         shiny_params: raw shiny parameters dict from Phase 1 extract, or None.
         options: dict of importer options (checks include_shiny). None = shiny enabled.
         logger: Logger instance.
+        build_results: list of dicts from Phase 5 with armature/actions/mat_slot_indices.
+            When provided, uses these directly instead of rediscovering actions by name.
     """
     logger.info("=== Phase 6: Post-Processing ===")
-    logger.info("  Armatures: %s", armature_names)
     logger.info("  Shiny params: %s", shiny_params is not None)
     logger.info("  Options: %s", options)
 
     include_shiny = True if options is None else options.get("include_shiny", True)
 
-    for name in armature_names:
-        armature = bpy.data.objects.get(name)
-        if not armature or armature.type != 'ARMATURE':
-            continue
+    if build_results:
+        # New pipeline path: use actions directly from Phase 5
+        for result in build_results:
+            armature = result['armature']
+            actions = result['actions']
+            mat_slot_indices = result['mat_slot_indices']
 
-        actions = _find_actions(armature)
-        mat_slot_indices = _find_material_slot_indices(armature, actions)
-        _select_first_action(armature, actions, mat_slot_indices)
+            logger.info("  Post-processing armature: %s (%d actions)", armature.name, len(actions))
+            _select_first_action(armature, actions, mat_slot_indices)
 
-        if include_shiny and shiny_params is not None:
-            _apply_shiny(armature, shiny_params, logger)
+            if include_shiny and shiny_params is not None:
+                _apply_shiny(armature, shiny_params, logger)
+    else:
+        # Legacy path: discover actions by name matching
+        logger.info("  Armatures: %s", armature_names)
+        for name in armature_names:
+            armature = bpy.data.objects.get(name)
+            if not armature or armature.type != 'ARMATURE':
+                continue
+
+            actions = _find_actions(armature)
+            mat_slot_indices = _find_material_slot_indices(armature, actions)
+            _select_first_action(armature, actions, mat_slot_indices)
+
+            if include_shiny and shiny_params is not None:
+                _apply_shiny(armature, shiny_params, logger)
 
     bpy.context.scene.frame_set(0)
     logger.info("=== Phase 6 complete ===")
