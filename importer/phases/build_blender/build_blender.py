@@ -1,7 +1,7 @@
 """Phase 5: Build Blender scene objects from an Intermediate Representation scene."""
 from .helpers.skeleton import build_skeleton
 from .helpers.meshes import build_meshes
-from .helpers.animations import build_bone_animations
+from .helpers.animations import build_bone_animations, reset_pose
 from .helpers.constraints import build_constraints
 from .helpers.lights import build_lights
 
@@ -29,6 +29,8 @@ def build_blender_scene(ir_scene, context, options, logger=StubLogger()):
         armature = build_skeleton(ir_model, context, options, logger=logger, model_index=model_idx)
 
         material_lookup = build_meshes(ir_model, armature, context, options, logger=logger)
+
+        reset_pose(armature)
 
         if ir_model.bone_animations:
             logger.info("  Building %d animation set(s)", len(ir_model.bone_animations))

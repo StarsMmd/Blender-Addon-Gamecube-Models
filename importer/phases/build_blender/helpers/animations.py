@@ -127,10 +127,16 @@ def build_bone_animations(ir_model, armature, options, logger=StubLogger(), mate
 
         bpy.ops.object.mode_set(mode='OBJECT')
 
-    # Reset pose to rest position — the new pipeline's edit bones encode
-    # the rest pose, so zeroing pose transforms gives the correct rest shape.
-    # This is specific to how Phase 5 builds bones and does not apply to
-    # legacy-built armatures.
+    return actions, mat_slot_indices
+
+
+def reset_pose(armature):
+    """Reset all pose bones to rest position.
+
+    The new pipeline's edit bones encode the rest pose, so zeroing pose
+    transforms gives the correct rest shape. Must run after skeleton build,
+    regardless of whether animations exist.
+    """
     bpy.context.view_layer.objects.active = armature
     bpy.ops.object.mode_set(mode='POSE')
     for bone in armature.pose.bones:
@@ -139,8 +145,6 @@ def build_bone_animations(ir_model, armature, options, logger=StubLogger(), mate
         bone.rotation_quaternion = (1, 0, 0, 0)
         bone.scale = (1, 1, 1)
     bpy.ops.object.mode_set(mode='OBJECT')
-
-    return actions, mat_slot_indices
 
 
 def _bake_bone_track(track, action, bone_data, max_frame, logger, armature=None):
