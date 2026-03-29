@@ -30,12 +30,13 @@ class Importer:
         """
         # Phase 1 — Container Extraction: raw file bytes → DAT bytes
         logger.info("=== Phase 1: Container Extraction ===")
-        dat_entries = extract_dat(raw_bytes, filename)
+        dat_entries = extract_dat(raw_bytes, filename, options=options)
         logger.info("Extracted %d DAT entry(s) from %s", len(dat_entries), filename)
 
         for dat_bytes, metadata in dat_entries:
             logger.info("Processing: %s (%d bytes)", metadata.filename, len(dat_bytes))
             options["filepath"] = metadata.filename
+            options["shiny_params"] = metadata.shiny_params
 
             try:
                 # Phase 2 — Section Routing: DAT bytes → section name→type map

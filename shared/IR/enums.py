@@ -156,3 +156,11 @@ class BlendFactor(Enum):
     INV_SRC_ALPHA = "INV_SRC_ALPHA"
     DST_ALPHA = "DST_ALPHA"
     INV_DST_ALPHA = "INV_DST_ALPHA"
+
+
+class ShinyChannel(Enum):
+    """Source channel for shiny color filter routing."""
+    RED = 0
+    GREEN = 1
+    BLUE = 2
+    ALPHA = 3

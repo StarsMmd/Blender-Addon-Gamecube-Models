@@ -10,7 +10,7 @@ except (ImportError, SystemError):
     from shared.helpers.logger import StubLogger
 
 
-def build_meshes(ir_model, armature, context, options, logger=StubLogger()):
+def build_meshes(ir_model, armature, context, options, logger=StubLogger(), shiny_node_group=None):
     """Create Blender meshes with materials, weights, and armature modifier.
 
     Args:
@@ -24,8 +24,13 @@ def build_meshes(ir_model, armature, context, options, logger=StubLogger()):
     image_cache = {}
     material_lookup = {}  # {mesh_name: bpy.types.Material} for material animations
     mesh_objects_by_bone = {}  # {bone_index: [mesh_objects]}
+    if shiny_node_group is not None:
+        from .shiny_filter import insert_shiny_filter
+
     for i, ir_mesh in enumerate(ir_model.meshes):
         mesh_obj, mat = _build_mesh(ir_mesh, ir_model, armature, image_cache, logger, i, model_name)
+        if mat and shiny_node_group is not None:
+            insert_shiny_filter(mat, shiny_node_group, armature)
         if mesh_obj:
             bone_idx = ir_mesh.parent_bone_index
             mesh_objects_by_bone.setdefault(bone_idx, []).append(mesh_obj)

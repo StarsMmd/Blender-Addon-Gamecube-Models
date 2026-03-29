@@ -24,6 +24,14 @@ This addon uses Blender's extensions system. Compress the contents of this repos
 - Light import (SUN, POINT, SPOT)
 - Bone instances (JOBJ_INSTANCE)
 
+## Shiny Variants
+
+When importing `.pkx` Pokemon models with the **Include Shiny Variant** option enabled (on by default), the addon extracts shiny color parameters from the file header and builds a toggleable shader filter into the imported materials.
+
+To use it: select the armature, go to **Properties > Object Properties** (orange square icon), and look for the **Shiny Variant** panel with a **Shiny** checkbox. Toggling this switches all materials on the model between normal and shiny appearance in real time.
+
+Not every Pokemon has shiny parameters in its PKX file — some (e.g. legendaries and starters) use a separate model for their shiny form instead. For these models, the Shiny Variant panel will not appear. See `documentation/shiny_variants.md` for technical details.
+
 ## Remaining Work
 
 - [ ] Shape animation import

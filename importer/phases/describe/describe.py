@@ -4,6 +4,8 @@ import time
 try:
     from ....shared.IR import IRScene
     from ....shared.IR.skeleton import IRModel
+    from ....shared.IR.shiny import IRShinyFilter
+    from ....shared.IR.enums import ShinyChannel
     from ....shared.Nodes.Classes.Joints.Joint import Joint
     from ....shared.Nodes.Classes.Joints.ModelSet import ModelSet
     from ....shared.Nodes.Classes.RootNodes.SceneData import SceneData
@@ -15,6 +17,8 @@ try:
 except (ImportError, SystemError):
     from shared.IR import IRScene
     from shared.IR.skeleton import IRModel
+    from shared.IR.shiny import IRShinyFilter
+    from shared.IR.enums import ShinyChannel
     from shared.Nodes.Classes.Joints.Joint import Joint
     from shared.Nodes.Classes.Joints.ModelSet import ModelSet
     from shared.Nodes.Classes.RootNodes.SceneData import SceneData
@@ -177,6 +181,8 @@ def describe_scene(sections, options, logger=StubLogger()):
                 logger.debug("  Paired material anim '%s' → '%s' (%d tracks)",
                              mat_anim_set.name, bone_anims[i].name, len(mat_anim_set.tracks))
 
+        shiny_filter = _build_shiny_filter(options)
+
         ir_model = IRModel(
             name=model_name,
             bones=bones,
@@ -188,6 +194,7 @@ def describe_scene(sections, options, logger=StubLogger()):
             copy_rotation_constraints=cr_c,
             limit_rotation_constraints=lr_c,
             limit_location_constraints=ll_c,
+            shiny_filter=shiny_filter,
         )
         ir_models.append(ir_model)
 
@@ -202,3 +209,25 @@ def describe_scene(sections, options, logger=StubLogger()):
 
     logger.info("=== Phase 4 complete: %d model(s), %d light(s) ===", len(ir_models), len(ir_lights))
     return IRScene(models=ir_models, lights=ir_lights)
+
+
+def _build_shiny_filter(options):
+    """Convert raw shiny_params dict from Phase 1 into an IRShinyFilter, or None."""
+    shiny_params = options.get("shiny_params")
+    if not shiny_params:
+        return None
+
+    return IRShinyFilter(
+        channel_routing=(
+            ShinyChannel(shiny_params["route_r"]),
+            ShinyChannel(shiny_params["route_g"]),
+            ShinyChannel(shiny_params["route_b"]),
+            ShinyChannel(shiny_params["route_a"]),
+        ),
+        brightness=(
+            shiny_params["brightness_r"],
+            shiny_params["brightness_g"],
+            shiny_params["brightness_b"],
+            shiny_params["brightness_a"],
+        ),
+    )

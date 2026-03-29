@@ -30,6 +30,10 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
                             description='Write import logs to a temp file for debugging.')
     setup_workspace: BoolProperty(default=True, name='Setup Workspace',
                                  description='Split the viewport and open an Action Editor. Sets playback end frame to 60.')
+    import_lights: BoolProperty(default=False, name='Import Lights',
+                               description='Import light sets from the model file.')
+    include_shiny: BoolProperty(default=True, name='Include Shiny Variant',
+                               description='Extract shiny color parameters from PKX files and add a toggleable shiny filter to materials.')
     use_legacy: BoolProperty(default=False, name='Use Legacy Importer',
                             description='Use the old import pipeline instead of the new Intermediate Representation pipeline.')
 
@@ -77,6 +81,8 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
             "max_frame": self.max_frame if self.max_frame > 0 else 1000000000,
             "section_names": [self.section] if len(self.section) > 0 else [],
             "filepath": path,
+            "import_lights": self.import_lights,
+            "include_shiny": self.include_shiny,
         }
 
         if bpy.ops.object.select_all.poll():
@@ -144,10 +150,47 @@ def menu_func_export(self, context):
     self.layout.operator(ExportHSD.bl_idname, text="Gamecube DAT Model - Refactor (.dat)")
 
 
-classes = (ImportHSD, ExportHSD)
+class DAT_PT_ShinyPanel(bpy.types.Panel):
+    """Panel for the shiny color variant toggle."""
+    bl_label = "Shiny Variant"
+    bl_idname = "OBJECT_PT_dat_shiny"
+    bl_space_type = 'PROPERTIES'
+    bl_region_type = 'WINDOW'
+    bl_context = "object"
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and obj.type == 'ARMATURE' and obj.get("dat_has_shiny", False)
+
+    def draw(self, context):
+        self.layout.prop(context.active_object, "dat_shiny", text="Shiny")
+
+
+classes = (ImportHSD, ExportHSD, DAT_PT_ShinyPanel)
+
+
+def _on_shiny_update(obj, context):
+    """Force viewport refresh when the Shiny toggle changes.
+
+    Drivers on shader node inputs don't reliably trigger viewport redraws,
+    so we explicitly tag the depsgraph and redraw 3D viewports.
+    """
+    obj.update_tag()
+    for child in obj.children:
+        if child.type == 'MESH' and child.active_material:
+            child.active_material.node_tree.update_tag()
+    if context and context.area:
+        context.area.tag_redraw()
 
 
 def register():
+    bpy.types.Object.dat_shiny = BoolProperty(
+        name="Shiny",
+        description="Toggle shiny color variant",
+        default=False,
+        update=_on_shiny_update,
+    )
     for cls in classes:
         bpy.utils.register_class(cls)
     bpy.types.TOPBAR_MT_file_import.append(menu_func_import)
@@ -159,3 +202,5 @@ def unregister():
         bpy.utils.unregister_class(cls)
     bpy.types.TOPBAR_MT_file_import.remove(menu_func_import)
     bpy.types.TOPBAR_MT_file_export.remove(menu_func_export)
+    if hasattr(bpy.types.Object, 'dat_shiny'):
+        del bpy.types.Object.dat_shiny
