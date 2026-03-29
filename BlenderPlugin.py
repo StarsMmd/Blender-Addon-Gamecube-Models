@@ -37,7 +37,7 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
                                description='Import light sets from the model file.')
     include_shiny: BoolProperty(default=True, name='Include Shiny Variant',
                                description='Extract shiny color parameters from PKX files and add a toggleable shiny filter to materials.')
-    use_legacy: BoolProperty(default=False, name='Use Legacy Importer',
+    use_legacy: BoolProperty(default=True, name='Use Legacy Importer',
                             description='Use the old import pipeline instead of the new Intermediate Representation pipeline.')
 
     filename_ext = ".dat"
