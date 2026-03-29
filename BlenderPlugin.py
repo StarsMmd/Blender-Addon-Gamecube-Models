@@ -173,7 +173,7 @@ def _setup_anim_workspace(context):
         return
 
     with context.temp_override(area=view3d_area):
-        bpy.ops.screen.area_split(direction='VERTICAL', factor=0.6)
+        bpy.ops.screen.area_split(direction='VERTICAL', factor=0.7)
 
     for area in screen.areas:
         if area.type == 'VIEW_3D' and area != view3d_area:
