@@ -4,8 +4,7 @@ import bpy
 from bpy.props import StringProperty, BoolProperty, IntProperty, FloatProperty, EnumProperty, CollectionProperty
 from bpy_extras.io_utils import ImportHelper, ExportHelper
 
-from .legacy.importer import *
-from .legacy.exporter import *
+from .legacy import import_hsd as legacy_import_hsd
 from .importer import Importer as IRImporter
 from .shared.helpers.logger import Logger, StubLogger
 
@@ -49,7 +48,13 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
         for path in paths:
             try:
                 if self.use_legacy:
-                    status = Importer.parseDAT(context, path, self.section, self.ik_hack, self.max_frame, verbose=False)
+                    status = legacy_import_hsd.load(
+                        self, context, path,
+                        scene_name=self.section if self.section else 'scene_data',
+                        ik_hack=self.ik_hack,
+                        max_frame=self.max_frame if self.max_frame > 0 else 1000000000,
+                        use_max_frame=self.max_frame > 0,
+                    )
                     if 'FINISHED' not in status:
                         return status
                 else:
@@ -100,10 +105,8 @@ class ExportHSD(bpy.types.Operator, ExportHelper):
         return context.active_object is not None
 
     def execute(self, context):
-        status = Exporter.writeDAT(context, self.filepath)
-        if 'FINISHED' not in status:
-            return status
-        return {'FINISHED'}
+        self.report({'WARNING'}, "Export is not yet implemented.")
+        return {'CANCELLED'}
 
 
 def _setup_anim_workspace(context):
