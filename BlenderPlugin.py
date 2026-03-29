@@ -49,20 +49,21 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
         else:
             paths = [self.filepath]
 
+        any_succeeded = False
         for path in paths:
             try:
                 if self.use_legacy:
                     self._import_legacy(context, path)
                 else:
                     self._import_ir(context, path)
+                any_succeeded = True
             except Exception as error:
-                self.report({'ERROR'}, "Import failed: %s" % error)
-                return {'CANCELLED'}
+                self.report({'ERROR'}, "Import failed for %s: %s" % (os.path.basename(path), error))
 
-        if self.setup_workspace:
+        if self.setup_workspace and any_succeeded:
             _setup_anim_workspace(context)
 
-        return {'FINISHED'}
+        return {'FINISHED'} if any_succeeded else {'CANCELLED'}
 
     def _import_ir(self, context, path):
         """Read file and run the IR import pipeline."""
