@@ -176,7 +176,7 @@ def rebuild_shiny_node_group(armature):
     populate_shiny_node_group(group, routing, brightness)
 
 
-def insert_shiny_filter(material, node_group, armature):
+def insert_shiny_filter(material, node_group, armature, logger=None):
     """Insert the shiny filter node group into a material's node tree.
 
     Finds the color source feeding into the main shader and interposes a Mix node
@@ -186,15 +186,27 @@ def insert_shiny_filter(material, node_group, armature):
         material: bpy.types.Material with use_nodes=True.
         node_group: The ShinyFilter node group (from build_shiny_node_group).
         armature: The armature object with the shiny properties.
+        logger: Optional logger for diagnostics.
     """
     if not material.use_nodes:
+        if logger:
+            logger.debug("    Skipped '%s': use_nodes is False", material.name)
         return
 
     nodes = material.node_tree.nodes
+
+    # Skip if already applied
+    if 'shiny_filter_mix' in nodes or 'shiny_filter_shader' in nodes:
+        if logger:
+            logger.debug("    Skipped '%s': already applied", material.name)
+        return
     links = material.node_tree.links
 
     target_node, target_input, is_emission = _find_color_input(nodes)
     if target_node is None:
+        if logger:
+            node_types = [n.type for n in nodes]
+            logger.debug("    Skipped '%s': no color input found, node types: %s", material.name, node_types)
         return
 
     source_link = None

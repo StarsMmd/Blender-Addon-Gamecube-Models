@@ -25,6 +25,9 @@ def post_process(armature_names, shiny_params=None, options=None, logger=StubLog
         logger: Logger instance.
     """
     logger.info("=== Phase 6: Post-Processing ===")
+    logger.info("  Armatures: %s", armature_names)
+    logger.info("  Shiny params: %s", shiny_params is not None)
+    logger.info("  Options: %s", options)
 
     include_shiny = True if options is None else options.get("include_shiny", True)
 
@@ -151,7 +154,7 @@ def _apply_shiny(armature, shiny_params, logger):
         if child.type == 'MESH':
             for mat in child.data.materials:
                 if mat and mat.use_nodes:
-                    insert_shiny_filter(mat, node_group, armature)
+                    insert_shiny_filter(mat, node_group, armature, logger=logger)
                     count += 1
 
     if count:

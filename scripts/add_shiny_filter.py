@@ -93,13 +93,24 @@ def _populate_shiny_node_group(group, routing, brightness):
 
 
 def _find_color_input(nodes):
-    """Find the main color input on the output shader."""
+    """Find the main color input on the output shader.
+
+    Checks Principled BSDF first, but only if its Base Color has an incoming
+    link. Unlit materials set Base Color to black and route the actual color
+    through an Emission node instead.
+    """
     for node in nodes:
         if node.type == 'BSDF_PRINCIPLED':
-            return node, node.inputs['Base Color']
+            base_color = node.inputs['Base Color']
+            if base_color.is_linked:
+                return node, base_color
     for node in nodes:
         if node.type == 'EMISSION':
             return node, node.inputs['Color']
+    # Fallback: Principled BSDF with no link (solid color)
+    for node in nodes:
+        if node.type == 'BSDF_PRINCIPLED':
+            return node, node.inputs['Base Color']
     return None, None
 
 
