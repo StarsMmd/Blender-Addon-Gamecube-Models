@@ -1,22 +1,17 @@
 schema_version = "1.0.0"
 
-id = "colo_xd"
-version = "1.0.1"
-name = "Colosseum / XD - Importer"
-tagline = "Importer for sydolphin scenes"
-description = "Imports scenes and related files found in Colosseum and XD, may also work for other games using the same library"
-maintainer = "Made"
+id = "gamecube_dat_model"
+version = "3.1.0"
+name = "Gamecube Dat Model"
+tagline = "Import-Export Gamecube .dat models"
+maintainer = "Made, StarsMmd, MikeyX"
 type = "add-on"
 
-website = "https://github.com/StarsMmd/Blender-Addon-Gamecube-Models"
-
-tags = ["Import-Export",]
-
-blender_version_min = "4.2.0"
-
 license = [
-  "TBD",
+  "SPDX:GPL-3.0-or-later",
 ]
+
+blender_version_min = "4.5.0"
 
 [permissions]
 files = "Import/export scene data from/to disk"

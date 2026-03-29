@@ -1,0 +1,207 @@
+# DAT Plugin — Claude Context
+
+## Project Overview
+
+A Blender addon that imports and exports `.dat` 3D model files used in GameCube games (primarily Pokémon Colosseum and XD: Gale of Darkness). The format is based on the proprietary **SysDolphin** library, reverse-engineered by hobbyists.
+
+**Target Blender version:** 4.5
+
+**Supported file extensions:** `.dat`, `.fdat`, `.rdat`, `.pkx`, `.fsys`
+
+**Reference implementation:** [Ploaj/HSDLib](https://github.com/Ploaj/HSDLib) — a C# Super Smash Bros. Melee model viewer/editor for the same SysDolphin format. **Caveat:** HSDLib targets Melee; this plugin targets Pokémon Colosseum/XD — struct fields, flag semantics, and node types may not match exactly.
+
+---
+
+## Architecture
+
+### Import Pipeline (5 phases)
+
+Each phase is a pure function: input → output, no shared mutable state. All phases live under `importer/phases/`. The entry point is `Importer.run()` in `importer/importer.py`.
+
+```
+Phase 1 (extract)        raw file bytes → DAT bytes (strip PKX/FSYS headers)
+Phase 2 (route)          DAT bytes → {section_name: node_type} map
+Phase 3 (parse)          DAT bytes + map → parsed node trees
+Phase 4 (describe)       node trees → IRScene (Intermediate Representation)
+Phase 5 (build_blender)  IRScene → Blender scene objects
+Phase 6 (post_process)   Reset poses, select animations, apply shiny filters
+```
+
+File reading happens at the entry points (`BlenderPlugin.py` / `CommandLineInterface.py`), not inside the pipeline. The pipeline takes `bytes` and a `filename`.
+
+### Intermediate Representation (IR)
+
+The IR is a platform-agnostic dataclass hierarchy (`shared/IR/`) that decouples parsing from Blender. It stores decoded data in generic formats — no raw binary nodes, no Blender-specific baked values.
+
+- `IRScene` → `IRModel` → `IRBone`, `IRMesh`, `IRMaterial`, `IRBoneAnimationSet`, `IRMaterialAnimationSet`
+- `IRKeyframe` stores decoded frame/value/interpolation/handles — not compressed HSD bytes
+- Blender-specific baking (scale correction, Euler decomposition) happens in Phase 5 only
+- **When modifying the IR**, update `documentation/ir_spec.md` to match
+
+### Export Pipeline
+
+`DATBuilder` in `shared/IO/dat_builder.py` writes `.dat` binaries from an in-memory node tree. Round-trip functional (0 value mismatches on re-parse). The exporter stub is in `legacy/exporter/`.
+
+### Entry Points
+
+| File | Purpose |
+|---|---|
+| `__init__.py` | Thin wrapper — imports `register`/`unregister` from `BlenderPlugin.py` |
+| `BlenderPlugin.py` | Blender operators (`ImportHSD`, `ExportHSD`), file reading, Logger creation |
+| `__main__.py` | Thin CLI wrapper — imports `main()` from `CommandLineInterface.py` |
+| `CommandLineInterface.py` | CLI argument parsing, file reading |
+
+### Key Directories
+
+```
+importer/
+  importer.py                    # Importer.run() — pipeline entry point
+  phases/
+    extract/extract.py           # Phase 1: container detection + header stripping
+      helpers/fsys.py            # FSYS archive parser (header, metadata, LZSS decompression)
+      helpers/lzss.py            # LZSS decompression algorithm
+      # Also: shiny param extraction (_extract_shiny_params, _is_noop_shiny)
+    route/route.py               # Phase 2: section name → node type mapping
+    parse/
+      parse.py                   # Phase 3: wrapper around DATParser
+      helpers/dat_parser.py      # DATParser — recursive node tree parser
+    describe/
+      describe.py                # Phase 4: node trees → IRScene
+      helpers/                   # bones, meshes, materials, animations, constraints, lights, material_animations, keyframe_decoder
+    build_blender/
+      build_blender.py           # Phase 5: IRScene → Blender objects
+      helpers/                   # skeleton, meshes, materials, animations, constraints, lights, material_animations
+      errors/build_errors.py     # ModelBuildError
+    post_process/
+      post_process.py            # Phase 6: reset poses, select animations, apply shiny filters
+      shiny_filter.py            # Shiny node group building, property setup, material insertion
+
+shared/
+  IR/                            # Intermediate Representation dataclasses
+  Nodes/                         # Node classes (parsing + writing only, no bpy)
+  Constants/                     # HSD/GX format constants
+  helpers/
+    binary.py                    # read/write helpers with descriptive type names
+    file_io.py                   # BinaryReader / BinaryWriter (stream-based)
+    logger.py                    # Logger / StubLogger
+    math_shim.py                 # Matrix/Vector/Euler (mathutils or pure-Python fallback)
+    srgb.py                      # sRGB ↔ linear conversion
+  IO/dat_builder.py              # DATBuilder (export)
+  ClassLookup/                   # Node type name → class resolution
+  BlenderVersion.py              # Version comparison utility
+
+legacy/                          # Pre-refactor code (functional, used when "Use Legacy" is checked)
+scripts/                         # Standalone Blender scripts (run from Scripting panel)
+documentation/                   # Pipeline docs, API reference, compatibility tables, IR spec, scripts
+```
+
+### Dependency Rules
+
+- `importer/` → `shared/` (one-directional)
+- `shared/` never imports from `importer/`
+- No phase imports from any other phase
+- `shared/Nodes/` has zero bpy/mathutils imports — pure parsing/writing
+
+---
+
+## Node System
+
+### Defining a Node
+
+```python
+class MyNode(Node):
+    class_name = "My Node"
+    fields = [
+        ('name',  'string'),
+        ('flags', 'uint'),
+        ('child', 'MyNode'),        # pointer to same type
+        ('data',  'float[4]'),      # bounded array
+        ('items', 'float[count]'),  # dynamic-length array
+        ('nodes', 'OtherNode[]'),   # null-terminated array
+    ]
+```
+
+### Node Lifecycle
+
+- **Parse:** `Node(address, None)` → `loadFromBinary(parser)` → fields set
+- **Write:** `allocationSize()` / `writePrimitivePointers()` / `writePrivateData()` / `writeBinary(builder)`
+- **Describe:** Phase 4 reads parsed fields → creates IR dataclasses
+- **Build:** Phase 5A reads IR → creates Blender objects (no Node access needed)
+
+### Caching
+
+Nodes are cached by file offset (`nodes_cache_by_offset`). Nodes with `is_cachable = False` skip caching.
+
+---
+
+## Current Status
+
+| Feature | Status |
+|---|---|
+| Binary parsing (all node types) | ✅ Complete |
+| Static model import (geometry + textures) | ✅ Working |
+| Skeleton/armature import | ✅ Working |
+| Joint animation import | ✅ Working |
+| Material animation import | ✅ Working (color/alpha + texture UV + NLA) |
+| Light import | ✅ Working (SUN, POINT, SPOT) |
+| Bone constraints (IK, copy loc/rot, track-to, limits) | ✅ Working |
+| Bone instances (JOBJ_INSTANCE) | ✅ Working |
+| Shape animation import | ❌ Stubs only (not implemented in legacy either) |
+| Camera / Fog import | ❌ Stubs only |
+| Exporter (binary round-trip) | ✅ Functional (0 value mismatches) |
+| IR pipeline | ✅ Default path (legacy available via toggle) |
+| FSYS archive import | ✅ Working (multi-model extraction + LZSS decompression) |
+| Shiny variant filter | ✅ Working (PKX color extraction, live-editable shader node group, per-parameter UI) |
+| Unit tests | ✅ 292 passing |
+| Shader node auto-layout | ✅ Working (topological sort from output→inputs, left-to-right) |
+
+---
+
+## Testing Strategy
+
+- Framework: **pytest**
+- **No game files** in the repository — ever
+- Test data: Python helper functions that build valid node binaries in memory
+- All tests use `io.BytesIO` — no temp files
+- Tests cover: node parsing round-trip, IR type instantiation, helper functions, phase stubs
+- Round-trip test tool: `python3 test_dat_write.py <input_file>`
+
+---
+
+## Coordinate System
+
+GameCube → Blender requires a π/2 rotation around the X-axis. Applied once at the armature level. Do not apply to individual bones or meshes.
+
+---
+
+## Vertex Color Gamma
+
+The original importer (`colo_xd_legacy`) applied a `ShaderNodeGamma` (1/2.2) to vertex colors before multiplying with the texture. This was a workaround for double linearization: material colors were linearized during parsing AND Blender's shader pipeline linearized them again. The refactored pipeline fixed the double linearization at the source, so the gamma correction node is intentionally removed — do not re-add it.
+
+---
+
+## Shiny Filter Shader Nodes
+
+The shiny filter is applied entirely in Phase 6 (post-processing), independent of the parsing/IR/build phases. Raw shiny parameters are extracted from PKX headers in Phase 1 and passed directly to Phase 6. There is no shiny data in the IR.
+
+The filter inserts two named nodes into each material's node tree:
+
+- **`shiny_filter_shader`** — the ShaderNodeGroup instance referencing the `ShinyFilter_{model_name}` node group
+- **`shiny_filter_mix`** — the MixRGB node blending between normal and shiny output
+
+The exporter **must skip these nodes** when reading back materials — they are display-only and not part of the original model data. Identify them by the node names above.
+
+The shiny parameters are stored as registered `bpy.props` properties on the armature (`dat_shiny_route_r`, `dat_shiny_brightness_r`, etc.). When exporting to PKX, the exporter can read these properties from the armature to write updated shiny metadata back into the PKX header.
+
+---
+
+## Coding Conventions
+
+- **Logger parameter:** Functions default to `StubLogger()`, never `None`. Always use `logger.info()`/`logger.debug()` instead of `print()` — logger output is written to log files on disk that persist after import and can be read directly for investigation. `print()` only goes to the Blender console which is transient.
+- **Imports:** Phase files use try/except for Blender (relative) vs pytest (absolute) imports.
+- **Binary reads:** Use `shared/helpers/binary.py` helpers (`read('uint', data, offset)`) instead of raw `struct.unpack`.
+- **Errors:** Use `ValueError("descriptive message")` instead of custom exception classes. Only `ModelBuildError` (in build phase) carries structured data.
+- **No bpy in shared/:** All Blender-specific code lives in `importer/phases/build_blender/`.
+- **Fail loud over silent fallbacks:** When looking up Blender objects we created (nodes, bones, materials), raise `ValueError` with the actual names if the lookup fails — don't silently skip or fall back. Silent failures mask bugs and make debugging much harder.
+- **Standalone scripts:** Any standalone Blender scripts (run from the Scripting panel) go in `scripts/` and must be documented in `documentation/scripts.md`.
+- **Blender API tracking:** Whenever a `bpy` API call is added, moved, removed, or modified, update `documentation/blender_api_usage.md` to match.

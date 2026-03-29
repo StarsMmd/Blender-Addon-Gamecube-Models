@@ -1,0 +1,278 @@
+from ..Joints import *
+from ..Shape import *
+from ...Node import Node
+
+from ....Constants import *
+
+# PObject
+class PObject(Node):
+    class_name = "P Object"
+    fields = [
+        ('name', 'string'),
+        ('next', 'PObject'),
+        ('vertex_list', 'VertexList'),
+        ('flags', 'ushort'),
+        ('display_list_chunk_count', 'ushort'),
+        ('display_list_address', 'uint'),
+        ('property', 'uint')
+    ]
+    display_list_chunk_size = 32
+
+    # Parse struct from binary file.
+    def loadFromBinary(self, parser):
+        super().loadFromBinary(parser)
+
+        # Log key fields for debugging UV/vertex issues
+        vtx_descs = []
+        for v in self.vertex_list.vertices:
+            vtx_descs.append('attr=%d type=%d bp=0x%X stride=%d frac=%d' %
+                             (v.attribute, v.attribute_type, v.base_pointer, v.stride, v.component_frac))
+        parser.logger.debug("PObject 0x%X: dl_addr=0x%X dl_chunks=%d vtxlist=0x%X descs=[%s]",
+                            self.address, self.display_list_address, self.display_list_chunk_count,
+                            self.vertex_list.address, ', '.join(vtx_descs))
+
+        if self.property > 0:
+            property_type = self.flags & POBJ_TYPE_MASK
+            if property_type == POBJ_SKIN:
+                parser.logger.debug("PObject 0x%X: property -> Joint (SKIN) at 0x%X", self.address, self.property)
+                self.property = parser.read('Joint', self.property)
+            elif property_type == POBJ_SHAPEANIM:
+                parser.logger.debug("PObject 0x%X: property -> ShapeSet (SHAPEANIM) at 0x%X", self.address, self.property)
+                self.property = parser.read('ShapeSet', self.property)
+            else:
+                parser.logger.debug("PObject 0x%X: property -> EnvelopeList[] (ENVELOPE) at 0x%X", self.address, self.property)
+                self.property = parser.read('(*EnvelopeList)[]', self.property)
+        else:
+            self.property = None
+
+        # Store raw display list data for round-trip writing
+        display_list_size = self.display_list_chunk_count * self.display_list_chunk_size
+        if self.display_list_address and display_list_size > 0:
+            self.raw_display_list = parser.read_chunk(display_list_size, self.display_list_address, parser._startOffset(True))
+        else:
+            self.raw_display_list = b''
+
+        sources, face_lists, normals = self.read_geometry(parser)
+        self.sources = sources
+        self.face_lists = face_lists
+        self.normals = normals
+
+    def writePrivateData(self, builder):
+        super().writePrivateData(builder)
+        if self.raw_display_list:
+            builder.seek(0, 'end')
+            # Display lists are aligned to 32-byte boundaries on the GameCube
+            while builder._currentRelativeAddress() % 32 != 0:
+                builder.write(0, 'uchar')
+            self.display_list_address = builder._currentRelativeAddress()
+            for byte in self.raw_display_list:
+                builder.write(byte, 'uchar')
+            self._raw_pointer_fields.add('display_list_address')
+        else:
+            self.display_list_address = 0
+
+    def allocationSize(self):
+        # If the property is an Envelope list then allocate space for
+        # the null-terminated list of pointers that precedes the node.
+        size = super().allocationSize()
+        if isinstance(self.property, list):
+            size += (len(self.property) + 1) * 4  # +1 for null terminator
+        return size
+
+    def allocationOffset(self):
+        offset = super().allocationOffset()
+        if isinstance(self.property, list):
+            offset += (len(self.property) + 1) * 4  # +1 for null terminator
+        return offset
+
+    # Tells the builder how to write this node's data to the binary file.
+    # Returns the offset the builder was at before it started writing its own data.
+    def writeBinary(self, builder):
+        if isinstance(self.property, Joint):
+            self.property = self.property.address
+            self._raw_pointer_fields.add('property')
+
+        elif isinstance(self.property, ShapeSet):
+            self.property = self.property.address
+            self._raw_pointer_fields.add('property')
+
+        elif isinstance(self.property, list):
+            # Envelope list — write array of pointers before the node data
+            # The pointer array was pre-allocated in allocationOffset
+            array_address = self.address - self.allocationOffset()
+            for i, envelope in enumerate(self.property):
+                addr = envelope.address if envelope is not None and envelope.address is not None else 0
+                builder.write(addr, 'uint', array_address + i * 4, relative_to_header=True)
+                if addr != 0:
+                    builder.relocations.append(array_address + i * 4)
+            # Null terminator
+            builder.write(0, 'uint', array_address + len(self.property) * 4, relative_to_header=True)
+            self.property = array_address
+            self._raw_pointer_fields.add('property')
+
+        elif self.property is None:
+            self.property = 0
+
+        super().writeBinary(builder)
+
+    def read_geometry(self, parser):
+        vertices = self.vertex_list.vertices
+        normal_dicts = []
+        stride = 0
+        for vertex in vertices:
+            stride += parser.getTypeLength(vertex.getFormat())
+        #comp_frac = vertex.component_frac
+        #TODO: add comp_frac to direct values
+
+        sources = []
+        face_lists = []
+
+        # On the console the displaylist would be copied in a chunk, limit reading to that area
+        display_list_size = self.display_list_chunk_count * self.display_list_chunk_size
+        offset_in_vertex_list = 0
+        
+        for vertex_index, vertex in enumerate(vertices):
+            vertex_format = vertex.getFormat()
+            faces = []
+            norm_dict = {}
+            norm_index = 0
+            offset = 0
+
+            opcode = parser.read('uchar', self.display_list_address, offset)  & gx.GX_OPCODE_MASK
+            offset += parser.getTypeLength('uchar')
+
+            while opcode != gx.GX_NOP and offset < display_list_size:
+                vertex_count = parser.read('ushort', self.display_list_address, offset)
+                offset += parser.getTypeLength('ushort')
+
+                indices = []
+                for i in range(vertex_count):
+                    index = parser.read(vertex.getFormat(), self.display_list_address, offset + offset_in_vertex_list)
+                    if vertex.attribute_type == gx.GX_DIRECT:
+                        indices.append(index)
+                    else:
+                        if not index in norm_dict.keys():
+                            norm_dict[index] = norm_index
+                            norm_index += 1
+                        indices.append(norm_dict[index])
+                    
+                    offset += stride
+
+                if opcode == gx.GX_DRAW_QUADS:
+                    for i in range(vertex_count // 4):
+                        idx = i * 4
+                        face = [indices[idx + 3],
+                                indices[idx + 2],
+                                indices[idx + 1],
+                                indices[idx + 0]]
+                        faces.append(face)
+                elif opcode == gx.GX_DRAW_TRIANGLES:
+                    for i in range(vertex_count // 3):
+                        idx = i * 3
+                        face = [indices[idx + 0],
+                                indices[idx + 2],
+                                indices[idx + 1]]
+                        faces.append(face)
+                elif opcode == gx.GX_DRAW_TRIANGLE_STRIP:
+                    for i in range(vertex_count - 2):
+                        if i % 2 == 0:
+                            face = [indices[i + 1],
+                                    indices[i + 0],
+                                    indices[i + 2]]
+                        else:
+                            face = [indices[i + 0],
+                                    indices[i + 1],
+                                    indices[i + 2]]
+                        faces.append(face)
+                elif opcode == gx.GX_DRAW_TRIANGLE_FAN:
+                    first_index = indices[0]
+                    #latest_index = indices[1]
+                    for i in range(vertex_count - 2):
+                        idx = i + 1
+                        face = [first_index,
+                                indices[idx + 1],
+                                indices[idx]]
+                        #latest_index = indices[idx]
+                        faces.append(face)
+                elif opcode == gx.GX_DRAW_LINES:
+                    parser.logger.warning("GX_DRAW_LINES not supported, skipped")
+                elif opcode == gx.GX_DRAW_LINE_STRIP:
+                    parser.logger.warning("GX_DRAW_LINE_STRIP not supported, skipped")
+                elif opcode == gx.GX_DRAW_POINTS:
+                    parser.logger.warning("GX_DRAW_POINTS not supported, skipped")
+                else:
+                    parser.logger.warning("Unsupported geometry primitive opcode 0x%X, skipped", opcode)
+
+                opcode = parser.read('uchar', self.display_list_address, offset)  & gx.GX_OPCODE_MASK
+                offset += parser.getTypeLength('uchar')
+
+            vertices = []
+            if vertex.attribute_type == gx.GX_DIRECT:
+                #this means the indices are actually the raw data they would be indexing
+                i = 0
+                new_faces = []
+                for face in faces:
+                    new_face = []
+                    for f in face:
+                        vertices.append(f)
+                        new_face.append(i)
+                        i += 1
+                    new_faces.append(new_face)
+                faces = new_faces
+            else:
+                indices = []
+                norm_indices = []
+                for key, value in norm_dict.items():
+                    indices.append(key)
+                    norm_indices.append(value)
+                indices = [x for _,x in sorted(zip(norm_indices,indices))]
+                vertices = self.read_vertex_data(parser, vertex, indices)
+
+            # Store raw vertex buffer for round-trip writing.
+            # base_pointer=0 is valid (points to start of data section).
+            # Multiple PObjects may share a VertexList — keep the largest capture.
+            if vertex.base_pointer is not None and vertex.stride > 0 and norm_dict:
+                max_index = max(norm_dict.keys()) if norm_dict else 0
+                buffer_size = (max_index + 1) * vertex.stride
+                existing = getattr(vertex, 'raw_vertex_data', b'')
+                if buffer_size > len(existing):
+                    vertex.raw_vertex_data = parser.read_chunk(buffer_size, vertex.base_pointer, parser._startOffset(True))
+            elif not hasattr(vertex, 'raw_vertex_data'):
+                vertex.raw_vertex_data = b''
+
+            sources.append(vertices)
+            face_lists.append(faces)
+            normal_dicts.append(norm_dict)
+            offset_in_vertex_list += parser.getTypeLength(vertex.getFormat())
+
+        return sources, face_lists, normal_dicts
+
+    def read_vertex_data(self, parser, vertex, indices):
+        #TODO: add support for NBT
+        data = []
+        base_pointer = vertex.base_pointer
+        vertex_format = vertex.getDirectElementType()
+        format_length = parser.getTypeLength(vertex_format)
+        if vertex.attribute == gx.GX_VA_NBT and vertex.component_count == gx.GX_NRM_NBT3:
+            #Normal, Binormal and Tangent are individually indexed
+            for index in indices:
+                value = []
+                for i in range(3):
+                    position = vertex.stride * index[i] + i * format_length
+                    value[i*3:i*3+3] = parser.read(vertex_format, base_pointer, position)
+                if vertex.attribute_type != gx.GX_F32:
+                    value = [v / (1 << vertex.component_frac) for v in value]
+                data.append(value)
+        else:
+            for index in indices:
+                position = vertex.stride * index
+                value = parser.read(vertex_format, base_pointer, position)
+                if not (vertex.isMatrix()
+                        or vertex.attribute == gx.GX_VA_CLR0
+                        or vertex.attribute == gx.GX_VA_CLR1
+                        or vertex.attribute_type == gx.GX_F32):
+                    value = [v / (1 << vertex.component_frac) for v in value]
+
+                data.append(value)
+        return data
+
