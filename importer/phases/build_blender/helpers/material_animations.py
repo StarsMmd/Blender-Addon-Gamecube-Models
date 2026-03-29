@@ -9,12 +9,17 @@ Functions accept an `fcurves` collection which can be either
 """
 import bpy
 
-# Mapping from IR field → (shader node name, component index)
+try:
+    from .....shared.helpers.srgb import srgb_to_linear
+except (ImportError, SystemError):
+    from shared.helpers.srgb import srgb_to_linear
+
+# Mapping from IR field → (shader node name, component index, needs_linearize)
 COLOR_TRACK_MAP = {
-    'diffuse_r': ('DiffuseColor', 0),
-    'diffuse_g': ('DiffuseColor', 1),
-    'diffuse_b': ('DiffuseColor', 2),
-    'alpha':     ('AlphaValue',   0),
+    'diffuse_r': ('DiffuseColor', 0, True),
+    'diffuse_g': ('DiffuseColor', 1, True),
+    'diffuse_b': ('DiffuseColor', 2, True),
+    'alpha':     ('AlphaValue',   0, False),
 }
 
 # Mapping from IRTextureUVTrack field → (Mapping node input index, component index)
@@ -30,8 +35,12 @@ UV_TRACK_MAP = {
 
 
 def apply_color_tracks(track, material, fcurves, max_frame, logger):
-    """Insert color/alpha keyframes into fcurves."""
-    for field_name, (node_name, index) in COLOR_TRACK_MAP.items():
+    """Insert color/alpha keyframes into fcurves.
+
+    IR stores sRGB color values — linearize RGB channels for Blender's
+    shader nodes. Alpha is not linearized.
+    """
+    for field_name, (node_name, index, needs_linearize) in COLOR_TRACK_MAP.items():
         keyframes = getattr(track, field_name)
         if not keyframes:
             continue
@@ -46,7 +55,8 @@ def apply_color_tracks(track, material, fcurves, max_frame, logger):
         curve = fcurves.new(data_path, index=index)
 
         for kf in keyframes:
-            point = curve.keyframe_points.insert(kf.frame, kf.value)
+            value = srgb_to_linear(max(0.0, min(1.0, kf.value))) if needs_linearize else kf.value
+            point = curve.keyframe_points.insert(kf.frame, value)
             point.interpolation = kf.interpolation.value
 
         if track.loop:

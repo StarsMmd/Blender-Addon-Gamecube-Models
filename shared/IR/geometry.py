@@ -19,6 +19,8 @@ class IRMesh:
     is_hidden: bool = False
     parent_bone_index: int = 0
     local_matrix: list[list[float]] | None = None
+    cull_front: bool = False
+    cull_back: bool = False
 
 
 @dataclass

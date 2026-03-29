@@ -26,8 +26,8 @@ The IR uses standard, widely-adopted conventions so that any build phase can con
 | **Matrices** | 4×4, row-major | Stored as `list[list[float]]` (4 rows of 4 floats) |
 | **UV origin** | Bottom-left (OpenGL convention) | Phase 4 flips V from GameCube's top-left origin: `v = 1 - scale_v - v` |
 | **UV animation** | Bottom-left, V-flipped in Phase 4 | Animated `translation_v` keyframes are corrected using the static or animated `scale_v` value at each keyframe's frame |
-| **Color space** | Linear | Diffuse/ambient/specular colors are converted from sRGB to linear in Phase 4. Material animation color keyframes are also linearized |
-| **Vertex colors** | Linear float [0, 1] | Source u8 [0, 255] values are normalized and linearized in Phase 4 |
+| **Color space** | sRGB [0, 1] | Diffuse/ambient/specular/vertex colors are normalized from u8 [0, 255] to float [0, 1] but remain in sRGB space. Linearization for Blender happens in Phase 5 (build) |
+| **Vertex colors** | sRGB float [0, 1] | Source u8 [0, 255] values are normalized to [0, 1] in Phase 4. Not linearized — the build phase stores them as FLOAT_COLOR so Blender passes them through as-is |
 | **Image pixels** | Raw u8 RGBA, row-major, bottom-to-top | No gamma or color space conversion — stored as decoded from the source format |
 | **Bone transforms** | Local-space SRT | `position`, `rotation`, `scale` are relative to parent bone |
 | **Bone matrices** | World-space | `world_matrix`, `normalized_world_matrix` etc. are absolute transforms |
@@ -270,7 +270,7 @@ class IRBoneAnimationSet:
 @dataclass
 class IRMaterialTrack:
     material_mesh_name: str
-    diffuse_r: list[IRKeyframe] | None                 # linearized from sRGB
+    diffuse_r: list[IRKeyframe] | None                 # sRGB [0-1], linearized in build phase
     diffuse_g: list[IRKeyframe] | None
     diffuse_b: list[IRKeyframe] | None
     alpha: list[IRKeyframe] | None

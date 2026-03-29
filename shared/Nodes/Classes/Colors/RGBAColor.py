@@ -16,21 +16,11 @@ class RGBAColor(Node, Color):
     ]
 
     def writeBinary(self, builder):
-        # If normalize()+linearize() was called during load, convert back to u8 sRGB
+        # If normalize() was called during load, convert back to u8
         if isinstance(self.red, float):
-            if getattr(self, '_was_linearized', False):
-                def delinearize(c):
-                    if c <= 0.0031308:
-                        return c * 12.92
-                    else:
-                        return 1.055 * pow(c, 1.0 / 2.4) - 0.055
-                self.red = min(255, max(0, round(delinearize(self.red) * 255)))
-                self.green = min(255, max(0, round(delinearize(self.green) * 255)))
-                self.blue = min(255, max(0, round(delinearize(self.blue) * 255)))
-            else:
-                self.red = min(255, max(0, round(self.red * 255)))
-                self.green = min(255, max(0, round(self.green * 255)))
-                self.blue = min(255, max(0, round(self.blue * 255)))
+            self.red = min(255, max(0, round(self.red * 255)))
+            self.green = min(255, max(0, round(self.green * 255)))
+            self.blue = min(255, max(0, round(self.blue * 255)))
             self.alpha = min(255, max(0, round(self.alpha * 255)))
         super().writeBinary(builder)
 
@@ -151,21 +141,11 @@ class RGBX8Color(Node, Color):
         self.alpha = 0xFF
 
     def writeBinary(self, builder):
-        # If normalize()+linearize() was called during load, convert back to u8 sRGB
+        # If normalize() was called during load, convert back to u8
         if isinstance(self.red, float):
-            if getattr(self, '_was_linearized', False):
-                def delinearize(c):
-                    if c <= 0.0031308:
-                        return c * 12.92
-                    else:
-                        return 1.055 * pow(c, 1.0 / 2.4) - 0.055
-                self.red = min(255, max(0, round(delinearize(self.red) * 255)))
-                self.green = min(255, max(0, round(delinearize(self.green) * 255)))
-                self.blue = min(255, max(0, round(delinearize(self.blue) * 255)))
-            else:
-                self.red = min(255, max(0, round(self.red * 255)))
-                self.green = min(255, max(0, round(self.green * 255)))
-                self.blue = min(255, max(0, round(self.blue * 255)))
+            self.red = min(255, max(0, round(self.red * 255)))
+            self.green = min(255, max(0, round(self.green * 255)))
+            self.blue = min(255, max(0, round(self.blue * 255)))
         self.padding = 0
         super().writeBinary(builder)
 

@@ -9,6 +9,7 @@ try:
     from .....shared.IR.enums import SkinType
     from .....shared.Constants.hsd import (
         POBJ_TYPE_MASK, POBJ_SKIN, POBJ_ENVELOPE, POBJ_SHAPEANIM,
+        POBJ_CULLFRONT, POBJ_CULLBACK,
         JOBJ_SKELETON, JOBJ_SKELETON_ROOT, JOBJ_HIDDEN,
     )
     from .....shared.Constants.gx import (
@@ -22,6 +23,7 @@ except (ImportError, SystemError):
     from shared.IR.enums import SkinType
     from shared.Constants.hsd import (
         POBJ_TYPE_MASK, POBJ_SKIN, POBJ_ENVELOPE, POBJ_SHAPEANIM,
+        POBJ_CULLFRONT, POBJ_CULLBACK,
         JOBJ_SKELETON, JOBJ_SKELETON_ROOT, JOBJ_HIDDEN,
     )
     from shared.Constants.gx import (
@@ -155,10 +157,10 @@ def describe_meshes(root_joint, bones, joint_to_bone_index, image_cache=None, lo
                 colors=[(1.0, 1.0, 1.0, 1.0)] * total_loops,
             ))
 
-        # Extract bone weight info (may deform verts_out in-place for envelopes)
+        # Extract bone weight info (may deform verts_out and normals in-place for envelopes)
         bone_weights = _extract_bone_weights(
             pobj, joint, bone_index, bones, joint_to_bone_index, faces,
-            verts_out, face_lists_copy, logger
+            verts_out, normals, face_lists_copy, logger
         )
 
         name = pobj.name if pobj.name else str(count)
@@ -174,6 +176,8 @@ def describe_meshes(root_joint, bones, joint_to_bone_index, image_cache=None, lo
             bone_weights=bone_weights,
             is_hidden=bool(joint.flags & JOBJ_HIDDEN),
             parent_bone_index=bone_index,
+            cull_front=bool(pobj.flags & POBJ_CULLFRONT),
+            cull_back=bool(pobj.flags & POBJ_CULLBACK),
         )
 
     _walk_joints(root_joint)
@@ -249,15 +253,18 @@ def _extract_color_layers(source, face_list, faces, color_num):
 
 
 def _extract_bone_weights(pobj, joint, bone_index, bones, joint_to_bone_index, faces,
-                          vertices_out, validated_face_lists=None, logger=StubLogger()):
+                          vertices_out, normals=None, validated_face_lists=None,
+                          logger=StubLogger()):
     """Extract bone weight data from PObject property.
 
-    For envelope-weighted meshes, also deforms vertices_out in-place using
-    the envelope matrices (matching legacy Mesh.apply_bone_weights).
+    For envelope-weighted meshes, also deforms vertices_out and normals
+    in-place using the envelope matrices (matching legacy Mesh.apply_bone_weights).
 
     Args:
         vertices_out: mutable list of vertex positions — may be modified in-place
                       for envelope deformation.
+        normals: mutable list of per-loop normals — may be modified in-place
+                 for envelope normal transformation.
         validated_face_lists: face lists with degenerate faces removed (must be
                              used for envelope index lookup to stay in sync with
                              the validated position faces).
@@ -274,7 +281,7 @@ def _extract_bone_weights(pobj, joint, bone_index, bones, joint_to_bone_index, f
     if pobj_type == POBJ_ENVELOPE:
         return _extract_envelope_weights(
             pobj, joint, bone_index, bones, joint_to_bone_index, faces,
-            vertices_out, validated_face_lists, logger
+            vertices_out, normals, validated_face_lists, logger
         )
     elif pobj_type == POBJ_SKIN:
         # Single bone deformation
@@ -348,8 +355,9 @@ def _envelope_coord_system(bone_index, bones):
 
 
 def _extract_envelope_weights(pobj, joint, bone_index, bones, joint_to_bone_index, faces,
-                              vertices_out, validated_face_lists=None, logger=StubLogger()):
-    """Extract weighted envelope deformation data and deform vertices."""
+                              vertices_out, normals=None, validated_face_lists=None,
+                              logger=StubLogger()):
+    """Extract weighted envelope deformation data, deform vertices and normals."""
     vertex_list = pobj.vertex_list.vertices
     envelope_list = pobj.property
 
@@ -428,6 +436,26 @@ def _extract_envelope_weights(pobj, joint, bone_index, bones, joint_to_bone_inde
                              vertex_idx, old_pos[0], old_pos[1], old_pos[2],
                              new_pos[0], new_pos[1], new_pos[2], env_idx)
             vertices_out[vertex_idx] = tuple(new_pos)
+
+    # Transform normals by inverse-transpose of deformation matrices
+    # (normal matrix = inverse transpose of the 3x3 part of the deform matrix)
+    if normals:
+        normal_matrices = []
+        for dm in deform_matrices:
+            nm = dm.to_3x3()
+            nm.invert()
+            nm.transpose()
+            normal_matrices.append(nm.to_4x4())
+
+        loop_idx = 0
+        for face in faces:
+            for vert_idx in face:
+                env_idx = indices.get(vert_idx)
+                if env_idx is not None and env_idx < len(normal_matrices):
+                    old_n = Vector(normals[loop_idx])
+                    new_n = (normal_matrices[env_idx] @ old_n).normalized()
+                    normals[loop_idx] = tuple(new_n)
+                loop_idx += 1
 
     # Build per-vertex bone weight assignments
     assignments = []

@@ -74,9 +74,12 @@ def _build_mesh(ir_mesh, ir_model, armature, image_cache, logger, mesh_idx, mode
             if i < len(bpy_uv.data):
                 bpy_uv.data[i].uv = (u, v)
 
-    # Color layers
+    # Color layers — use FLOAT_COLOR so Blender doesn't auto-linearize.
+    # IR stores sRGB values matching the game's gamma-space rendering;
+    # FLOAT_COLOR passes them through to the shader as-is.
     for color_layer in ir_mesh.color_layers:
-        bpy_cl = mesh_data.vertex_colors.new(name=color_layer.name)
+        bpy_cl = mesh_data.color_attributes.new(
+            name=color_layer.name, type='FLOAT_COLOR', domain='CORNER')
         for i, rgba in enumerate(color_layer.colors):
             if i < len(bpy_cl.data):
                 bpy_cl.data[i].color = rgba
@@ -103,12 +106,19 @@ def _build_mesh(ir_mesh, ir_model, armature, image_cache, logger, mesh_idx, mode
     else:
         mat = bpy.data.materials.new(name='%s_mat_%d' % (model_name, mesh_idx))
         logger.debug("  mesh[%d] '%s': placeholder material (no IR material)", mesh_idx, ir_mesh.name)
+    # Backface culling — GameCube POBJ cull flags control which face sides are visible.
+    # CULL_BACK (default) = only front faces, CULL_FRONT = only back faces,
+    # both = nothing visible, neither = double-sided.
+    # This prevents z-fighting on double-layered geometry (e.g. skirt inner/outer surfaces).
+    if ir_mesh.cull_front or ir_mesh.cull_back:
+        mat.use_backface_culling = True
+
     mesh_data.materials.append(mat)
 
     # Log UV layer info
     uv_names = [uv.name for uv in mesh_data.uv_layers]
-    clr_names = [vc.name for vc in mesh_data.vertex_colors]
-    logger.debug("  mesh[%d] '%s': uv_layers=%s, vertex_colors=%s, verts=%d, faces=%d",
+    clr_names = [ca.name for ca in mesh_data.color_attributes]
+    logger.debug("  mesh[%d] '%s': uv_layers=%s, color_attributes=%s, verts=%d, faces=%d",
                  mesh_idx, ir_mesh.name, uv_names, clr_names,
                  len(mesh_data.vertices), len(mesh_data.polygons))
 

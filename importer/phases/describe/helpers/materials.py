@@ -13,7 +13,6 @@ try:
         LayerBlendMode, LightmapChannel, CombinerInputSource, CombinerOp,
         CombinerBias, CombinerScale, OutputBlendEffect, BlendFactor,
     )
-    from .....shared.helpers.srgb import srgb_to_linear
     from .....shared.Constants.hsd import *
     from .....shared.Constants.gx import *
 except (ImportError, SystemError):
@@ -26,7 +25,6 @@ except (ImportError, SystemError):
         LayerBlendMode, LightmapChannel, CombinerInputSource, CombinerOp,
         CombinerBias, CombinerScale, OutputBlendEffect, BlendFactor,
     )
-    from shared.helpers.srgb import srgb_to_linear
     from shared.Constants.hsd import *
     from shared.Constants.gx import *
 
@@ -63,8 +61,9 @@ def describe_material(mobj, image_cache=None):
     enable_specular = bool(render_mode & RENDER_SPECULAR)
     is_translucent = bool(render_mode & RENDER_XLU)
 
-    # Material colors — already normalized and linearized during parsing
-    # (Material.loadFromBinary calls transform() which does normalize + linearize)
+    # Material colors — normalized [0-1] sRGB during parsing
+    # (Material.loadFromBinary calls transform() which normalizes u8 → float)
+    # Linearization for Blender happens in Phase 5 (build), not here.
     diffuse_color = tuple(material.diffuse.asRGBAList())
     ambient_color = tuple(material.ambient.asRGBAList())
     specular_color = tuple(material.specular.asRGBAList())
@@ -259,11 +258,6 @@ def _describe_tev(tev):
 
 
 # --- Mapping helpers ---
-
-def _linearize_rgba(rgba):
-    """Convert sRGB [0-1] RGBA to linear, preserving alpha."""
-    return (srgb_to_linear(rgba[0]), srgb_to_linear(rgba[1]),
-            srgb_to_linear(rgba[2]), rgba[3])
 
 
 def _map_color_source(diffuse_flags, render_diffuse):
@@ -487,10 +481,13 @@ def _map_tev_alpha_input(flag, tev):
 
 
 def _tev_color_value(color_obj):
-    """Extract RGBA tuple from a TEV color register object."""
+    """Extract RGBA tuple from a TEV color register object.
+
+    Values are already normalized [0-1] by TextureTEV.loadFromBinary().
+    """
     if hasattr(color_obj, 'red'):
-        return (color_obj.red / 255.0, color_obj.green / 255.0,
-                color_obj.blue / 255.0, color_obj.alpha / 255.0)
+        return (color_obj.red, color_obj.green,
+                color_obj.blue, color_obj.alpha)
     return (0.0, 0.0, 0.0, 1.0)
 
 

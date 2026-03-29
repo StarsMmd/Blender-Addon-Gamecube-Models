@@ -31,8 +31,6 @@ class Color:
 
 	def transform(self):
 		self.normalize()
-		self.linearize()
-		self._was_linearized = True
 
 	def asRGBList(self):
 		return [self.red, self.green, self.blue]
