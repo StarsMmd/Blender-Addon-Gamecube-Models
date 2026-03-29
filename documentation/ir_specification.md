@@ -28,6 +28,7 @@ shared/IR/
                           # IRShapeAnimationSet, IRShapeTrack
   constraints.py          # IRIKConstraint, IRBoneReposition, IRCopyLocationConstraint,
                           # IRTrackToConstraint, IRCopyRotationConstraint, IRLimitConstraint
+  shiny.py                # IRShinyFilter (shiny variant color filter)
   lights.py               # IRLight
   camera.py               # IRCamera (stub)
   fog.py                  # IRFog (stub)

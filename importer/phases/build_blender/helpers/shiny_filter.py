@@ -214,7 +214,7 @@ def insert_shiny_filter(material, node_group, armature):
 
     group_node = nodes.new('ShaderNodeGroup')
     group_node.node_tree = node_group
-    group_node.name = 'ShinyFilter'
+    group_node.name = 'shiny_filter_shader'
 
     links.new(source_output, group_node.inputs[0])
 
@@ -223,7 +223,7 @@ def insert_shiny_filter(material, node_group, armature):
 
     mix_node = nodes.new('ShaderNodeMixRGB')
     mix_node.blend_type = 'MIX'
-    mix_node.name = 'ShinyMix'
+    mix_node.name = 'shiny_filter_mix'
     mix_node.inputs[0].default_value = 0.0
 
     links.new(source_output, mix_node.inputs[1])

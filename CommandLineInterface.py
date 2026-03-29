@@ -42,3 +42,7 @@ def main():
 
         status = Importer.run(context, raw_bytes, filename, options, logger=logger)
         print(status)
+
+
+if __name__ == "__main__":
+    main()

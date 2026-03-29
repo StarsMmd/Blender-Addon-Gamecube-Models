@@ -2,7 +2,7 @@
 
 ## Background
 
-Every Pokemon has a "shiny" variant with an alternate color palette. In Pokemon Colosseum and XD: Gale of Darkness, a few prominent Pokemon (e.g. Shadow Lugia) have entirely separate models for their shiny forms. However, the majority use a color filter stored in the PKX file header that transforms the base model's textures into the shiny appearance at runtime.
+Every Pokemon has a "shiny" variant with an alternate color palette. In Pokemon Colosseum and XD: Gale of Darkness, a few prominent Pokemon (e.g. legendaries and starters) have entirely separate models for their shiny forms. However, the majority use a color filter stored in the PKX file header that transforms the base model's textures into the shiny appearance at runtime.
 
 ## How the Game Stores Shiny Data
 
@@ -33,22 +33,22 @@ Four contiguous bytes representing a per-channel brightness multiplier. Raw byte
 
 ### No-Op Detection
 
-Models without a meaningful shiny variant (e.g. legendaries and starters, which use separate shiny models) store identity routing `(0, 1, 2, 3)` and neutral brightness bytes near `128`. The addon detects this pattern and skips the shiny filter entirely for these models.
+Models without a meaningful shiny variant (e.g. legendaries and starters, which use separate shiny models) store identity routing `(0, 1, 2, 3)` and neutral brightness bytes near `128`. The addon detects this pattern on raw byte values (before conversion to floats) and skips the shiny filter entirely for these models.
 
 ## Implementation in the Addon
 
 ### Pipeline Flow
 
 ```
-Phase 1 (Extract)    PKX header bytes → raw shiny params dict
-                     No-op detection happens here (before conversion)
-                     Returns None if identity routing + neutral brightness
+Phase 1 (Extract)    PKX header bytes → raw shiny params dict (routing ints + brightness floats)
+                     No-op detection on raw bytes (identity routing + brightness within 1 of 128)
+                     Returns None if no-op, skipping all downstream shiny logic
 
 Phase 4 (Describe)   Raw dict → IRShinyFilter dataclass
                      Converts routing ints to ShinyChannel enum
-                     Converts brightness bytes to [-1.0, 1.0] floats
+                     Brightness already converted to [-1.0, 1.0] floats by Phase 1
 
-Phase 5A (Build)     IRShinyFilter → Blender shader node group + toggle
+Phase 5A (Build)     IRShinyFilter → Blender shader node group + armature properties + UI panel
 ```
 
 ### IR Representation
@@ -86,9 +86,51 @@ The addon creates a reusable node group (`ShinyFilter_{model_name}`) containing:
 
 This group is inserted into every material via a `MixRGB` node that blends between the original and shiny-filtered color. The mix factor is driven by the armature's `dat_shiny` property.
 
-### Toggling
+The node group is shared across all materials on the same model. When any shiny parameter property changes, the node group is cleared and rebuilt via `populate_shiny_node_group()`, and all material instances update automatically.
 
-A registered `BoolProperty` (`dat_shiny`) on the armature controls all materials simultaneously via drivers. An update callback forces the viewport to refresh when the toggle changes. A UI panel ("Shiny Variant") appears in Object Properties when the selected armature has shiny data.
+### Armature Properties
+
+All shiny parameters are registered as `bpy.props` properties on `bpy.types.Object` in `BlenderPlugin.register()`:
+
+| Property | Type | Description |
+|---|---|---|
+| `dat_shiny` | BoolProperty | Enable/disable the shiny filter |
+| `dat_shiny_route_r` | EnumProperty (Red/Green/Blue/Alpha) | Source channel for red output |
+| `dat_shiny_route_g` | EnumProperty | Source channel for green output |
+| `dat_shiny_route_b` | EnumProperty | Source channel for blue output |
+| `dat_shiny_route_a` | EnumProperty | Source channel for alpha output |
+| `dat_shiny_brightness_r` | FloatProperty (-1.0 to 1.0) | Red brightness offset |
+| `dat_shiny_brightness_g` | FloatProperty | Green brightness offset |
+| `dat_shiny_brightness_b` | FloatProperty | Blue brightness offset |
+| `dat_shiny_brightness_a` | FloatProperty | Alpha brightness offset |
+
+On import, these are initialized from the extracted `IRShinyFilter` values. Users can then tweak any parameter and see the result in real time.
+
+### UI Panel
+
+A panel ("Shiny Variant") appears in **Object Properties** when the selected armature has `dat_has_shiny` set. It shows:
+
+- **Enable** checkbox — toggles the shiny filter on/off via driver
+- **Channel Routing** — 4 enum dropdowns
+- **Brightness** — 4 float sliders
+
+The routing/brightness controls are greyed out when Enable is unchecked.
+
+### Viewport Refresh
+
+The `dat_shiny` toggle uses a driver on the MixRGB factor input, with an update callback (`_on_shiny_toggle_update`) that tags the depsgraph for refresh. Routing and brightness changes use a separate callback (`_on_shiny_param_update`) that rebuilds the node group and tags materials for update.
+
+### Key Files
+
+| File | Role |
+|---|---|
+| `importer/phases/extract/extract.py` | `_extract_shiny_params()`, `_is_noop_shiny()` |
+| `shared/IR/shiny.py` | `IRShinyFilter` dataclass |
+| `shared/IR/enums.py` | `ShinyChannel` enum |
+| `importer/phases/describe/describe.py` | `_build_shiny_filter()` — dict → IR conversion |
+| `importer/phases/build_blender/helpers/shiny_filter.py` | Node group building, property setup, material insertion |
+| `importer/phases/build_blender/build_blender.py` | Orchestrates shiny setup in Phase 5A |
+| `BlenderPlugin.py` | Property registration, UI panel, update callbacks |
 
 ## Reference
 

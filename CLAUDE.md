@@ -58,6 +58,7 @@ importer/
     extract/extract.py           # Phase 1: container detection + header stripping
       helpers/fsys.py            # FSYS archive parser (header, metadata, LZSS decompression)
       helpers/lzss.py            # LZSS decompression algorithm
+      # Also: shiny param extraction (_extract_shiny_params, _is_noop_shiny)
     route/route.py               # Phase 2: section name → node type mapping
     parse/
       parse.py                   # Phase 3: wrapper around DATParser
@@ -67,7 +68,7 @@ importer/
       helpers/                   # bones, meshes, materials, animations, constraints, lights, material_animations, keyframe_decoder
     build_blender/
       build_blender.py           # Phase 5A: IRScene → Blender objects
-      helpers/                   # skeleton, meshes, materials, animations, constraints, lights, material_animations
+      helpers/                   # skeleton, meshes, materials, animations, constraints, lights, material_animations, shiny_filter
       errors/build_errors.py     # ModelBuildError
 
 shared/
@@ -85,7 +86,8 @@ shared/
   BlenderVersion.py              # Version comparison utility
 
 legacy/                          # Pre-refactor code (functional, used when "Use Legacy" is checked)
-documentation/                   # Pipeline docs, API reference, compatibility tables, IR spec
+scripts/                         # Standalone Blender scripts (run from Scripting panel)
+documentation/                   # Pipeline docs, API reference, compatibility tables, IR spec, scripts
 ```
 
 ### Dependency Rules
@@ -144,7 +146,8 @@ Nodes are cached by file offset (`nodes_cache_by_offset`). Nodes with `is_cachab
 | Exporter (binary round-trip) | ✅ Functional (0 value mismatches) |
 | IR pipeline | ✅ Default path (legacy available via toggle) |
 | FSYS archive import | ✅ Working (multi-model extraction + LZSS decompression) |
-| Unit tests | ✅ 280 passing |
+| Shiny variant filter | ✅ Working (PKX color extraction, live-editable shader node group, per-parameter UI) |
+| Unit tests | ✅ 296 passing |
 | Shader node auto-layout | ✅ Working (topological sort from output→inputs, left-to-right) |
 
 ---
@@ -172,6 +175,19 @@ The original importer (`colo_xd_legacy`) applied a `ShaderNodeGamma` (1/2.2) to 
 
 ---
 
+## Shiny Filter Shader Nodes
+
+The shiny filter inserts two named nodes into each material's node tree:
+
+- **`shiny_filter_shader`** — the ShaderNodeGroup instance referencing the `ShinyFilter_{model_name}` node group
+- **`shiny_filter_mix`** — the MixRGB node blending between normal and shiny output
+
+The exporter **must skip these nodes** when reading back materials — they are display-only and not part of the original model data. Identify them by the node names above.
+
+The shiny parameters are stored as registered `bpy.props` properties on the armature (`dat_shiny_route_r`, `dat_shiny_brightness_r`, etc.). When exporting to PKX, the exporter can read these properties from the armature to write updated shiny metadata back into the PKX header.
+
+---
+
 ## Coding Conventions
 
 - **Logger parameter:** Functions default to `StubLogger()`, never `None`. Always use `logger.info()`/`logger.debug()` instead of `print()` — logger output is written to log files on disk that persist after import and can be read directly for investigation. `print()` only goes to the Blender console which is transient.
@@ -180,3 +196,5 @@ The original importer (`colo_xd_legacy`) applied a `ShaderNodeGamma` (1/2.2) to 
 - **Errors:** Use `ValueError("descriptive message")` instead of custom exception classes. Only `ModelBuildError` (in build phase) carries structured data.
 - **No bpy in shared/:** All Blender-specific code lives in `importer/phases/build_blender/`.
 - **Fail loud over silent fallbacks:** When looking up Blender objects we created (nodes, bones, materials), raise `ValueError` with the actual names if the lookup fails — don't silently skip or fall back. Silent failures mask bugs and make debugging much harder.
+- **Standalone scripts:** Any standalone Blender scripts (run from the Scripting panel) go in `scripts/` and must be documented in `documentation/scripts.md`.
+- **Blender API tracking:** Whenever a `bpy` API call is added, moved, removed, or modified, update `documentation/blender_api_usage.md` to match.

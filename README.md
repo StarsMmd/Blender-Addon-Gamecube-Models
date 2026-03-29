@@ -6,7 +6,7 @@ The importer uses a 5-phase pipeline with an Intermediate Representation (IR) th
 
 Original implementation provided by Made.
 
-**Supported file extensions:** `.dat`, `.fdat`, `.rdat`, `.pkx`
+**Supported file extensions:** `.dat`, `.fdat`, `.rdat`, `.pkx`, `.fsys`
 
 **Target Blender version:** 4.5.7 LTS
 
@@ -21,14 +21,26 @@ This addon uses Blender's extensions system. Compress the contents of this repos
 - Bone animation import with keyframe decoding, path/spline animation, and looping
 - Material pipeline with TEV color combiners, pixel engine blending, and texture mapping
 - Material animation import (color, alpha, texture UV) with NLA support
-- Light import (SUN, POINT, SPOT)
+- Light import (SUN, POINT, SPOT) — toggle with "Import Lights" setting
 - Bone instances (JOBJ_INSTANCE)
+- Shiny variant color filter (PKX models)
+- FSYS archive import (multi-model extraction + LZSS decompression)
 
 ## Shiny Variants
 
 When importing `.pkx` Pokemon models with the **Include Shiny Variant** option enabled (on by default), the addon extracts shiny color parameters from the file header and builds a toggleable shader filter into the imported materials.
 
-To use it: select the armature, go to **Properties > Object Properties** (orange square icon), and look for the **Shiny Variant** panel with a **Shiny** checkbox. Toggling this switches all materials on the model between normal and shiny appearance in real time.
+To use the shiny toggle:
+
+1. Select the armature in the viewport
+2. Open **Properties > Object Properties** (orange square icon)
+3. Find the **Shiny Variant** panel
+4. Check **Enable** to switch to the shiny appearance
+
+The panel also exposes all 8 shiny parameters for live editing:
+
+- **Channel Routing** — 4 dropdowns (Red/Green/Blue/Alpha) controlling which source channel maps to each output channel
+- **Brightness** — 4 sliders (-1.0 to 1.0) for per-channel brightness adjustment
 
 Not every Pokemon has shiny parameters in its PKX file — some (e.g. legendaries and starters) use a separate model for their shiny form instead. For these models, the Shiny Variant panel will not appear. See `documentation/shiny_variants.md` for technical details.
 
@@ -37,7 +49,6 @@ Not every Pokemon has shiny parameters in its PKX file — some (e.g. legendarie
 - [ ] Shape animation import
 - [ ] Camera import
 - [ ] Fog import
-- [ ] FSYS archive extraction
 - [ ] Blender scene to IR (export describe phase)
 - [ ] IR to node tree (export build phase)
 
@@ -62,7 +73,7 @@ shared/
 
 legacy/                    # Pre-refactor importer (available via "Use Legacy" toggle)
 documentation/             # Pipeline docs, API reference, compatibility table, IR spec
-tests/                     # pytest suite (261 tests, no game files required)
+tests/                     # pytest suite (296 tests, no game files required)
 ```
 
 ## Developer Instructions
@@ -75,11 +86,11 @@ The pipeline can run outside of Blender for parsing and testing:
 # Install Blender as a Python module (optional — without it, phases 1-4 run but phase 5A is skipped)
 pip install bpy mathutils
 
-# Run the pipeline on a model file
-python -m colo_xd model.dat
+# From within the addon folder, run the pipeline on a model file
+python3 CommandLineInterface.py model.dat
 
 # Verbose mode (writes detailed log)
-python -m colo_xd model.dat -v
+python3 CommandLineInterface.py model.dat -v
 ```
 
 The CLI entry point is `CommandLineInterface.py` (invoked via `__main__.py`). Without `bpy` installed, the pipeline runs phases 1-4 (parse and describe) and outputs the IR without creating Blender objects.
@@ -94,6 +105,18 @@ pip install pytest
 cd colo_xd
 python3 -m pytest tests/ -q
 ```
+
+## Documentation
+
+Detailed documentation lives in the `documentation/` folder:
+
+- [**Import Pipeline Plan**](documentation/import_pipeline_plan.md) — design and architecture of the 5-phase import pipeline
+- [**Export Pipeline Plan**](documentation/export_pipeline_plan.md) — design for the export pipeline (DAT writing)
+- [**IR Specification**](documentation/ir_specification.md) — the Intermediate Representation dataclass hierarchy and design principles
+- [**Compatibility Table**](documentation/compatibility_table.md) — feature support across different games and file types
+- [**Blender API Usage**](documentation/blender_api_usage.md) — reference for Blender Python API patterns used in the addon
+- [**Shiny Variants**](documentation/shiny_variants.md) — how the game stores shiny color data and how the addon implements it
+- [**Scripts**](documentation/scripts.md) — standalone Blender scripts and how to run them
 
 ## Community
 

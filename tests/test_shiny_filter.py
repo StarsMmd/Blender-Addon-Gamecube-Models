@@ -193,25 +193,13 @@ def test_noop_shiny_returns_none():
     assert result is None
 
 
-def test_noop_shiny_byte_127_returns_none():
-    """Brightness byte 127 (within 1 of 128) is still detected as no-op."""
-    raw = _build_xd_pkx((0, 1, 2, 3), (127, 127, 127, 127))
-    result = _extract_shiny_params(raw, is_xd=True)
-    assert result is None
-
-
-def test_non_identity_routing_not_noop():
-    """Non-identity routing is not a no-op even with neutral brightness."""
-    raw = _build_xd_pkx((2, 1, 0, 3), (128, 128, 128, 128))
-    result = _extract_shiny_params(raw, is_xd=True)
-    assert result is not None
-
-
-def test_nonzero_brightness_not_noop():
-    """Identity routing with non-neutral brightness is not a no-op."""
-    raw = _build_xd_pkx((0, 1, 2, 3), (200, 128, 128, 128))
-    result = _extract_shiny_params(raw, is_xd=True)
-    assert result is not None
+def test_noop_detection():
+    """_is_noop_shiny correctly identifies identity routing + neutral brightness."""
+    from importer.phases.extract.extract import _is_noop_shiny
+    assert _is_noop_shiny(0, 1, 2, 3, [128, 128, 128, 128]) is True
+    assert _is_noop_shiny(0, 1, 2, 3, [127, 127, 127, 127]) is True
+    assert _is_noop_shiny(2, 1, 0, 3, [128, 128, 128, 128]) is False
+    assert _is_noop_shiny(0, 1, 2, 3, [200, 128, 128, 128]) is False
 
 
 # ---------------------------------------------------------------------------
