@@ -11,6 +11,30 @@ The IR is the output of Phase 4 (Scene Description) and the input to Phase 5 (Bu
 - Materials store abstract rendering parameters, not target-specific shader graphs
 - Animation keyframes are fully decoded (frame/value/interpolation/handles) — not compressed bytes, not target-baked values
 - Image pixels are raw u8 bytes — float conversion happens in the build phase
+- Platform-agnostic: no source-format quirks (GameCube) or target-format quirks (Blender) — Phase 4 strips the former, Phase 5 applies the latter
+
+---
+
+## Conventions & Coordinate Spaces
+
+The IR uses standard, widely-adopted conventions so that any build phase can consume it without needing to know about the original game format.
+
+| Property | Convention | Notes |
+|---|---|---|
+| **Coordinate system** | Y-up, right-handed | GameCube uses Y-up natively; the π/2 X-rotation for Blender's Z-up is applied in Phase 5 at the armature level |
+| **Rotation** | Euler XYZ, radians | Stored as `(rx, ry, rz)` tuples |
+| **Matrices** | 4×4, row-major | Stored as `list[list[float]]` (4 rows of 4 floats) |
+| **UV origin** | Bottom-left (OpenGL convention) | Phase 4 flips V from GameCube's top-left origin: `v = 1 - scale_v - v` |
+| **UV animation** | Bottom-left, V-flipped in Phase 4 | Animated `translation_v` keyframes are corrected using the static or animated `scale_v` value at each keyframe's frame |
+| **Color space** | Linear | Diffuse/ambient/specular colors are converted from sRGB to linear in Phase 4. Material animation color keyframes are also linearized |
+| **Vertex colors** | Linear float [0, 1] | Source u8 [0, 255] values are normalized and linearized in Phase 4 |
+| **Image pixels** | Raw u8 RGBA, row-major, bottom-to-top | No gamma or color space conversion — stored as decoded from the source format |
+| **Bone transforms** | Local-space SRT | `position`, `rotation`, `scale` are relative to parent bone |
+| **Bone matrices** | World-space | `world_matrix`, `normalized_world_matrix` etc. are absolute transforms |
+| **Mesh vertices** | World-space positions | Envelope-deformed vertices are in world space after skinning |
+| **Animation values** | Source world-space SRT | Bone animation keyframes store absolute rotation/translation/scale values from the source format. Blender-specific baking (scale correction, Euler decomposition) happens in Phase 5 |
+| **Angles** | Radians | All rotation values throughout the IR |
+| **Units** | Unitless (source scale) | No unit conversion is applied; 1 unit = 1 source unit |
 
 ---
 
