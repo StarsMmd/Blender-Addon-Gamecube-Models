@@ -146,11 +146,11 @@ def _setup_anim_workspace(context):
 
 
 def menu_func_import(self, context):
-    self.layout.operator(ImportHSD.bl_idname, text="Gamecube DAT Model - Refactor (.dat)")
+    self.layout.operator(ImportHSD.bl_idname, text="Gamecube DAT Model (.dat)")
 
 
 def menu_func_export(self, context):
-    self.layout.operator(ExportHSD.bl_idname, text="Gamecube DAT Model - Refactor (.dat)")
+    self.layout.operator(ExportHSD.bl_idname, text="Gamecube DAT Model (.dat)")
 
 
 class DAT_PT_ShinyPanel(bpy.types.Panel):
