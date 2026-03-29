@@ -152,7 +152,7 @@ Nodes are cached by file offset (`nodes_cache_by_offset`). Nodes with `is_cachab
 | IR pipeline | ✅ Default path (legacy available via toggle) |
 | FSYS archive import | ✅ Working (multi-model extraction + LZSS decompression) |
 | Shiny variant filter | ✅ Working (PKX color extraction, live-editable shader node group, per-parameter UI) |
-| Unit tests | ✅ 292 passing |
+| Unit tests | ✅ 390 passing |
 | Shader node auto-layout | ✅ Working (topological sort from output→inputs, left-to-right) |
 
 ---
@@ -174,9 +174,17 @@ GameCube → Blender requires a π/2 rotation around the X-axis. Applied once at
 
 ---
 
-## Vertex Color Gamma
+## Color Space Strategy
 
-The original importer (`colo_xd_legacy`) applied a `ShaderNodeGamma` (1/2.2) to vertex colors before multiplying with the texture. This was a workaround for double linearization: material colors were linearized during parsing AND Blender's shader pipeline linearized them again. The refactored pipeline fixed the double linearization at the source, so the gamma correction node is intentionally removed — do not re-add it.
+The IR stores all colors in **sRGB [0-1]** — normalized from u8 but not linearized. This keeps the IR platform-agnostic. Blender-specific linearization happens in **Phase 5 (build)** only:
+
+- **Material colors** (diffuse, ambient, specular): Linearized via `srgb_to_linear()` when set on `ShaderNodeRGB` default values, because Blender treats those as scene-linear.
+- **Material animation keyframes**: RGB channels linearized when inserting into fcurves. Alpha is not linearized.
+- **Vertex colors**: Stored as `FLOAT_COLOR` (not `BYTE_COLOR`) so Blender does **not** auto-linearize them. The raw sRGB values pass through to the shader, matching the GameCube's gamma-space rendering.
+- **Light colors**: Linearized when set on `bpy.data.lights[].color`.
+- **Image pixels**: Raw u8 RGBA — Blender handles image color management internally.
+
+Do not linearize colors in the IR, parsing, or describe phases.
 
 ---
 
@@ -205,3 +213,4 @@ The shiny parameters are stored as registered `bpy.props` properties on the arma
 - **Fail loud over silent fallbacks:** When looking up Blender objects we created (nodes, bones, materials), raise `ValueError` with the actual names if the lookup fails — don't silently skip or fall back. Silent failures mask bugs and make debugging much harder.
 - **Standalone scripts:** Any standalone Blender scripts (run from the Scripting panel) go in `scripts/` and must be documented in `documentation/scripts.md`.
 - **Blender API tracking:** Whenever a `bpy` API call is added, moved, removed, or modified, update `documentation/blender_api_usage.md` to match.
+- **Test count:** Whenever tests are added or removed, update the unit test count in the Current Status table above.

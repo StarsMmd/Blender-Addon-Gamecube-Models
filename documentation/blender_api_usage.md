@@ -102,7 +102,7 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.80 | current | `mesh.materials.append(mat)` | `meshes.py` | |
 | 2.74 | current | `mesh.normals_split_custom_set(normals)` | `meshes.py` | |
 | 2.80 | current | `mesh.uv_layers.new(name)` | `meshes.py` | |
-| 2.80 | current | `mesh.vertex_colors.new(name)` | `meshes.py` | Deprecated in 3.2; still functional |
+| 3.2 | current | `mesh.color_attributes.new(name, type, domain)` | `meshes.py` | FLOAT_COLOR + CORNER; avoids sRGB auto-linearization |
 | | | | | |
 | | | **Vertex Groups** | | |
 | 2.80 | current | `object.vertex_groups.new(name)` | `meshes.py` | |
@@ -211,5 +211,5 @@ The addon uses `BlenderVersion` checks to handle API differences across versions
 | API | Status | Replacement | Impact |
 |-----|--------|-------------|--------|
 | `ShaderNodeMixRGB` | Deprecated 3.4 | `ShaderNodeMix` | Still functional; used for TEV blending and shiny filter mix |
-| `mesh.vertex_colors` | Deprecated 3.2 | Color attributes API | Still functional; used for vertex colors and alpha |
+| `mesh.vertex_colors` | Deprecated 3.2 | `mesh.color_attributes` (FLOAT_COLOR) | Migrated to FLOAT_COLOR to avoid sRGB auto-linearization |
 | `mesh.normals_split_custom_set()` | Workflow changed 4.1 | Auto Smooth modifier | Still callable |

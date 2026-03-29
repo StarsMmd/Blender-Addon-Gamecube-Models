@@ -7,7 +7,6 @@ from types import SimpleNamespace
 
 try:
     from .....shared.Constants.hsd import *
-    from .....shared.helpers.srgb import srgb_to_linear
     from .....shared.IR.animation import (
         IRMaterialTrack, IRTextureUVTrack, IRKeyframe,
     )
@@ -15,7 +14,6 @@ try:
     from .keyframe_decoder import decode_fobjdesc
 except (ImportError, SystemError):
     from shared.Constants.hsd import *
-    from shared.helpers.srgb import srgb_to_linear
     from shared.IR.animation import (
         IRMaterialTrack, IRTextureUVTrack, IRKeyframe,
     )
@@ -29,8 +27,6 @@ _MAT_TRACK_MAP = {
     HSD_A_M_DIFFUSE_B: 'diffuse_b',
     HSD_A_M_ALPHA:     'alpha',
 }
-
-_SRGB_TRACKS = {HSD_A_M_DIFFUSE_R, HSD_A_M_DIFFUSE_G, HSD_A_M_DIFFUSE_B}
 
 # HSD texture UV track type → (IR field name on IRTextureUVTrack)
 _TEX_UV_MAP = {
@@ -131,26 +127,15 @@ def _describe_material_track(mat_anim, mesh, bone_name, mesh_idx, logger):
         loop=loop,
     )
 
-    # Decode color/alpha tracks
+    # Decode color/alpha tracks (stored as sRGB [0-1] in IR;
+    # linearization for Blender happens in Phase 5)
     if has_aobj:
         fobj = aobj.frame
         while fobj:
             field = _MAT_TRACK_MAP.get(fobj.type)
             if field:
-                is_srgb = fobj.type in _SRGB_TRACKS
                 scale = 1.0 / 255.0
                 keyframes = decode_fobjdesc(fobj, bias=0, scale=scale)
-
-                # Apply sRGB→linear conversion to keyframe values
-                if is_srgb:
-                    keyframes = [IRKeyframe(
-                        frame=kf.frame,
-                        value=srgb_to_linear(max(0.0, min(1.0, kf.value))),
-                        interpolation=Interpolation.LINEAR,  # baked, so linear
-                        handle_left=None,
-                        handle_right=None,
-                    ) for kf in keyframes]
-
                 setattr(track, field, keyframes)
             fobj = fobj.next
 

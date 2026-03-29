@@ -14,6 +14,7 @@ try:
         CombinerBias, CombinerScale, OutputBlendEffect, BlendFactor,
     )
     from .....shared.BlenderVersion import BlenderVersion
+    from .....shared.helpers.srgb import srgb_to_linear
 except (ImportError, SystemError):
     from shared.IR.enums import (
         ColorSource, LightingModel, CoordType, WrapMode, TextureInterpolation,
@@ -21,6 +22,17 @@ except (ImportError, SystemError):
         CombinerBias, CombinerScale, OutputBlendEffect, BlendFactor,
     )
     from shared.BlenderVersion import BlenderVersion
+    from shared.helpers.srgb import srgb_to_linear
+
+
+def _linearize_rgb(rgba):
+    """Convert sRGB [0-1] RGBA to linear for Blender shader nodes.
+
+    Blender's ShaderNodeRGB default_value expects linear values.
+    Alpha is NOT linearized.
+    """
+    return (srgb_to_linear(rgba[0]), srgb_to_linear(rgba[1]),
+            srgb_to_linear(rgba[2]), rgba[3])
 
 
 def build_material(ir_material, image_cache=None, name=''):
@@ -123,7 +135,8 @@ def build_material(ir_material, image_cache=None, name=''):
 
 def _build_base_color_alpha(ir_mat, nodes, links):
     """Build base color and alpha nodes from IRMaterial source flags."""
-    dc = ir_mat.diffuse_color
+    # IR stores sRGB — linearize for Blender's shader nodes
+    dc = _linearize_rgb(ir_mat.diffuse_color)
 
     if ir_mat.lighting == LightingModel.LIT:
         # RENDER_DIFFUSE set
@@ -384,32 +397,35 @@ def _build_tev_input(nodes, combiner_input, cur_color, cur_alpha, is_color):
         return cur_alpha
     elif src in (CombinerInputSource.CONSTANT, CombinerInputSource.REGISTER_0, CombinerInputSource.REGISTER_1):
         val = combiner_input.value or (0, 0, 0, 1)
+        # IR stores sRGB — linearize RGB for Blender shader nodes
+        lv = _linearize_rgb(val)
         ch = combiner_input.channel
         if is_color:
             color = nodes.new('ShaderNodeRGB')
             if ch == "RGB":
-                color.outputs[0].default_value[:] = list(val)
+                color.outputs[0].default_value[:] = list(lv)
             elif ch == "RRR":
-                color.outputs[0].default_value[:] = [val[0], val[0], val[0], val[3]]
+                color.outputs[0].default_value[:] = [lv[0], lv[0], lv[0], lv[3]]
             elif ch == "GGG":
-                color.outputs[0].default_value[:] = [val[1], val[1], val[1], val[3]]
+                color.outputs[0].default_value[:] = [lv[1], lv[1], lv[1], lv[3]]
             elif ch == "BBB":
-                color.outputs[0].default_value[:] = [val[2], val[2], val[2], val[3]]
+                color.outputs[0].default_value[:] = [lv[2], lv[2], lv[2], lv[3]]
             elif ch == "AAA":
-                color.outputs[0].default_value[:] = [val[3], val[3], val[3], val[3]]
+                color.outputs[0].default_value[:] = [lv[3], lv[3], lv[3], lv[3]]
             else:
-                color.outputs[0].default_value[:] = list(val)
+                color.outputs[0].default_value[:] = list(lv)
             return color.outputs[0]
         else:
+            # Alpha channels — not linearized (alpha is not a color)
             alpha = nodes.new('ShaderNodeValue')
             if ch == "A":
                 alpha.outputs[0].default_value = val[3]
             elif ch == "R":
-                alpha.outputs[0].default_value = val[0]
+                alpha.outputs[0].default_value = lv[0]
             elif ch == "G":
-                alpha.outputs[0].default_value = val[1]
+                alpha.outputs[0].default_value = lv[1]
             elif ch == "B":
-                alpha.outputs[0].default_value = val[2]
+                alpha.outputs[0].default_value = lv[2]
             else:
                 alpha.outputs[0].default_value = val[3]
             return alpha.outputs[0]

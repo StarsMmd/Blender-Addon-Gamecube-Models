@@ -3,6 +3,11 @@ import math
 import bpy
 from mathutils import Matrix, Vector
 
+try:
+    from .....shared.helpers.srgb import srgb_to_linear
+except (ImportError, SystemError):
+    from shared.helpers.srgb import srgb_to_linear
+
 
 def build_lights(ir_lights, logger):
     """Create Blender lights from IRLight list."""
@@ -18,7 +23,9 @@ def _build_light(ir_light):
     blender_type = type_map.get(ir_light.type.value, 'POINT')
 
     light_data = bpy.data.lights.new(name=ir_light.name, type=blender_type)
-    light_data.color = ir_light.color
+    # IR stores sRGB — linearize for Blender's light color
+    c = ir_light.color
+    light_data.color = (srgb_to_linear(c[0]), srgb_to_linear(c[1]), srgb_to_linear(c[2]))
 
     lamp = bpy.data.objects.new(name=ir_light.name, object_data=light_data)
 
