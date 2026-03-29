@@ -4,7 +4,7 @@ from .helpers.meshes import build_meshes
 from .helpers.animations import build_bone_animations
 from .helpers.constraints import build_constraints
 from .helpers.lights import build_lights
-from .helpers.shiny_filter import build_shiny_node_group, setup_shiny_property
+from .helpers.shiny_filter import build_shiny_node_group, setup_shiny_properties
 
 try:
     from ....shared.helpers.logger import StubLogger
@@ -32,9 +32,9 @@ def build_blender_scene(ir_scene, context, options, logger=StubLogger()):
         # Set up shiny filter node group if shiny params are present
         shiny_node_group = None
         if ir_model.shiny_filter is not None:
-            setup_shiny_property(armature)
             group_name = "ShinyFilter_%s" % ir_model.name
             shiny_node_group = build_shiny_node_group(ir_model.shiny_filter, group_name)
+            setup_shiny_properties(armature, ir_model.shiny_filter, group_name)
             logger.info("  Built shiny filter node group: %s", group_name)
 
         material_lookup = build_meshes(ir_model, armature, context, options, logger=logger,

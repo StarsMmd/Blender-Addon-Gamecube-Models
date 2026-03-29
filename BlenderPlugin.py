@@ -1,7 +1,7 @@
 """Blender addon operators and registration for the DAT model importer/exporter."""
 import os
 import bpy
-from bpy.props import StringProperty, BoolProperty, IntProperty, CollectionProperty
+from bpy.props import StringProperty, BoolProperty, IntProperty, FloatProperty, EnumProperty, CollectionProperty
 from bpy_extras.io_utils import ImportHelper, ExportHelper
 
 from .legacy.importer import *
@@ -151,7 +151,7 @@ def menu_func_export(self, context):
 
 
 class DAT_PT_ShinyPanel(bpy.types.Panel):
-    """Panel for the shiny color variant toggle."""
+    """Panel for the shiny color variant parameters."""
     bl_label = "Shiny Variant"
     bl_idname = "OBJECT_PT_dat_shiny"
     bl_space_type = 'PROPERTIES'
@@ -164,18 +164,42 @@ class DAT_PT_ShinyPanel(bpy.types.Panel):
         return obj is not None and obj.type == 'ARMATURE' and obj.get("dat_has_shiny", False)
 
     def draw(self, context):
-        self.layout.prop(context.active_object, "dat_shiny", text="Shiny")
+        obj = context.active_object
+        layout = self.layout
+
+        layout.prop(obj, "dat_shiny", text="Enable")
+
+        col = layout.column()
+        col.active = obj.dat_shiny
+
+        col.label(text="Channel Routing:")
+        row = col.row(align=True)
+        row.prop(obj, "dat_shiny_route_r", text="R")
+        row.prop(obj, "dat_shiny_route_g", text="G")
+        row = col.row(align=True)
+        row.prop(obj, "dat_shiny_route_b", text="B")
+        row.prop(obj, "dat_shiny_route_a", text="A")
+
+        col.label(text="Brightness:")
+        col.prop(obj, "dat_shiny_brightness_r", text="R")
+        col.prop(obj, "dat_shiny_brightness_g", text="G")
+        col.prop(obj, "dat_shiny_brightness_b", text="B")
+        col.prop(obj, "dat_shiny_brightness_a", text="A")
 
 
 classes = (ImportHSD, ExportHSD, DAT_PT_ShinyPanel)
 
 
-def _on_shiny_update(obj, context):
-    """Force viewport refresh when the Shiny toggle changes.
+_SHINY_CHANNEL_ITEMS = [
+    ('RED', 'Red', 'Red channel'),
+    ('GREEN', 'Green', 'Green channel'),
+    ('BLUE', 'Blue', 'Blue channel'),
+    ('ALPHA', 'Alpha', 'Alpha channel'),
+]
 
-    Drivers on shader node inputs don't reliably trigger viewport redraws,
-    so we explicitly tag the depsgraph and redraw 3D viewports.
-    """
+
+def _on_shiny_toggle_update(obj, context):
+    """Force viewport refresh when the Shiny toggle changes."""
     obj.update_tag()
     for child in obj.children:
         if child.type == 'MESH' and child.active_material:
@@ -184,13 +208,61 @@ def _on_shiny_update(obj, context):
         context.area.tag_redraw()
 
 
+def _on_shiny_param_update(obj, context):
+    """Rebuild the shiny node group and refresh the viewport when a parameter changes."""
+    from .importer.phases.build_blender.helpers.shiny_filter import rebuild_shiny_node_group
+    rebuild_shiny_node_group(obj)
+    obj.update_tag()
+    for child in obj.children:
+        if child.type == 'MESH' and child.active_material:
+            child.active_material.node_tree.update_tag()
+    if context and context.area:
+        context.area.tag_redraw()
+
+
+_shiny_props = [
+    ('dat_shiny', BoolProperty(
+        name="Shiny", description="Toggle shiny color variant",
+        default=False, update=_on_shiny_toggle_update,
+    )),
+    ('dat_shiny_route_r', EnumProperty(
+        name="Route R", description="Source channel for red output",
+        items=_SHINY_CHANNEL_ITEMS, default='RED', update=_on_shiny_param_update,
+    )),
+    ('dat_shiny_route_g', EnumProperty(
+        name="Route G", description="Source channel for green output",
+        items=_SHINY_CHANNEL_ITEMS, default='GREEN', update=_on_shiny_param_update,
+    )),
+    ('dat_shiny_route_b', EnumProperty(
+        name="Route B", description="Source channel for blue output",
+        items=_SHINY_CHANNEL_ITEMS, default='BLUE', update=_on_shiny_param_update,
+    )),
+    ('dat_shiny_route_a', EnumProperty(
+        name="Route A", description="Source channel for alpha output",
+        items=_SHINY_CHANNEL_ITEMS, default='ALPHA', update=_on_shiny_param_update,
+    )),
+    ('dat_shiny_brightness_r', FloatProperty(
+        name="Brightness R", description="Red channel brightness (-1 = black, 0 = unchanged, 1 = 2x bright)",
+        default=0.0, min=-1.0, max=1.0, step=1, precision=3, update=_on_shiny_param_update,
+    )),
+    ('dat_shiny_brightness_g', FloatProperty(
+        name="Brightness G", description="Green channel brightness (-1 = black, 0 = unchanged, 1 = 2x bright)",
+        default=0.0, min=-1.0, max=1.0, step=1, precision=3, update=_on_shiny_param_update,
+    )),
+    ('dat_shiny_brightness_b', FloatProperty(
+        name="Brightness B", description="Blue channel brightness (-1 = black, 0 = unchanged, 1 = 2x bright)",
+        default=0.0, min=-1.0, max=1.0, step=1, precision=3, update=_on_shiny_param_update,
+    )),
+    ('dat_shiny_brightness_a', FloatProperty(
+        name="Brightness A", description="Alpha channel brightness (-1 = black, 0 = unchanged, 1 = 2x bright)",
+        default=0.0, min=-1.0, max=1.0, step=1, precision=3, update=_on_shiny_param_update,
+    )),
+]
+
+
 def register():
-    bpy.types.Object.dat_shiny = BoolProperty(
-        name="Shiny",
-        description="Toggle shiny color variant",
-        default=False,
-        update=_on_shiny_update,
-    )
+    for prop_name, prop in _shiny_props:
+        setattr(bpy.types.Object, prop_name, prop)
     for cls in classes:
         bpy.utils.register_class(cls)
     bpy.types.TOPBAR_MT_file_import.append(menu_func_import)
@@ -202,5 +274,6 @@ def unregister():
         bpy.utils.unregister_class(cls)
     bpy.types.TOPBAR_MT_file_import.remove(menu_func_import)
     bpy.types.TOPBAR_MT_file_export.remove(menu_func_export)
-    if hasattr(bpy.types.Object, 'dat_shiny'):
-        del bpy.types.Object.dat_shiny
+    for prop_name, _ in _shiny_props:
+        if hasattr(bpy.types.Object, prop_name):
+            delattr(bpy.types.Object, prop_name)
