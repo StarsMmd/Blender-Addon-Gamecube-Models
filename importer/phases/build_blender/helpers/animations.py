@@ -223,19 +223,15 @@ def _bake_bone_track(track, action, bone_data, max_frame, logger, armature=None)
         new_transform_list[i + 7] = action.fcurves.new(
             'pose.bones["%s"].scale' % bone_name, index=i)
 
-    # Pre-fetch Blender-specific matrices
-    local_edit_matrix = bd['local_edit_matrix']
-    edit_scale_correction = bd['edit_scale_correction']
-    temp_matrix_local = bd['temp_matrix_local']
-    parent_edit_scale_correction = (
-        bone_data[parent_idx]['edit_scale_correction'] if parent_idx is not None else None
-    )
-    # Note: parent_scl is NOT passed to compile_srt_matrix during animation baking.
-    # The aligned scale inheritance correction is already accounted for by the
-    # edit_scale_correction matrices. Legacy compileSRTMatrix is called with only
-    # 3 args (no parent_scl) during animation — matching this behavior.
+    # Compute the raw rest-pose SRT matrix (without parent_scl correction).
+    # The animated SRT matrix is also computed without parent_scl, so using
+    # rest_raw.inv() @ animated_raw guarantees identity at rest — avoiding
+    # the non-uniform scale distortion that the edit_scale_correction formula
+    # introduced for bones under non-uniformly scaled parents.
+    rest_raw = compile_srt_matrix(
+        track.rest_scale, track.rest_rotation, track.rest_position)
 
-    # Pass 2: frame-by-frame baking with scale correction
+    # Pass 2: frame-by-frame baking
     end_frame = min(int(track.end_frame), max_frame)
 
     for frame in range(end_frame):
@@ -261,20 +257,12 @@ def _bake_bone_track(track, action, bone_data, max_frame, logger, armature=None)
         if has_path:
             mtx = Matrix.Rotation(-math.pi / 2, 4, 'X') @ mtx
 
-        try:
-            if parent_idx is not None:
-                Bmtx = (local_edit_matrix.inverted()
-                        @ parent_edit_scale_correction
-                        @ mtx
-                        @ edit_scale_correction.inverted())
-            else:
-                Bmtx = (local_edit_matrix.inverted()
-                        @ mtx
-                        @ edit_scale_correction.inverted())
-        except ValueError:
-            # Singular matrix — bone has zero/near-zero scale. Use safe fallback.
-            logger.debug("  %s: singular matrix at frame %d, using fallback", bone_name, frame)
-            Bmtx = temp_matrix_local.inverted_safe() @ mtx
+        # Simple bake: rest_raw.inv() @ animated_raw.
+        # Both matrices use compile_srt_matrix WITHOUT parent_scl, so they
+        # cancel perfectly at rest (producing identity). This matches the
+        # original addon's approach and avoids the scale distortion that the
+        # edit_scale_correction formula caused for non-uniform parent scales.
+        Bmtx = rest_raw.inverted_safe() @ mtx
 
         trans, rot, scl = Bmtx.decompose()
         rot = rot.to_euler()
@@ -288,7 +276,7 @@ def _bake_bone_track(track, action, bone_data, max_frame, logger, armature=None)
                         r[0], r[1], r[2], l[0], l[1], l[2], s[0], s[1], s[2])
             logger.info("    blender_out: loc=(%.6f,%.6f,%.6f) rot=(%.6f,%.6f,%.6f) scl=(%.6f,%.6f,%.6f)",
                         trans[0], trans[1], trans[2], rot[0], rot[1], rot[2], scl[0], scl[1], scl[2])
-            logger.info("    local_edit_matrix[0]=%s", [round(local_edit_matrix[i][0], 6) for i in range(4)])
+            logger.info("    local_edit_matrix[0]=%s", [round(bd['local_edit_matrix'][i][0], 6) for i in range(4)])
             logger.info("    has_parent=%s", parent_idx is not None)
 
         max_scl = 100.0
