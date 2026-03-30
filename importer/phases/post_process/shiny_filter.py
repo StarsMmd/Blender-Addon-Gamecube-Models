@@ -101,7 +101,14 @@ def populate_shiny_node_group(group, routing, brightness):
     links.new(scaled_channels[1], combine.inputs[1])
     links.new(scaled_channels[2], combine.inputs[2])
 
-    links.new(combine.outputs[0], group_out.inputs[0])
+    # Gamma node: linearize the shiny output (sRGB → linear) so Blender's
+    # scene-linear pipeline produces accurate colors.
+    gamma = nodes.new('ShaderNodeGamma')
+    gamma.name = 'Gamma'
+    gamma.inputs[1].default_value = 2.2
+    links.new(combine.outputs[0], gamma.inputs[0])
+
+    links.new(gamma.outputs[0], group_out.inputs[0])
 
     _auto_layout_node_group(nodes, links)
 
@@ -242,15 +249,7 @@ def insert_shiny_filter(material, node_group, armature, logger=None):
 
     links.new(source_output, mix_node.inputs[1])
     links.new(group_node.outputs[0], mix_node.inputs[2])
-
-    # Gamma node: linearize the shiny output (sRGB → linear) so Blender's
-    # scene-linear pipeline produces accurate colors.
-    gamma_node = nodes.new('ShaderNodeGamma')
-    gamma_node.name = 'shiny_filter_gamma'
-    gamma_node.inputs[1].default_value = 2.2
-
-    links.new(mix_node.outputs[0], gamma_node.inputs[0])
-    links.new(gamma_node.outputs[0], target_input)
+    links.new(mix_node.outputs[0], target_input)
 
     _add_shiny_driver(mix_node.inputs[0], armature)
 
