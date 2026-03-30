@@ -210,6 +210,7 @@ The shiny parameters are stored as registered `bpy.props` properties on the arma
 - **Binary reads:** Use `shared/helpers/binary.py` helpers (`read('uint', data, offset)`) instead of raw `struct.unpack`.
 - **Errors:** Use `ValueError("descriptive message")` instead of custom exception classes. Only `ModelBuildError` (in build phase) carries structured data.
 - **No bpy in shared/:** All Blender-specific code lives in `importer/phases/build_blender/`.
+- **Do not modify `legacy/`:** The `legacy/` folder contains the pre-refactor importer and should not be changed unless explicitly asked to do so.
 - **Fail loud over silent fallbacks:** When looking up Blender objects we created (nodes, bones, materials), raise `ValueError` with the actual names if the lookup fails — don't silently skip or fall back. Silent failures mask bugs and make debugging much harder.
 - **Standalone scripts:** Any standalone Blender scripts (run from the Scripting panel) go in `scripts/` and must be documented in `documentation/scripts.md`.
 - **Blender API tracking:** Whenever a `bpy` API call is added, moved, removed, or modified, update `documentation/blender_api_usage.md` to match.
