@@ -196,6 +196,7 @@ The filter inserts two named nodes into each material's node tree:
 
 - **`shiny_filter_shader`** — the ShaderNodeGroup instance referencing the `ShinyFilter_{model_name}` node group
 - **`shiny_filter_mix`** — the MixRGB node blending between normal and shiny output
+- **`shiny_filter_gamma`** — the Gamma node (exponent 2.2) linearizing the shiny output for Blender's scene-linear pipeline
 
 The exporter **must skip these nodes** when reading back materials — they are display-only and not part of the original model data. Identify them by the node names above.
 

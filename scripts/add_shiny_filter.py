@@ -91,6 +91,8 @@ def _populate_shiny_node_group(group, routing, brightness):
 
     links.new(combine.outputs[0], group_out.inputs[0])
 
+    _auto_layout(nodes, links, output_type='GROUP_OUTPUT')
+
 
 def _find_color_input(nodes):
     """Find the main color input on the output shader.
@@ -162,7 +164,15 @@ def _insert_shiny_filter(material, node_group, armature):
 
     links.new(source_output, mix_node.inputs[1])
     links.new(group_node.outputs[0], mix_node.inputs[2])
-    links.new(mix_node.outputs[0], target_input)
+
+    # Gamma node: linearize the shiny output (sRGB → linear) so Blender's
+    # scene-linear pipeline produces accurate colors.
+    gamma_node = nodes.new('ShaderNodeGamma')
+    gamma_node.name = 'shiny_filter_gamma'
+    gamma_node.inputs[1].default_value = 2.2
+
+    links.new(mix_node.outputs[0], gamma_node.inputs[0])
+    links.new(gamma_node.outputs[0], target_input)
 
     # Driver: mix factor driven by armature.dat_shiny
     driver_data = mix_node.inputs[0].driver_add("default_value")
@@ -175,6 +185,62 @@ def _insert_shiny_filter(material, node_group, armature):
     target.id_type = 'OBJECT'
     target.id = armature
     target.data_path = 'dat_shiny'
+
+    _auto_layout(nodes, material.node_tree.links)
+
+
+def _auto_layout(nodes, links, output_type='OUTPUT_MATERIAL'):
+    """Arrange shader nodes left-to-right via topological sort from output."""
+    NODE_WIDTH = 300
+    NODE_HEIGHT = 200
+
+    output = None
+    for node in nodes:
+        if node.type == output_type:
+            output = node
+            break
+    if output is None:
+        return
+
+    inputs_of = {}
+    for link in links:
+        target = link.to_node
+        source = link.from_node
+        if target not in inputs_of:
+            inputs_of[target] = []
+        if source not in inputs_of[target]:
+            inputs_of[target].append(source)
+
+    column_of = {output: 0}
+    queue = [output]
+    while queue:
+        node = queue.pop(0)
+        col = column_of[node]
+        for source in inputs_of.get(node, []):
+            new_col = col + 1
+            if source not in column_of or column_of[source] < new_col:
+                column_of[source] = new_col
+                queue.append(source)
+
+    max_col = max(column_of.values()) if column_of else 0
+    for node in nodes:
+        if node not in column_of:
+            max_col += 1
+            column_of[node] = max_col
+
+    columns = {}
+    for node, col in column_of.items():
+        columns.setdefault(col, []).append(node)
+
+    for col in columns:
+        columns[col].sort(key=lambda n: n.name)
+
+    max_column = max(columns.keys()) if columns else 0
+    for col, col_nodes in columns.items():
+        x = (max_column - col) * NODE_WIDTH
+        for i, node in enumerate(col_nodes):
+            y = -i * NODE_HEIGHT
+            node.location = (x, y)
 
 
 # ---------------------------------------------------------------------------

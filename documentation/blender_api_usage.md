@@ -132,6 +132,7 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 3.3 | current | `nodes.new('ShaderNodeSeparateColor')` | `shiny_filter.py` | Shiny channel routing |
 | 3.3 | current | `nodes.new('ShaderNodeCombineColor')` | `shiny_filter.py` | Shiny channel recombination |
 | 2.80 | current | `nodes.new('ShaderNodeGroup')` | `shiny_filter.py` | ShinyFilter group instance |
+| 2.80 | current | `nodes.new('ShaderNodeGamma')` | `shiny_filter.py` | Shiny output linearization (γ=2.2) |
 | 2.80 | current | `nodes.new('NodeGroupInput')` / `('NodeGroupOutput')` | `shiny_filter.py` | Inside node group |
 | 2.80 | current | `nodes.remove(node)` | `materials.py` | |
 | 2.80 | current | `nodes.clear()` | `shiny_filter.py` | Clear group for rebuild |
