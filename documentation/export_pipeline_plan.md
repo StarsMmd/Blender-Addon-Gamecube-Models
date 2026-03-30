@@ -471,40 +471,36 @@ Steps (reverse of `describe_material_animations()`):
 
 ## Round-Trip Testing Strategy
 
-### Goal
-Measure and improve binary-level fidelity across the pipeline: `file → import → export → re-import → compare`.
+### Terminology
+
+| Abbreviation | Name | Flow | Measures |
+|---|---|---|---|
+| **BNB** | Binary → Node → Binary | DAT bytes → parse → write → compare bytes | Binary-level fidelity (fuzzy 4-byte word match) |
+| **NBN** | Node → Binary → Node | Parse → write → reparse → compare fields | Node field preservation through serialization |
+| **NIN** | Node → IR → Node | Parse → describe → compose → compare fields | IR round-trip fidelity |
+
+BNB uses `compute_binary_match()` which splits both binaries into 4-byte words and counts matching words by value (not position) using `Counter` intersection. This tolerates layout differences from DATBuilder's alignment/ordering.
+
+### Current Scores (nukenin)
+
+| Test | Score | Notes |
+|---|---|---|
+| BNB | 94.0% | Layout differences from DATBuilder conventions |
+| NBN | 93.7% | Field mismatches from unresolved pointer edge cases |
+| NIN (skeleton) | 100.0% | compose_bones perfectly reverses describe_bones |
 
 ### Phase-Level Round-Trip Tests
 
 Each adjacent phase pair should be tested independently:
 
-| Test | Input | Transform | Compare |
-|------|-------|-----------|---------|
-| Node → IR → Node | Parsed Joint/Mesh tree | describe → compose | Field-by-field comparison |
-| IR → Blender → IR | IRScene | build_blender → describe_blender | Field-by-field IR comparison |
-| Node → DAT → Node | Node tree | DATBuilder → DATParser | Already passing (existing test) |
-| Full round-trip | .dat file | import all → export all → re-import | IR field comparison + byte comparison |
+| Test | Status |
+|------|--------|
+| NBN: Node → Binary → Node | ✅ Implemented (`tests/test_write_roundtrip.py`) |
+| BNB: Binary → Node → Binary | ✅ Implemented (`tests/test_write_roundtrip.py`) |
+| NIN: Node → IR → Node | ✅ Implemented (score reflects full node tree) |
+| IBI: IR → Blender → IR | Blocked — describe_blender not implemented |
 
-### Percentage Match Scoring
-
-Create a test utility that computes a match percentage:
-
-```python
-def compute_match_score(original, exported):
-    """Compare two IR objects field-by-field, return (matched, total, details)."""
-    # For each field: exact match = 1 point, float within tolerance = 1 point, mismatch = 0
-    # Score = matched / total * 100
-```
-
-Categories to score:
-- **Bone transforms**: position, rotation, scale (float tolerance 1e-5)
-- **Mesh geometry**: vertex positions, face indices (exact)
-- **UV coordinates**: per-loop UVs (float tolerance 1e-4)
-- **Normals**: per-loop normals (float tolerance 1e-3)
-- **Material properties**: colors, flags (exact enum match)
-- **Texture data**: pixel data (exact byte match)
-- **Animation keyframes**: frame/value (float tolerance 1e-3)
-- **Bone flags**: exact int match
+See [Round-Trip Test Progress](round_trip_test_progress.md) for per-model scores.
 
 ### Test File Strategy
 

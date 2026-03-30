@@ -1,21 +1,24 @@
-"""Round-trip write tests: build synthetic binaries, parse them, write them back, and compare."""
+"""Round-trip write tests.
+
+Two kinds of round-trip:
+
+1. **Node tree → binary → node tree** (TestNodeRoundtrip)
+   Build synthetic node trees, serialize via DATBuilder, re-parse, compare fields.
+   Validates data integrity through the binary format.
+
+2. **Binary → node tree → binary** (TestBinaryRoundtrip)
+   Parse a DAT binary, write it back, compare output against input using a
+   fuzzy matching algorithm that measures the percentage of shared content
+   regardless of exact byte positions.
+"""
 import io
 import struct
 import pytest
 
 from helpers import (
-    build_archive_header,
     build_joint,
-    build_mesh,
-    build_pobject,
-    build_vertex_list_terminator,
     build_dat_with_sections,
-    build_relocation_table,
-    build_section_info,
     JOINT_SIZE,
-    MESH_SIZE,
-    POBJECT_SIZE,
-    VERTEX_SIZE,
 )
 from shared.helpers.file_io import BinaryReader, BinaryWriter
 from importer.phases.parse.helpers.dat_parser import DATParser
@@ -63,7 +66,6 @@ class TestBinaryIOBytesIO:
         writer.write('string', 'hello')
 
         raw = buf.getvalue()
-        # Should be 'hello' + null byte
         assert raw == b'hello\x00'
 
         buf.seek(0)
@@ -103,119 +105,227 @@ class TestBinaryIOBytesIO:
 
 
 # ---------------------------------------------------------------------------
-# DATParser with BytesIO — parse synthetic binary from memory
+# Fuzzy binary comparison
 # ---------------------------------------------------------------------------
 
-class TestDATParserBytesIO:
-    """Verify DATParser works when given a BytesIO instead of a file path."""
+def compute_binary_match(data_a, data_b, word_size=4):
+    """Compare two binaries by finding matching runs of aligned words.
 
-    def test_parse_single_joint_from_bytesio(self):
-        """Parse a minimal DAT containing one Joint from a BytesIO stream."""
+    Splits both binaries into word_size-byte chunks, builds a set of all
+    (word_value, occurrence_index) pairs in the input, then scans the output
+    for matching words. Matching is by value, not position — this tolerates
+    the builder reordering or shifting content to different offsets.
+
+    To handle duplicate words fairly (e.g. many zero words), each unique word
+    value is counted: the number of matches for a given value is the minimum
+    of its count in input and output.
+
+    Args:
+        data_a: Input bytes.
+        data_b: Output bytes.
+        word_size: Chunk size in bytes (default 4, matching the format's alignment).
+
+    Returns:
+        (matched_words, total_words_a, total_words_b, match_pct) where
+        match_pct = matched_words / max(total_words_a, total_words_b) * 100.
+    """
+    from collections import Counter
+
+    def to_words(data):
+        count = len(data) // word_size
+        return [data[i * word_size:(i + 1) * word_size] for i in range(count)]
+
+    words_a = to_words(data_a)
+    words_b = to_words(data_b)
+
+    counts_a = Counter(words_a)
+    counts_b = Counter(words_b)
+
+    matched = 0
+    for word, count_a in counts_a.items():
+        matched += min(count_a, counts_b.get(word, 0))
+
+    total = max(len(words_a), len(words_b))
+    pct = (matched / total * 100) if total > 0 else 100.0
+
+    return matched, len(words_a), len(words_b), pct
+
+
+# ---------------------------------------------------------------------------
+# NIN comparison — counts all fields in the original tree
+# ---------------------------------------------------------------------------
+
+def compute_nin_score(original_node, composed_node):
+    """Compare two node trees for NIN scoring.
+
+    Walks the ORIGINAL tree to count every field (the denominator), and
+    counts mismatches against the composed tree. When the composed side
+    is missing a subtree, ALL fields in that original subtree count as
+    mismatches — not just the single pointer field.
+
+    Args:
+        original_node: Root node from the parsed node tree.
+        composed_node: Root node from the compose phase.
+
+    Returns:
+        (matched, total, pct) — matched fields, total fields, percentage.
+    """
+    from shared.Nodes.Node import Node
+
+    total = [0]
+    mismatches = [0]
+
+    def _walk(orig, comp, visited):
+        if orig is None:
+            return
+        if id(orig) in visited:
+            return
+        visited.add(id(orig))
+
+        if not hasattr(orig, 'fields'):
+            return
+
+        for field_name, _ in orig.fields:
+            if field_name == 'address':
+                continue
+
+            val_orig = getattr(orig, field_name, None)
+            val_comp = getattr(comp, field_name, None) if comp is not None else None
+
+            if isinstance(val_orig, Node):
+                # Count this pointer field
+                total[0] += 1
+                comp_child = val_comp if isinstance(val_comp, Node) else None
+                if comp_child is None and val_orig is not None:
+                    mismatches[0] += 1
+                # Recurse into the subtree (always walks original)
+                _walk(val_orig, comp_child, visited)
+
+            elif isinstance(val_orig, (list, tuple)):
+                comp_list = val_comp if isinstance(val_comp, (list, tuple)) else []
+                # Count the length field
+                total[0] += 1
+                if len(val_orig) != len(comp_list):
+                    mismatches[0] += 1
+
+                for i, item in enumerate(val_orig):
+                    comp_item = comp_list[i] if i < len(comp_list) else None
+                    if isinstance(item, Node):
+                        total[0] += 1
+                        comp_node = comp_item if isinstance(comp_item, Node) else None
+                        if comp_node is None:
+                            mismatches[0] += 1
+                        _walk(item, comp_node, visited)
+                    else:
+                        total[0] += 1
+                        if isinstance(item, float) and isinstance(comp_item, float):
+                            if abs(item - comp_item) > 1e-5:
+                                mismatches[0] += 1
+                        elif item != comp_item:
+                            mismatches[0] += 1
+            else:
+                total[0] += 1
+                if isinstance(val_orig, float) and isinstance(val_comp, float):
+                    if abs(val_orig - val_comp) > 1e-5:
+                        mismatches[0] += 1
+                elif val_orig != val_comp:
+                    mismatches[0] += 1
+
+    _walk(original_node, composed_node, set())
+
+    matched = total[0] - mismatches[0]
+    pct = (matched / total[0] * 100) if total[0] > 0 else 100.0
+    return matched, total[0], pct
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _parse_sections(dat_bytes, section_map=None):
+    """Parse a DAT binary and return the sections list."""
+    if section_map is None:
+        section_map = {"test_joint": "Joint"}
+    buf = io.BytesIO(dat_bytes)
+    parser = DATParser(buf, {"section_map": section_map})
+    parser.parseSections()
+    sections = parser.sections
+    parser.close()
+    return sections
+
+
+def _rebuild(sections):
+    """Write parsed sections back to DAT bytes via DATBuilder."""
+    root_nodes = [s.root_node for s in sections]
+    section_names = [s.section_name for s in sections]
+    out_buf = io.BytesIO()
+    builder = DATBuilder(out_buf, root_nodes, section_names)
+    builder.build()
+    return out_buf.getvalue()
+
+
+def _is_absent(val):
+    """Check if a node pointer is absent (None, 0, or non-Node int)."""
+    if val is None:
+        return True
+    if isinstance(val, int) and val == 0:
+        return True
+    return not isinstance(val, Joint)
+
+
+def _compare_joints(joint_a, joint_b, path="root", mismatches=None):
+    """Recursively compare Joint fields. Returns list of mismatch descriptions."""
+    if mismatches is None:
+        mismatches = []
+
+    if _is_absent(joint_a) and _is_absent(joint_b):
+        return mismatches
+    if _is_absent(joint_a) or _is_absent(joint_b):
+        mismatches.append(f"{path}: one is absent")
+        return mismatches
+
+    # Compare flags
+    if joint_a.flags != joint_b.flags:
+        mismatches.append(f"{path}.flags: {joint_a.flags} vs {joint_b.flags}")
+
+    # Compare vec3 fields
+    for attr in ('rotation', 'scale', 'position'):
+        va = getattr(joint_a, attr)
+        vb = getattr(joint_b, attr)
+        for i in range(3):
+            if abs(va[i] - vb[i]) > 1e-5:
+                mismatches.append(f"{path}.{attr}[{i}]: {va[i]} vs {vb[i]}")
+
+    # Recurse into child/next
+    _compare_joints(joint_a.child, joint_b.child, f"{path}.child", mismatches)
+    _compare_joints(joint_a.next, joint_b.next, f"{path}.next", mismatches)
+
+    return mismatches
+
+
+# ---------------------------------------------------------------------------
+# Node tree → binary → node tree (field comparison)
+# ---------------------------------------------------------------------------
+
+class TestNodeRoundtrip:
+    """Parse synthetic nodes, write them back via DATBuilder, re-parse, compare fields."""
+
+    def _roundtrip_joint(self, dat_bytes, section_map=None):
+        """Parse → write → reparse both, return (fresh_original, reparsed).
+
+        DATBuilder mutates nodes during build, so we reparse the original
+        bytes fresh for a clean comparison.
+        """
+        sections = _parse_sections(dat_bytes, section_map)
+        rebuilt = _rebuild(sections)
+        # Reparse both from clean bytes
+        fresh_original = _parse_sections(dat_bytes, section_map)[0].root_node
+        reparsed = _parse_sections(rebuilt, section_map)[0].root_node
+        return fresh_original, reparsed
+
+    def test_single_joint_fields(self):
+        """Single Joint field values survive the round-trip."""
         joint_data = build_joint(
-            flags=0x02,
-            rotation=(1.0, 2.0, 3.0),
-            scale=(4.0, 5.0, 6.0),
-            position=(7.0, 8.0, 9.0),
-        )
-
-        # Wrap in a full DAT with header, one relocation-free section pointing at the joint
-        dat_bytes = build_dat_with_sections(
-            data_section=joint_data,
-            relocations=[],
-            sections=[(0, True)],
-            section_names=["test_joint"],
-        )
-
-        buf = io.BytesIO(dat_bytes)
-        parser = DATParser(buf, {"section_names": []})
-
-        # Manually parse a Joint at offset 0
-        joint = Joint(0, None)
-        joint.loadFromBinary(parser)
-        parser.close()
-
-        assert joint.flags == 0x02
-        assert abs(joint.rotation[0] - 1.0) < 1e-5
-        assert abs(joint.scale[1] - 5.0) < 1e-5
-        assert abs(joint.position[2] - 9.0) < 1e-5
-
-    def test_parse_joint_with_child_from_bytesio(self):
-        """Parse a Joint whose child pointer references a second Joint."""
-        child_offset = JOINT_SIZE
-        parent_data = build_joint(flags=0xAA, child_ptr=child_offset)
-        child_data = build_joint(flags=0xBB)
-        data_section = parent_data + child_data
-
-        # Both pointer fields (child) need relocation entries
-        # child_ptr is at offset 8 in the Joint struct
-        relocations = [8]
-
-        dat_bytes = build_dat_with_sections(
-            data_section=data_section,
-            relocations=relocations,
-            sections=[(0, True)],
-            section_names=["test_joint"],
-        )
-
-        buf = io.BytesIO(dat_bytes)
-        parser = DATParser(buf, {"section_names": []})
-
-        joint = Joint(0, None)
-        joint.loadFromBinary(parser)
-        parser.close()
-
-        assert joint.flags == 0xAA
-        assert isinstance(joint.child, Joint)
-        assert joint.child.flags == 0xBB
-
-    def test_parse_joint_with_next_sibling_from_bytesio(self):
-        """Parse a Joint linked to a sibling via next pointer."""
-        next_offset = JOINT_SIZE
-        first_data = build_joint(flags=0x11, next_ptr=next_offset)
-        second_data = build_joint(flags=0x22)
-        data_section = first_data + second_data
-
-        # next_ptr is at offset 12 in the Joint struct
-        relocations = [12]
-
-        dat_bytes = build_dat_with_sections(
-            data_section=data_section,
-            relocations=relocations,
-            sections=[(0, True)],
-            section_names=["test_joint"],
-        )
-
-        buf = io.BytesIO(dat_bytes)
-        parser = DATParser(buf, {"section_names": []})
-
-        joint = Joint(0, None)
-        joint.loadFromBinary(parser)
-        parser.close()
-
-        assert joint.flags == 0x11
-        assert isinstance(joint.next, Joint)
-        assert joint.next.flags == 0x22
-
-
-# ---------------------------------------------------------------------------
-# Write round-trip: parse → write → re-parse → compare fields
-# ---------------------------------------------------------------------------
-
-class TestWriteRoundtrip:
-    """Parse synthetic nodes, write them back via DATBuilder, re-parse, and compare."""
-
-    def _parse_joint_from_bytes(self, dat_bytes):
-        """Helper: parse a Joint at offset 0 from the given DAT binary."""
-        buf = io.BytesIO(dat_bytes)
-        parser = DATParser(buf, {"section_names": []})
-        joint = Joint(0, None)
-        joint.loadFromBinary(parser)
-        parser.close()
-        return joint
-
-    def test_roundtrip_single_joint_fields(self):
-        """Parse a single Joint, write it back, re-parse, and compare field values."""
-        original_data = build_joint(
             flags=0x05,
             rotation=(0.1, 0.2, 0.3),
             scale=(1.0, 2.0, 3.0),
@@ -223,31 +333,238 @@ class TestWriteRoundtrip:
         )
 
         dat_bytes = build_dat_with_sections(
-            data_section=original_data,
+            data_section=joint_data,
             relocations=[],
             sections=[(0, True)],
             section_names=["test_joint"],
         )
 
-        # Parse the original
-        original_joint = self._parse_joint_from_bytes(dat_bytes)
+        original, reparsed = self._roundtrip_joint(dat_bytes)
+        mismatches = _compare_joints(original, reparsed)
+        assert mismatches == [], f"Mismatches: {mismatches}"
 
-        # Write it back using DATBuilder
-        out_buf = io.BytesIO()
-        builder = DATBuilder(out_buf, [original_joint])
-        builder.build()
+    def test_joint_with_child(self):
+        """Parent→child structure survives the round-trip."""
+        parent_data = build_joint(flags=0xAA, child_ptr=JOINT_SIZE)
+        child_data = build_joint(flags=0xBB)
 
-        # Re-parse from the written output
-        written_bytes = out_buf.getvalue()
-        re_buf = io.BytesIO(written_bytes)
-        re_parser = DATParser(re_buf, {"section_names": []})
-        re_joint = Joint(original_joint.address, None)
-        re_joint.loadFromBinary(re_parser)
-        re_parser.close()
+        dat_bytes = build_dat_with_sections(
+            data_section=parent_data + child_data,
+            relocations=[8],
+            sections=[(0, True)],
+            section_names=["test_joint"],
+        )
 
-        # Compare field values
-        assert re_joint.flags == original_joint.flags
-        for i in range(3):
-            assert abs(re_joint.rotation[i] - original_joint.rotation[i]) < 1e-5
-            assert abs(re_joint.scale[i] - original_joint.scale[i]) < 1e-5
-            assert abs(re_joint.position[i] - original_joint.position[i]) < 1e-5
+        original, reparsed = self._roundtrip_joint(dat_bytes)
+        mismatches = _compare_joints(original, reparsed)
+        assert mismatches == [], f"Mismatches: {mismatches}"
+
+    def test_joint_with_sibling(self):
+        """Sibling linkage via next pointer survives the round-trip."""
+        first_data = build_joint(flags=0x11, next_ptr=JOINT_SIZE)
+        second_data = build_joint(flags=0x22)
+
+        dat_bytes = build_dat_with_sections(
+            data_section=first_data + second_data,
+            relocations=[12],
+            sections=[(0, True)],
+            section_names=["test_joint"],
+        )
+
+        original, reparsed = self._roundtrip_joint(dat_bytes)
+        mismatches = _compare_joints(original, reparsed)
+        assert mismatches == [], f"Mismatches: {mismatches}"
+
+    def test_three_deep_chain(self):
+        """Root→child→grandchild chain survives the round-trip."""
+        root_data = build_joint(flags=0x01, child_ptr=JOINT_SIZE)
+        child_data = build_joint(flags=0x02, child_ptr=JOINT_SIZE * 2)
+        grandchild_data = build_joint(flags=0x03)
+
+        dat_bytes = build_dat_with_sections(
+            data_section=root_data + child_data + grandchild_data,
+            relocations=[8, JOINT_SIZE + 8],
+            sections=[(0, True)],
+            section_names=["test_joint"],
+        )
+
+        original, reparsed = self._roundtrip_joint(dat_bytes)
+        mismatches = _compare_joints(original, reparsed)
+        assert mismatches == [], f"Mismatches: {mismatches}"
+
+    def test_all_transforms(self):
+        """Non-trivial rotation, scale, position values survive the round-trip."""
+        joint_data = build_joint(
+            flags=0xFF,
+            rotation=(1.5707963, -0.7853982, 3.1415927),
+            scale=(0.5, 2.0, 0.189),
+            position=(-100.0, 50.25, 0.001),
+        )
+
+        dat_bytes = build_dat_with_sections(
+            data_section=joint_data,
+            relocations=[],
+            sections=[(0, True)],
+            section_names=["test_joint"],
+        )
+
+        original, reparsed = self._roundtrip_joint(dat_bytes)
+        mismatches = _compare_joints(original, reparsed)
+        assert mismatches == [], f"Mismatches: {mismatches}"
+
+
+# ---------------------------------------------------------------------------
+# Binary → node tree → binary (fuzzy byte comparison)
+# ---------------------------------------------------------------------------
+
+class TestBinaryRoundtrip:
+    """Parse a DAT, write it back, compare bytes with fuzzy matching.
+
+    The builder may produce a different layout (alignment, ordering) than
+    the original. These tests verify that the content is preserved by
+    measuring the percentage of matching 4-byte words between input and
+    output, regardless of position.
+    """
+
+    def _roundtrip_match(self, dat_bytes, section_map=None, skip_header=True):
+        """Parse and rebuild, return (result_bytes, match_pct).
+
+        When skip_header is True, the 32-byte DAT header is excluded from
+        the comparison since the file_size field will always differ.
+        """
+        sections = _parse_sections(dat_bytes, section_map)
+        result = _rebuild(sections)
+
+        offset = 32 if skip_header else 0
+        a = dat_bytes[offset:]
+        b = result[offset:]
+        _, _, _, pct = compute_binary_match(a, b)
+        return result, pct
+
+    def test_single_joint_high_match(self):
+        """A single Joint should produce a high match percentage."""
+        joint_data = build_joint(
+            flags=0x05,
+            rotation=(0.1, 0.2, 0.3),
+            scale=(1.0, 2.0, 3.0),
+            position=(10.0, 20.0, 30.0),
+        )
+
+        dat_bytes = build_dat_with_sections(
+            data_section=joint_data,
+            relocations=[],
+            sections=[(0, True)],
+            section_names=["test_joint"],
+        )
+
+        _, pct = self._roundtrip_match(dat_bytes)
+        assert pct >= 80, f"Match too low: {pct:.1f}%"
+
+    def test_joint_with_child_high_match(self):
+        """Parent→child structure should produce a high match percentage."""
+        parent_data = build_joint(flags=0xAA, child_ptr=JOINT_SIZE)
+        child_data = build_joint(flags=0xBB)
+
+        dat_bytes = build_dat_with_sections(
+            data_section=parent_data + child_data,
+            relocations=[8],
+            sections=[(0, True)],
+            section_names=["test_joint"],
+        )
+
+        _, pct = self._roundtrip_match(dat_bytes)
+        assert pct >= 70, f"Match too low: {pct:.1f}%"
+
+    def test_complex_tree_high_match(self):
+        """Parent with children and siblings should maintain reasonable match."""
+        root_data = build_joint(flags=0x01, child_ptr=JOINT_SIZE)
+        child_a_data = build_joint(flags=0x02, next_ptr=JOINT_SIZE * 2)
+        child_b_data = build_joint(flags=0x03)
+
+        dat_bytes = build_dat_with_sections(
+            data_section=root_data + child_a_data + child_b_data,
+            relocations=[8, JOINT_SIZE + 12],
+            sections=[(0, True)],
+            section_names=["test_joint"],
+        )
+
+        _, pct = self._roundtrip_match(dat_bytes)
+        assert pct >= 60, f"Match too low: {pct:.1f}%"
+
+    def test_match_percentage_utility(self):
+        """Verify the fuzzy match utility itself."""
+        # Identical data = 100%
+        data = b'\x00\x00\x00\x01' * 10
+        _, _, _, pct = compute_binary_match(data, data)
+        assert pct == 100.0
+
+        # Completely different (non-zero) data
+        a = b'\x00\x00\x00\x01' * 10
+        b = b'\x00\x00\x00\x02' * 10
+        _, _, _, pct = compute_binary_match(a, b)
+        assert pct == 0.0
+
+        # Half matching
+        a = b'\x00\x00\x00\x01' * 5 + b'\x00\x00\x00\x02' * 5
+        b = b'\x00\x00\x00\x01' * 5 + b'\x00\x00\x00\x03' * 5
+        _, _, _, pct = compute_binary_match(a, b)
+        assert pct == 50.0
+
+
+# ---------------------------------------------------------------------------
+# Real-file round-trip (opt-in, requires --dat-file)
+# ---------------------------------------------------------------------------
+
+class TestRealFileRoundtrip:
+    """Round-trip a real .dat/.pkx file. Opt-in via --dat-file flag."""
+
+    def test_real_file_node_roundtrip(self, dat_file):
+        """Parse a real file, write it back, reparse, compare node fields."""
+        from importer.phases.extract.extract import extract_dat
+        from shared.Nodes.Node import Node
+        from test_dat_write import compare_nodes
+
+        with open(dat_file, 'rb') as f:
+            raw_bytes = f.read()
+
+        filename = dat_file.rsplit('/', 1)[-1] if '/' in dat_file else dat_file
+        entries = extract_dat(raw_bytes, filename)
+        dat_bytes = entries[0][0]
+
+        sections = _parse_sections(dat_bytes, section_map=None)
+        result = _rebuild(sections)
+        re_sections = _parse_sections(result, section_map=None)
+
+        all_mismatches = []
+        for orig, rewritten in zip(sections, re_sections):
+            mismatches = compare_nodes(orig.root_node, rewritten.root_node,
+                                       path=orig.section_name)
+            all_mismatches.extend(mismatches)
+
+        assert all_mismatches == [], (
+            f"{len(all_mismatches)} field mismatch(es):\n" +
+            "\n".join(all_mismatches[:20])
+        )
+
+    def test_real_file_binary_match(self, dat_file):
+        """Parse a real file, write it back, report match percentage."""
+        from importer.phases.extract.extract import extract_dat
+
+        with open(dat_file, 'rb') as f:
+            raw_bytes = f.read()
+
+        filename = dat_file.rsplit('/', 1)[-1] if '/' in dat_file else dat_file
+        entries = extract_dat(raw_bytes, filename)
+        dat_bytes = entries[0][0]
+
+        sections = _parse_sections(dat_bytes, section_map=None)
+        result = _rebuild(sections)
+
+        matched, total_a, total_b, pct = compute_binary_match(
+            dat_bytes[32:], result[32:]
+        )
+        print(f"\n  {filename}: {pct:.1f}% match "
+              f"({matched} words, input={total_a}, output={total_b})")
+
+        # Real files should have very high match since DATBuilder is proven
+        assert pct >= 95, f"Match too low for real file: {pct:.1f}%"

@@ -186,7 +186,7 @@ Nodes are cached by file offset (`nodes_cache_by_offset`). Nodes with `is_cachab
 | IR pipeline | ✅ Default path (legacy available via toggle) |
 | FSYS archive import | ✅ Working (multi-model extraction + LZSS decompression) |
 | Shiny variant filter | ✅ Working (PKX color extraction, live-editable shader node group, per-parameter UI) |
-| Unit tests | ✅ 438 passing |
+| Unit tests | ✅ 443 passing |
 | Shader node auto-layout | ✅ Working (topological sort from output→inputs, left-to-right) |
 | Scale inheritance (animation baking) | ⚠️ Partially resolved — hybrid approach, see below |
 
@@ -232,6 +232,19 @@ Nodes are cached by file offset (`nodes_cache_by_offset`). Nodes with `is_cachab
 - All tests use `io.BytesIO` — no temp files
 - Tests cover: node parsing round-trip, IR type instantiation, helper functions, phase stubs
 - Round-trip test tool: `python3 test_dat_write.py <input_file>`
+
+### Round-Trip Test Types
+
+| Abbreviation | Name | Flow | Measures |
+|---|---|---|---|
+| **BNB** | Binary → Node → Binary | DAT bytes → parse → write → compare bytes | Binary-level fidelity (fuzzy word match) |
+| **NBN** | Node → Binary → Node | Parse → write → reparse → compare fields | Node field preservation through serialization |
+| **NIN** | Node → IR → Node | Parse → describe → compose → compare fields | IR round-trip fidelity |
+| **IBI** | IR → Blender → IR | Build → describe_blender → compare IR fields | Blender round-trip fidelity |
+
+NIN scores reflect the **full** node tree — not just the fields we've implemented compose for — so the percentage naturally increases as more compose helpers are added.
+
+See [Round-Trip Test Progress](documentation/round_trip_test_progress.md) for per-model scores across all test types.
 
 ### Test Models
 
@@ -302,3 +315,10 @@ The shiny parameters are stored as registered `bpy.props` properties on the arma
 - **Standalone scripts:** Any standalone Blender scripts (run from the Scripting panel) go in `scripts/` and must be documented in `documentation/scripts.md`.
 - **Blender API tracking:** Whenever a `bpy` API call is added, moved, removed, or modified, update `documentation/blender_api_usage.md` to match.
 - **Test count:** Whenever tests are added or removed, update the unit test count in the Current Status table above.
+
+---
+
+## Outstanding TODOs
+
+- [ ] Code audit: identify opportunities to simplify and clean up code
+- [ ] Code audit: identify opportunities to reduce algorithmic complexity
