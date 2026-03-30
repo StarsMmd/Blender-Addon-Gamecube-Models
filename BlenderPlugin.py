@@ -33,11 +33,11 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
                             description='Write import logs to a temp file for debugging.')
     setup_workspace: BoolProperty(default=True, name='Setup Workspace',
                                  description='Split the viewport and open an Action Editor. Sets playback end frame to 60.')
-    import_lights: BoolProperty(default=False, name='Import Lights',
+    import_lights: BoolProperty(default=True, name='Import Lights',
                                description='Import light sets from the model file.')
     include_shiny: BoolProperty(default=True, name='Include Shiny Variant',
                                description='Extract shiny color parameters from PKX files and add a toggleable shiny filter to materials.')
-    use_legacy: BoolProperty(default=True, name='Use Legacy Importer',
+    use_legacy: BoolProperty(default=False, name='Use Legacy Importer',
                             description='Use the old import pipeline instead of the new Intermediate Representation pipeline.')
 
     filename_ext = ".dat"
