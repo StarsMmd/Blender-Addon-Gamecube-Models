@@ -44,13 +44,19 @@ The panel also exposes all 8 shiny parameters for live editing:
 
 Not every Pokemon has shiny parameters in its PKX file — some (e.g. legendaries and starters) use a separate model for their shiny form instead. For these models, the Shiny Variant panel will not appear. See `documentation/shiny_variants.md` for technical details. Shiny variants are not available with the legacy importer setting enabled.
 
+## Exporting
+
+> **Work in progress** — the exporter is not yet functional.
+
+The exporter writes a Blender scene to a `.dat` or `.pkx` binary. The pipeline skeleton is wired up (pre-process, describe, compose, serialize, package) but feature implementation is in progress. See the [Exporter Usage](documentation/exporter_usage.md) documentation for details on supported features and planned functionality.
+
 ## Remaining Work
 
 - [ ] Shape animation import
 - [ ] Camera import
 - [ ] Fog import
-- [ ] Blender scene to IR (export describe phase)
-- [ ] IR to node tree (export build phase)
+- [ ] Exporter: Blender scene → IR (describe phase)
+- [ ] Exporter: IR → node trees (compose phase — skeleton done, meshes/materials/animations TODO)
 
 ## Code Structure
 
@@ -69,12 +75,20 @@ shared/
   IR/                      # Intermediate Representation dataclasses
   Nodes/                   # Node class definitions (parsing + writing only, no bpy)
   Constants/               # HSD/GX format constants
-  helpers/                 # Binary I/O, logging, math utilities, sRGB conversion
-  IO/                      # DATBuilder (binary export), BinaryReader/Writer
+  helpers/                 # Binary I/O, logging, math utilities, PKX container, sRGB
+
+exporter/
+  exporter.py              # Pipeline entry point: Exporter.run()
+  phases/
+    pre_process/           # Pre-process: validate output path + scene
+    describe_blender/      # Phase 1: Blender -> IR dataclasses
+    compose/               # Phase 2: IR -> node trees
+    serialize/             # Phase 3: node trees -> DAT bytes (DATBuilder)
+    package/               # Phase 4: DAT bytes -> final output (.dat or .pkx)
 
 legacy/                    # Pre-refactor importer (available via "Use Legacy" toggle)
 documentation/             # Pipeline docs, API reference, compatibility table, IR spec
-tests/                     # pytest suite (292 tests, no game files required)
+tests/                     # pytest suite (409 tests, no game files required)
 ```
 
 ## Developer Instructions
@@ -117,6 +131,7 @@ Detailed documentation lives in the `documentation/` folder:
 - [**Compatibility Table**](documentation/compatibility_table.md) — feature support across different games and file types
 - [**Blender API Usage**](documentation/blender_api_usage.md) — reference for Blender Python API patterns used in the addon
 - [**Shiny Variants**](documentation/shiny_variants.md) — how the game stores shiny color data and how the addon implements it
+- [**Exporter Usage**](documentation/exporter_usage.md) — supported features and usage guide for the exporter (WIP)
 - [**Scripts**](documentation/scripts.md) — standalone Blender scripts and how to run them
 
 ## Community

@@ -21,7 +21,7 @@ def post_process(armature_names, shiny_params=None, options=None, logger=StubLog
 
     Args:
         armature_names: set of armature object names to post-process (used for legacy path).
-        shiny_params: raw shiny parameters dict from Phase 1 extract, or None.
+        shiny_params: ShinyParams from Phase 1 extract, or None.
         options: dict of importer options (checks include_shiny). None = shiny enabled.
         logger: Logger instance.
         build_results: list of dicts from Phase 5 with armature/actions/mat_slot_indices.
@@ -126,7 +126,7 @@ def _apply_shiny(armature, shiny_params, logger):
 
     Args:
         armature: The Blender armature object.
-        shiny_params: Raw dict with route_r/g/b/a (int 0-3) and brightness_r/g/b/a (float).
+        shiny_params: ShinyParams with route_r/g/b/a (int 0-3) and brightness_r/g/b/a (float).
         logger: Logger instance.
     """
     try:
@@ -147,16 +147,16 @@ def _apply_shiny(armature, shiny_params, logger):
 
     channel_map = {0: ShinyChannel.RED, 1: ShinyChannel.GREEN, 2: ShinyChannel.BLUE, 3: ShinyChannel.ALPHA}
     routing = (
-        channel_map.get(shiny_params["route_r"], ShinyChannel.RED),
-        channel_map.get(shiny_params["route_g"], ShinyChannel.GREEN),
-        channel_map.get(shiny_params["route_b"], ShinyChannel.BLUE),
-        channel_map.get(shiny_params["route_a"], ShinyChannel.ALPHA),
+        channel_map.get(shiny_params.route_r, ShinyChannel.RED),
+        channel_map.get(shiny_params.route_g, ShinyChannel.GREEN),
+        channel_map.get(shiny_params.route_b, ShinyChannel.BLUE),
+        channel_map.get(shiny_params.route_a, ShinyChannel.ALPHA),
     )
     brightness = (
-        shiny_params["brightness_r"],
-        shiny_params["brightness_g"],
-        shiny_params["brightness_b"],
-        shiny_params["brightness_a"],
+        shiny_params.brightness_r,
+        shiny_params.brightness_g,
+        shiny_params.brightness_b,
+        shiny_params.brightness_a,
     )
     ir_filter = IRShinyFilter(channel_routing=routing, brightness=brightness)
 

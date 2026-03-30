@@ -31,7 +31,8 @@ for mod in ('bpy', 'bpy.types', 'bpy.props', 'bpy_extras', 'bpy_extras.io_utils'
     if mod not in sys.modules:
         sys.modules[mod] = MagicMock()
 
-from shared.IO.DAT_io import DATParser, DATBuilder
+from importer.phases.parse.helpers.dat_parser import DATParser
+from exporter.phases.serialize.helpers.dat_builder import DATBuilder
 from shared.Nodes.Node import Node
 
 
@@ -131,7 +132,6 @@ def main():
     section_names = [s.section_name for s in sections]
     builder = DATBuilder(output_path, root_nodes, section_names)
     builder.build()
-    builder.close()
 
     # Phase 3: Re-parse output
     print(f"Re-parsing: {output_path}")
@@ -186,6 +186,10 @@ def main():
 
     parser.close()
     re_parser.close()
+
+    # Clean up output file
+    os.remove(output_path)
+    print(f"\nCleaned up: {output_path}")
 
 
 if __name__ == "__main__":

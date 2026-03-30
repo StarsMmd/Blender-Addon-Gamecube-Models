@@ -1,9 +1,16 @@
 """Tests for shiny color filter extraction and IR construction."""
 import struct
 import pytest
-from importer.phases.extract.extract import extract_dat, _extract_shiny_params
+from importer.phases.extract.extract import extract_dat
+from shared.helpers.pkx import PKXContainer, _is_noop_shiny
 from shared.IR.shiny import IRShinyFilter
 from shared.IR.enums import ShinyChannel
+
+
+def _extract_shiny_params(raw_bytes, is_xd):
+    """Test helper: extract shiny params from raw PKX bytes via PKXContainer."""
+    pkx = PKXContainer(raw_bytes)
+    return pkx.shiny_params
 
 
 # ---------------------------------------------------------------------------
@@ -92,17 +99,17 @@ def test_colo_pkx_shiny_extraction():
     params = _extract_shiny_params(raw, is_xd=False)
 
     assert params is not None
-    assert params["route_r"] == 1
-    assert params["route_g"] == 2
-    assert params["route_b"] == 0
-    assert params["route_a"] == 3
+    assert params.route_r == 1
+    assert params.route_g == 2
+    assert params.route_b == 0
+    assert params.route_a == 3
 
     # ABGR reversed → RGBA: R=255, G=150, B=100, A=200
     # Brightness: (value / 255 * 2) - 1
-    assert pytest.approx(params["brightness_r"], abs=0.01) == (255 / 255.0 * 2.0) - 1.0  # 1.0
-    assert pytest.approx(params["brightness_g"], abs=0.01) == (150 / 255.0 * 2.0) - 1.0
-    assert pytest.approx(params["brightness_b"], abs=0.01) == (100 / 255.0 * 2.0) - 1.0
-    assert pytest.approx(params["brightness_a"], abs=0.01) == (200 / 255.0 * 2.0) - 1.0
+    assert pytest.approx(params.brightness_r, abs=0.01) == (255 / 255.0 * 2.0) - 1.0  # 1.0
+    assert pytest.approx(params.brightness_g, abs=0.01) == (150 / 255.0 * 2.0) - 1.0
+    assert pytest.approx(params.brightness_b, abs=0.01) == (100 / 255.0 * 2.0) - 1.0
+    assert pytest.approx(params.brightness_a, abs=0.01) == (200 / 255.0 * 2.0) - 1.0
 
 
 def test_xd_pkx_shiny_extraction():
@@ -114,15 +121,15 @@ def test_xd_pkx_shiny_extraction():
     params = _extract_shiny_params(raw, is_xd=True)
 
     assert params is not None
-    assert params["route_r"] == 0
-    assert params["route_g"] == 1
-    assert params["route_b"] == 2
-    assert params["route_a"] == 3
+    assert params.route_r == 0
+    assert params.route_g == 1
+    assert params.route_b == 2
+    assert params.route_a == 3
 
-    assert pytest.approx(params["brightness_r"], abs=0.01) == (128 / 255.0 * 2.0) - 1.0
-    assert pytest.approx(params["brightness_g"], abs=0.01) == (0 / 255.0 * 2.0) - 1.0  # -1.0
-    assert pytest.approx(params["brightness_b"], abs=0.01) == (255 / 255.0 * 2.0) - 1.0  # 1.0
-    assert pytest.approx(params["brightness_a"], abs=0.01) == (64 / 255.0 * 2.0) - 1.0
+    assert pytest.approx(params.brightness_r, abs=0.01) == (128 / 255.0 * 2.0) - 1.0
+    assert pytest.approx(params.brightness_g, abs=0.01) == (0 / 255.0 * 2.0) - 1.0  # -1.0
+    assert pytest.approx(params.brightness_b, abs=0.01) == (255 / 255.0 * 2.0) - 1.0  # 1.0
+    assert pytest.approx(params.brightness_a, abs=0.01) == (64 / 255.0 * 2.0) - 1.0
 
 
 def test_brightness_conversion_boundaries():
@@ -130,9 +137,9 @@ def test_brightness_conversion_boundaries():
     raw = _build_xd_pkx((0, 0, 0, 0), (0, 128, 255, 0))
     params = _extract_shiny_params(raw, is_xd=True)
 
-    assert pytest.approx(params["brightness_r"], abs=0.001) == -1.0
-    assert pytest.approx(params["brightness_g"], abs=0.01) == (128 / 255.0 * 2.0) - 1.0
-    assert pytest.approx(params["brightness_b"], abs=0.001) == 1.0
+    assert pytest.approx(params.brightness_r, abs=0.001) == -1.0
+    assert pytest.approx(params.brightness_g, abs=0.01) == (128 / 255.0 * 2.0) - 1.0
+    assert pytest.approx(params.brightness_b, abs=0.001) == 1.0
 
 
 def test_extract_dat_with_include_shiny_enabled():
@@ -144,8 +151,8 @@ def test_extract_dat_with_include_shiny_enabled():
 
     assert len(entries) == 1
     assert entries[0][1].shiny_params is not None
-    assert "route_r" in entries[0][1].shiny_params
-    assert "brightness_r" in entries[0][1].shiny_params
+    assert hasattr(entries[0][1].shiny_params, 'route_r')
+    assert hasattr(entries[0][1].shiny_params, 'brightness_r')
 
 
 def test_extract_dat_with_include_shiny_disabled():
@@ -194,7 +201,6 @@ def test_noop_shiny_returns_none():
 
 def test_noop_detection():
     """_is_noop_shiny correctly identifies identity routing + neutral brightness."""
-    from importer.phases.extract.extract import _is_noop_shiny
     assert _is_noop_shiny(0, 1, 2, 3, [128, 128, 128, 128]) is True
     assert _is_noop_shiny(0, 1, 2, 3, [127, 127, 127, 127]) is True
     assert _is_noop_shiny(2, 1, 0, 3, [128, 128, 128, 128]) is False

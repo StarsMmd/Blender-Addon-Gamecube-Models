@@ -38,9 +38,19 @@ The IR is a platform-agnostic dataclass hierarchy (`shared/IR/`) that decouples 
 - Blender-specific baking (scale correction, Euler decomposition) happens in Phase 5 only
 - **When modifying the IR**, update `documentation/ir_spec.md` to match
 
-### Export Pipeline
+### Export Pipeline (pre-process + 4 phases)
 
-`DATBuilder` in `shared/IO/dat_builder.py` writes `.dat` binaries from an in-memory node tree. Round-trip functional (0 value mismatches on re-parse). The exporter stub is in `legacy/exporter/`.
+The export pipeline reverses the import pipeline. All phases live under `exporter/phases/`. The entry point is `Exporter.run()` in `exporter/exporter.py`.
+
+```
+Pre-process (pre_process)    Validate output path + scene
+Phase 1 (describe_blender)   Blender context → IRScene + shiny params
+Phase 2 (compose)            IRScene → node trees + section names
+Phase 3 (serialize)          node trees → DAT bytes (via DATBuilder)
+Phase 4 (package)            DAT bytes → final output (.dat or .pkx)
+```
+
+`DATBuilder` in `exporter/phases/serialize/helpers/dat_builder.py` writes `.dat` binaries from an in-memory node tree. Round-trip functional (0 value mismatches on re-parse).
 
 ### Entry Points
 
@@ -57,10 +67,9 @@ The IR is a platform-agnostic dataclass hierarchy (`shared/IR/`) that decouples 
 importer/
   importer.py                    # Importer.run() — pipeline entry point
   phases/
-    extract/extract.py           # Phase 1: container detection + header stripping
+    extract/extract.py           # Phase 1: container detection + header stripping (uses PKXContainer)
       helpers/fsys.py            # FSYS archive parser (header, metadata, LZSS decompression)
       helpers/lzss.py            # LZSS decompression algorithm
-      # Also: shiny param extraction (_extract_shiny_params, _is_noop_shiny)
     route/route.py               # Phase 2: section name → node type mapping
     parse/
       parse.py                   # Phase 3: wrapper around DATParser
@@ -85,14 +94,37 @@ shared/
     file_io.py                   # BinaryReader / BinaryWriter (stream-based)
     logger.py                    # Logger / StubLogger
     math_shim.py                 # Matrix/Vector/Euler (mathutils or pure-Python fallback)
+    pkx.py                       # PKXContainer — read/write PKX headers, DAT payloads, shiny params
+    shiny_params.py              # ShinyParams dataclass (channel routing + brightness)
     srgb.py                      # sRGB ↔ linear conversion
-  IO/dat_builder.py              # DATBuilder (export)
   ClassLookup/                   # Node type name → class resolution
   BlenderVersion.py              # Version comparison utility
 
+exporter/
+  exporter.py                        # Exporter.run() — pipeline entry point
+  phases/
+    pre_process/
+      pre_process.py                 # Pre-process: validate output path + scene
+    describe_blender/
+      describe_blender.py            # Phase 1 (export): Blender → IRScene
+    compose/
+      compose.py                     # Phase 2 (export): IRScene → node trees
+      helpers/
+        bones.py                     # IRBone list → Joint tree
+    serialize/
+      serialize.py                   # Phase 3 (export): node trees → DAT bytes
+      helpers/
+        dat_builder.py               # DATBuilder (binary serialization engine)
+    package/
+      package.py                     # Phase 4 (export): DAT bytes → final output
+
 legacy/                          # Pre-refactor code (functional, used when "Use Legacy" is checked)
 scripts/                         # Standalone Blender scripts (run from Scripting panel)
+utilities/                       # Developer tools (not Blender scripts)
+  dat_to_json.py                 # Parse .dat/.pkx → serialize node tree to JSON
+  json_to_ir.py                  # Deserialize JSON → node tree → describe → IR summary
 documentation/                   # Pipeline docs, API reference, compatibility tables, IR spec, scripts
+test models/                     # JSON node tree dumps from real models (gitignored, not committed)
 ```
 
 ### Dependency Rules
@@ -148,11 +180,13 @@ Nodes are cached by file offset (`nodes_cache_by_offset`). Nodes with `is_cachab
 | Bone instances (JOBJ_INSTANCE) | ✅ Working |
 | Shape animation import | ❌ Stubs only (not implemented in legacy either) |
 | Camera / Fog import | ❌ Stubs only |
-| Exporter (binary round-trip) | ✅ Functional (0 value mismatches) |
+| Exporter pipeline | ⚠️ Skeleton wired, phases stubbed — see export pipeline plan |
+| Exporter binary round-trip (DATBuilder) | ✅ Functional (0 value mismatches) |
+| Exporter PKX packaging | ✅ Working (DAT injection, shiny write-back, trailer preserved) |
 | IR pipeline | ✅ Default path (legacy available via toggle) |
 | FSYS archive import | ✅ Working (multi-model extraction + LZSS decompression) |
 | Shiny variant filter | ✅ Working (PKX color extraction, live-editable shader node group, per-parameter UI) |
-| Unit tests | ✅ 409 passing |
+| Unit tests | ✅ 438 passing |
 | Shader node auto-layout | ✅ Working (topological sort from output→inputs, left-to-right) |
 | Scale inheritance (animation baking) | ⚠️ Partially resolved — hybrid approach, see below |
 
@@ -198,6 +232,26 @@ Nodes are cached by file offset (`nodes_cache_by_offset`). Nodes with `is_cachab
 - All tests use `io.BytesIO` — no temp files
 - Tests cover: node parsing round-trip, IR type instantiation, helper functions, phase stubs
 - Round-trip test tool: `python3 test_dat_write.py <input_file>`
+
+### Test Models
+
+JSON node tree dumps from real `.pkx` models live in `test models/` (gitignored). These are generated by `utilities/dat_to_json.py` and used for round-trip testing via `utilities/json_to_ir.py`.
+
+Available XD models: achamo, bohmander, cerebi, cokodora, frygon, gallop, haganeil, ken_a1, mage_0101, miniryu, rayquaza, runpappa, nukenin, usohachi.
+
+Available Colosseum models: ghos, heracros, hinoarashi, hizuki_a1, koduck, showers.
+
+To regenerate a test model JSON: `python3 utilities/dat_to_json.py <path_to_model.pkx> "test models/<name>.json"`
+
+Source models are in `~/Documents/Projects/DAT plugin/models/`.
+
+---
+
+## Naming Conventions for Exporter
+
+The exporter requires certain Blender objects to follow naming conventions so it can distinguish model features during export. The importer must apply the same naming conventions when creating Blender objects, ensuring round-trip fidelity.
+
+_(Conventions will be documented here as they are established for each feature.)_
 
 ---
 

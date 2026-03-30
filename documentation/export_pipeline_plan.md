@@ -16,19 +16,21 @@ raw bytes → DAT bytes → section map → node trees → IRScene → Blender
   Phase 1     Phase 2     Phase 3      Phase 4      Phase 5
 ```
 
-The export pipeline reverses this (numbered 1–5):
+The export pipeline reverses this (pre-process + 4 phases):
 ```
-Blender → IRScene → node trees → section names → DAT bytes → output file
- Phase 1   Phase 2    Phase 3      Phase 4        Phase 5
+validate → Blender → IRScene → node trees → DAT bytes → output file
+pre-process  Phase 1   Phase 2    Phase 3      Phase 4
 ```
 
-| Phase | Name | Input | Output |
-|-------|------|-------|--------|
-| 1 | Describe Blender Scene | Blender context | IRScene |
-| 2 | Compose | IRScene | Node trees (root nodes) |
-| 3 | Route | Root nodes | Section names list |
-| 4 | Serialize | Root nodes + section names | DAT bytes (via DATBuilder) |
-| 5 | Package | DAT bytes + target filepath | Final output bytes |
+| Step | Name | Input | Output | Status |
+|------|------|-------|--------|--------|
+| Pre | Pre-process | filepath + context | validation pass/fail | ✅ Implemented |
+| 1 | Describe Blender Scene | Blender context | IRScene + ShinyParams | Stub |
+| 2 | Compose | IRScene | Node trees (root nodes) | Skeleton done |
+| 3 | Serialize | Root nodes → DAT bytes (via DATBuilder) | DAT bytes | ✅ Implemented |
+| 4 | Package | DAT bytes + target filepath | Final output bytes | ✅ Implemented |
+
+Section naming is hardcoded: the scene data root is always written as `"scene_data"`, with an optional `"bound_box"` section.
 
 ### Directory Structure
 
@@ -37,25 +39,22 @@ exporter/
   __init__.py
   exporter.py                        # Exporter.run() entry point
   phases/
-    __init__.py
+    pre_process/
+      pre_process.py                 # Pre-process: validate output path + scene       ✅
     describe_blender/
-      __init__.py
-      describe_blender.py           # Phase 1: Blender → IRScene
+      describe_blender.py            # Phase 1: Blender → IRScene + ShinyParams        stub
       helpers/
-        __init__.py
         skeleton.py                  # Armature → IRBone list
         meshes.py                    # Mesh objects → IRMesh list
         materials.py                 # Blender materials → IRMaterial
-        animations.py               # Actions → IRBoneAnimationSet list
+        animations.py                # Actions → IRBoneAnimationSet list
         constraints.py               # Bone constraints → IR constraint lists
         lights.py                    # Light objects → IRLight list
         material_animations.py       # NLA tracks → IRMaterialAnimationSet list
     compose/
-      __init__.py
-      compose.py                     # Phase 2: IRScene → root node trees
+      compose.py                     # Phase 2: IRScene → root node trees              partial
       helpers/
-        __init__.py
-        bones.py                     # IRBone list → Joint tree
+        bones.py                     # IRBone list → Joint tree                        ✅
         meshes.py                    # IRMesh list → Mesh/PObject chains
         materials.py                 # IRMaterial → MaterialObject chain
         display_list_encoder.py      # Vertices/faces → GX display list bytes
@@ -65,54 +64,44 @@ exporter/
         constraints.py               # IR constraints → Reference objects on Joints
         lights.py                    # IRLight → Light/LightSet nodes
         material_animations.py       # IRMaterialAnimationSet → MatAnimJoint tree
-    route/
-      __init__.py
-      route.py                       # Phase 3: root nodes → section names
     serialize/
-      __init__.py
-      serialize.py                   # Phase 4: node trees → DAT bytes
+      serialize.py                   # Phase 3: node trees → DAT bytes                 ✅
       helpers/
-        __init__.py
-        dat_builder.py               # DATBuilder (moved from shared/IO/dat_builder.py)
+        dat_builder.py               # DATBuilder (binary serialization engine)         ✅
     package/
-      __init__.py
-      package.py                     # Phase 5: DAT bytes → final output
-      helpers/
-        __init__.py
-        pkx.py                       # PKX header wrapping/copying
+      package.py                     # Phase 4: DAT bytes → final output (.dat/.pkx)   ✅
+
+shared/helpers/
+  pkx.py                             # PKXContainer — shared by extract + package      ✅
+  shiny_params.py                    # ShinyParams dataclass                            ✅
 ```
 
-### DATBuilder Relocation
+### DATBuilder Relocation — ✅ Done
 
-Move `shared/IO/dat_builder.py` → `exporter/phases/serialize/helpers/dat_builder.py`.
-
-Update imports in:
-- `legacy/exporter/exporter.py` (the old stub)
-- `test_dat_write.py`
-- Any other files importing from `shared.IO`
+`DATBuilder` now lives at `exporter/phases/serialize/helpers/dat_builder.py`. The `shared/IO/` directory has been removed.
 
 ### Pipeline Entry Point (`exporter/exporter.py`)
 
 ```python
 class Exporter:
     @staticmethod
-    def run(context, filepath, options, logger=StubLogger()):
+    def run(context, filepath, options=None, logger=StubLogger()):
+        # Pre-process — Validate output path and scene
+        pre_process(context, filepath, options, logger)
+
         # Phase 1: Describe Blender Scene
-        ir_scene = describe_blender_scene(context, options, logger)
+        ir_scene, shiny_params = describe_blender_scene(context, options, logger)
 
         # Phase 2: Compose node trees
-        root_nodes = compose_scene(ir_scene, options, logger)
+        root_nodes, section_names = compose_scene(ir_scene, options, logger)
 
-        # Phase 3: Route — assign section names
-        section_names = route_sections(root_nodes, options, logger)
-
-        # Phase 4: Serialize via DATBuilder
+        # Phase 3: Serialize via DATBuilder
         dat_bytes = serialize(root_nodes, section_names, logger)
 
-        # Phase 5: Package output
-        final_bytes = package_output(dat_bytes, filepath, options, logger)
+        # Phase 4: Package output
+        final_bytes = package_output(dat_bytes, filepath, options, logger,
+                                     shiny_params=shiny_params)
 
-        # Write
         with open(filepath, 'wb') as f:
             f.write(final_bytes)
 
@@ -259,22 +248,12 @@ This is the most complex single piece of new code:
 
 **Simplification for v1:** Use GX_DRAW_TRIANGLES only (no strips/fans). Triangle strips are an optimization that can be added later.
 
-#### Phase 3: Route — Section Naming
+#### Phase 3: Serialize
 
-Assign section names to root nodes based on their type:
-- ModelSet root → `"scene_data"` (when using SceneData wrapper)
-- Disjoint Joint root → `"<model>_joint"`
-- Disjoint AnimationJoint root → `"<model>_joint_matanim_joint"` / `"<model>_joint_animjoint"`
-- LightSet → section within SceneData
+Call `DATBuilder(stream, root_nodes, ["scene_data"]).build()`. The section name is always `"scene_data"`, with an optional `"bound_box"` section when bound box data is present.
+DATBuilder lives at `exporter/phases/serialize/helpers/dat_builder.py`.
 
-For simple exports: wrap in SceneData with ModelSet. For round-trip fidelity: preserve original section names via custom properties if available.
-
-#### Phase 4: Serialize
-
-Call `DATBuilder(stream, root_nodes, section_names).build()`.
-DATBuilder lives at `exporter/phases/serialize/helpers/dat_builder.py` (moved from `shared/IO/`).
-
-#### Phase 5: Package Output
+#### Phase 4: Package Output
 
 **`package/package.py`**:
 1. If target path doesn't exist or extension is `.dat`/`.fdat`/`.rdat`: write raw DAT bytes
@@ -550,27 +529,36 @@ tests/
 
 ---
 
-## Bounding Boxes
+### Feature 7: Bound Box
 
-Deferred to future work. Many Joint nodes have bounding box data; we will skip computing/writing these for now and leave them zeroed.
+Automatically generate and write the `"bound_box"` section.
+
+The BoundBox section contains per-animation-set, per-frame axis-aligned bounding boxes (AABBs) — not mesh geometry. Each AABB is a min/max vec3 pair (24 bytes) representing the model's spatial extent at a given animation frame. The game uses these for culling and collision. The goal is to compute meaningful AABBs automatically from the animated mesh geometry — there is no user-facing setup required.
+
+**Depends on:** Step E (Bone Animations) — AABB computation requires evaluating the skeleton pose at each animation frame.
+
+#### Implementation
+1. For each animation set, evaluate the skeleton + mesh at each frame to compute a world-space AABB
+2. Build a BoundBox node with `anim_set_count` and the concatenated AABB data
+3. Write as a `"bound_box"` section alongside `"scene_data"` in the serialize phase
 
 ---
 
 ## Implementation Sequence
 
 ### Step A: Foundation (Skeleton + Mesh geometry)
-1. Move `shared/IO/dat_builder.py` → `exporter/phases/serialize/helpers/dat_builder.py`, update all imports
+1. ~~Move DATBuilder to `exporter/phases/serialize/helpers/`~~ ✅ Done
 2. Add optional name fields to IR types
 3. Store HSD custom properties during import (flags, skin type)
 4. Implement `describe_blender/helpers/skeleton.py`
-5. Implement `compose/helpers/bones.py` (IRBone → Joint tree)
+5. ~~Implement `compose/helpers/bones.py` (IRBone → Joint tree)~~ ✅ Done
 6. Implement `display_list_encoder.py` (the hardest single piece)
 7. Implement `describe_blender/helpers/meshes.py`
 8. Implement `compose/helpers/meshes.py` (IRMesh → Mesh/PObject)
-9. Implement `route/route.py` (section naming)
-10. Implement `serialize/serialize.py` (DATBuilder wrapper)
-11. Wire up `exporter.py`, `describe_blender.py`, `compose.py`
-12. Implement `package.py` (raw DAT + PKX wrapping)
+9. ~~Implement `serialize/serialize.py` (DATBuilder wrapper)~~ ✅ Done
+10. ~~Wire up `exporter.py`, `describe_blender.py`, `compose.py`~~ ✅ Done
+11. ~~Implement `package.py` (raw DAT + PKX injection + shiny write-back)~~ ✅ Done
+12. ~~Implement `pre_process.py` (PKX validation + scene validation stub)~~ ✅ Done
 13. Update `BlenderPlugin.py` to use new exporter
 14. Write skeleton + mesh round-trip tests
 15. Test with real .dat files
@@ -606,7 +594,13 @@ Deferred to future work. Many Joint nodes have bounding box data; we will skip c
 3. Wire MaterialAnimationJoint trees to ModelSet
 4. Write material animation round-trip tests
 
-### Step G: Round-Trip Scoring System
+### Step G: Bound Box
+1. Implement per-frame AABB computation by evaluating skeleton poses + mesh geometry at each animation frame
+2. Build BoundBox node with `anim_set_count` and concatenated AABB data
+3. Update serialize to include `"bound_box"` as a second section when AABB data is present
+4. Write bound box round-trip tests (compare computed AABBs against original file's AABBs)
+
+### Step H: Round-Trip Scoring System
 1. Build match percentage scoring utility
 2. Run against test file corpus
 3. Document results and known gaps
@@ -618,7 +612,7 @@ Deferred to future work. Many Joint nodes have bounding box data; we will skip c
 
 | File | Change |
 |------|--------|
-| `shared/IO/dat_builder.py` | Move to `exporter/phases/serialize/helpers/dat_builder.py` |
+| ~~`shared/IO/dat_builder.py`~~ | ✅ Moved to `exporter/phases/serialize/helpers/dat_builder.py` |
 | `shared/IR/skeleton.py` | Add `original_name` to IRBone |
 | `shared/IR/geometry.py` | Add `pobj_name`, `dobj_name` to IRMesh |
 | `shared/IR/material.py` | Add `class_type` to IRMaterial, `texture_name` to IRTextureLayer |
@@ -628,12 +622,24 @@ Deferred to future work. Many Joint nodes have bounding box data; we will skip c
 | `importer/phases/build_blender/helpers/skeleton.py` | Store `hsd_flags` custom property |
 | `importer/phases/build_blender/helpers/meshes.py` | Store `hsd_skin_type` custom property |
 | `BlenderPlugin.py` | Wire ExportHSD to new exporter pipeline |
-| `legacy/exporter/exporter.py` | Update DATBuilder import path |
-| `test_dat_write.py` | Update DATBuilder import path |
+| `documentation/exporter_usage.md` | Update feature status as features are implemented |
+| ~~`test_dat_write.py`~~ | ✅ DATBuilder import path updated |
 
-## Key Files to Create (New)
+## Key Files Created
 
-All files under `exporter/` as listed in the directory structure above, plus test files.
+| File | Status |
+|------|--------|
+| `exporter/exporter.py` | ✅ Pipeline entry point |
+| `exporter/phases/pre_process/pre_process.py` | ✅ PKX validation + scene validation stub |
+| `exporter/phases/describe_blender/describe_blender.py` | Stub (returns empty IRScene) |
+| `exporter/phases/compose/compose.py` | Partial (skeleton wired) |
+| `exporter/phases/compose/helpers/bones.py` | ✅ IRBone → Joint tree |
+| `exporter/phases/serialize/serialize.py` | ✅ DATBuilder wrapper |
+| `exporter/phases/package/package.py` | ✅ .dat passthrough + .pkx injection |
+| `shared/helpers/pkx.py` | ✅ PKXContainer (shared by extract + package) |
+| `shared/helpers/shiny_params.py` | ✅ ShinyParams dataclass |
+| `utilities/dat_to_json.py` | ✅ Node tree → JSON serializer |
+| `utilities/json_to_ir.py` | ✅ JSON → node tree → IR summary |
 
 ---
 

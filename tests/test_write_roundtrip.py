@@ -19,7 +19,7 @@ from helpers import (
 )
 from shared.helpers.file_io import BinaryReader, BinaryWriter
 from importer.phases.parse.helpers.dat_parser import DATParser
-from shared.IO.dat_builder import DATBuilder
+from exporter.phases.serialize.helpers.dat_builder import DATBuilder
 from shared.Nodes.Classes.Joints.Joint import Joint
 
 

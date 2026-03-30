@@ -1,17 +1,19 @@
-from ..Nodes import *
-from ..Constants import *
-from ..helpers.file_io import *
+try:
+    from ......shared.Nodes import *
+    from ......shared.Constants import *
+    from ......shared.helpers.file_io import *
+except (ImportError, SystemError):
+    from shared.Nodes import *
+    from shared.Constants import *
+    from shared.helpers.file_io import *
 
-# A class for managing the recursive writing of the Node tree. 
-# This happens in 3 steps:
-# 1) Convert the node tree into an ordered array of nodes.
-#    The order of the array should match the write order of the nodes.
-#    To match the conventions of official models append nodes to the list in a breadth/depth first order
-#    and then reverse the list so the nodes towards the top of the tree are written towards the end of the file.
-# 2) For each node in the list, allocate an address range of the output to that node.
-#    Each node is allocated the address following the preceding node, adjusting for alignment.
-# 3) Write each node's data to the pre allocated address. For fields which are a pointer to a sub node,
-#    write the pre allocated address of the sub node.
+# Serializes a node tree to DAT binary format.
+# The build process has 4 internal steps:
+# 1) Collect nodes via DFS post-order traversal into an ordered list (leaf-first).
+# 2) Write shared raw data (vertex buffers, image pixels, palette data) with deduplication.
+# 3) For each node: write private data, then allocate struct address space.
+# 4) Write node structs at allocated addresses, resolve pointers, record relocations.
+# Auto-closes the file after build() if the builder opened it from a path.
 class DATBuilder(BinaryWriter):
 
 	# Length of the Header data of a DAT model. Pointers in the data are relative to the end of this header.
@@ -170,6 +172,11 @@ class DATBuilder(BinaryWriter):
 		self.write(relocations_count, 'uint', 8, False)
 		self.write(len(self.root_nodes), 'uint', 12, False)
 		self.write(0, 'uint', 16, False)  # external_nodes_count
+
+		# Auto-close if we opened the file ourselves (from a path).
+		# External streams (e.g. BytesIO) are left open for the caller.
+		if self.filepath is not None:
+			self.close()
 
 	# If no address is specified then append to end of file
 	def write(self, value, field_type, address=None, relative_to_header=True, whence='start'):
