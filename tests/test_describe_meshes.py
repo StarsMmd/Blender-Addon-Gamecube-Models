@@ -1,8 +1,12 @@
 """Tests for phases/describe/meshes.py — geometry extraction helpers."""
+from types import SimpleNamespace
+from unittest.mock import patch, MagicMock
+
 from importer.phases.describe.helpers.meshes import (
-    _validate_mesh, _extract_uv_layer, _extract_normals,
+    _validate_mesh, _extract_uv_layer, _extract_normals, describe_meshes,
 )
 from shared.IR.geometry import IRUVLayer
+from shared.Constants.gx import GX_VA_POS
 
 
 class TestValidateMesh:
@@ -74,3 +78,130 @@ class TestExtractNormals:
         faces = [[0]]
         normals = _extract_normals(source, face_list, faces)
         assert abs(normals[0][2] - 1.0) < 1e-6
+
+
+# --- Helpers for material cache tests ---
+
+def _make_bone(name='bone'):
+    return SimpleNamespace(
+        name=name, flags=0,
+        world_matrix=[[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]],
+        inverse_bind_matrix=None, parent_index=None, mesh_indices=[],
+        instance_child_bone_index=None,
+    )
+
+
+def _make_pobj(address=200):
+    """Minimal PObject with one triangle."""
+    return SimpleNamespace(
+        address=address,
+        name='prim',
+        vertex_list=SimpleNamespace(vertices=[
+            SimpleNamespace(attribute=GX_VA_POS, isTexture=lambda: False),
+        ]),
+        flags=0,
+        sources=[[(0, 0, 0), (1, 0, 0), (0, 1, 0)]],
+        face_lists=[[[0, 1, 2]]],
+        property=None,
+        next=None,
+    )
+
+
+def _make_mesh_node(address, mobject, pobj):
+    """Minimal DObject (Mesh node)."""
+    return SimpleNamespace(
+        address=address,
+        mobject=mobject,
+        pobject=pobj,
+        next=None,
+    )
+
+
+def _make_joint(address, mesh_node):
+    """Minimal Joint pointing to a mesh chain."""
+    return SimpleNamespace(
+        address=address,
+        flags=0,
+        child=None,
+        next=None,
+        property=SimpleNamespace(pobject=mesh_node.pobject) if mesh_node is None else mesh_node,
+    )
+
+
+class TestMaterialCache:
+
+    @patch('importer.phases.describe.helpers.materials.describe_material')
+    def test_same_mobject_reuses_ir_material(self, mock_describe_mat):
+        """Two DObjects with the same mobject.address share one IRMaterial."""
+        shared_material = SimpleNamespace(texture_layers=[])
+        mock_describe_mat.return_value = shared_material
+
+        mobject = SimpleNamespace(address=0x100)
+
+        pobj_a = _make_pobj(address=200)
+        pobj_b = _make_pobj(address=300)
+        mesh_a = _make_mesh_node(address=50, mobject=mobject, pobj=pobj_a)
+        mesh_b = _make_mesh_node(address=60, mobject=mobject, pobj=pobj_b)
+        mesh_a.next = mesh_b  # chain them
+
+        joint = SimpleNamespace(
+            address=0, flags=0, child=None, next=None,
+            property=mesh_a,
+        )
+
+        bones = [_make_bone()]
+        joint_to_bone_index = {0: 0}
+
+        meshes = describe_meshes(joint, bones, joint_to_bone_index)
+
+        assert len(meshes) == 2
+        assert meshes[0].material is meshes[1].material
+        mock_describe_mat.assert_called_once()
+
+    @patch('importer.phases.describe.helpers.materials.describe_material')
+    def test_different_mobjects_get_different_materials(self, mock_describe_mat):
+        """Two DObjects with different mobject addresses get separate IRMaterials."""
+        mat_a = SimpleNamespace(texture_layers=[])
+        mat_b = SimpleNamespace(texture_layers=[])
+        mock_describe_mat.side_effect = [mat_a, mat_b]
+
+        mob_a = SimpleNamespace(address=0x100)
+        mob_b = SimpleNamespace(address=0x200)
+
+        pobj_a = _make_pobj(address=200)
+        pobj_b = _make_pobj(address=300)
+        mesh_a = _make_mesh_node(address=50, mobject=mob_a, pobj=pobj_a)
+        mesh_b = _make_mesh_node(address=60, mobject=mob_b, pobj=pobj_b)
+        mesh_a.next = mesh_b
+
+        joint = SimpleNamespace(
+            address=0, flags=0, child=None, next=None,
+            property=mesh_a,
+        )
+
+        bones = [_make_bone()]
+        joint_to_bone_index = {0: 0}
+
+        meshes = describe_meshes(joint, bones, joint_to_bone_index)
+
+        assert len(meshes) == 2
+        assert meshes[0].material is not meshes[1].material
+        assert mock_describe_mat.call_count == 2
+
+    def test_none_mobject_no_error(self):
+        """DObject with mobject=None produces mesh with material=None."""
+        pobj = _make_pobj(address=200)
+        mesh_node = _make_mesh_node(address=50, mobject=None, pobj=pobj)
+
+        joint = SimpleNamespace(
+            address=0, flags=0, child=None, next=None,
+            property=mesh_node,
+        )
+
+        bones = [_make_bone()]
+        joint_to_bone_index = {0: 0}
+
+        meshes = describe_meshes(joint, bones, joint_to_bone_index)
+
+        assert len(meshes) == 1
+        assert meshes[0].material is None

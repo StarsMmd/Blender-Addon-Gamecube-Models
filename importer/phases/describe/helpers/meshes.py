@@ -50,6 +50,7 @@ def describe_meshes(root_joint, bones, joint_to_bone_index, image_cache=None, lo
         image_cache = {}
     meshes = []
     mesh_count = [0]
+    material_cache = {}  # {mobject.address: IRMaterial} — dedup shared materials
 
     def _walk_joints(joint):
         bone_index = joint_to_bone_index.get(joint.address, 0)
@@ -67,13 +68,19 @@ def describe_meshes(root_joint, bones, joint_to_bone_index, image_cache=None, lo
         """Walk the Mesh (DObject) linked list."""
         import time
         while mesh_node:
-            # Describe the material for this DObject
+            # Describe the material for this DObject (cached by mobject address)
             ir_material = None
             if mesh_node.mobject:
-                from .materials import describe_material
-                t = time.time()
-                ir_material = describe_material(mesh_node.mobject, image_cache=image_cache)
-                logger.debug("    describe_material for DObj 0x%X: %.3fs", mesh_node.address, time.time() - t)
+                mob_addr = mesh_node.mobject.address
+                if mob_addr in material_cache:
+                    ir_material = material_cache[mob_addr]
+                    logger.debug("    reusing cached IRMaterial for DObj 0x%X (mob 0x%X)", mesh_node.address, mob_addr)
+                else:
+                    from .materials import describe_material
+                    t = time.time()
+                    ir_material = describe_material(mesh_node.mobject, image_cache=image_cache)
+                    logger.debug("    describe_material for DObj 0x%X: %.3fs", mesh_node.address, time.time() - t)
+                    material_cache[mob_addr] = ir_material
 
             pobj = mesh_node.pobject
             while pobj:
