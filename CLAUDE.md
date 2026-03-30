@@ -154,6 +154,13 @@ Nodes are cached by file offset (`nodes_cache_by_offset`). Nodes with `is_cachab
 | Shiny variant filter | ✅ Working (PKX color extraction, live-editable shader node group, per-parameter UI) |
 | Unit tests | ✅ 409 passing |
 | Shader node auto-layout | ✅ Working (topological sort from output→inputs, left-to-right) |
+| Scale inheritance (animation baking) | ⚠️ Known issue — see below |
+
+### Scale Inheritance Issue
+
+Models with **non-uniform bone scale** (e.g. runpappa) produce garbled geometry when animations play. The previous `edit_scale_correction` bake formula (`local_edit.inv() @ parent_sc @ mtx @ sc.inv()`) does not produce identity at rest for bones whose parents have non-uniform scale, causing the armature modifier to distort envelope-weighted vertices.
+
+**Current workaround:** reverted to `Bmtx = rest_raw.inverted_safe() @ mtx` (matching the original addon's approach). This guarantees identity at rest and fixes the garbled meshes, but does not fully solve the underlying scale inheritance mismatch between HSD's aligned scale model and Blender's `inherit_scale = 'ALIGNED'` mode. Animations on models with non-uniform bone scale may still have subtle inaccuracies. Models with uniform scale (e.g. bohmander) are unaffected.
 
 ---
 
@@ -196,6 +203,7 @@ The filter inserts two named nodes into each material's node tree:
 
 - **`shiny_filter_shader`** — the ShaderNodeGroup instance referencing the `ShinyFilter_{model_name}` node group
 - **`shiny_filter_mix`** — the MixRGB node blending between normal and shiny output
+- **`shiny_filter_gamma`** — the Gamma node (exponent 2.2) linearizing the shiny output for Blender's scene-linear pipeline
 
 The exporter **must skip these nodes** when reading back materials — they are display-only and not part of the original model data. Identify them by the node names above.
 
@@ -210,6 +218,7 @@ The shiny parameters are stored as registered `bpy.props` properties on the arma
 - **Binary reads:** Use `shared/helpers/binary.py` helpers (`read('uint', data, offset)`) instead of raw `struct.unpack`.
 - **Errors:** Use `ValueError("descriptive message")` instead of custom exception classes. Only `ModelBuildError` (in build phase) carries structured data.
 - **No bpy in shared/:** All Blender-specific code lives in `importer/phases/build_blender/`.
+- **Do not modify `legacy/`:** The `legacy/` folder contains the pre-refactor importer and should not be changed unless explicitly asked to do so.
 - **Fail loud over silent fallbacks:** When looking up Blender objects we created (nodes, bones, materials), raise `ValueError` with the actual names if the lookup fails — don't silently skip or fall back. Silent failures mask bugs and make debugging much harder.
 - **Standalone scripts:** Any standalone Blender scripts (run from the Scripting panel) go in `scripts/` and must be documented in `documentation/scripts.md`.
 - **Blender API tracking:** Whenever a `bpy` API call is added, moved, removed, or modified, update `documentation/blender_api_usage.md` to match.
