@@ -78,11 +78,17 @@ def build_bone_animations(ir_model, armature, options, logger=StubLogger(), mate
                 layer = action.layers.new("Layer")
                 strip = layer.strips.new(type='KEYFRAME')
 
+            animated_materials = set()  # skip duplicates from shared materials
             for mat_track in anim_set.material_tracks:
                 mat = material_lookup.get(mat_track.material_mesh_name)
                 logger.debug("    MatTrack lookup: '%s' → %s", mat_track.material_mesh_name, mat.name if mat else 'NOT FOUND')
                 if not mat:
                     continue
+                if id(mat) in animated_materials:
+                    logger.debug("    MatTrack '%s': skipping (material '%s' already animated)",
+                                 mat_track.material_mesh_name, mat.name)
+                    continue
+                animated_materials.add(id(mat))
 
                 # Create a MATERIAL slot and its channelbag in the same action
                 mat_slot = action.slots.new('MATERIAL', mat.name or 'Material')

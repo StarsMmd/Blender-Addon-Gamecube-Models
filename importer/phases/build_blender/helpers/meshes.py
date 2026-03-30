@@ -24,13 +24,26 @@ def build_meshes(ir_model, armature, context, options, logger=StubLogger()):
     image_cache = {}
     material_lookup = {}  # {mesh_name: bpy.types.Material} for material animations
     mesh_objects_by_bone = {}  # {bone_index: [mesh_objects]}
+    built_material_cache = {}  # {(id(ir_material), cull_front, cull_back): bpy.types.Material}
 
     for i, ir_mesh in enumerate(ir_model.meshes):
-        mesh_obj, mat = _build_mesh(ir_mesh, ir_model, armature, image_cache, logger, i, model_name)
+        # Reuse previously built Blender material if same IR material + cull flags
+        cached_mat = None
+        if ir_mesh.material is not None:
+            cache_key = (id(ir_mesh.material), ir_mesh.cull_front, ir_mesh.cull_back)
+            cached_mat = built_material_cache.get(cache_key)
+
+        mesh_obj, mat = _build_mesh(ir_mesh, ir_model, armature, image_cache, logger, i, model_name,
+                                    cached_material=cached_mat)
         if mesh_obj:
             bone_idx = ir_mesh.parent_bone_index
             mesh_objects_by_bone.setdefault(bone_idx, []).append(mesh_obj)
         if mat:
+            if ir_mesh.material is not None:
+                cache_key = (id(ir_mesh.material), ir_mesh.cull_front, ir_mesh.cull_back)
+                if cache_key not in built_material_cache:
+                    built_material_cache[cache_key] = mat
+
             bone_name = ir_model.bones[ir_mesh.parent_bone_index].name if ir_mesh.parent_bone_index < len(ir_model.bones) else 'unknown'
             key = "mesh_%d_%s" % (i, bone_name)
             material_lookup[key] = mat
@@ -54,7 +67,7 @@ def build_meshes(ir_model, armature, context, options, logger=StubLogger()):
     return material_lookup
 
 
-def _build_mesh(ir_mesh, ir_model, armature, image_cache, logger, mesh_idx, model_name="Model"):
+def _build_mesh(ir_mesh, ir_model, armature, image_cache, logger, mesh_idx, model_name="Model", cached_material=None):
     """Create a single Blender mesh object from an IRMesh."""
     # Create mesh data
     mesh_name = '%s_mesh_%s' % (model_name, ir_mesh.name)
@@ -96,22 +109,25 @@ def _build_mesh(ir_mesh, ir_model, armature, image_cache, logger, mesh_idx, mode
     # Parent to armature
     mesh_object.parent = armature
 
-    # Build material from IR
-    if ir_mesh.material is not None:
+    # Build material from IR (reuse cached material if available)
+    if cached_material is not None:
+        mat = cached_material
+        logger.debug("  mesh[%d] '%s': reusing material '%s'", mesh_idx, ir_mesh.name, mat.name)
+    elif ir_mesh.material is not None:
         from .materials import build_material
         mat_name = '%s_mat_%d' % (model_name, mesh_idx)
         mat = build_material(ir_mesh.material, image_cache=image_cache, name=mat_name)
         logger.debug("  mesh[%d] '%s': material '%s' with %d textures",
                      mesh_idx, ir_mesh.name, mat.name, len(ir_mesh.material.texture_layers))
+        # Backface culling — GameCube POBJ cull flags control which face sides are visible.
+        # CULL_BACK (default) = only front faces, CULL_FRONT = only back faces,
+        # both = nothing visible, neither = double-sided.
+        # This prevents z-fighting on double-layered geometry (e.g. skirt inner/outer surfaces).
+        if ir_mesh.cull_front or ir_mesh.cull_back:
+            mat.use_backface_culling = True
     else:
         mat = bpy.data.materials.new(name='%s_mat_%d' % (model_name, mesh_idx))
         logger.debug("  mesh[%d] '%s': placeholder material (no IR material)", mesh_idx, ir_mesh.name)
-    # Backface culling — GameCube POBJ cull flags control which face sides are visible.
-    # CULL_BACK (default) = only front faces, CULL_FRONT = only back faces,
-    # both = nothing visible, neither = double-sided.
-    # This prevents z-fighting on double-layered geometry (e.g. skirt inner/outer surfaces).
-    if ir_mesh.cull_front or ir_mesh.cull_back:
-        mat.use_backface_culling = True
 
     mesh_data.materials.append(mat)
 
