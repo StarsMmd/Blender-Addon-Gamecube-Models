@@ -192,6 +192,12 @@ def describe_scene(sections, options, logger=StubLogger()):
                 logger.debug("  Created placeholder anim '%s' for material anim '%s' (%d tracks)",
                              placeholder_name, mat_anim_set.name, len(mat_anim_set.tracks))
 
+        # Fix world matrices for bones with near-zero rest scale.
+        # Must run after both bones and animations are described, so that
+        # visible scales from animation keyframes are available.
+        from .helpers.bones import fix_near_zero_bone_matrices
+        fix_near_zero_bone_matrices(bones, bone_anims, logger)
+
         ir_model = IRModel(
             name=model_name,
             bones=bones,

@@ -154,13 +154,39 @@ Nodes are cached by file offset (`nodes_cache_by_offset`). Nodes with `is_cachab
 | Shiny variant filter | ✅ Working (PKX color extraction, live-editable shader node group, per-parameter UI) |
 | Unit tests | ✅ 409 passing |
 | Shader node auto-layout | ✅ Working (topological sort from output→inputs, left-to-right) |
-| Scale inheritance (animation baking) | ⚠️ Known issue — see below |
+| Scale inheritance (animation baking) | ⚠️ Partially resolved — hybrid approach, see below |
 
-### Scale Inheritance Issue
+### Scale Inheritance (Animation Baking) — ⚠️ Ongoing Investigation
 
-Models with **non-uniform bone scale** (e.g. runpappa) produce garbled geometry when animations play. The previous `edit_scale_correction` bake formula (`local_edit.inv() @ parent_sc @ mtx @ sc.inv()`) does not produce identity at rest for bones whose parents have non-uniform scale, causing the armature modifier to distort envelope-weighted vertices.
+**Core problem:** Blender edit bones can't store scale (always normalized to unit length). HSD bones have real rest scales (e.g. 0.189). The delta formula `rest.inv() @ animated` computes ratios relative to each bone's own "unit 1", but these units differ between bones. Blender's scale inheritance compounds these mismatched ratios, producing cascading errors on deeply-nested bones with non-uniform scale.
 
-**Current workaround:** reverted to `Bmtx = rest_raw.inverted_safe() @ mtx` (matching the original addon's approach). This guarantees identity at rest and fixes the garbled meshes, but does not fully solve the underlying scale inheritance mismatch between HSD's aligned scale model and Blender's `inherit_scale = 'ALIGNED'` mode. Animations on models with non-uniform bone scale may still have subtle inaccuracies. Models with uniform scale (e.g. bohmander) are unaffected.
+**Current hybrid approach (per-bone):**
+- **Uniform accumulated scale** (max/min ratio < 1.1): Uses the legacy `edit_scale_correction` sandwich formula + `inherit_scale='ALIGNED'`. Works correctly because uniform parent_scl creates no shear in `compile_srt_matrix`.
+- **Non-uniform accumulated scale**: Uses direct SRT delta (quaternion rotation, per-axis scale ratio, matrix-free location) + `inherit_scale='NONE'`. Avoids shear from TRS decomposition but doesn't propagate parent scale.
+
+**Phase 4 pre-processing:**
+- `rest_local_matrix` on `IRBoneTrack` pre-bakes format-specific corrections (keeps Phase 5 generic)
+- `_find_visible_scale_in_channels()` scans animation keyframes for bones hidden at rest (near-zero scale)
+- `fix_near_zero_bone_matrices()` recomputes world matrices for near-zero bones and descendants using visible scales — **bug: descendant cascade may not be transitive (only direct children, not grandchildren), causing subame's left wing to remain collapsed**
+- Path bone rotation applied symmetrically to both rest and animated matrices
+- Edit bones use `normalized_world_matrix` for stable placement
+
+**Known remaining issues:**
+- **subame**: Left wing still missing (collapsed bone positions). Right wing bones overly long. The `fix_near_zero_bone_matrices` descendant detection likely needs to be transitive (grandchildren and beyond).
+- **deoxys tentacles**: Greatly improved (no more 30,000x explosion) but still has some inaccuracy at the apex of extreme animations. The 3.7x scale ratio is mathematically correct per-bone but Blender's evaluation doesn't perfectly match HSD's scale composition for deeply-nested non-uniform chains.
+- **Fundamental tension**: TRS decomposition can't represent shear. When non-uniform scale and rotation both change, the delta matrix has shear that gets absorbed as wrong scale/rotation. The direct SRT delta avoids this for scale and rotation but the location computation may still have edge cases.
+
+**Key files:**
+- `importer/phases/describe/helpers/animations.py` — Phase 4: `rest_local_matrix`, visible scale scanning
+- `importer/phases/describe/helpers/bones.py` — Phase 4: `fix_near_zero_bone_matrices()`
+- `importer/phases/build_blender/helpers/animations.py` — Phase 5: hybrid bake formula
+- `importer/phases/build_blender/helpers/skeleton.py` — Phase 5: per-bone `inherit_scale`
+
+**Next steps to investigate:**
+1. Fix the descendant cascade in `fix_near_zero_bone_matrices()` — ensure grandchildren and deeper are also recomputed
+2. The direct SRT location computation (`delta_pos.rotate(rest_quat_inv)`) may differ from the legacy matrix-based location for some models — compare outputs
+3. For the "unit mismatch" problem on non-uniform bones: explore whether Blender's `inherit_scale='NONE'` mode can be combined with explicit scale compensation in the bake values
+4. The per-frame hierarchy walk for animated parent scales was attempted but the conversion from world matrices to Blender pose-bone space couldn't be solved due to Blender's opaque ALIGNED evaluation. Reverse-engineering `armature.cc`'s `BKE_bone_parent_transform_calc_from_matrices` could enable this.
 
 ---
 

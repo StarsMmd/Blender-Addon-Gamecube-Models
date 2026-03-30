@@ -6,7 +6,7 @@ correction, decomposes to bone-local Euler, creates final Actions.
 """
 import math
 import bpy
-from mathutils import Matrix, Vector
+from mathutils import Matrix, Vector, Euler, Quaternion
 
 try:
     from .....shared.Constants.hsd import *
@@ -63,7 +63,8 @@ def build_bone_animations(ir_model, armature, options, logger=StubLogger(), mate
         armature.animation_data.action_slot = armature_slot
 
         for track in anim_set.tracks:
-            _bake_bone_track(track, action, bone_data, max_frame, logger, armature)
+            _bake_bone_track(track, action, bone_data, ir_model.bones,
+                             max_frame, logger, armature)
 
         # Build paired material animation tracks into the same action
         # using channelbag API so fcurves are associated with the correct slot
@@ -153,18 +154,26 @@ def reset_pose(armature):
         bone.scale = (1, 1, 1)
 
 
-def _bake_bone_track(track, action, bone_data, max_frame, logger, armature=None):
-    """Bake one bone's IRBoneTrack into Blender fcurves."""
+def _bake_bone_track(track, action, bone_data, bones, max_frame, logger, armature=None):
+    """Bake one bone's IRBoneTrack into Blender fcurves.
+
+    Hybrid formula based on parent scale uniformity:
+    - Uniform: legacy formula with edit_scale_correction (correct for ALIGNED inheritance)
+    - Non-uniform: direct SRT delta (avoids shear from TRS decomposition)
+    """
     bone_name = track.bone_name
     bone_idx = track.bone_index
     bd = bone_data[bone_idx]
     parent_idx = bd['parent_index']
 
+    # Determine bake strategy based on accumulated scale uniformity
+    accum = bones[bone_idx].accumulated_scale
+    mn = min(abs(x) for x in accum if abs(x) > 1e-6) if any(abs(x) > 1e-6 for x in accum) else 0
+    mx = max(abs(x) for x in accum)
+    use_legacy_formula = (mn > 0 and mx / max(mn, 1e-9) < 1.1)
+
     has_path = track.spline_path is not None
 
-    # Path animation: create a Blender curve and FOLLOW_PATH constraint.
-    # SRT baking continues below — LIMIT_LOCATION zeroes the baked location
-    # at runtime, but rotation/scale from SRT baking still take effect.
     if has_path and armature:
         _apply_path_constraint(track, action, armature, logger)
 
@@ -189,7 +198,6 @@ def _bake_bone_track(track, action, bone_data, max_frame, logger, armature=None)
                     point.interpolation = kf.interpolation.value
                 transform_list[idx] = curve
 
-                # Apply bezier handles after all points are inserted
                 kf_count = len(curve.keyframe_points)
                 offset = kf_count - len(keyframes)
                 for i, kf in enumerate(keyframes):
@@ -223,13 +231,27 @@ def _bake_bone_track(track, action, bone_data, max_frame, logger, armature=None)
         new_transform_list[i + 7] = action.fcurves.new(
             'pose.bones["%s"].scale' % bone_name, index=i)
 
-    # Compute the raw rest-pose SRT matrix (without parent_scl correction).
-    # The animated SRT matrix is also computed without parent_scl, so using
-    # rest_raw.inv() @ animated_raw guarantees identity at rest — avoiding
-    # the non-uniform scale distortion that the edit_scale_correction formula
-    # introduced for bones under non-uniformly scaled parents.
-    rest_raw = compile_srt_matrix(
-        track.rest_scale, track.rest_rotation, track.rest_position)
+    # rest_local_matrix from IR: plain T@R@S with visible-scale correction
+    # for near-zero bones. Path rotation applied symmetrically to both sides.
+    rest_base = Matrix(track.rest_local_matrix)
+    if has_path:
+        rest_base = Matrix.Rotation(-math.pi / 2, 4, 'X') @ rest_base
+    rest_base_inv = rest_base.inverted_safe()
+
+    # Pre-compute rest SRT for the direct delta path
+    rest_decomp = rest_base.decompose()
+    rest_loc = rest_decomp[0]
+    rest_s = rest_decomp[2]
+    rest_quat = rest_decomp[1]
+    rest_quat_inv = rest_quat.inverted()
+
+    # For the legacy formula path: pre-fetch edit_scale_correction matrices
+    if use_legacy_formula:
+        local_edit = bd['local_edit_matrix']
+        edit_sc = bd['edit_scale_correction']
+        parent_edit_sc = (
+            bone_data[parent_idx]['edit_scale_correction'] if parent_idx is not None else None
+        )
 
     # Pass 2: frame-by-frame baking
     end_frame = min(int(track.end_frame), max_frame)
@@ -250,34 +272,52 @@ def _bake_bone_track(track, action, bone_data, max_frame, logger, armature=None)
                         bone_name, frame, r[0], r[1], r[2], l[0], l[1], l[2], s[0], s[1], s[2])
 
         mtx = compile_srt_matrix(s, r, l)
-
-        # Path bones: the curve is in unrotated GameCube space while the
-        # armature has a π/2 X rotation. This rotation on the SRT matrix
-        # compensates so the walk animation aligns with the path direction.
         if has_path:
             mtx = Matrix.Rotation(-math.pi / 2, 4, 'X') @ mtx
 
-        # Simple bake: rest_raw.inv() @ animated_raw.
-        # Both matrices use compile_srt_matrix WITHOUT parent_scl, so they
-        # cancel perfectly at rest (producing identity). This matches the
-        # original addon's approach and avoids the scale distortion that the
-        # edit_scale_correction formula caused for non-uniform parent scales.
-        Bmtx = rest_raw.inverted_safe() @ mtx
+        if use_legacy_formula:
+            # Legacy formula: edit_scale_correction sandwich.
+            # Correct for uniform parent scales (no shear). Encodes scale
+            # information for ALIGNED inheritance propagation.
+            try:
+                if parent_idx is not None:
+                    Bmtx = (local_edit.inverted()
+                            @ parent_edit_sc
+                            @ mtx
+                            @ edit_sc.inverted())
+                else:
+                    Bmtx = (local_edit.inverted()
+                            @ mtx
+                            @ edit_sc.inverted())
+            except ValueError:
+                Bmtx = rest_base_inv @ mtx
+            trans, rot, scl = Bmtx.decompose()
+            rot = rot.to_euler()
+        else:
+            # Direct SRT delta: compute loc/rot/scl separately to avoid
+            # shear contamination from non-uniform scale + rotation change.
+            anim_loc = Vector((mtx[0][3], mtx[1][3], mtx[2][3]))
+            delta_pos = anim_loc - rest_loc
+            trans = delta_pos.copy()
+            trans.rotate(rest_quat_inv)
 
-        trans, rot, scl = Bmtx.decompose()
-        rot = rot.to_euler()
+            anim_quat = Euler((r[0], r[1], r[2]), 'XYZ').to_quaternion()
+            if has_path:
+                path_quat = Matrix.Rotation(-math.pi / 2, 4, 'X').to_quaternion()
+                anim_quat = path_quat @ anim_quat
+            rot = (rest_quat_inv @ anim_quat).to_euler('XYZ')
+
+            scl = Vector((
+                s[0] / rest_s[0] if abs(rest_s[0]) > 1e-6 else s[0],
+                s[1] / rest_s[1] if abs(rest_s[1]) > 1e-6 else s[1],
+                s[2] / rest_s[2] if abs(rest_s[2]) > 1e-6 else s[2],
+            ))
 
         if frame <= 3 or frame == end_frame - 1:
             logger.info("  BAKE %s f=%d loc=(%.6f,%.6f,%.6f) rot=(%.6f,%.6f,%.6f) scl=(%.6f,%.6f,%.6f)",
                         bone_name, frame, trans[0], trans[1], trans[2], rot[0], rot[1], rot[2], scl[0], scl[1], scl[2])
         if frame == 0:
             logger.info("  SRT_BAKE bone=%s frame=0 uses_path=%s", bone_name, has_path)
-            logger.info("    srt_in: r=(%.6f,%.6f,%.6f) l=(%.6f,%.6f,%.6f) s=(%.6f,%.6f,%.6f)",
-                        r[0], r[1], r[2], l[0], l[1], l[2], s[0], s[1], s[2])
-            logger.info("    blender_out: loc=(%.6f,%.6f,%.6f) rot=(%.6f,%.6f,%.6f) scl=(%.6f,%.6f,%.6f)",
-                        trans[0], trans[1], trans[2], rot[0], rot[1], rot[2], scl[0], scl[1], scl[2])
-            logger.info("    local_edit_matrix[0]=%s", [round(bd['local_edit_matrix'][i][0], 6) for i in range(4)])
-            logger.info("    has_parent=%s", parent_idx is not None)
 
         max_scl = 100.0
         scl = Vector((
@@ -453,3 +493,4 @@ def _build_bone_data_lookup(bones):
             'temp_matrix_local': Matrix(bone.local_matrix),
         }
     return lookup
+

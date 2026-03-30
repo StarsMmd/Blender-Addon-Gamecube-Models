@@ -32,7 +32,7 @@ The IR uses standard, widely-adopted conventions so that any build phase can con
 | **Bone transforms** | Local-space SRT | `position`, `rotation`, `scale` are relative to parent bone |
 | **Bone matrices** | World-space | `world_matrix`, `normalized_world_matrix` etc. are absolute transforms |
 | **Mesh vertices** | World-space positions | Envelope-deformed vertices are in world space after skinning |
-| **Animation values** | Source world-space SRT | Bone animation keyframes store absolute rotation/translation/scale values from the source format. Blender-specific baking (scale correction, Euler decomposition) happens in Phase 5 |
+| **Animation values** | Raw per-channel SRT | Keyframe values are raw rotation/translation/scale from the source. Phase 5 composes them via plain `T @ R @ S`. Format-specific corrections (e.g. aligned scale inheritance) are pre-baked into `rest_local_matrix` by Phase 4 |
 | **Angles** | Radians | All rotation values throughout the IR |
 | **Units** | Unitless (source scale) | No unit conversion is applied; 1 unit = 1 source unit |
 
@@ -234,7 +234,11 @@ class FragmentBlending:
 
 **File:** `shared/IR/animation.py`
 
-All keyframes are fully decoded from compressed HSD format into explicit frame/value pairs with interpolation and bezier handles. Values are in HSD world-space SRT — target-specific baking (e.g. Blender scale correction + Euler decomposition) happens in Phase 5.
+All keyframes are fully decoded into explicit frame/value pairs with interpolation and bezier handles. Keyframe values are raw per-channel SRT — Phase 5 composes them into matrices via plain `T @ R @ S` (no format-specific corrections needed).
+
+Format-specific corrections (e.g. HSD's aligned scale inheritance) are pre-baked into `rest_local_matrix` by Phase 4. The build phase uses: `Bmtx = rest_local_matrix.inv() @ animated_SRT_matrix`. This keeps format-specific logic in the describe phase.
+
+For bones hidden at rest (near-zero scale), Phase 4 scans animation keyframes to find the intended "visible" scale and uses that for a numerically stable rest matrix.
 
 ```python
 @dataclass
@@ -252,13 +256,12 @@ class IRBoneTrack:
     rotation: list[list[IRKeyframe]]                   # [X, Y, Z] channels
     location: list[list[IRKeyframe]]                   # [X, Y, Z] channels
     scale: list[list[IRKeyframe]]                      # [X, Y, Z] channels
-    rest_rotation: tuple[float, float, float]
+    rest_local_matrix: list[list[float]]               # 4x4, format-specific corrections pre-applied
+    rest_rotation: tuple[float, float, float]          # raw rest SRT (for missing channel fill)
     rest_position: tuple[float, float, float]
     rest_scale: tuple[float, float, float]
-    parent_accumulated_scale: tuple[float, float, float] | None
-    # Path animation (mutually exclusive with SRT channels)
-    path_keyframes: list[IRKeyframe] | None
-    spline_points: list[list[float]] | None
+    # Path animation
+    spline_path: IRSplinePath | None
 
 @dataclass
 class IRBoneAnimationSet:
