@@ -154,6 +154,13 @@ Nodes are cached by file offset (`nodes_cache_by_offset`). Nodes with `is_cachab
 | Shiny variant filter | ✅ Working (PKX color extraction, live-editable shader node group, per-parameter UI) |
 | Unit tests | ✅ 409 passing |
 | Shader node auto-layout | ✅ Working (topological sort from output→inputs, left-to-right) |
+| Scale inheritance (animation baking) | ⚠️ Known issue — see below |
+
+### Scale Inheritance Issue
+
+Models with **non-uniform bone scale** (e.g. runpappa) produce garbled geometry when animations play. The previous `edit_scale_correction` bake formula (`local_edit.inv() @ parent_sc @ mtx @ sc.inv()`) does not produce identity at rest for bones whose parents have non-uniform scale, causing the armature modifier to distort envelope-weighted vertices.
+
+**Current workaround:** reverted to `Bmtx = rest_raw.inverted_safe() @ mtx` (matching the original addon's approach). This guarantees identity at rest and fixes the garbled meshes, but does not fully solve the underlying scale inheritance mismatch between HSD's aligned scale model and Blender's `inherit_scale = 'ALIGNED'` mode. Animations on models with non-uniform bone scale may still have subtle inaccuracies. Models with uniform scale (e.g. bohmander) are unaffected.
 
 ---
 
