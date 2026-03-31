@@ -522,7 +522,39 @@ class TestRealFileRoundtrip:
         """Parse a real file, write it back, reparse, compare node fields."""
         from importer.phases.extract.extract import extract_dat
         from shared.Nodes.Node import Node
-        from test_dat_write import compare_nodes
+
+        def compare_nodes(node_a, node_b, path="root", mismatches=None):
+            if mismatches is None:
+                mismatches = []
+            if type(node_a) != type(node_b):
+                mismatches.append(f"{path}: type mismatch {type(node_a).__name__} vs {type(node_b).__name__}")
+                return mismatches
+            if not hasattr(node_a, 'fields'):
+                return mismatches
+            for field_name, _ in node_a.fields:
+                val_a = getattr(node_a, field_name, None)
+                val_b = getattr(node_b, field_name, None)
+                field_path = f"{path}.{field_name}"
+                if isinstance(val_a, Node) and isinstance(val_b, Node):
+                    compare_nodes(val_a, val_b, field_path, mismatches)
+                elif isinstance(val_a, (list, tuple)) and isinstance(val_b, (list, tuple)):
+                    if len(val_a) != len(val_b):
+                        mismatches.append(f"{field_path}: list length {len(val_a)} vs {len(val_b)}")
+                    else:
+                        for i, (a, b) in enumerate(zip(val_a, val_b)):
+                            if isinstance(a, Node) and isinstance(b, Node):
+                                compare_nodes(a, b, f"{field_path}[{i}]", mismatches)
+                            elif isinstance(a, float) and isinstance(b, float):
+                                if abs(a - b) > 1e-5:
+                                    mismatches.append(f"{field_path}[{i}]: {a} vs {b}")
+                            elif a != b:
+                                mismatches.append(f"{field_path}[{i}]: {a!r} vs {b!r}")
+                elif isinstance(val_a, float) and isinstance(val_b, float):
+                    if abs(val_a - val_b) > 1e-5:
+                        mismatches.append(f"{field_path}: {val_a} vs {val_b}")
+                elif val_a != val_b and field_name != 'address':
+                    mismatches.append(f"{field_path}: {val_a!r} vs {val_b!r}")
+            return mismatches
 
         with open(dat_file, 'rb') as f:
             raw_bytes = f.read()

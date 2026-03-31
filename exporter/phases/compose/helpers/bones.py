@@ -7,9 +7,9 @@ child/next sibling tree structure used by the DAT format.
 from collections import defaultdict
 
 try:
-    from ......shared.Nodes.Classes.Joints.Joint import Joint
-    from ......shared.Constants.hsd import JOBJ_INSTANCE
-    from ......shared.helpers.logger import StubLogger
+    from .....shared.Nodes.Classes.Joints.Joint import Joint
+    from .....shared.Constants.hsd import JOBJ_INSTANCE
+    from .....shared.helpers.logger import StubLogger
 except (ImportError, SystemError):
     from shared.Nodes.Classes.Joints.Joint import Joint
     from shared.Constants.hsd import JOBJ_INSTANCE
@@ -72,6 +72,8 @@ def compose_bones(bones, logger=StubLogger()):
 
     root_joint = joints[roots[0]] if roots else None
 
-    logger.info("Composed %d bones into Joint tree", len(joints))
+    instance_count = sum(1 for b in bones if b.instance_child_bone_index is not None)
+    logger.info("    Composed %d bones into Joint tree (%d root(s), %d instance(s))",
+                len(joints), len(roots), instance_count)
 
     return root_joint, joints

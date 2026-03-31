@@ -5,8 +5,8 @@ For .pkx output, the existing PKX file is read via PKXContainer, the DAT
 payload is replaced, and shiny parameters are written back if provided.
 """
 try:
-    from .....shared.helpers.pkx import PKXContainer
-    from .....shared.helpers.logger import StubLogger
+    from ....shared.helpers.pkx import PKXContainer
+    from ....shared.helpers.logger import StubLogger
 except (ImportError, SystemError):
     from shared.helpers.pkx import PKXContainer
     from shared.helpers.logger import StubLogger

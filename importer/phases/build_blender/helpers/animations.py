@@ -254,7 +254,12 @@ def _bake_bone_track(track, action, bone_data, bones, max_frame, logger, armatur
         )
 
     # Pass 2: frame-by-frame baking
+    # Collect all baked values first, then batch-insert into fcurves.
+    # This avoids O(frames × log(k)) per-frame insert overhead.
     end_frame = min(int(track.end_frame), max_frame)
+
+    # Pre-allocate storage: 9 channels × end_frame values
+    baked_values = [[] for _ in range(TRANSFORM_COUNT)]
 
     for frame in range(end_frame):
         s = [transform_list[7].evaluate(frame),
@@ -326,15 +331,28 @@ def _bake_bone_track(track, action, bone_data, bones, max_frame, logger, armatur
             max(-max_scl, min(max_scl, scl[2])),
         ))
 
-        new_transform_list[0].keyframe_points.insert(frame, rot[0]).interpolation = 'BEZIER'
-        new_transform_list[1].keyframe_points.insert(frame, rot[1]).interpolation = 'BEZIER'
-        new_transform_list[2].keyframe_points.insert(frame, rot[2]).interpolation = 'BEZIER'
-        new_transform_list[4].keyframe_points.insert(frame, trans[0]).interpolation = 'BEZIER'
-        new_transform_list[5].keyframe_points.insert(frame, trans[1]).interpolation = 'BEZIER'
-        new_transform_list[6].keyframe_points.insert(frame, trans[2]).interpolation = 'BEZIER'
-        new_transform_list[7].keyframe_points.insert(frame, scl[0]).interpolation = 'BEZIER'
-        new_transform_list[8].keyframe_points.insert(frame, scl[1]).interpolation = 'BEZIER'
-        new_transform_list[9].keyframe_points.insert(frame, scl[2]).interpolation = 'BEZIER'
+        baked_values[0].append((frame, rot[0]))
+        baked_values[1].append((frame, rot[1]))
+        baked_values[2].append((frame, rot[2]))
+        baked_values[4].append((frame, trans[0]))
+        baked_values[5].append((frame, trans[1]))
+        baked_values[6].append((frame, trans[2]))
+        baked_values[7].append((frame, scl[0]))
+        baked_values[8].append((frame, scl[1]))
+        baked_values[9].append((frame, scl[2]))
+
+    # Batch-insert all keyframes: add() + bulk co/interpolation set is
+    # much faster than per-frame insert() which shifts the internal array.
+    for idx in [0, 1, 2, 4, 5, 6, 7, 8, 9]:
+        curve = new_transform_list[idx]
+        values = baked_values[idx]
+        if not values:
+            continue
+        curve.keyframe_points.add(len(values))
+        for i, (frame, value) in enumerate(values):
+            kp = curve.keyframe_points[i]
+            kp.co = (frame, value)
+            kp.interpolation = 'BEZIER'
 
     # Remove temporary raw fcurves
     for c in transform_list:

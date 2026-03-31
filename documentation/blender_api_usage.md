@@ -193,6 +193,41 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.80 | current | `matrix.inverted()` | `animations.py` | |
 | 2.80 | current | `matrix.decompose()` | `animations.py` | Returns `(trans, rot, scale)` |
 | | | | | |
+| | | **Exporter — Describe Blender (Phase 1)** | | |
+| 2.80 | current | `context.selected_objects` | `describe_blender.py` | Find selected armatures |
+| 2.80 | current | `obj.type` | `describe_blender.py`, `exporter/meshes.py` | Filter ARMATURE / MESH |
+| 2.80 | current | `bpy.context.view_layer.objects.active` | `exporter/skeleton.py` | Set active for mode switch |
+| 2.80 | current | `bpy.ops.object.select_all(action='DESELECT')` | `exporter/skeleton.py` | Clean selection state |
+| 2.80 | current | `armature.select_set(True)` | `exporter/skeleton.py` | Select armature for edit mode |
+| 2.80 | current | `bpy.ops.object.mode_set(mode='EDIT')` | `exporter/skeleton.py` | Enter edit mode to read bones |
+| 2.80 | current | `bpy.ops.object.mode_set(mode='OBJECT')` | `exporter/skeleton.py` | Return to object mode |
+| 2.80 | current | `armature_data.edit_bones` | `exporter/skeleton.py` | Iterate edit bones |
+| 2.80 | current | `edit_bone.parent` | `exporter/skeleton.py` | Parent bone reference |
+| 2.80 | current | `edit_bone.matrix` | `exporter/skeleton.py` | 4x4 bone matrix in armature space |
+| 2.80 | current | `edit_bone.hide` | `exporter/skeleton.py` | Bone visibility |
+| 2.80 | current | `edit_bone.children` | `exporter/skeleton.py` | Child bones for DFS traversal |
+| 2.80 | current | `matrix.decompose()` | `exporter/skeleton.py` | Decompose to (trans, quat, scale) |
+| 2.80 | current | `matrix.inverted()` | `exporter/skeleton.py` | Compute local from parent/child world |
+| 2.80 | current | `Matrix.Rotation(angle, size, axis)` | `exporter/skeleton.py` | Coordinate system conversion |
+| 2.80 | current | `Matrix.Identity(size)` | `exporter/skeleton.py` | Scale correction placeholder |
+| 2.80 | current | `quat.to_euler('XYZ')` | `exporter/skeleton.py` | Quaternion → Euler conversion |
+| 2.80 | current | `obj.parent` | `exporter/meshes.py` | Find meshes parented to armature |
+| 2.80 | current | `mesh_data.calc_loop_triangles()` | `exporter/meshes.py` | Ensure geometry is up to date |
+| 2.80 | current | `mesh_data.vertices` | `exporter/meshes.py` | Read vertex positions |
+| 2.80 | current | `mesh_data.polygons` | `exporter/meshes.py` | Read face indices |
+| 2.80 | current | `mesh_data.uv_layers` | `exporter/meshes.py` | Read UV layers |
+| 3.2 | current | `mesh_data.color_attributes` | `exporter/meshes.py` | Read vertex color layers (FLOAT_COLOR) |
+| 2.80 | current | `mesh_data.has_custom_normals` | `exporter/meshes.py` | Check for custom normals |
+| 4.1 | current | `mesh_data.corner_normals` | `exporter/meshes.py` | Per-loop normals (replaces `calc_normals_split()`) |
+| 2.80 | 4.0 | `mesh_data.calc_normals_split()` | `exporter/meshes.py` | Fallback for pre-4.1; removed in 4.1 |
+| 2.80 | current | `mesh_data.loops` | `exporter/meshes.py` | Read per-loop data (fallback path) |
+| 2.80 | current | `obj.vertex_groups` | `exporter/meshes.py` | Read vertex group list |
+| 2.80 | current | `vertex.groups` | `exporter/meshes.py` | Per-vertex group assignments |
+| 2.80 | current | `group_element.group` | `exporter/meshes.py` | Vertex group index |
+| 2.80 | current | `group_element.weight` | `exporter/meshes.py` | Vertex weight value |
+| 2.80 | current | `obj.hide_render` | `exporter/meshes.py` | Mesh visibility |
+| 2.80 | current | `material.use_backface_culling` | `exporter/meshes.py` | Backface culling flag |
+| | | | | |
 | | | **Third-Party Libraries** | | |
 | — | — | `numpy.frombuffer(bytes, dtype=np.uint8)` | `materials.py` | Image pixel conversion; bundled with Blender |
 | — | — | `ndarray.astype(np.float32) / 255.0` | `materials.py` | u8 → float32 normalization |

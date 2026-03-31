@@ -6,7 +6,7 @@ for export. Raises ValueError if any check fails, cancelling the export.
 import os
 
 try:
-    from .....shared.helpers.logger import StubLogger
+    from ....shared.helpers.logger import StubLogger
 except (ImportError, SystemError):
     from shared.helpers.logger import StubLogger
 

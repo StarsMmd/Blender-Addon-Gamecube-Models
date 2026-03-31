@@ -243,6 +243,7 @@ def _evaluate_track(keyframes, frame):
     """Evaluate a keyframe track at a given frame using the keyframes' interpolation.
 
     Supports CONSTANT, LINEAR, and BEZIER interpolation.
+    Uses binary search (bisect) for O(log n) keyframe lookup.
     """
     if not keyframes:
         return 0.0
@@ -255,30 +256,35 @@ def _evaluate_track(keyframes, frame):
     if frame >= keyframes[-1].frame:
         return keyframes[-1].value
 
-    # Find surrounding keyframes
-    for i in range(len(keyframes) - 1):
-        kf0 = keyframes[i]
-        kf1 = keyframes[i + 1]
-        if kf0.frame <= frame <= kf1.frame:
-            if kf0.interpolation == Interpolation.CONSTANT:
-                return kf0.value
+    # Binary search for the bracket containing frame
+    lo, hi = 0, len(keyframes) - 1
+    while lo < hi - 1:
+        mid = (lo + hi) // 2
+        if keyframes[mid].frame <= frame:
+            lo = mid
+        else:
+            hi = mid
 
-            t = (frame - kf0.frame) / (kf1.frame - kf0.frame) if kf1.frame != kf0.frame else 0.0
+    kf0 = keyframes[lo]
+    kf1 = keyframes[hi]
 
-            if kf0.interpolation == Interpolation.LINEAR:
-                return kf0.value + t * (kf1.value - kf0.value)
+    if kf0.interpolation == Interpolation.CONSTANT:
+        return kf0.value
 
-            if kf0.interpolation == Interpolation.BEZIER:
-                if kf0.handle_right and kf1.handle_left:
-                    # Cubic bezier: P0, P1 (handle_right of kf0), P2 (handle_left of kf1), P3
-                    p0 = kf0.value
-                    p1 = kf0.handle_right[1]
-                    p2 = kf1.handle_left[1]
-                    p3 = kf1.value
-                    u = 1 - t
-                    return u*u*u*p0 + 3*u*u*t*p1 + 3*u*t*t*p2 + t*t*t*p3
-                else:
-                    # No handles — fall back to linear
-                    return kf0.value + t * (kf1.value - kf0.value)
+    t = (frame - kf0.frame) / (kf1.frame - kf0.frame) if kf1.frame != kf0.frame else 0.0
+
+    if kf0.interpolation == Interpolation.LINEAR:
+        return kf0.value + t * (kf1.value - kf0.value)
+
+    if kf0.interpolation == Interpolation.BEZIER:
+        if kf0.handle_right and kf1.handle_left:
+            p0 = kf0.value
+            p1 = kf0.handle_right[1]
+            p2 = kf1.handle_left[1]
+            p3 = kf1.value
+            u = 1 - t
+            return u*u*u*p0 + 3*u*u*t*p1 + 3*u*t*t*p2 + t*t*t*p3
+        else:
+            return kf0.value + t * (kf1.value - kf0.value)
 
     return keyframes[-1].value

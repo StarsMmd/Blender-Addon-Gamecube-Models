@@ -29,12 +29,24 @@ class VertexList(Node):
     def writePrimitivePointers(self, builder):
         # Write vertex buffer data with deduplication.
         # Multiple VertexLists may share the same vertex buffers (same base_pointer).
-        # The builder pre-collects the max size per base_pointer and writes each once.
+        # Pre-collect the max buffer size per base_pointer in a single pass over all nodes,
+        # then write each unique buffer once.
         if not hasattr(builder, '_vertex_buffer_cache'):
             builder._vertex_buffer_cache = {}
+        if not hasattr(builder, '_vertex_buffer_max'):
+            max_map = {}
+            for node in builder.node_list:
+                if type(node).__name__ == 'VertexList':
+                    for v in node.vertices:
+                        if not hasattr(v, '_orig_base_pointer'):
+                            v._orig_base_pointer = v.base_pointer
+                        if hasattr(v, 'raw_vertex_data') and v.raw_vertex_data:
+                            bp = v._orig_base_pointer
+                            if bp not in max_map or len(v.raw_vertex_data) > len(max_map[bp]):
+                                max_map[bp] = v.raw_vertex_data
+            builder._vertex_buffer_max = max_map
 
         for vertex in self.vertices:
-            # Save original base_pointer before any modification
             if not hasattr(vertex, '_orig_base_pointer'):
                 vertex._orig_base_pointer = vertex.base_pointer
 
@@ -42,20 +54,11 @@ class VertexList(Node):
             if hasattr(vertex, 'raw_vertex_data') and vertex.raw_vertex_data:
                 orig_bp = vertex._orig_base_pointer
                 if orig_bp not in builder._vertex_buffer_cache:
-                    # Find the largest raw_vertex_data for this base_pointer across all VertexLists
-                    max_data = vertex.raw_vertex_data
-                    for other in builder.node_list:
-                        if type(other).__name__ == 'VertexList':
-                            for ov in other.vertices:
-                                obp = getattr(ov, '_orig_base_pointer', ov.base_pointer)
-                                if hasattr(ov, 'raw_vertex_data') and ov.raw_vertex_data and obp == orig_bp:
-                                    if len(ov.raw_vertex_data) > len(max_data):
-                                        max_data = ov.raw_vertex_data
+                    max_data = builder._vertex_buffer_max.get(orig_bp, vertex.raw_vertex_data)
                     # Write the largest buffer once
                     builder.seek(0, 'end')
                     new_addr = builder._currentRelativeAddress()
-                    for byte in max_data:
-                        builder.write(byte, 'uchar')
+                    builder.file.write(bytes(max_data))
                     builder._vertex_buffer_cache[orig_bp] = new_addr
 
                 vertex.base_pointer = builder._vertex_buffer_cache[orig_bp]

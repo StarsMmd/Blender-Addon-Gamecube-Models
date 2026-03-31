@@ -137,19 +137,42 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
 
 
 class ExportHSD(bpy.types.Operator, ExportHelper):
+    """Export selected armature(s) as a DAT model"""
     bl_idname = "export_model.dat"
     bl_label = "Export DAT"
 
     filename_ext = ".dat"
     filter_glob: StringProperty(default="*.dat;*.pkx", options={'HIDDEN'})
 
+    write_logs: BoolProperty(default=True, name='Write Logs',
+                            description='Write export logs to a temp file for debugging.')
+
     @classmethod
     def poll(cls, context):
-        return context.active_object is not None
+        return any(obj.type == 'ARMATURE' and obj.select_get() for obj in context.selected_objects)
 
     def execute(self, context):
-        self.report({'WARNING'}, "Export is not yet implemented.")
-        return {'CANCELLED'}
+        from .exporter.exporter import Exporter
+
+        model_name = os.path.splitext(os.path.basename(self.filepath))[0] or "export"
+
+        if self.write_logs:
+            logger = Logger(model_name=model_name)
+        else:
+            logger = StubLogger()
+
+        options = {}
+
+        try:
+            Exporter.run(context, self.filepath, options, logger=logger)
+        except Exception as error:
+            self.report({'ERROR'}, "Export failed: %s" % error)
+            logger.error("Export failed: %s", error)
+            logger.close()
+            return {'CANCELLED'}
+
+        self.report({'INFO'}, "Exported to %s" % self.filepath)
+        return {'FINISHED'}
 
 
 def _setup_anim_workspace(context):

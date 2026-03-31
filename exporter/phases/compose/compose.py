@@ -4,18 +4,19 @@ Takes an IRScene (the platform-agnostic intermediate representation) and
 reconstructs the SysDolphin node tree structure that can be serialized
 to a .dat binary by DATBuilder.
 
-Currently supports: skeleton (Joint tree).
+Currently supports: skeleton (Joint tree), meshes (Mesh/PObject chains).
 """
 try:
-    from .....shared.Nodes.Classes.Joints.ModelSet import ModelSet
-    from .....shared.Nodes.Classes.RootNodes.SceneData import SceneData
-    from .....shared.helpers.logger import StubLogger
+    from ....shared.Nodes.Classes.Joints.ModelSet import ModelSet
+    from ....shared.Nodes.Classes.RootNodes.SceneData import SceneData
+    from ....shared.helpers.logger import StubLogger
 except (ImportError, SystemError):
     from shared.Nodes.Classes.Joints.ModelSet import ModelSet
     from shared.Nodes.Classes.RootNodes.SceneData import SceneData
     from shared.helpers.logger import StubLogger
 
 from .helpers.bones import compose_bones
+from .helpers.meshes import compose_meshes
 
 
 def compose_scene(ir_scene, options=None, logger=StubLogger()):
@@ -33,15 +34,22 @@ def compose_scene(ir_scene, options=None, logger=StubLogger()):
     if options is None:
         options = {}
 
+    logger.info("=== Export Phase 2: Compose ===")
+
     root_nodes = []
     section_names = []
 
-    for model in ir_scene.models:
+    for mi, model in enumerate(ir_scene.models):
+        logger.info("  Composing model '%s' (%d bones, %d meshes)",
+                    model.name, len(model.bones), len(model.meshes))
+
         root_joint, joints = compose_bones(model.bones, logger)
         if root_joint is None:
+            logger.info("    Skipped: no bones")
             continue
 
-        # TODO: compose meshes and attach to joints via joint.property
+        compose_meshes(model.meshes, joints, model.bones, logger)
+
         # TODO: compose animations and attach to model_set
 
         model_set = ModelSet(address=None, blender_obj=None)
@@ -61,6 +69,6 @@ def compose_scene(ir_scene, options=None, logger=StubLogger()):
 
     # TODO: compose lights and add to scene_data.lights
 
-    logger.info("Composed %d scene(s)", len(root_nodes))
+    logger.info("=== Export Phase 2 complete: %d scene(s) ===", len(root_nodes))
 
     return root_nodes, section_names

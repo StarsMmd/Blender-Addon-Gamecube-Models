@@ -32,6 +32,26 @@ The exporter writes a Blender scene to a `.dat` or `.pkx` binary that can be use
 
 > This section is a work in progress.
 
+### Armature Selection
+
+The exporter exports **the currently selected armature(s)** in the scene. Each selected armature becomes one model in the output file.
+
+- Select the armature(s) you want to export before running the exporter
+- Meshes parented to a selected armature are automatically included
+- Meshes not parented to any selected armature are ignored
+
+### Bone Visibility
+
+Hidden bones in Blender are exported as hidden bones in the DAT file. Toggle bone visibility in the armature to control this.
+
+### Mesh-to-Bone Binding
+
+Each mesh must be parented to the armature. Bone assignments are determined from vertex groups:
+
+- **Weighted skinning**: Meshes with vertex groups assigned to multiple bones
+- **Single-bone binding**: Meshes where all vertices belong to one bone's vertex group
+- **No vertex groups**: Meshes with no vertex groups are bound to the root bone
+
 ### Base Model
 
 _WIP_
