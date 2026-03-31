@@ -159,3 +159,92 @@ def _set_instance_refs(joint, bones, jtb):
         _set_instance_refs(joint.next, bones, jtb)
 
 
+def fix_near_zero_bone_matrices(bones, bone_animations, logger=None):
+    """Recompute world matrices for bones with near-zero rest scale.
+
+    When a bone has near-zero scale at rest, its world matrix has near-zero
+    columns. Children's world matrices collapse to the parent's position.
+    This fixes them by substituting the "visible scale" found in animation
+    keyframes, then cascading corrected world matrices to all descendants.
+
+    Must run AFTER both describe_bones and describe_bone_animations, since
+    visible scales come from animation keyframe data.
+
+    Args:
+        bones: list[IRBone] — mutated in-place.
+        bone_animations: list[IRBoneAnimationSet] from describe_bone_animations.
+        logger: optional Logger instance.
+    """
+    nz = 0.001
+
+    # Find bones with near-zero rest scale
+    near_zero = set()
+    for i, bone in enumerate(bones):
+        if any(abs(bone.scale[c]) < nz for c in range(3)):
+            near_zero.add(i)
+
+    if not near_zero:
+        return
+
+    # Scan animation keyframes for visible scales
+    visible_scales = {}  # {bone_index: (sx, sy, sz)}
+    for anim_set in bone_animations:
+        for track in anim_set.tracks:
+            if track.bone_index not in near_zero:
+                continue
+            if track.bone_index in visible_scales:
+                continue
+            best = [None, None, None]
+            for ch in range(3):
+                for kf in track.scale[ch]:
+                    if abs(kf.value) >= nz and best[ch] is None:
+                        best[ch] = kf.value
+            if all(v is not None for v in best):
+                visible_scales[track.bone_index] = tuple(best)
+
+    if not visible_scales:
+        return
+
+    # Determine which bones need world matrix recomputation:
+    # near-zero bones with visible scales AND all their descendants
+    needs_recompute = set()
+    for idx in visible_scales:
+        needs_recompute.add(idx)
+    # Add all descendants of corrected bones
+    for i, bone in enumerate(bones):
+        if bone.parent_index in needs_recompute:
+            needs_recompute.add(i)
+
+    if logger:
+        logger.debug("  fix_near_zero_bone_matrices: %d near-zero, %d with visible scale, %d to recompute",
+                     len(near_zero), len(visible_scales), len(needs_recompute))
+
+    # Walk top-down (bones are in DFS order = parent before child)
+    for i in range(len(bones)):
+        if i not in needs_recompute:
+            continue
+
+        bone = bones[i]
+
+        if i in visible_scales:
+            # Recompute local matrix with visible scale
+            vis = visible_scales[i]
+            local = compile_srt_matrix(vis, bone.rotation, bone.position)
+        else:
+            # Descendant of a corrected bone — keep own local matrix
+            local = Matrix(bone.local_matrix)
+
+        # Recompute world matrix from (potentially corrected) parent
+        if bone.parent_index is not None:
+            parent_world = Matrix(bones[bone.parent_index].world_matrix)
+        else:
+            parent_world = Matrix.Identity(4)
+
+        world = parent_world @ local
+        normalized_world = world.normalized()
+
+        bone.world_matrix = matrix_to_list(world)
+        bone.normalized_world_matrix = matrix_to_list(normalized_world)
+
+        if i in visible_scales and logger:
+            logger.debug("    Bone_%d: corrected with visible_scale=%s", i, visible_scales[i])

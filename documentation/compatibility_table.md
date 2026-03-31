@@ -85,7 +85,7 @@ This table tracks every feature in the GameCube SysDolphin `.dat` format and its
 | Lights (SPOT) | ✅ | `IRLight` | ✅ | ❌ | With target + TRACK_TO |
 | Cameras | ✅ Parsed | `IRCamera` (stub) | ❌ | ❌ | |
 | Fog | ✅ Parsed | `IRFog` (stub) | ❌ | ❌ | |
-| Particles | ✅ Parsed | ❌ Not planned | ❌ | ❌ | |
+| Particles | ✅ Parsed | ❌ Needs research | ❌ | ❌ | |
 
 ## Keyframe Encoding
 

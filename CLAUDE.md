@@ -38,9 +38,19 @@ The IR is a platform-agnostic dataclass hierarchy (`shared/IR/`) that decouples 
 - Blender-specific baking (scale correction, Euler decomposition) happens in Phase 5 only
 - **When modifying the IR**, update `documentation/ir_spec.md` to match
 
-### Export Pipeline
+### Export Pipeline (pre-process + 4 phases)
 
-`DATBuilder` in `shared/IO/dat_builder.py` writes `.dat` binaries from an in-memory node tree. Round-trip functional (0 value mismatches on re-parse). The exporter stub is in `legacy/exporter/`.
+The export pipeline reverses the import pipeline. All phases live under `exporter/phases/`. The entry point is `Exporter.run()` in `exporter/exporter.py`.
+
+```
+Pre-process (pre_process)    Validate output path + scene
+Phase 1 (describe_blender)   Blender context → IRScene + shiny params
+Phase 2 (compose)            IRScene → node trees + section names
+Phase 3 (serialize)          node trees → DAT bytes (via DATBuilder)
+Phase 4 (package)            DAT bytes → final output (.dat or .pkx)
+```
+
+`DATBuilder` in `exporter/phases/serialize/helpers/dat_builder.py` writes `.dat` binaries from an in-memory node tree. Round-trip functional (0 value mismatches on re-parse).
 
 ### Entry Points
 
@@ -57,10 +67,9 @@ The IR is a platform-agnostic dataclass hierarchy (`shared/IR/`) that decouples 
 importer/
   importer.py                    # Importer.run() — pipeline entry point
   phases/
-    extract/extract.py           # Phase 1: container detection + header stripping
+    extract/extract.py           # Phase 1: container detection + header stripping (uses PKXContainer)
       helpers/fsys.py            # FSYS archive parser (header, metadata, LZSS decompression)
       helpers/lzss.py            # LZSS decompression algorithm
-      # Also: shiny param extraction (_extract_shiny_params, _is_noop_shiny)
     route/route.py               # Phase 2: section name → node type mapping
     parse/
       parse.py                   # Phase 3: wrapper around DATParser
@@ -85,14 +94,37 @@ shared/
     file_io.py                   # BinaryReader / BinaryWriter (stream-based)
     logger.py                    # Logger / StubLogger
     math_shim.py                 # Matrix/Vector/Euler (mathutils or pure-Python fallback)
+    pkx.py                       # PKXContainer — read/write PKX headers, DAT payloads, shiny params
+    shiny_params.py              # ShinyParams dataclass (channel routing + brightness)
     srgb.py                      # sRGB ↔ linear conversion
-  IO/dat_builder.py              # DATBuilder (export)
   ClassLookup/                   # Node type name → class resolution
   BlenderVersion.py              # Version comparison utility
 
+exporter/
+  exporter.py                        # Exporter.run() — pipeline entry point
+  phases/
+    pre_process/
+      pre_process.py                 # Pre-process: validate output path + scene
+    describe_blender/
+      describe_blender.py            # Phase 1 (export): Blender → IRScene
+    compose/
+      compose.py                     # Phase 2 (export): IRScene → node trees
+      helpers/
+        bones.py                     # IRBone list → Joint tree
+    serialize/
+      serialize.py                   # Phase 3 (export): node trees → DAT bytes
+      helpers/
+        dat_builder.py               # DATBuilder (binary serialization engine)
+    package/
+      package.py                     # Phase 4 (export): DAT bytes → final output
+
 legacy/                          # Pre-refactor code (functional, used when "Use Legacy" is checked)
 scripts/                         # Standalone Blender scripts (run from Scripting panel)
+utilities/                       # Developer tools (not Blender scripts)
+  dat_to_json.py                 # Parse .dat/.pkx → serialize node tree to JSON
+  json_to_ir.py                  # Deserialize JSON → node tree → describe → IR summary
 documentation/                   # Pipeline docs, API reference, compatibility tables, IR spec, scripts
+test models/                     # JSON node tree dumps from real models (gitignored, not committed)
 ```
 
 ### Dependency Rules
@@ -148,19 +180,47 @@ Nodes are cached by file offset (`nodes_cache_by_offset`). Nodes with `is_cachab
 | Bone instances (JOBJ_INSTANCE) | ✅ Working |
 | Shape animation import | ❌ Stubs only (not implemented in legacy either) |
 | Camera / Fog import | ❌ Stubs only |
-| Exporter (binary round-trip) | ✅ Functional (0 value mismatches) |
+| Exporter pipeline | ⚠️ Skeleton wired, phases stubbed — see export pipeline plan |
+| Exporter binary round-trip (DATBuilder) | ✅ Functional (0 value mismatches) |
+| Exporter PKX packaging | ✅ Working (DAT injection, shiny write-back, trailer preserved) |
 | IR pipeline | ✅ Default path (legacy available via toggle) |
 | FSYS archive import | ✅ Working (multi-model extraction + LZSS decompression) |
 | Shiny variant filter | ✅ Working (PKX color extraction, live-editable shader node group, per-parameter UI) |
-| Unit tests | ✅ 409 passing |
+| Unit tests | ✅ 443 passing |
 | Shader node auto-layout | ✅ Working (topological sort from output→inputs, left-to-right) |
-| Scale inheritance (animation baking) | ⚠️ Known issue — see below |
+| Scale inheritance (animation baking) | ⚠️ Partially resolved — hybrid approach, see below |
 
-### Scale Inheritance Issue
+### Scale Inheritance (Animation Baking) — ⚠️ Ongoing Investigation
 
-Models with **non-uniform bone scale** (e.g. runpappa) produce garbled geometry when animations play. The previous `edit_scale_correction` bake formula (`local_edit.inv() @ parent_sc @ mtx @ sc.inv()`) does not produce identity at rest for bones whose parents have non-uniform scale, causing the armature modifier to distort envelope-weighted vertices.
+**Core problem:** Blender edit bones can't store scale (always normalized to unit length). HSD bones have real rest scales (e.g. 0.189). The delta formula `rest.inv() @ animated` computes ratios relative to each bone's own "unit 1", but these units differ between bones. Blender's scale inheritance compounds these mismatched ratios, producing cascading errors on deeply-nested bones with non-uniform scale.
 
-**Current workaround:** reverted to `Bmtx = rest_raw.inverted_safe() @ mtx` (matching the original addon's approach). This guarantees identity at rest and fixes the garbled meshes, but does not fully solve the underlying scale inheritance mismatch between HSD's aligned scale model and Blender's `inherit_scale = 'ALIGNED'` mode. Animations on models with non-uniform bone scale may still have subtle inaccuracies. Models with uniform scale (e.g. bohmander) are unaffected.
+**Current hybrid approach (per-bone):**
+- **Uniform accumulated scale** (max/min ratio < 1.1): Uses the legacy `edit_scale_correction` sandwich formula + `inherit_scale='ALIGNED'`. Works correctly because uniform parent_scl creates no shear in `compile_srt_matrix`.
+- **Non-uniform accumulated scale**: Uses direct SRT delta (quaternion rotation, per-axis scale ratio, matrix-free location) + `inherit_scale='NONE'`. Avoids shear from TRS decomposition but doesn't propagate parent scale.
+
+**Phase 4 pre-processing:**
+- `rest_local_matrix` on `IRBoneTrack` pre-bakes format-specific corrections (keeps Phase 5 generic)
+- `_find_visible_scale_in_channels()` scans animation keyframes for bones hidden at rest (near-zero scale)
+- `fix_near_zero_bone_matrices()` recomputes world matrices for near-zero bones and descendants using visible scales — **bug: descendant cascade may not be transitive (only direct children, not grandchildren), causing subame's left wing to remain collapsed**
+- Path bone rotation applied symmetrically to both rest and animated matrices
+- Edit bones use `normalized_world_matrix` for stable placement
+
+**Known remaining issues:**
+- **subame**: Left wing still missing (collapsed bone positions). Right wing bones overly long. The `fix_near_zero_bone_matrices` descendant detection likely needs to be transitive (grandchildren and beyond).
+- **deoxys tentacles**: Greatly improved (no more 30,000x explosion) but still has some inaccuracy at the apex of extreme animations. The 3.7x scale ratio is mathematically correct per-bone but Blender's evaluation doesn't perfectly match HSD's scale composition for deeply-nested non-uniform chains.
+- **Fundamental tension**: TRS decomposition can't represent shear. When non-uniform scale and rotation both change, the delta matrix has shear that gets absorbed as wrong scale/rotation. The direct SRT delta avoids this for scale and rotation but the location computation may still have edge cases.
+
+**Key files:**
+- `importer/phases/describe/helpers/animations.py` — Phase 4: `rest_local_matrix`, visible scale scanning
+- `importer/phases/describe/helpers/bones.py` — Phase 4: `fix_near_zero_bone_matrices()`
+- `importer/phases/build_blender/helpers/animations.py` — Phase 5: hybrid bake formula
+- `importer/phases/build_blender/helpers/skeleton.py` — Phase 5: per-bone `inherit_scale`
+
+**Next steps to investigate:**
+1. Fix the descendant cascade in `fix_near_zero_bone_matrices()` — ensure grandchildren and deeper are also recomputed
+2. The direct SRT location computation (`delta_pos.rotate(rest_quat_inv)`) may differ from the legacy matrix-based location for some models — compare outputs
+3. For the "unit mismatch" problem on non-uniform bones: explore whether Blender's `inherit_scale='NONE'` mode can be combined with explicit scale compensation in the bake values
+4. The per-frame hierarchy walk for animated parent scales was attempted but the conversion from world matrices to Blender pose-bone space couldn't be solved due to Blender's opaque ALIGNED evaluation. Reverse-engineering `armature.cc`'s `BKE_bone_parent_transform_calc_from_matrices` could enable this.
 
 ---
 
@@ -172,6 +232,39 @@ Models with **non-uniform bone scale** (e.g. runpappa) produce garbled geometry 
 - All tests use `io.BytesIO` — no temp files
 - Tests cover: node parsing round-trip, IR type instantiation, helper functions, phase stubs
 - Round-trip test tool: `python3 test_dat_write.py <input_file>`
+
+### Round-Trip Test Types
+
+| Abbreviation | Name | Flow | Measures |
+|---|---|---|---|
+| **BNB** | Binary → Node → Binary | DAT bytes → parse → write → compare bytes | Binary-level fidelity (fuzzy word match) |
+| **NBN** | Node → Binary → Node | Parse → write → reparse → compare fields | Node field preservation through serialization |
+| **NIN** | Node → IR → Node | Parse → describe → compose → compare fields | IR round-trip fidelity |
+| **IBI** | IR → Blender → IR | Build → describe_blender → compare IR fields | Blender round-trip fidelity |
+
+NIN scores reflect the **full** node tree — not just the fields we've implemented compose for — so the percentage naturally increases as more compose helpers are added.
+
+See [Round-Trip Test Progress](documentation/round_trip_test_progress.md) for per-model scores across all test types. **When running round-trip tests and scores change**, update both the per-model percentages and the column header emojis (🔴 0-20% · 🟠 21-40% · 🟡 41-60% · 🔵 61-80% · ✅ 81-100%) in that document to reflect current averages.
+
+### Test Models
+
+JSON node tree dumps from real `.pkx` models live in `test models/` (gitignored). These are generated by `utilities/dat_to_json.py` and used for round-trip testing via `utilities/json_to_ir.py`.
+
+Available XD models: achamo, bohmander, cerebi, cokodora, frygon, gallop, haganeil, ken_a1, mage_0101, miniryu, rayquaza, runpappa, nukenin, usohachi.
+
+Available Colosseum models: ghos, heracros, hinoarashi, hizuki_a1, koduck, showers.
+
+To regenerate a test model JSON: `python3 utilities/dat_to_json.py <path_to_model.pkx> "test models/<name>.json"`
+
+Source models are in `~/Documents/Projects/DAT plugin/models/`.
+
+---
+
+## Naming Conventions for Exporter
+
+The exporter requires certain Blender objects to follow naming conventions so it can distinguish model features during export. The importer must apply the same naming conventions when creating Blender objects, ensuring round-trip fidelity.
+
+_(Conventions will be documented here as they are established for each feature.)_
 
 ---
 
@@ -222,3 +315,10 @@ The shiny parameters are stored as registered `bpy.props` properties on the arma
 - **Standalone scripts:** Any standalone Blender scripts (run from the Scripting panel) go in `scripts/` and must be documented in `documentation/scripts.md`.
 - **Blender API tracking:** Whenever a `bpy` API call is added, moved, removed, or modified, update `documentation/blender_api_usage.md` to match.
 - **Test count:** Whenever tests are added or removed, update the unit test count in the Current Status table above.
+
+---
+
+## Outstanding TODOs
+
+- [ ] Code audit: identify opportunities to simplify and clean up code
+- [ ] Code audit: identify opportunities to reduce algorithmic complexity

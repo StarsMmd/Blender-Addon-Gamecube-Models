@@ -42,7 +42,7 @@ def _populate_shiny_node_group(group, routing, brightness):
     links.new(group_in.outputs[0], separate.inputs[0])
 
     needs_alpha_input = any(
-        routing[i] == ShinyChannel.ALPHA for i in range(3)
+        routing[i] == ShinyChannel.ALPHA for i in range(4)
     )
 
     channel_sources = {
@@ -65,8 +65,10 @@ def _populate_shiny_node_group(group, routing, brightness):
                     break
         channel_sources[ShinyChannel.ALPHA] = None
 
+    # For each RGBA output channel: route source → multiply by brightness
+    channel_names = ['R', 'G', 'B', 'A']
     scaled_channels = []
-    for i in range(3):
+    for i in range(4):
         source_channel = routing[i]
         source_socket = channel_sources[source_channel]
         brightness_multiplier = brightness[i] + 1.0
@@ -74,7 +76,7 @@ def _populate_shiny_node_group(group, routing, brightness):
         if source_socket is not None:
             mult = nodes.new('ShaderNodeMath')
             mult.operation = 'MULTIPLY'
-            mult.name = 'Brightness_%s' % ['R', 'G', 'B'][i]
+            mult.name = 'Brightness_%s' % channel_names[i]
             links.new(source_socket, mult.inputs[0])
             mult.inputs[1].default_value = brightness_multiplier
             scaled_channels.append(mult.outputs[0])
@@ -83,6 +85,7 @@ def _populate_shiny_node_group(group, routing, brightness):
             value.outputs[0].default_value = 0.0
             scaled_channels.append(value.outputs[0])
 
+    # Recombine RGB channels
     combine = nodes.new('ShaderNodeCombineColor')
     combine.mode = 'RGB'
     links.new(scaled_channels[0], combine.inputs[0])
@@ -98,7 +101,19 @@ def _populate_shiny_node_group(group, routing, brightness):
 
     links.new(gamma.outputs[0], group_out.inputs[0])
 
+    # Alpha output
+    _ensure_alpha_output(group)
+    links.new(scaled_channels[3], group_out.inputs[1])
+
     _auto_layout(nodes, links, output_type='GROUP_OUTPUT')
+
+
+def _ensure_alpha_output(group):
+    """Add an Alpha output socket if it doesn't already exist."""
+    for item in group.interface.items_tree:
+        if item.name == 'Alpha' and item.in_out == 'OUTPUT':
+            return
+    group.interface.new_socket('Alpha', in_out='OUTPUT', socket_type='NodeSocketFloat')
 
 
 def _find_color_input(nodes):
@@ -272,6 +287,7 @@ def main():
     group = bpy.data.node_groups.new(group_name, 'ShaderNodeTree')
     group.interface.new_socket('Color', in_out='INPUT', socket_type='NodeSocketColor')
     group.interface.new_socket('Color', in_out='OUTPUT', socket_type='NodeSocketColor')
+    group.interface.new_socket('Alpha', in_out='OUTPUT', socket_type='NodeSocketFloat')
     _populate_shiny_node_group(group, noop_routing, noop_brightness)
 
     # Set up armature properties

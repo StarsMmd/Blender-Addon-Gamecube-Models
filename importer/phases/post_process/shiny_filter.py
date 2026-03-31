@@ -50,7 +50,7 @@ def populate_shiny_node_group(group, routing, brightness):
     links.new(group_in.outputs[0], separate.inputs[0])
 
     needs_alpha_input = any(
-        routing[i] == ShinyChannel.ALPHA for i in range(3)
+        routing[i] == ShinyChannel.ALPHA for i in range(4)
     )
 
     channel_sources = {
@@ -76,9 +76,10 @@ def populate_shiny_node_group(group, routing, brightness):
                     break
         channel_sources[ShinyChannel.ALPHA] = None
 
-    # For each RGB output channel: route source → multiply by brightness
+    # For each RGBA output channel: route source → multiply by brightness
+    channel_names = ['R', 'G', 'B', 'A']
     scaled_channels = []
-    for i in range(3):
+    for i in range(4):
         source_channel = routing[i]
         source_socket = channel_sources[source_channel]
         brightness_multiplier = brightness[i] + 1.0  # [-1,1] → [0,2]
@@ -86,7 +87,7 @@ def populate_shiny_node_group(group, routing, brightness):
         if source_socket is not None:
             mult = nodes.new('ShaderNodeMath')
             mult.operation = 'MULTIPLY'
-            mult.name = 'Brightness_%s' % ['R', 'G', 'B'][i]
+            mult.name = 'Brightness_%s' % channel_names[i]
             links.new(source_socket, mult.inputs[0])
             mult.inputs[1].default_value = brightness_multiplier
             scaled_channels.append(mult.outputs[0])
@@ -95,6 +96,7 @@ def populate_shiny_node_group(group, routing, brightness):
             value.outputs[0].default_value = 0.0
             scaled_channels.append(value.outputs[0])
 
+    # Recombine RGB channels
     combine = nodes.new('ShaderNodeCombineColor')
     combine.mode = 'RGB'
     links.new(scaled_channels[0], combine.inputs[0])
@@ -110,7 +112,19 @@ def populate_shiny_node_group(group, routing, brightness):
 
     links.new(gamma.outputs[0], group_out.inputs[0])
 
+    # Alpha output
+    _ensure_socket(group, 'Alpha', 'OUTPUT', 'NodeSocketFloat')
+    links.new(scaled_channels[3], group_out.inputs[1])
+
     _auto_layout_node_group(nodes, links)
+
+
+def _ensure_socket(group, name, in_out, socket_type):
+    """Add an interface socket if it doesn't already exist."""
+    for item in group.interface.items_tree:
+        if item.name == name and item.in_out == in_out:
+            return
+    group.interface.new_socket(name, in_out=in_out, socket_type=socket_type)
 
 
 def build_shiny_node_group(shiny_filter, name):
@@ -127,6 +141,7 @@ def build_shiny_node_group(shiny_filter, name):
 
     group.interface.new_socket('Color', in_out='INPUT', socket_type='NodeSocketColor')
     group.interface.new_socket('Color', in_out='OUTPUT', socket_type='NodeSocketColor')
+    group.interface.new_socket('Alpha', in_out='OUTPUT', socket_type='NodeSocketFloat')
 
     populate_shiny_node_group(group, shiny_filter.channel_routing, shiny_filter.brightness)
 

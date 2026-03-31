@@ -31,22 +31,35 @@ class IRSplinePath:
 
 @dataclass
 class IRBoneTrack:
-    """Decoded animation keyframes for one bone in HSD world-space SRT.
+    """Decoded animation keyframes for one bone.
 
-    Channels contain decoded keyframes (not compressed bytes, not Blender-baked).
-    The target-specific baking (e.g. Blender scale correction + Euler decomposition)
-    happens in the build phase.
+    Channels contain decoded keyframes (not compressed bytes, not target-baked).
+    Keyframe values are raw per-channel SRT values from the source format.
+    The build phase composes them via plain T @ R @ S (no format-specific corrections).
+
+    The rest_local_matrix is a 4x4 matrix encoding the bone's rest-pose local
+    transform with all format-specific corrections pre-applied (e.g. aligned
+    scale inheritance from the source engine). The build phase uses it as:
+        Bmtx = rest_local_matrix.inv() @ animated_SRT_matrix
+    This keeps format-specific logic in the describe phase and lets the build
+    phase work with generic matrices.
+
+    For bones hidden at rest (near-zero scale), the rest_local_matrix uses a
+    "visible scale" discovered by scanning animation keyframes, ensuring the
+    inverse is numerically stable.
     """
     bone_name: str
     bone_index: int
     rotation: list[list[IRKeyframe]]  # [X, Y, Z] channels
     location: list[list[IRKeyframe]]  # [X, Y, Z] channels
     scale: list[list[IRKeyframe]]     # [X, Y, Z] channels
-    # Rest pose (needed by build phase for baking)
+    # Rest-pose local matrix (4x4) with format-specific corrections pre-applied.
+    # The build phase inverts this and multiplies by the animated T@R@S matrix.
+    rest_local_matrix: list[list[float]] | None = None
+    # Raw rest-pose SRT — used to fill missing animation channels with constants
     rest_rotation: tuple[float, float, float] = (0.0, 0.0, 0.0)
     rest_position: tuple[float, float, float] = (0.0, 0.0, 0.0)
     rest_scale: tuple[float, float, float] = (1.0, 1.0, 1.0)
-    parent_accumulated_scale: tuple[float, float, float] | None = None
     end_frame: float = 0  # animation duration from the source Animation object
     # Path animation — bone follows a spline curve (mutually exclusive with SRT location)
     spline_path: IRSplinePath | None = None

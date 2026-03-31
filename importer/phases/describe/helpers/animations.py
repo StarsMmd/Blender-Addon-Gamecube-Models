@@ -120,11 +120,26 @@ def _describe_bone_track(aobj, joint, bone, bone_index, bones, logger=None):
                     bone.name, bone_index, len(spline_path.parameter_keyframes),
                     len(spline_path.control_points), spline_path.curve_type)
 
-    # Parent accumulated scale
-    parent_scl = None
-    if bone.parent_index is not None:
-        parent_bone = bones[bone.parent_index]
-        parent_scl = parent_bone.accumulated_scale
+    # Compute the rest-pose local matrix as plain T @ R @ S (no parent_scl
+    # correction). The animated matrix in Phase 5 also uses plain T @ R @ S,
+    # so they cancel at rest (identity). Blender's ALIGNED inheritance handles
+    # parent scale propagation at evaluation time.
+    #
+    # The parent_scl correction from HSD's aligned scale inheritance is NOT
+    # applied here because it creates shear in the matrix. TRS decomposition
+    # can't represent shear, causing cascading errors in deep bone chains.
+    #
+    # Near-zero guard: bones hidden at rest (scale ≈ 0) use a "visible scale"
+    # discovered by scanning animation keyframes.
+    rest_scale = tuple(joint.scale)
+    nz = 0.001
+    if any(abs(rest_scale[c]) < nz for c in range(3)):
+        vis = _find_visible_scale_in_channels(scale)
+        use_scale = vis if vis is not None else rest_scale
+    else:
+        use_scale = rest_scale
+
+    rest_local = compile_srt_matrix(use_scale, joint.rotation, joint.position)
 
     return IRBoneTrack(
         bone_name=bone.name,
@@ -132,13 +147,34 @@ def _describe_bone_track(aobj, joint, bone, bone_index, bones, logger=None):
         rotation=rotation,
         location=location,
         scale=scale,
+        rest_local_matrix=matrix_to_list(rest_local),
         rest_rotation=tuple(joint.rotation),
         rest_position=tuple(joint.position),
-        rest_scale=tuple(joint.scale),
-        parent_accumulated_scale=parent_scl,
+        rest_scale=rest_scale,
         end_frame=aobj.end_frame,
         spline_path=spline_path,
     )
+
+
+def _find_visible_scale_in_channels(scale_channels):
+    """Find a non-zero scale from animation keyframes for a near-zero rest bone.
+
+    Args:
+        scale_channels: list of 3 keyframe lists [X, Y, Z] for scale.
+
+    Returns:
+        (sx, sy, sz) tuple if a visible scale was found, else None.
+    """
+    nz = 0.001
+    best = [None, None, None]
+    for ch in range(3):
+        for kf in scale_channels[ch]:
+            if abs(kf.value) >= nz:
+                if best[ch] is None:
+                    best[ch] = kf.value
+    if all(v is not None for v in best):
+        return tuple(best)
+    return None
 
 
 def _extract_spline_path(aobj, joint, bone, bones, fobj, logger):

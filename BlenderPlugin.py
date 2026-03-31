@@ -92,7 +92,7 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
         IRImporter.run(context, raw_bytes, filename, options, logger=logger)
 
     def _import_legacy(self, context, path):
-        """Run Phase 1 (extract) + Phase 2 (route), legacy import, then Phase 6 (post-process)."""
+        """Run extract + route, legacy import, then post-process."""
         from .importer.phases.post_process.post_process import post_process
 
         with open(path, 'rb') as f:
@@ -139,6 +139,9 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
 class ExportHSD(bpy.types.Operator, ExportHelper):
     bl_idname = "export_model.dat"
     bl_label = "Export DAT"
+
+    filename_ext = ".dat"
+    filter_glob: StringProperty(default="*.dat;*.pkx", options={'HIDDEN'})
 
     @classmethod
     def poll(cls, context):

@@ -69,9 +69,19 @@ def build_skeleton(ir_model, context, options, logger=StubLogger(), model_index=
         if bone_data.parent_index is not None:
             bone.parent = edit_bones[bone_data.parent_index]
 
-        # Set world matrix
-        bone.matrix = Matrix(bone_data.world_matrix)
-        bone.inherit_scale = 'ALIGNED'
+        # Set world matrix — use normalized to avoid degenerate edit bones when
+        # rest scale is near-zero (hidden mesh bones). Blender normalizes the
+        # matrix internally anyway; our pre-normalized version is numerically stable.
+        bone.matrix = Matrix(bone_data.normalized_world_matrix)
+
+        # Per-bone inherit_scale: ALIGNED for uniform accumulated scale
+        # (correct scale propagation, no shear), NONE for non-uniform
+        # (prevents cascading scale errors from TRS decomposition limits).
+        accum = bone_data.accumulated_scale
+        mn = min(abs(x) for x in accum)
+        mx = max(abs(x) for x in accum)
+        is_uniform = (mn < 0.001) or (mx / max(mn, 1e-9) < 1.1)
+        bone.inherit_scale = 'ALIGNED' if is_uniform else 'NONE'
 
         edit_bones.append(bone)
 

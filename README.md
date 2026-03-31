@@ -1,8 +1,6 @@
 # Blender SysDolphin Addon
 
-A Blender addon for importing GameCube `.dat` models into Blender. This addon is currently developed predominantly for `Pokemon Colosseum` and `Pokemon XD: Gale of Darkness` but may have some compatibility with other games that use the format (based on the SysDolphin library) such as `Super Smash Bros. Melee`, `Kirby Air Ride`, `Chibi-Robo! Plug Into Adventure!` and `Killer7`.
-
-The importer uses a 6-phase pipeline with an Intermediate Representation (IR) that decouples binary parsing from Blender object creation. A legacy import path is also available via a toggle for comparison.
+A Blender addon for importing and exporting GameCube `.dat` models. This addon is currently developed predominantly for `Pokemon Colosseum` and `Pokemon XD: Gale of Darkness` but may have some compatibility with other games that use the format (based on the SysDolphin library) such as `Super Smash Bros. Melee`, `Kirby Air Ride`, `Chibi-Robo! Plug Into Adventure!` and `Killer7`.
 
 Original implementation provided by Made.
 
@@ -11,6 +9,8 @@ Original implementation provided by Made.
 **Target Blender version:** 4.5.7 LTS
 
 ## Installation
+
+**This addon requires Blender 4.5.7 LTS. Using even a slightly different version of Blender may produce unexpected results.**
 
 This addon uses Blender's extensions system. Compress the contents of this repository into a `.zip` file and install it via **Edit > Preferences > Extensions** (drag-and-drop the `.zip` into Blender also works). When the addon is enabled, navigate to **File > Import > Gamecube model (.dat)** and select your model file.
 
@@ -44,13 +44,23 @@ The panel also exposes all 8 shiny parameters for live editing:
 
 Not every Pokemon has shiny parameters in its PKX file — some (e.g. legendaries and starters) use a separate model for their shiny form instead. For these models, the Shiny Variant panel will not appear. See `documentation/shiny_variants.md` for technical details. Shiny variants are not available with the legacy importer setting enabled.
 
+The shiny filter can also be added to any model manually using the standalone script documented in [Scripts](documentation/scripts.md).
+
+## Exporting
+
+> **Work in progress** — the exporter is not yet functional.
+
+The exporter writes a Blender scene to a `.dat` or `.pkx` binary. See the [Exporter Usage](documentation/exporter_usage.md) documentation for details on supported features and planned functionality.
+
 ## Remaining Work
 
 - [ ] Shape animation import
 - [ ] Camera import
 - [ ] Fog import
-- [ ] Blender scene to IR (export describe phase)
-- [ ] IR to node tree (export build phase)
+- [ ] Exporter: Blender scene → IR (describe phase)
+- [ ] Exporter: IR → node trees (compose phase — skeleton done, meshes/materials/animations TODO)
+- [ ] Code audit: identify opportunities to simplify and clean up code
+- [ ] Code audit: identify opportunities to reduce algorithmic complexity
 
 ## Code Structure
 
@@ -69,12 +79,20 @@ shared/
   IR/                      # Intermediate Representation dataclasses
   Nodes/                   # Node class definitions (parsing + writing only, no bpy)
   Constants/               # HSD/GX format constants
-  helpers/                 # Binary I/O, logging, math utilities, sRGB conversion
-  IO/                      # DATBuilder (binary export), BinaryReader/Writer
+  helpers/                 # Binary I/O, logging, math utilities, PKX container, sRGB
+
+exporter/
+  exporter.py              # Pipeline entry point: Exporter.run()
+  phases/
+    pre_process/           # Pre-process: validate output path + scene
+    describe_blender/      # Phase 1: Blender -> IR dataclasses
+    compose/               # Phase 2: IR -> node trees
+    serialize/             # Phase 3: node trees -> DAT bytes (DATBuilder)
+    package/               # Phase 4: DAT bytes -> final output (.dat or .pkx)
 
 legacy/                    # Pre-refactor importer (available via "Use Legacy" toggle)
 documentation/             # Pipeline docs, API reference, compatibility table, IR spec
-tests/                     # pytest suite (292 tests, no game files required)
+tests/                     # pytest suite (443 tests, no game files required)
 ```
 
 ## Developer Instructions
@@ -107,16 +125,19 @@ cd colo_xd
 python3 -m pytest tests/ -q
 ```
 
+For round-trip testing with real model files, see [Round-Trip Test Progress](documentation/round_trip_test_progress.md).
+
 ## Documentation
 
 Detailed documentation lives in the `documentation/` folder:
 
-- [**Import Pipeline Plan**](documentation/import_pipeline_plan.md) — design and architecture of the 6-phase import pipeline
 - [**Export Pipeline Plan**](documentation/export_pipeline_plan.md) — design for the export pipeline (DAT writing)
+- [**Round-Trip Test Progress**](documentation/round_trip_test_progress.md) — NBN/NIN/IBI/BNB test results per model
 - [**IR Specification**](documentation/ir_specification.md) — the Intermediate Representation dataclass hierarchy and design principles
 - [**Compatibility Table**](documentation/compatibility_table.md) — feature support across different games and file types
 - [**Blender API Usage**](documentation/blender_api_usage.md) — reference for Blender Python API patterns used in the addon
 - [**Shiny Variants**](documentation/shiny_variants.md) — how the game stores shiny color data and how the addon implements it
+- [**Exporter Usage**](documentation/exporter_usage.md) — supported features and usage guide for the exporter (WIP)
 - [**Scripts**](documentation/scripts.md) — standalone Blender scripts and how to run them
 
 ## Community
