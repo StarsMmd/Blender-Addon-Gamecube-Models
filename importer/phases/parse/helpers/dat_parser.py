@@ -200,17 +200,19 @@ class DATParser(BinaryReader):
 			current_offset += field_length
 
 		# Inject array bounds into fields as appropriate
+		# Build replacement map once, then single pass over fields
+		bound_replacements = {}
 		for name, number in uint_fields.items():
-			bound_string = "[" + name + "]"
-			replacement_bound =  "[" + str(number) + "]"
-			for i, field in enumerate(fields):
-				field_name = field[0]
-				field_type = markUpFieldType(field[1])
+			bound_replacements["[" + name + "]"] = "[" + str(number) + "]"
 
-				if bound_string in field_type:
-					self.logger.debug("replacing bounded array var: %s -> %s", bound_string, replacement_bound)
-					updated_type = field_type.replace(bound_string, replacement_bound)
-					fields[i] = (field_name, updated_type)
+		if bound_replacements:
+			for i, field in enumerate(fields):
+				field_type = markUpFieldType(field[1])
+				for bound_string, replacement_bound in bound_replacements.items():
+					if bound_string in field_type:
+						self.logger.debug("replacing bounded array var: %s -> %s", bound_string, replacement_bound)
+						field_type = field_type.replace(bound_string, replacement_bound)
+						fields[i] = (field[0], field_type)
 
 
 		current_offset = 0

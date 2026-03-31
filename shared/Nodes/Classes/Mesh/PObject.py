@@ -151,7 +151,7 @@ class PObject(Node):
                     if vertex.attribute_type == gx.GX_DIRECT:
                         indices.append(index)
                     else:
-                        if not index in norm_dict.keys():
+                        if index not in norm_dict:
                             norm_dict[index] = norm_index
                             norm_index += 1
                         indices.append(norm_dict[index])

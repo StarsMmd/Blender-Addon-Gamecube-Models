@@ -321,4 +321,5 @@ The shiny parameters are stored as registered `bpy.props` properties on the arma
 ## Outstanding TODOs
 
 - [ ] Code audit: identify opportunities to simplify and clean up code
-- [ ] Code audit: identify opportunities to reduce algorithmic complexity
+- [x] Code audit: identify opportunities to reduce algorithmic complexity — see [complexity optimization plan](documentation/complexity_optimization_plan.md)
+- [ ] Implement remaining complexity optimizations (items 1-3 in the plan above)
