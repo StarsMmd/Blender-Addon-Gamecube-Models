@@ -231,7 +231,13 @@ def compute_nin_score(filepath):
 # ---------------------------------------------------------------------------
 
 def compute_ibi_score(filepath):
-    """Parse through phase 4 to get IR, build in Blender, read back, compare."""
+    """Parse through phase 4 to get IR, build in Blender, read back, compare.
+
+    Uses category-weighted scoring: each IR category (bones, meshes,
+    materials, animations, constraints, lights) is scored independently,
+    then the scores are averaged across categories that have data. This
+    prevents large vertex arrays from drowning out other features.
+    """
     clear_blender_scene()
 
     _, sections = load_model(filepath)
@@ -243,18 +249,22 @@ def compute_ibi_score(filepath):
     # Read back from Blender (export phase 1)
     ir_roundtripped, _ = read_back_from_blender(build_results)
 
-    # Compare IR scenes
-    total, mismatches, details = _compare_ir_scenes(ir_original, ir_roundtripped)
+    # Compare IR scenes by category
+    categories, details = _compare_ir_by_category(ir_original, ir_roundtripped)
 
-    matched = total - mismatches
-    pct = (matched / total * 100) if total > 0 else 100.0
+    # Average across categories that have data
+    scored = {k: v for k, v in categories.items() if v['total'] > 0}
+    if scored:
+        pct = sum(v['pct'] for v in scored.values()) / len(scored)
+    else:
+        pct = 100.0
 
     clear_blender_scene()
-    return matched, total, pct, details
+    return 0, 0, pct, details, categories
 
 
 # ---------------------------------------------------------------------------
-# IR comparison — generic dataclass walker
+# IR comparison — category-weighted scoring
 # ---------------------------------------------------------------------------
 
 # Fields to skip during comparison (internal/computed, not meaningful for round-trip)
@@ -266,95 +276,197 @@ _SKIP_FIELDS = {
     'deformed_vertices', 'deformed_normals',
 }
 
-# Maximum number of detail lines to keep per mismatch category to avoid
-# flooding output on large meshes
-_MAX_DETAILS = 50
+# Maximum number of detail lines per category
+_MAX_DETAILS_PER_CAT = 10
 
 
-def _compare_ir_scenes(ir_a, ir_b):
-    """Walk the ORIGINAL IR to count every field as the denominator.
+def _compare_ir_by_category(ir_a, ir_b):
+    """Compare two IRScenes with per-category scoring.
 
-    When the round-tripped side is missing data (None, empty list, etc.),
-    all fields in the original subtree count as mismatches. This ensures
-    the score reflects overall export completeness, not just the subset
-    of features currently implemented.
+    Categories:
+        bones      — IRBone list (SRT, flags, hierarchy, inverse_bind)
+        meshes     — IRMesh list (geometry, UVs, colors, normals, weights)
+        materials  — IRMaterial on each mesh
+        animations — IRBoneAnimationSet list
+        constraints — all constraint lists
+        lights     — IRLight list
 
-    Returns (total, mismatches, details).
+    Returns:
+        (categories_dict, details_list)
+        categories_dict maps category name → {total, mismatches, pct}
     """
-    total = [0]
-    mismatches = [0]
+    categories = {}
+    all_details = []
+
+    # Compare per-model
+    models_a = ir_a.models if ir_a else []
+    models_b = ir_b.models if ir_b else []
+
+    for mi in range(max(len(models_a), len(models_b))):
+        ma = models_a[mi] if mi < len(models_a) else None
+        mb = models_b[mi] if mi < len(models_b) else None
+        if ma is None:
+            continue
+
+        # Bones
+        _score_category(categories, all_details, 'bones',
+                        ma.bones, mb.bones if mb else [],
+                        f"model[{mi}].bones")
+
+        # Meshes (geometry only, material scored separately)
+        meshes_a_no_mat = []
+        meshes_b_no_mat = []
+        for m in ma.meshes:
+            meshes_a_no_mat.append(_strip_material(m))
+        if mb:
+            for m in mb.meshes:
+                meshes_b_no_mat.append(_strip_material(m))
+        _score_category(categories, all_details, 'meshes',
+                        meshes_a_no_mat, meshes_b_no_mat,
+                        f"model[{mi}].meshes")
+
+        # Materials (from each mesh's .material field)
+        mats_a = [m.material for m in ma.meshes]
+        mats_b = [m.material for m in mb.meshes] if mb else []
+        _score_category(categories, all_details, 'materials',
+                        mats_a, mats_b,
+                        f"model[{mi}].materials")
+
+        # Animations
+        _score_category(categories, all_details, 'animations',
+                        ma.bone_animations,
+                        mb.bone_animations if mb else [],
+                        f"model[{mi}].bone_animations")
+
+        # Constraints (combine all constraint lists)
+        cons_a = (ma.ik_constraints + ma.copy_location_constraints +
+                  ma.track_to_constraints + ma.copy_rotation_constraints +
+                  ma.limit_rotation_constraints + ma.limit_location_constraints)
+        cons_b = []
+        if mb:
+            cons_b = (mb.ik_constraints + mb.copy_location_constraints +
+                      mb.track_to_constraints + mb.copy_rotation_constraints +
+                      mb.limit_rotation_constraints + mb.limit_location_constraints)
+        _score_category(categories, all_details, 'constraints',
+                        cons_a, cons_b,
+                        f"model[{mi}].constraints")
+
+    # Lights
+    _score_category(categories, all_details, 'lights',
+                    ir_a.lights if ir_a else [],
+                    ir_b.lights if ir_b else [],
+                    "scene.lights")
+
+    return categories, all_details
+
+
+def _strip_material(mesh):
+    """Create a shallow copy of an IRMesh-like object without the material field."""
+    class MeshNoMat:
+        pass
+    m = MeshNoMat()
+    m.__dataclass_fields__ = {k: v for k, v in mesh.__dataclass_fields__.items()
+                               if k != 'material'}
+    for k in m.__dataclass_fields__:
+        setattr(m, k, getattr(mesh, k))
+    return m
+
+
+def _score_category(categories, all_details, cat_name, list_a, list_b, path_prefix):
+    """Score a single category by comparing two lists of IR objects.
+
+    Categories where the original data is empty (no items to test) are
+    recorded with total=0 so they're excluded from the average.
+    """
+    if cat_name not in categories:
+        categories[cat_name] = {'total': 0, 'mismatches': 0, 'pct': 0.0}
+
+    # Skip categories where the original has no data — nothing to test
+    orig_items = list_a if isinstance(list_a, (list, tuple)) else [list_a]
+    if not any(item is not None for item in orig_items):
+        return
+
+    cat = categories[cat_name]
     details = []
 
-    def _add_mismatch(path, msg):
-        mismatches[0] += 1
-        if len(details) < _MAX_DETAILS:
-            details.append(f"{path}: {msg}")
+    total, mismatches = _compare_ir_values(list_a, list_b, path_prefix, details)
+    cat['total'] += total
+    cat['mismatches'] += mismatches
+    cat['pct'] = ((cat['total'] - cat['mismatches']) / cat['total'] * 100
+                  if cat['total'] > 0 else 0.0)
 
-    def _walk(orig, comp, path):
-        """Recursively compare an original value against its round-tripped counterpart."""
-        if orig is None:
+    all_details.extend(details[:_MAX_DETAILS_PER_CAT])
+
+
+def _compare_ir_values(orig, comp, path, details):
+    """Compare two IR values recursively. Returns (total, mismatches)."""
+    total = [0]
+    mismatches = [0]
+
+    def _add_mismatch(p, msg):
+        mismatches[0] += 1
+        details.append(f"{p}: {msg}")
+
+    def _walk(orig_val, comp_val, p):
+        if orig_val is None:
             return
 
         # Dataclass: walk all fields
-        if _is_dataclass(orig):
-            for field_name in _dataclass_field_names(orig):
+        if _is_dataclass(orig_val):
+            for field_name in _dataclass_field_names(orig_val):
                 if field_name in _SKIP_FIELDS:
                     continue
-                val_orig = getattr(orig, field_name, None)
-                val_comp = getattr(comp, field_name, None) if comp is not None else None
-                _walk(val_orig, val_comp, f"{path}.{field_name}")
+                val_orig = getattr(orig_val, field_name, None)
+                val_comp = getattr(comp_val, field_name, None) if comp_val is not None else None
+                _walk(val_orig, val_comp, f"{p}.{field_name}")
             return
 
-        # List/tuple: compare length then elements
-        if isinstance(orig, (list, tuple)):
+        # List/tuple
+        if isinstance(orig_val, (list, tuple)):
             total[0] += 1
-            comp_list = comp if isinstance(comp, (list, tuple)) else []
-            if len(orig) != len(comp_list):
-                _add_mismatch(path, f"length {len(orig)} vs {len(comp_list)}")
-                # Count all elements in the original as mismatches for the missing portion
-                if len(comp_list) < len(orig):
-                    for i in range(len(comp_list), len(orig)):
-                        count = _count_fields(orig[i])
+            comp_list = comp_val if isinstance(comp_val, (list, tuple)) else []
+            if len(orig_val) != len(comp_list):
+                _add_mismatch(p, f"length {len(orig_val)} vs {len(comp_list)}")
+                if len(comp_list) < len(orig_val):
+                    for i in range(len(comp_list), len(orig_val)):
+                        count = _count_fields(orig_val[i])
                         total[0] += count
                         mismatches[0] += count
-                # Walk elements that exist in both
-                for i in range(min(len(orig), len(comp_list))):
-                    _walk(orig[i], comp_list[i], f"{path}[{i}]")
+                for i in range(min(len(orig_val), len(comp_list))):
+                    _walk(orig_val[i], comp_list[i], f"{p}[{i}]")
             else:
-                for i in range(len(orig)):
-                    _walk(orig[i], comp_list[i], f"{path}[{i}]")
+                for i in range(len(orig_val)):
+                    _walk(orig_val[i], comp_list[i], f"{p}[{i}]")
             return
 
-        # bytes: compare as a single field
-        if isinstance(orig, bytes):
+        # bytes
+        if isinstance(orig_val, bytes):
             total[0] += 1
-            if orig != comp:
-                _add_mismatch(path, f"{len(orig)} bytes vs {len(comp) if isinstance(comp, bytes) else type(comp).__name__}")
+            if orig_val != comp_val:
+                _add_mismatch(p, f"{len(orig_val)} bytes vs {len(comp_val) if isinstance(comp_val, bytes) else type(comp_val).__name__}")
             return
 
-        # Enum: compare by value
-        if hasattr(orig, 'value') and hasattr(type(orig), '__members__'):
+        # Enum
+        if hasattr(orig_val, 'value') and hasattr(type(orig_val), '__members__'):
             total[0] += 1
-            if comp is None or not hasattr(comp, 'value') or orig.value != comp.value:
-                _add_mismatch(path, f"{orig!r} vs {comp!r}")
+            if comp_val is None or not hasattr(comp_val, 'value') or orig_val.value != comp_val.value:
+                _add_mismatch(p, f"{orig_val!r} vs {comp_val!r}")
             return
 
-        # Float: compare with tolerance
-        if isinstance(orig, float):
+        # Float
+        if isinstance(orig_val, float):
             total[0] += 1
-            if not isinstance(comp, (int, float)) or abs(orig - comp) > 1e-4:
-                _add_mismatch(path, f"{orig:.6f} vs {comp}")
+            if not isinstance(comp_val, (int, float)) or abs(orig_val - comp_val) > 1e-4:
+                _add_mismatch(p, f"{orig_val:.6f} vs {comp_val}")
             return
 
-        # int, bool, str, other primitives
+        # Other primitives
         total[0] += 1
-        if orig != comp:
-            _add_mismatch(path, f"{orig!r} vs {comp!r}")
+        if orig_val != comp_val:
+            _add_mismatch(p, f"{orig_val!r} vs {comp_val!r}")
 
-    _walk(ir_a, ir_b, "scene")
-
-    matched = total[0] - mismatches[0]
-    return total[0], mismatches[0], details
+    _walk(orig, comp, path)
+    return total[0], mismatches[0]
 
 
 def _is_dataclass(obj):
@@ -584,13 +696,15 @@ def run_all_tests(filepath):
 
     # IBI
     try:
-        matched, total, pct, details = compute_ibi_score(filepath)
+        _, _, pct, details, categories = compute_ibi_score(filepath)
         scores['ibi'] = pct
         scores['ibi_details'] = details
+        scores['ibi_categories'] = categories
     except Exception as e:
         scores['ibi'] = f"ERROR: {e}"
         import traceback
         scores['ibi_details'] = [traceback.format_exc()]
+        scores['ibi_categories'] = {}
 
     return scores
 
@@ -630,6 +744,16 @@ def main():
             else:
                 parts.append(f"{key.upper()}={val}")
         print('  '.join(parts))
+
+        # Show IBI category breakdown (only categories with data)
+        cats = scores.get('ibi_categories', {})
+        cat_parts = []
+        for cat_name in ('bones', 'meshes', 'materials', 'animations', 'constraints', 'lights'):
+            cat = cats.get(cat_name)
+            if cat and cat['total'] > 0:
+                cat_parts.append(f"{cat_name}={cat['pct']:.0f}%")
+        if cat_parts:
+            print(f"    IBI breakdown: {', '.join(cat_parts)}")
 
         if verbose and scores.get('ibi_details'):
             for detail in scores['ibi_details'][:20]:

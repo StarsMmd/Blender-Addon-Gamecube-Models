@@ -28,32 +28,34 @@ Parse a DAT binary, write it back, and compare the output bytes against the inpu
 
 ## Test Results
 
-**Overall export pipeline completion: 🟡 46.7%** _(weighted: NBN 25%, NIN 40%, IBI 30%, BNB 5%)_
+**Overall export pipeline completion: 🟡 47.4%** _(weighted: NBN 25%, NIN 40%, IBI 30%, BNB 5%)_
 
 _Average health: 🔴 0-20% · 🟠 21-40% · 🟡 41-60% · 🔵 61-80% · ✅ 81-100%_
 
+IBI uses **category-weighted scoring**: each IR category (bones, meshes, materials, animations, constraints, lights) is scored independently, then averaged across categories that have data. This prevents large vertex arrays from inflating the score.
+
 | Model | Game | NBN ✅ | NIN 🟠 | IBI 🟠 | BNB 🔵 |
 |---|---|---|---|---|---|
-| nukenin | XD | 95.8% | 42.4% | 39.1% | 94.0% |
-| haganeil | XD | 92.4% | 29.2% | 25.2% | 91.8% |
-| cokodora | XD | 93.0% | 29.9% | 24.3% | 84.3% |
-| frygon | XD | 92.9% | 29.1% | 23.2% | 83.5% |
-| achamo | XD | 91.9% | 25.8% | 32.2% | 80.9% |
-| miniryu | XD | 90.0% | 17.7% | 36.4% | 80.9% |
-| bohmander | XD | 91.4% | 23.1% | 30.7% | 80.8% |
-| cerebi | XD | 89.5% | 16.1% | 40.1% | 71.0% |
-| gallop | XD | 91.6% | 24.3% | 28.1% | 77.3% |
-| usohachi | XD | 92.1% | 25.1% | 35.7% | 75.1% |
-| runpappa | XD | 92.4% | 28.0% | 35.5% | 81.4% |
-| rayquaza | XD | 93.1% | 26.1% | 31.2% | 84.6% |
-| ken_a1 | XD | 91.5% | 23.0% | 30.8% | 61.0% |
-| mage_0101 | XD | 91.6% | 21.8% | 42.5% | 56.1% |
-| heracros | Colo | 92.8% | 29.9% | 26.1% | 77.5% |
-| hinoarashi | Colo | 90.2% | 18.1% | 46.4% | 83.1% |
-| hizuki_a1 | Colo | 92.4% | 28.2% | 40.1% | 79.6% |
-| koduck | Colo | 93.8% | 35.3% | 22.6% | 82.5% |
-| ghos | Colo | 90.2% | 17.8% | 28.0% | 77.8% |
-| showers | Colo | 89.6% | 15.9% | 23.0% | 76.0% |
+| nukenin | XD | 95.8% | 43.9% | 37.2% | 94.0% |
+| haganeil | XD | 92.4% | 29.7% | 40.3% | 91.8% |
+| cokodora | XD | 93.0% | 30.2% | 35.4% | 84.3% |
+| frygon | XD | 92.9% | 29.4% | 33.1% | 83.5% |
+| achamo | XD | 91.9% | 26.0% | 34.1% | 80.9% |
+| miniryu | XD | 90.0% | 18.0% | 33.3% | 80.9% |
+| bohmander | XD | 91.4% | 23.3% | 34.4% | 80.8% |
+| cerebi | XD | 89.5% | 16.2% | 31.9% | 71.0% |
+| gallop | XD | 91.6% | 24.4% | 35.6% | 77.3% |
+| usohachi | XD | 92.1% | 25.3% | 34.7% | 75.1% |
+| runpappa | XD | 92.4% | 28.4% | 34.1% | 81.4% |
+| rayquaza | XD | 93.1% | 26.6% | 32.3% | 84.6% |
+| ken_a1 | XD | 91.5% | 23.1% | 32.4% | 61.0% |
+| mage_0101 | XD | 91.6% | 22.0% | 32.2% | 56.1% |
+| heracros | Colo | 92.8% | 30.0% | 35.5% | 77.5% |
+| hinoarashi | Colo | 90.2% | 18.2% | 33.6% | 83.1% |
+| hizuki_a1 | Colo | 92.4% | 28.3% | 32.5% | 79.6% |
+| koduck | Colo | 93.8% | 35.6% | 35.0% | 82.5% |
+| ghos | Colo | 90.2% | 18.1% | 32.5% | 77.8% |
+| showers | Colo | 89.6% | 16.0% | 33.7% | 76.0% |
 
 ---
 
