@@ -28,32 +28,32 @@ Parse a DAT binary, write it back, and compare the output bytes against the inpu
 
 ## Test Results
 
-**Overall export pipeline completion: 🟡 46.4%** _(weighted: NBN 25%, NIN 40%, IBI 30%, BNB 5%)_
+**Overall export pipeline completion: 🟡 46.7%** _(weighted: NBN 25%, NIN 40%, IBI 30%, BNB 5%)_
 
 _Average health: 🔴 0-20% · 🟠 21-40% · 🟡 41-60% · 🔵 61-80% · ✅ 81-100%_
 
 | Model | Game | NBN ✅ | NIN 🟠 | IBI 🟠 | BNB 🔵 |
 |---|---|---|---|---|---|
-| nukenin | XD | 95.8% | 38.4% | 39.1% | 94.0% |
-| haganeil | XD | 92.4% | 27.4% | 25.2% | 91.8% |
-| cokodora | XD | 93.0% | 28.9% | 24.3% | 84.3% |
-| frygon | XD | 92.9% | 28.7% | 23.2% | 83.5% |
-| achamo | XD | 91.9% | 25.4% | 32.2% | 80.9% |
-| miniryu | XD | 90.0% | 17.2% | 36.4% | 80.9% |
-| bohmander | XD | 91.4% | 22.8% | 30.7% | 80.8% |
-| cerebi | XD | 89.5% | 15.8% | 40.1% | 71.0% |
-| gallop | XD | 91.6% | 24.0% | 28.1% | 77.3% |
-| usohachi | XD | 92.1% | 24.6% | 35.7% | 75.1% |
-| runpappa | XD | 92.4% | 27.6% | 35.5% | 81.4% |
-| rayquaza | XD | 93.1% | 25.2% | 31.2% | 84.6% |
-| ken_a1 | XD | 91.5% | 22.9% | 30.8% | 61.0% |
-| mage_0101 | XD | 91.6% | 21.6% | 42.5% | 56.1% |
-| heracros | Colo | 92.8% | 29.4% | 26.1% | 77.5% |
-| hinoarashi | Colo | 90.2% | 17.8% | 46.4% | 83.1% |
-| hizuki_a1 | Colo | 92.4% | 28.0% | 40.1% | 79.6% |
-| koduck | Colo | 93.8% | 34.6% | 22.6% | 82.5% |
-| ghos | Colo | 90.2% | 17.2% | 28.0% | 77.8% |
-| showers | Colo | 89.6% | 15.8% | 23.0% | 76.0% |
+| nukenin | XD | 95.8% | 42.4% | 39.1% | 94.0% |
+| haganeil | XD | 92.4% | 29.2% | 25.2% | 91.8% |
+| cokodora | XD | 93.0% | 29.9% | 24.3% | 84.3% |
+| frygon | XD | 92.9% | 29.1% | 23.2% | 83.5% |
+| achamo | XD | 91.9% | 25.8% | 32.2% | 80.9% |
+| miniryu | XD | 90.0% | 17.7% | 36.4% | 80.9% |
+| bohmander | XD | 91.4% | 23.1% | 30.7% | 80.8% |
+| cerebi | XD | 89.5% | 16.1% | 40.1% | 71.0% |
+| gallop | XD | 91.6% | 24.3% | 28.1% | 77.3% |
+| usohachi | XD | 92.1% | 25.1% | 35.7% | 75.1% |
+| runpappa | XD | 92.4% | 28.0% | 35.5% | 81.4% |
+| rayquaza | XD | 93.1% | 26.1% | 31.2% | 84.6% |
+| ken_a1 | XD | 91.5% | 23.0% | 30.8% | 61.0% |
+| mage_0101 | XD | 91.6% | 21.8% | 42.5% | 56.1% |
+| heracros | Colo | 92.8% | 29.9% | 26.1% | 77.5% |
+| hinoarashi | Colo | 90.2% | 18.1% | 46.4% | 83.1% |
+| hizuki_a1 | Colo | 92.4% | 28.2% | 40.1% | 79.6% |
+| koduck | Colo | 93.8% | 35.3% | 22.6% | 82.5% |
+| ghos | Colo | 90.2% | 17.8% | 28.0% | 77.8% |
+| showers | Colo | 89.6% | 15.9% | 23.0% | 76.0% |
 
 ---
 

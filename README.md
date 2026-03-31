@@ -112,6 +112,12 @@ pip install pytest bpy mathutils
 | `bpy` | Required for round-trip tests (IBI) and CLI pipeline phases 5-6 |
 | `mathutils` | Required alongside `bpy` for Blender math operations |
 
+**Note on bpy version:** The addon targets Blender 4.5, but the standalone `bpy` package on PyPI currently only provides version 3.4. Most core APIs (armatures, meshes, vertex groups, edit mode) work the same. Some Blender 4.5-specific APIs (e.g. action slots) are version-guarded in the codebase and will be skipped when running under bpy 3.4. To check your installed version:
+
+```bash
+python3 -c "import bpy; print(bpy.app.version_string)"
+```
+
 ### Running the CLI Pipeline
 
 The pipeline can run outside of Blender for parsing and testing:

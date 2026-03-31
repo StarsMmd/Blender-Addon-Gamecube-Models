@@ -55,7 +55,7 @@ exporter/
       compose.py                     # Phase 2: IRScene → root node trees              partial
       helpers/
         bones.py                     # IRBone list → Joint tree                        ✅
-        meshes.py                    # IRMesh list → Mesh/PObject chains
+        meshes.py                    # IRMesh list → Mesh/PObject chains               ✅
         materials.py                 # IRMaterial → MaterialObject chain
         display_list_encoder.py      # Vertices/faces → GX display list bytes
         image_encoder.py             # RGBA pixels → GX texture format bytes
@@ -551,7 +551,7 @@ The BoundBox section contains per-animation-set, per-frame axis-aligned bounding
 5. ~~Implement `compose/helpers/bones.py` (IRBone → Joint tree)~~ ✅ Done
 6. Implement `display_list_encoder.py` (the hardest single piece)
 7. ~~Implement `describe_blender/helpers/meshes.py`~~ ✅ Done
-8. Implement `compose/helpers/meshes.py` (IRMesh → Mesh/PObject)
+8. ~~Implement `compose/helpers/meshes.py` (IRMesh → Mesh/PObject)~~ ✅ Done
 9. ~~Implement `serialize/serialize.py` (DATBuilder wrapper)~~ ✅ Done
 10. ~~Wire up `exporter.py`, `describe_blender.py`, `compose.py`~~ ✅ Done
 11. ~~Implement `package.py` (raw DAT + PKX injection + shiny write-back)~~ ✅ Done
@@ -633,6 +633,7 @@ The BoundBox section contains per-animation-set, per-frame axis-aligned bounding
 | `exporter/phases/describe_blender/helpers/meshes.py` | ✅ Mesh objects → IRMesh list |
 | `exporter/phases/compose/compose.py` | Partial (skeleton wired) |
 | `exporter/phases/compose/helpers/bones.py` | ✅ IRBone → Joint tree |
+| `exporter/phases/compose/helpers/meshes.py` | ✅ IRMesh → Mesh/PObject chains |
 | `exporter/phases/serialize/serialize.py` | ✅ DATBuilder wrapper |
 | `exporter/phases/package/package.py` | ✅ .dat passthrough + .pkx injection |
 | `shared/helpers/pkx.py` | ✅ PKXContainer (shared by extract + package) |

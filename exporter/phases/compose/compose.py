@@ -4,7 +4,7 @@ Takes an IRScene (the platform-agnostic intermediate representation) and
 reconstructs the SysDolphin node tree structure that can be serialized
 to a .dat binary by DATBuilder.
 
-Currently supports: skeleton (Joint tree).
+Currently supports: skeleton (Joint tree), meshes (Mesh/PObject chains).
 """
 try:
     from .....shared.Nodes.Classes.Joints.ModelSet import ModelSet
@@ -16,6 +16,7 @@ except (ImportError, SystemError):
     from shared.helpers.logger import StubLogger
 
 from .helpers.bones import compose_bones
+from .helpers.meshes import compose_meshes
 
 
 def compose_scene(ir_scene, options=None, logger=StubLogger()):
@@ -41,7 +42,8 @@ def compose_scene(ir_scene, options=None, logger=StubLogger()):
         if root_joint is None:
             continue
 
-        # TODO: compose meshes and attach to joints via joint.property
+        compose_meshes(model.meshes, joints, model.bones, logger)
+
         # TODO: compose animations and attach to model_set
 
         model_set = ModelSet(address=None, blender_obj=None)
