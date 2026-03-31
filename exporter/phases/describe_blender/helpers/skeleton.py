@@ -12,10 +12,10 @@ import bpy
 from mathutils import Matrix
 
 try:
-    from ......shared.IR.skeleton import IRBone
-    from ......shared.IR.enums import ScaleInheritance
-    from ......shared.Constants.hsd import JOBJ_SKELETON, JOBJ_HIDDEN
-    from ......shared.helpers.logger import StubLogger
+    from .....shared.IR.skeleton import IRBone
+    from .....shared.IR.enums import ScaleInheritance
+    from .....shared.Constants.hsd import JOBJ_SKELETON, JOBJ_HIDDEN
+    from .....shared.helpers.logger import StubLogger
 except (ImportError, SystemError):
     from shared.IR.skeleton import IRBone
     from shared.IR.enums import ScaleInheritance
@@ -76,23 +76,34 @@ def describe_skeleton(armature, logger=StubLogger()):
     bpy.ops.object.mode_set(mode='OBJECT')
     bpy.context.view_layer.objects.active = prev_active
 
-    # Convert edit bone data to IRBone list
+    # Edit bone matrices are in armature-local space (Blender Z-up).
+    # The IR and DAT format expect Y-up. We apply the coordinate rotation
+    # to compute GameCube-space world matrices, then derive local SRT from
+    # parent-child relationships. For child bones the coordinate rotation
+    # cancels out (parent and child both get the same transform). For root
+    # bones we use the raw armature-local matrix — the Z→Y conversion is
+    # handled at the armature level by the importer (matrix_basis), not in
+    # bone SRT data.
+
     bones = []
-    gc_world_matrices = {}  # {index: Matrix} in GameCube coordinate space
+    gc_world_matrices = {}  # {index: Matrix} in GameCube Y-up space
 
     for i, data in enumerate(edit_bone_data):
         parent_index = bone_name_to_index.get(data['parent_name']) if data['parent_name'] else None
 
-        # Edit bone .matrix is a 4x4 in armature-local space (normalized, no scale).
-        # Undo the coordinate rotation to get GameCube-space world matrix.
+        # Convert from Blender Z-up armature space to GameCube Y-up
         gc_world = _COORD_ROTATION_INV @ data['matrix']
         gc_world_matrices[i] = gc_world
 
-        # Compute local matrix relative to parent
+        # Compute local matrix relative to parent.
+        # For root bones: use the raw armature-local matrix (no coord rotation).
+        # The coord rotation is an armature-level concern applied by the importer
+        # via armature.matrix_basis, not part of any bone's SRT.
+        # For child bones: coord rotation cancels out in parent.inv() @ child.
         if parent_index is not None:
             gc_local = gc_world_matrices[parent_index].inverted() @ gc_world
         else:
-            gc_local = gc_world
+            gc_local = data['matrix']
 
         # Decompose local matrix to SRT
         translation, quat, scale = gc_local.decompose()
@@ -140,7 +151,17 @@ def describe_skeleton(armature, logger=StubLogger()):
         )
         bones.append(bone)
 
-    logger.info("  Described %d bones from armature '%s'", len(bones), armature.name)
+    root_count = sum(1 for b in bones if b.parent_index is None)
+    hidden_count = sum(1 for b in bones if b.is_hidden)
+    logger.info("  Described %d bones from armature '%s' (%d root(s), %d hidden)",
+                len(bones), armature.name, root_count, hidden_count)
+    for i, bone in enumerate(bones):
+        logger.debug("    bone[%d] '%s': parent=%s pos=(%.3f,%.3f,%.3f) rot=(%.3f,%.3f,%.3f) scl=(%.3f,%.3f,%.3f) flags=%#x hidden=%s",
+                     i, bone.name, bone.parent_index,
+                     bone.position[0], bone.position[1], bone.position[2],
+                     bone.rotation[0], bone.rotation[1], bone.rotation[2],
+                     bone.scale[0], bone.scale[1], bone.scale[2],
+                     bone.flags, bone.is_hidden)
     return bones
 
 

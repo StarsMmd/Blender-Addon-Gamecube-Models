@@ -7,7 +7,7 @@ import io
 
 try:
     from .helpers.dat_builder import DATBuilder
-    from .....shared.helpers.logger import StubLogger
+    from ....shared.helpers.logger import StubLogger
 except (ImportError, SystemError):
     from exporter.phases.serialize.helpers.dat_builder import DATBuilder
     from shared.helpers.logger import StubLogger
@@ -25,7 +25,7 @@ def serialize(root_nodes, section_names, logger=StubLogger()):
         bytes — the complete DAT binary.
     """
     logger.info("=== Export Phase 3: Serialize ===")
-    logger.info("Serializing %d section(s): %s", len(root_nodes), section_names)
+    logger.info("  Serializing %d section(s): %s", len(root_nodes), section_names)
 
     stream = io.BytesIO()
     builder = DATBuilder(stream, root_nodes, section_names)
@@ -33,5 +33,7 @@ def serialize(root_nodes, section_names, logger=StubLogger()):
 
     dat_bytes = stream.getvalue()
 
+    logger.info("  Node count: %d", len(builder.node_list))
+    logger.info("  Relocations: %d", len(builder.relocations))
     logger.info("=== Export Phase 3 complete: %d bytes ===", len(dat_bytes))
     return dat_bytes

@@ -4,43 +4,61 @@ Reverses importer/phases/describe/helpers/meshes.py:describe_meshes().
 Takes IRMesh dataclasses and reconstructs the SysDolphin node tree
 structure with encoded vertex buffers and GX display lists.
 """
+import re
 import struct
 from collections import defaultdict
 
 try:
-    from ......shared.Nodes.Classes.Mesh.Mesh import Mesh
-    from ......shared.Nodes.Classes.Mesh.PObject import PObject
-    from ......shared.Nodes.Classes.Mesh.VertexList import VertexList
-    from ......shared.Nodes.Classes.Mesh.Vertex import Vertex
-    from ......shared.Constants.gx import (
+    from .....shared.Nodes.Classes.Mesh.Mesh import Mesh
+    from .....shared.Nodes.Classes.Mesh.PObject import PObject
+    from .....shared.Nodes.Classes.Mesh.VertexList import VertexList
+    from .....shared.Nodes.Classes.Mesh.Vertex import Vertex
+    from .....shared.Nodes.Classes.Joints.Envelope import EnvelopeList, Envelope
+    from .....shared.Constants.gx import (
         GX_VA_POS, GX_VA_NRM, GX_VA_CLR0, GX_VA_CLR1,
-        GX_VA_TEX0,
-        GX_INDEX16, GX_F32, GX_RGBA8,
+        GX_VA_TEX0, GX_VA_PNMTXIDX,
+        GX_INDEX16, GX_DIRECT, GX_F32, GX_RGBA8,
         GX_POS_XYZ, GX_NRM_XYZ, GX_TEX_ST,
-        GX_DRAW_TRIANGLES, GX_NOP,
+        GX_DRAW_TRIANGLES,
     )
-    from ......shared.Constants.hsd import (
-        POBJ_CULLFRONT, POBJ_CULLBACK, POBJ_SKIN,
+    from .....shared.Constants.hsd import (
+        POBJ_CULLFRONT, POBJ_CULLBACK, POBJ_SKIN, POBJ_ENVELOPE,
+        JOBJ_HIDDEN,
     )
-    from ......shared.IR.enums import SkinType
-    from ......shared.helpers.logger import StubLogger
+    from .....shared.IR.enums import SkinType
+    from .....shared.helpers.logger import StubLogger
 except (ImportError, SystemError):
     from shared.Nodes.Classes.Mesh.Mesh import Mesh
     from shared.Nodes.Classes.Mesh.PObject import PObject
     from shared.Nodes.Classes.Mesh.VertexList import VertexList
     from shared.Nodes.Classes.Mesh.Vertex import Vertex
+    from shared.Nodes.Classes.Joints.Envelope import EnvelopeList, Envelope
     from shared.Constants.gx import (
         GX_VA_POS, GX_VA_NRM, GX_VA_CLR0, GX_VA_CLR1,
-        GX_VA_TEX0,
-        GX_INDEX16, GX_F32, GX_RGBA8,
+        GX_VA_TEX0, GX_VA_PNMTXIDX,
+        GX_INDEX16, GX_DIRECT, GX_F32, GX_RGBA8,
         GX_POS_XYZ, GX_NRM_XYZ, GX_TEX_ST,
-        GX_DRAW_TRIANGLES, GX_NOP,
+        GX_DRAW_TRIANGLES,
     )
     from shared.Constants.hsd import (
-        POBJ_CULLFRONT, POBJ_CULLBACK, POBJ_SKIN,
+        POBJ_CULLFRONT, POBJ_CULLBACK, POBJ_SKIN, POBJ_ENVELOPE,
+        JOBJ_HIDDEN,
     )
     from shared.IR.enums import SkinType
     from shared.helpers.logger import StubLogger
+
+
+# Counter for generating unique synthetic base_pointer values.
+# Each vertex buffer needs a distinct base_pointer so the VertexList
+# deduplication logic treats them as separate buffers during serialization.
+_next_synthetic_bp = [0x80000000]
+
+
+def _alloc_base_pointer():
+    """Allocate a unique synthetic base_pointer for a vertex buffer."""
+    bp = _next_synthetic_bp[0]
+    _next_synthetic_bp[0] += 0x10000
+    return bp
 
 
 def compose_meshes(meshes, joints, bones, logger=StubLogger()):
@@ -60,6 +78,9 @@ def compose_meshes(meshes, joints, bones, logger=StubLogger()):
     """
     if not meshes or not joints:
         return
+
+    # Reset synthetic base_pointer counter for each compose call
+    _next_synthetic_bp[0] = 0x80000000
 
     # Group meshes by parent bone
     meshes_by_bone = defaultdict(list)
@@ -94,8 +115,15 @@ def compose_meshes(meshes, joints, bones, logger=StubLogger()):
         # Attach to joint
         joints[bone_idx].property = mesh_nodes[0]
 
+        # If all meshes on this bone are hidden, set JOBJ_HIDDEN on the joint
+        if all(m.is_hidden for m in ir_meshes):
+            joints[bone_idx].flags |= JOBJ_HIDDEN
+
     total_meshes = sum(len(ml) for ml in meshes_by_bone.values())
-    logger.info("Composed %d meshes across %d bones", total_meshes, len(meshes_by_bone))
+    logger.info("    Composed %d meshes across %d bones", total_meshes, len(meshes_by_bone))
+    for bone_idx, ir_meshes in meshes_by_bone.items():
+        bone_name = bones[bone_idx].name if bone_idx < len(bones) else '?'
+        logger.debug("      bone[%d] '%s': %d mesh(es)", bone_idx, bone_name, len(ir_meshes))
 
 
 def _build_pobj(ir_mesh, joints, bones, bone_name_to_index, logger):
@@ -110,9 +138,28 @@ def _build_pobj(ir_mesh, joints, bones, bone_name_to_index, logger):
     if not ir_mesh.vertices or not ir_mesh.faces:
         return None
 
+    bw = ir_mesh.bone_weights
+    is_envelope = bw and bw.type == SkinType.WEIGHTED and bw.assignments
+
     # Build vertex descriptors and encode vertex/display list data
     vertex_descs = []
     vertex_buffers = []
+
+    # PNMTXIDX — envelope index attribute (only for WEIGHTED meshes)
+    envelope_map = None
+    if is_envelope:
+        envelope_map = _build_envelope_map(bw.assignments, bone_name_to_index)
+        pnmtx_desc = Vertex(address=None, blender_obj=None)
+        pnmtx_desc.attribute = GX_VA_PNMTXIDX
+        pnmtx_desc.attribute_type = GX_DIRECT
+        pnmtx_desc.component_count = 0
+        pnmtx_desc.component_type = 0
+        pnmtx_desc.component_frac = 0
+        pnmtx_desc.stride = 0
+        pnmtx_desc.base_pointer = 0
+        pnmtx_desc.raw_vertex_data = b''
+        vertex_descs.append(pnmtx_desc)
+        vertex_buffers.append(('pnmtxidx', envelope_map))
 
     # Position — always present
     pos_data, pos_buffer = _encode_float3_buffer(ir_mesh.vertices)
@@ -140,10 +187,10 @@ def _build_pobj(ir_mesh, joints, bones, bone_name_to_index, logger):
 
     # Color layers
     for color_layer in ir_mesh.color_layers:
-        clr_attr = GX_VA_CLR0 if 'color_0' in color_layer.name or 'alpha' not in color_layer.name else GX_VA_CLR1
         # Skip alpha-only layers (they're baked into the color layer on import)
         if 'alpha_' in color_layer.name:
             continue
+        clr_attr = GX_VA_CLR0 if 'color_0' in color_layer.name else GX_VA_CLR1
         clr_verts, clr_indices, clr_buffer = _encode_indexed_rgba(color_layer.colors)
         clr_desc = _make_vertex_desc(clr_attr, 0, GX_RGBA8, stride=4)
         clr_desc.attribute_type = GX_INDEX16
@@ -180,8 +227,11 @@ def _build_pobj(ir_mesh, joints, bones, bone_name_to_index, logger):
         pobj.flags |= POBJ_CULLBACK
 
     # Skinning
-    bw = ir_mesh.bone_weights
-    if bw and bw.type == SkinType.SINGLE_BONE and bw.bone_name:
+    if is_envelope:
+        pobj.property = _build_envelope_lists(
+            envelope_map, joints, bone_name_to_index)
+        pobj.flags |= POBJ_ENVELOPE
+    elif bw and bw.type == SkinType.SINGLE_BONE and bw.bone_name:
         bone_idx = bone_name_to_index.get(bw.bone_name)
         if bone_idx is not None and bone_idx < len(joints):
             pobj.property = joints[bone_idx]
@@ -191,7 +241,76 @@ def _build_pobj(ir_mesh, joints, bones, bone_name_to_index, logger):
     else:
         pobj.property = None
 
+    # Log PObject details
+    skin_type = 'ENVELOPE' if is_envelope else ('SKIN' if pobj.flags & POBJ_SKIN else 'RIGID')
+    desc_summary = ', '.join(f'attr={d.attribute}' for d in vertex_descs)
+    total_buf_bytes = sum(len(d.raw_vertex_data) for d in vertex_descs if hasattr(d, 'raw_vertex_data'))
+    logger.debug("      pobj '%s': %d verts, %d faces, %d descs [%s], dl=%d bytes, bufs=%d bytes, skin=%s, flags=%#x",
+                 ir_mesh.name, len(ir_mesh.vertices), len(ir_mesh.faces),
+                 len(vertex_descs), desc_summary, len(raw_dl), total_buf_bytes,
+                 skin_type, pobj.flags)
+
     return pobj
+
+
+# ---------------------------------------------------------------------------
+# Envelope (WEIGHTED skinning) helpers
+# ---------------------------------------------------------------------------
+
+def _build_envelope_map(assignments, bone_name_to_index):
+    """Build a mapping from vertex indices to envelope indices.
+
+    Groups vertices by their unique bone weight combination. Each unique
+    combination becomes one EnvelopeList entry.
+
+    Args:
+        assignments: list[(vertex_idx, [(bone_name, weight), ...])]
+        bone_name_to_index: dict mapping bone name → index
+
+    Returns:
+        dict with keys:
+            'vertex_to_env': {vertex_idx: envelope_index}
+            'envelopes': list of [(bone_name, weight), ...] per unique combo
+    """
+    combo_to_env = {}  # frozenset of (bone_name, weight) → env index
+    envelopes = []
+    vertex_to_env = {}
+
+    for vertex_idx, weight_list in assignments:
+        # Normalize: sort by bone name for consistent keys
+        key = tuple(sorted((name, round(w, 6)) for name, w in weight_list))
+        if key not in combo_to_env:
+            combo_to_env[key] = len(envelopes)
+            envelopes.append(weight_list)
+        vertex_to_env[vertex_idx] = combo_to_env[key]
+
+    return {
+        'vertex_to_env': vertex_to_env,
+        'envelopes': envelopes,
+    }
+
+
+def _build_envelope_lists(envelope_map, joints, bone_name_to_index):
+    """Build EnvelopeList node array from the envelope map.
+
+    Returns:
+        list[EnvelopeList] — the null-terminated pointer array for PObject.property.
+    """
+    env_lists = []
+    for weight_list in envelope_map['envelopes']:
+        env_list = EnvelopeList(address=None, blender_obj=None)
+        env_list.envelopes = []
+        for bone_name, weight in weight_list:
+            env = Envelope(address=None, blender_obj=None)
+            bone_idx = bone_name_to_index.get(bone_name)
+            if bone_idx is not None and bone_idx < len(joints):
+                env.joint = joints[bone_idx]
+            else:
+                env.joint = None
+            env.weight = weight
+            env_list.envelopes.append(env)
+        env_lists.append(env_list)
+    return env_lists
 
 
 # ---------------------------------------------------------------------------
@@ -205,8 +324,6 @@ def _parse_uv_index(name, fallback):
     """
     if not name:
         return fallback
-    # Try extracting trailing digits
-    import re
     match = re.search(r'(\d+)$', name)
     if match:
         return int(match.group(1))
@@ -222,7 +339,7 @@ def _make_vertex_desc(attribute, component_count, component_type, stride):
     v.component_type = component_type
     v.component_frac = 0
     v.stride = stride
-    v.base_pointer = 0  # Will be set during write
+    v.base_pointer = _alloc_base_pointer()
     v.raw_vertex_data = b''
     return v
 
@@ -332,62 +449,36 @@ def _encode_display_list(faces, vertices, vertex_descs, vertex_buffers):
         faces: list[list[int]] — per-face vertex index lists (may be quads).
         vertices: list[tuple] — position vertices (for index range).
         vertex_descs: list[Vertex] — vertex attribute descriptors.
-        vertex_buffers: list — parallel to vertex_descs; either
-            (vertex_list, raw_bytes) for position, or
-            ('type', unique_verts, per_loop_indices) for per-loop attributes.
+        vertex_buffers: list — parallel to vertex_descs.
 
     Returns:
         bytes — the raw display list, padded to 32-byte alignment.
     """
     # Triangulate faces (split quads into two triangles)
     triangles = []
+    tri_loop_indices = []
+    loop_idx = 0
+
     for face in faces:
+        base = loop_idx
         if len(face) == 3:
             triangles.append(face)
+            tri_loop_indices.append([base, base + 1, base + 2])
         elif len(face) == 4:
             triangles.append([face[0], face[1], face[2]])
+            tri_loop_indices.append([base, base + 1, base + 2])
             triangles.append([face[0], face[2], face[3]])
+            tri_loop_indices.append([base, base + 2, base + 3])
         elif len(face) > 4:
-            # Fan triangulation
             for i in range(1, len(face) - 1):
                 triangles.append([face[0], face[i], face[i + 1]])
+                tri_loop_indices.append([base, base + i, base + i + 1])
+        loop_idx += len(face)
 
     if not triangles:
         return b'\x00' * 32
 
-    # Build a loop-index mapping: for each face, for each vertex in the face,
-    # track which loop index it corresponds to (for per-loop attributes like
-    # normals, UVs, colors).
-    loop_idx = 0
-    face_loop_starts = []
-    for face in faces:
-        face_loop_starts.append(loop_idx)
-        loop_idx += len(face)
-
-    # Build per-triangle loop indices
-    tri_loop_indices = []
-    face_offset = 0
-    for face in faces:
-        base = face_loop_starts[face_offset]
-        if len(face) == 3:
-            tri_loop_indices.append([base, base + 1, base + 2])
-        elif len(face) == 4:
-            tri_loop_indices.append([base, base + 1, base + 2])
-            tri_loop_indices.append([base, base + 2, base + 3])
-        elif len(face) > 4:
-            for i in range(1, len(face) - 1):
-                tri_loop_indices.append([base, base + i, base + i + 1])
-        face_offset += 1
-
     vertex_count = len(triangles) * 3
-
-    # Compute stride (bytes per vertex in DL)
-    stride_per_vertex = 0
-    for desc in vertex_descs:
-        if desc.attribute_type == GX_INDEX16:
-            stride_per_vertex += 2
-        else:
-            stride_per_vertex += 1  # GX_INDEX8
 
     buf = bytearray()
 
@@ -408,20 +499,23 @@ def _encode_display_list(faces, vertices, vertex_descs, vertex_buffers):
             for desc_idx, desc in enumerate(vertex_descs):
                 vbuf = vertex_buffers[desc_idx]
 
-                if desc.attribute == GX_VA_POS:
-                    # Position: index directly into vertex list
-                    idx = pos_index
+                if desc.attribute == GX_VA_PNMTXIDX:
+                    # Envelope index: vertex_idx → env_idx * 3
+                    _, env_map = vbuf
+                    env_idx = env_map['vertex_to_env'].get(pos_index, 0)
+                    buf.append(env_idx * 3)
+                elif desc.attribute == GX_VA_POS:
+                    buf.extend(struct.pack('>H', pos_index))
                 elif isinstance(vbuf, tuple) and len(vbuf) == 3:
-                    # Per-loop attribute (normals, UVs, colors): use loop index
+                    # Per-loop attribute (normals, UVs, colors)
                     _, _, per_loop_indices = vbuf
                     if loop_index < len(per_loop_indices):
                         idx = per_loop_indices[loop_index]
                     else:
                         idx = 0
+                    buf.extend(struct.pack('>H', idx))
                 else:
-                    idx = pos_index
-
-                buf.extend(struct.pack('>H', idx))
+                    buf.extend(struct.pack('>H', pos_index))
 
     # Pad to 32-byte alignment
     while len(buf) % 32 != 0:

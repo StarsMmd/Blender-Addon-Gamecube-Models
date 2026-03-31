@@ -218,9 +218,9 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.80 | current | `mesh_data.uv_layers` | `exporter/meshes.py` | Read UV layers |
 | 3.2 | current | `mesh_data.color_attributes` | `exporter/meshes.py` | Read vertex color layers (FLOAT_COLOR) |
 | 2.80 | current | `mesh_data.has_custom_normals` | `exporter/meshes.py` | Check for custom normals |
-| 2.80 | current | `mesh_data.calc_normals_split()` | `exporter/meshes.py` | Compute split normals |
-| 2.80 | current | `mesh_data.loops` | `exporter/meshes.py` | Read per-loop normals |
-| 2.80 | current | `loop.normal` | `exporter/meshes.py` | Loop normal vector |
+| 4.1 | current | `mesh_data.corner_normals` | `exporter/meshes.py` | Per-loop normals (replaces `calc_normals_split()`) |
+| 2.80 | 4.0 | `mesh_data.calc_normals_split()` | `exporter/meshes.py` | Fallback for pre-4.1; removed in 4.1 |
+| 2.80 | current | `mesh_data.loops` | `exporter/meshes.py` | Read per-loop data (fallback path) |
 | 2.80 | current | `obj.vertex_groups` | `exporter/meshes.py` | Read vertex group list |
 | 2.80 | current | `vertex.groups` | `exporter/meshes.py` | Per-vertex group assignments |
 | 2.80 | current | `group_element.group` | `exporter/meshes.py` | Vertex group index |

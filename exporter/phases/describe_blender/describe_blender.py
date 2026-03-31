@@ -13,8 +13,8 @@ if present, for writing back into PKX headers during packaging.
 import bpy
 
 try:
-    from .....shared.IR import IRScene, IRModel
-    from .....shared.helpers.logger import StubLogger
+    from ....shared.IR import IRScene, IRModel
+    from ....shared.helpers.logger import StubLogger
     from .helpers.skeleton import describe_skeleton
     from .helpers.meshes import describe_meshes
 except (ImportError, SystemError):
@@ -62,6 +62,18 @@ def describe_blender_scene(context, options=None, logger=StubLogger()):
 
         bones = describe_skeleton(armature, logger=logger)
         meshes = describe_meshes(armature, bones, logger=logger)
+
+        # Populate mesh_indices on bones
+        for mesh_idx, ir_mesh in enumerate(meshes):
+            bone_idx = ir_mesh.parent_bone_index
+            if bone_idx < len(bones):
+                bones[bone_idx].mesh_indices.append(mesh_idx)
+
+        bones_with_meshes = sum(1 for b in bones if b.mesh_indices)
+        logger.info("  Mesh attachment: %d mesh(es) across %d bone(s)", len(meshes), bones_with_meshes)
+        for b in bones:
+            if b.mesh_indices:
+                logger.debug("    bone '%s': mesh_indices=%s", b.name, b.mesh_indices)
 
         model = IRModel(
             name=armature.name,

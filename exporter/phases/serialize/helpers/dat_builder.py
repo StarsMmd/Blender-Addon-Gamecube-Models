@@ -1,7 +1,7 @@
 try:
-    from ......shared.Nodes import *
-    from ......shared.Constants import *
-    from ......shared.helpers.file_io import *
+    from .....shared.Nodes import *
+    from .....shared.Constants import *
+    from .....shared.helpers.file_io import *
 except (ImportError, SystemError):
     from shared.Nodes import *
     from shared.Constants import *
