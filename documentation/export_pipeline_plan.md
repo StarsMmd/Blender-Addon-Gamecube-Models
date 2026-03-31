@@ -25,7 +25,7 @@ pre-process  Phase 1   Phase 2    Phase 3      Phase 4
 | Step | Name | Input | Output | Status |
 |------|------|-------|--------|--------|
 | Pre | Pre-process | filepath + context | validation pass/fail | ✅ Implemented |
-| 1 | Describe Blender Scene | Blender context | IRScene + ShinyParams | Stub |
+| 1 | Describe Blender Scene | Blender context | IRScene + ShinyParams | Bones + meshes done |
 | 2 | Compose | IRScene | Node trees (root nodes) | Skeleton done |
 | 3 | Serialize | Root nodes → DAT bytes (via DATBuilder) | DAT bytes | ✅ Implemented |
 | 4 | Package | DAT bytes + target filepath | Final output bytes | ✅ Implemented |
@@ -42,10 +42,10 @@ exporter/
     pre_process/
       pre_process.py                 # Pre-process: validate output path + scene       ✅
     describe_blender/
-      describe_blender.py            # Phase 1: Blender → IRScene + ShinyParams        stub
+      describe_blender.py            # Phase 1: Blender → IRScene + ShinyParams        bones+meshes
       helpers/
-        skeleton.py                  # Armature → IRBone list
-        meshes.py                    # Mesh objects → IRMesh list
+        skeleton.py                  # Armature → IRBone list                           ✅
+        meshes.py                    # Mesh objects → IRMesh list                       ✅
         materials.py                 # Blender materials → IRMaterial
         animations.py                # Actions → IRBoneAnimationSet list
         constraints.py               # Bone constraints → IR constraint lists
@@ -149,50 +149,48 @@ Several HSD node types have `name` string fields that go unused in Colo/XD but c
 
 This is the foundation — everything else depends on a working skeleton and mesh export.
 
-#### Phase 1: Describe Blender Scene
+#### Phase 1: Describe Blender Scene — ✅ Bones + Meshes Implemented
 
-**`describe_blender/helpers/skeleton.py`** — Armature → IRBone list
+**Important design principle:** The exporter handles **arbitrary Blender models**, not just models imported from Colo/XD. No assumptions are made about bone naming conventions, bone ordering, or import-specific metadata.
 
-Steps (reverse of `build_blender/helpers/skeleton.py`):
-1. Find the armature object in the Blender scene
-2. Undo the pi/2 X-axis rotation (armature.matrix_basis) to get back to GameCube Y-up
-3. Enter EDIT mode to read edit bones
-4. For each edit bone (in parent-first order):
-   - Extract parent_index from bone.parent
-   - Extract world_matrix from bone.matrix (undo the armature rotation)
-   - Reconstruct local SRT:
-     - local_matrix = parent_world.inverted() @ world_matrix (or just world_matrix for roots)
-     - Decompose local_matrix to extract position, rotation (Euler XYZ), scale
-   - Compute normalized matrices (same math as describe_bones but from Blender data)
-   - Compute scale_correction, accumulated_scale
-   - Extract flags from custom properties (if stored during import) or reconstruct defaults
-   - Compute inverse_bind_matrix if the bone has weighted meshes
-5. Build flat IRBone list with correct parent_index values
-6. Record mesh_indices by checking which meshes are parented to which bones
+**`describe_blender/helpers/skeleton.py`** — Armature → IRBone list ✅
 
-**Key challenge:** Reconstructing HSD flags. Options:
-- **Option A:** Store flags as custom properties on Blender bones during import, read them back during export. This is the most reliable for round-trip.
-- **Option B:** Infer flags from bone state (hidden → JOBJ_HIDDEN, has mesh → JOBJ_MESH, etc.). Lossy but works for newly-created models.
-- **Recommended:** Use Option A for round-trip, Option B as fallback.
+Implementation:
+1. Exports only the **currently selected armature(s)** — each becomes one IRModel
+2. Enter EDIT mode, walk the bone hierarchy in **depth-first order** (parents before children)
+3. For each edit bone:
+   - Undo the pi/2 X-axis coordinate rotation to get GameCube Y-up world matrix
+   - Compute local matrix from `parent_world.inverted() @ child_world`
+   - Decompose local matrix to position (translation), rotation (Euler XYZ), scale
+   - Compute accumulated_scale (product with all ancestor scales)
+4. **Flags**: Deduced from Blender state — `JOBJ_SKELETON` on all bones, `JOBJ_HIDDEN` from `edit_bone.hide`
+   - Flags that can't be deduced (e.g. `JOBJ_SPLINE`, `JOBJ_EFFECTOR`) are not set. May be exposed as custom properties later.
+5. `inverse_bind_matrix` is set to None (not yet computed)
+6. `scale_correction` is identity (edit bones don't carry scale)
 
-**`describe_blender/helpers/meshes.py`** — Mesh objects → IRMesh list
+**`describe_blender/helpers/meshes.py`** — Mesh objects → IRMesh list ✅
 
-Steps (reverse of `build_blender/helpers/meshes.py`):
-1. For each mesh object parented to the armature:
-   - Read vertices from mesh_data.vertices
-   - Read faces from mesh_data.polygons (convert to index lists)
-   - Read UV layers from mesh_data.uv_layers → IRUVLayer (un-flip V: `1.0 - v`)
-   - Read color layers from mesh_data.vertex_colors → IRColorLayer
-   - Read normals from mesh_data (split normals if available)
-   - Read bone weights from vertex_groups → IRBoneWeights
-     - Classify: RIGID (single group, weight 1.0), SINGLE_BONE (all verts same bone), WEIGHTED (multiple groups)
-   - Determine parent_bone_index from vertex group or armature modifier
-   - Skip material extraction (handled in Feature 2)
-2. For rigid meshes: store local_matrix = mesh_object.matrix_local (bone world matrix)
-3. For weighted meshes: need to un-deform vertices (reverse of envelope deformation)
-   - This is the inverse of `_extract_envelope_weights` — apply inverse deform matrices to get back to local-space vertices
+Implementation:
+1. Finds all mesh objects parented to the armature via `obj.parent`
+2. For each mesh:
+   - Vertices from `mesh_data.vertices`, faces from `mesh_data.polygons`
+   - UV layers from `mesh_data.uv_layers` (per-loop data)
+   - Color layers from `mesh_data.color_attributes` (FLOAT_COLOR, read as-is — already sRGB)
+   - Custom split normals if `mesh_data.has_custom_normals`
+   - `material=None` (material export not yet implemented)
+3. **Bone weight classification** from vertex groups:
+   - Filter vertex groups to only those matching bone names
+   - SINGLE_BONE: all vertices reference exactly one bone
+   - WEIGHTED: vertices reference multiple bones
+   - No vertex groups → `bone_weights=None`, bound to root bone
+4. **Parent bone index**: bone with highest total vertex weight across all vertices, or 0 (root) if no weights
+5. `cull_back` from `material.use_backface_culling` on first material slot
+6. `is_hidden` from `mesh_obj.hide_render`
 
-**Key challenge:** Vertex un-deformation for envelope-weighted meshes. During import, vertices were deformed by envelope matrices in `_extract_envelope_weights()`. During export, we need to reverse this. The deformation matrices depend on the bone hierarchy and inverse bind matrices, which we're also reconstructing. Need to handle this carefully.
+**Remaining work for Feature 1:**
+- Vertex un-deformation for envelope-weighted meshes (reverse of `_extract_envelope_weights()`)
+- `inverse_bind_matrix` computation for weighted bones
+- RIGID skin type classification (currently only SINGLE_BONE and WEIGHTED)
 
 #### Phase 2: Compose IR → Node Trees
 
@@ -266,16 +264,19 @@ DATBuilder lives at `exporter/phases/serialize/helpers/dat_builder.py`.
 
 #### Custom Properties Strategy
 
-To preserve HSD-specific data through the Blender round-trip, store key values as custom properties during import:
-- `bone["hsd_flags"]` = Joint.flags (int)
-- `mesh_obj["hsd_skin_type"]` = POBJ skin type flag
-- `mesh_obj["hsd_parent_bone"]` = bone index
+The exporter deduces HSD values from Blender state rather than relying on custom properties stored during import. This allows it to work with arbitrary Blender models, not just re-exported imports.
 
-These properties are invisible to the user but survive save/load.
+**Current flag deduction:**
+- `JOBJ_SKELETON` — set on all bones
+- `JOBJ_HIDDEN` — set when `edit_bone.hide` is True
 
-**Files to modify (import side):**
-- `importer/phases/build_blender/helpers/skeleton.py` — store `hsd_flags` on pose bones
-- `importer/phases/build_blender/helpers/meshes.py` — store skin type on mesh objects
+**Flags not yet deduced:** `JOBJ_SPLINE`, `JOBJ_EFFECTOR`, `JOBJ_INSTANCE`, `JOBJ_SKELETON_ROOT`. These may be exposed as custom properties in the future for users who need fine-grained control.
+
+**Skin type classification:**
+- SINGLE_BONE — all vertices reference exactly one bone via vertex groups
+- WEIGHTED — vertices reference multiple bones via vertex groups
+- No vertex groups — mesh bound to root bone (index 0)
+- RIGID — not yet distinguished from SINGLE_BONE (both use same vertex group pattern)
 
 ---
 
@@ -498,7 +499,7 @@ Each adjacent phase pair should be tested independently:
 | NBN: Node → Binary → Node | ✅ Implemented (`tests/test_write_roundtrip.py`) |
 | BNB: Binary → Node → Binary | ✅ Implemented (`tests/test_write_roundtrip.py`) |
 | NIN: Node → IR → Node | ✅ Implemented (score reflects full node tree) |
-| IBI: IR → Blender → IR | Blocked — describe_blender not implemented |
+| IBI: IR → Blender → IR | ✅ Implemented (bones + meshes) |
 
 See [Round-Trip Test Progress](round_trip_test_progress.md) for per-model scores.
 
@@ -546,10 +547,10 @@ The BoundBox section contains per-animation-set, per-frame axis-aligned bounding
 1. ~~Move DATBuilder to `exporter/phases/serialize/helpers/`~~ ✅ Done
 2. Add optional name fields to IR types
 3. Store HSD custom properties during import (flags, skin type)
-4. Implement `describe_blender/helpers/skeleton.py`
+4. ~~Implement `describe_blender/helpers/skeleton.py`~~ ✅ Done
 5. ~~Implement `compose/helpers/bones.py` (IRBone → Joint tree)~~ ✅ Done
 6. Implement `display_list_encoder.py` (the hardest single piece)
-7. Implement `describe_blender/helpers/meshes.py`
+7. ~~Implement `describe_blender/helpers/meshes.py`~~ ✅ Done
 8. Implement `compose/helpers/meshes.py` (IRMesh → Mesh/PObject)
 9. ~~Implement `serialize/serialize.py` (DATBuilder wrapper)~~ ✅ Done
 10. ~~Wire up `exporter.py`, `describe_blender.py`, `compose.py`~~ ✅ Done
@@ -619,7 +620,7 @@ The BoundBox section contains per-animation-set, per-frame axis-aligned bounding
 | `importer/phases/build_blender/helpers/meshes.py` | Store `hsd_skin_type` custom property |
 | `BlenderPlugin.py` | Wire ExportHSD to new exporter pipeline |
 | `documentation/exporter_usage.md` | Update feature status as features are implemented |
-| ~~`test_dat_write.py`~~ | ✅ DATBuilder import path updated |
+| ~~`test_dat_write.py`~~ | Removed — functionality moved to `tests/round_trip/run_round_trips.py` |
 
 ## Key Files Created
 
@@ -627,15 +628,18 @@ The BoundBox section contains per-animation-set, per-frame axis-aligned bounding
 |------|--------|
 | `exporter/exporter.py` | ✅ Pipeline entry point |
 | `exporter/phases/pre_process/pre_process.py` | ✅ PKX validation + scene validation stub |
-| `exporter/phases/describe_blender/describe_blender.py` | Stub (returns empty IRScene) |
+| `exporter/phases/describe_blender/describe_blender.py` | ✅ Bones + meshes wired |
+| `exporter/phases/describe_blender/helpers/skeleton.py` | ✅ Armature → IRBone list |
+| `exporter/phases/describe_blender/helpers/meshes.py` | ✅ Mesh objects → IRMesh list |
 | `exporter/phases/compose/compose.py` | Partial (skeleton wired) |
 | `exporter/phases/compose/helpers/bones.py` | ✅ IRBone → Joint tree |
 | `exporter/phases/serialize/serialize.py` | ✅ DATBuilder wrapper |
 | `exporter/phases/package/package.py` | ✅ .dat passthrough + .pkx injection |
 | `shared/helpers/pkx.py` | ✅ PKXContainer (shared by extract + package) |
 | `shared/helpers/shiny_params.py` | ✅ ShinyParams dataclass |
-| `utilities/dat_to_json.py` | ✅ Node tree → JSON serializer |
-| `utilities/json_to_ir.py` | ✅ JSON → node tree → IR summary |
+| ~~`utilities/dat_to_json.py`~~ | Removed — round-trip tests now use real model files directly |
+| ~~`utilities/json_to_ir.py`~~ | Removed — round-trip tests now use real model files directly |
+| `tests/round_trip/run_round_trips.py` | ✅ All round-trip tests (NBN, NIN, IBI, BNB) |
 
 ---
 
@@ -649,5 +653,5 @@ For each phase:
    - Export from Blender to new .dat
    - Re-import the exported .dat
    - Compare IR scenes field-by-field
-   - Compare binary output with `test_dat_write.py`
+   - Compare binary output with `tests/round_trip/run_round_trips.py`
 4. Verify in Blender: exported model should render identically to the original import

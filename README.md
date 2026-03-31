@@ -93,18 +93,30 @@ exporter/
 legacy/                    # Pre-refactor importer (available via "Use Legacy" toggle)
 documentation/             # Pipeline docs, API reference, compatibility table, IR spec
 tests/                     # pytest suite (443 tests, no game files required)
+tests/round_trip/          # Round-trip tests with real model files (requires bpy)
 ```
 
 ## Developer Instructions
+
+### Dependencies
+
+Install the following Python packages for development and testing:
+
+```bash
+pip install pytest bpy mathutils
+```
+
+| Package | Purpose |
+|---|---|
+| `pytest` | Required for running the unit test suite |
+| `bpy` | Required for round-trip tests (IBI) and CLI pipeline phases 5-6 |
+| `mathutils` | Required alongside `bpy` for Blender math operations |
 
 ### Running the CLI Pipeline
 
 The pipeline can run outside of Blender for parsing and testing:
 
 ```bash
-# Install Blender as a Python module (optional — without it, phases 1-4 run but phases 5-6 are skipped)
-pip install bpy mathutils
-
 # From within the addon folder, run the pipeline on a model file
 python3 CommandLineInterface.py model.dat
 
@@ -116,16 +128,30 @@ The CLI entry point is `CommandLineInterface.py` (invoked via `__main__.py`). Wi
 
 ### Running Tests
 
-Tests use **pytest** and run outside of Blender (no Blender installation required). All test data is generated programmatically — no game files are needed or should ever be committed.
+#### Unit Tests
+
+Unit tests use **pytest** and run with mocked Blender APIs. All test data is generated programmatically — no game files are needed or should ever be committed.
 
 ```bash
-pip install pytest
-
-cd colo_xd
 python3 -m pytest tests/ -q
 ```
 
-For round-trip testing with real model files, see [Round-Trip Test Progress](documentation/round_trip_test_progress.md).
+#### Round-Trip Tests
+
+Round-trip tests validate the export pipeline against real model files using all four test types (NBN, NIN, IBI, BNB). These require `bpy` and `mathutils` to be installed.
+
+```bash
+# Single model
+python3 tests/round_trip/run_round_trips.py path/to/model.pkx
+
+# All models in a directory
+python3 tests/round_trip/run_round_trips.py path/to/models/
+
+# Verbose (shows mismatch details)
+python3 tests/round_trip/run_round_trips.py path/to/model.pkx -v
+```
+
+See [Round-Trip Test Progress](documentation/round_trip_test_progress.md) for per-model scores and test type explanations.
 
 ## Documentation
 
