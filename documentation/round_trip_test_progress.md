@@ -18,7 +18,7 @@ Parse a DAT binary into a node tree, run the describe phase to produce an IRScen
 
 ### IR → Blender → IR (IBI)
 
-Build an IRScene into Blender objects via the build phase, then read them back via the describe_blender phase to produce a new IRScene. Compare the two IR scenes field-by-field. Measures the Blender round-trip fidelity. Currently 0% as describe_blender is not yet implemented.
+Build an IRScene into Blender objects via the build phase, then read them back via the describe_blender phase to produce a new IRScene. Compare the two IR scenes using category-weighted scoring — each IR category (bones, meshes, materials, animations, constraints, lights) is scored independently, then averaged across categories that have data. This prevents large vertex arrays from inflating the score. Currently covers bones and mesh geometry; materials, animations, and constraints are not yet implemented in the export describe phase.
 
 ### Binary → Node tree → Binary (BNB)
 
@@ -64,7 +64,7 @@ IBI uses **category-weighted scoring**: each IR category (bones, meshes, materia
 - **BNB**: `compute_binary_match()` in `tests/test_write_roundtrip.py` — splits both binaries into 4-byte words, counts matching words by value (not position) using Counter intersection, divides by the larger word count.
 - **NBN**: Recursively compares all node fields after serialize → reparse. Counts mismatches vs total fields.
 - **NIN**: Walks the full original node tree as the denominator, compares against the composed node tree (after describe → compose).
-- **IBI**: Walks the full original IR as the denominator, compares against the round-tripped IR (after build → describe_blender). Uses a generic dataclass walker that automatically covers all IR fields.
+- **IBI**: Category-weighted scoring. Each IR category (bones, meshes, materials, animations, constraints, lights) is scored independently using a generic dataclass walker, then averaged across categories that have data in the original IR. Empty categories are excluded from the average.
 
 ---
 

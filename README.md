@@ -48,17 +48,19 @@ The shiny filter can also be added to any model manually using the standalone sc
 
 ## Exporting
 
-> **Work in progress** — the exporter is not yet functional.
-
-The exporter writes a Blender scene to a `.dat` or `.pkx` binary. See the [Exporter Usage](documentation/exporter_usage.md) documentation for details on supported features and planned functionality.
+The exporter writes a Blender scene to a `.dat` or `.pkx` binary. Skeleton and mesh geometry export is functional. Materials, animations, and constraints are not yet implemented. See the [Exporter Usage](documentation/exporter_usage.md) documentation for details.
 
 ## Remaining Work
 
 - [ ] Shape animation import
 - [ ] Camera import
 - [ ] Fog import
-- [ ] Exporter: Blender scene → IR (describe phase)
-- [ ] Exporter: IR → node trees (compose phase — skeleton done, meshes/materials/animations TODO)
+- [x] Exporter: Blender scene → IR (skeleton + meshes)
+- [x] Exporter: IR → node trees (skeleton + meshes)
+- [ ] Exporter: Materials + textures
+- [ ] Exporter: Bone animations
+- [ ] Exporter: Constraints
+- [ ] Exporter: Lights
 - [ ] Code audit: identify opportunities to simplify and clean up code
 - [ ] Code audit: identify opportunities to reduce algorithmic complexity
 

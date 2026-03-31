@@ -52,7 +52,7 @@ exporter/
         lights.py                    # Light objects → IRLight list
         material_animations.py       # NLA tracks → IRMaterialAnimationSet list
     compose/
-      compose.py                     # Phase 2: IRScene → root node trees              partial
+      compose.py                     # Phase 2: IRScene → root node trees              skeleton+meshes
       helpers/
         bones.py                     # IRBone list → Joint tree                        ✅
         meshes.py                    # IRMesh list → Mesh/PObject chains               ✅

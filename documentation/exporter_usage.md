@@ -1,6 +1,6 @@
 # Exporter Usage
 
-> **Status:** Work in progress — the exporter is not yet functional.
+> **Status:** Work in progress — skeleton and mesh export functional, materials and animations not yet implemented.
 
 The exporter writes a Blender scene to a `.dat` or `.pkx` binary that can be used in Pokemon Colosseum or Pokemon XD: Gale of Darkness. The output is not directly compatible with other games that use `.dat` models (e.g. Super Smash Bros. Melee).
 
@@ -10,14 +10,14 @@ The exporter writes a Blender scene to a `.dat` or `.pkx` binary that can be use
 
 | Feature | Status |
 |---|---|
-| Skeleton / Bones | Not yet implemented |
-| Meshes (geometry, faces) | Not yet implemented |
-| UV Mapping | Not yet implemented |
-| Vertex Colors | Not yet implemented |
-| Normals | Not yet implemented |
+| Skeleton / Bones | ✅ Working |
+| Meshes (geometry, faces) | ✅ Working |
+| UV Mapping | ✅ Working |
+| Vertex Colors | ✅ Working |
+| Normals | ✅ Working |
+| Bone Weights / Skinning | ✅ Working (single-bone) |
 | Materials (colors, properties) | Not yet implemented |
 | Textures | Not yet implemented |
-| Bone Weights / Skinning | Not yet implemented |
 | Bone Animations | Not yet implemented |
 | Material Animations (color/alpha) | Not yet implemented |
 | Material Animations (texture UV) | Not yet implemented |
