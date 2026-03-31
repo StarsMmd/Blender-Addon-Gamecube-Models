@@ -184,16 +184,12 @@ class Node(object):
         self.is_being_listed = True
 
         node_list = [self]
-
-        def isNodeAlreadyInList(new_node):
-            for node in node_list:
-                if new_node.address == node.address:
-                    return True
-            return False
+        seen_addresses = {self.address}
 
         def addToListUniquely(nodes):
             for node in nodes:
-                if not isNodeAlreadyInList(node):
+                if node.address not in seen_addresses:
+                    seen_addresses.add(node.address)
                     node_list.append(node)
 
         # Recursively get the lists for any sub nodes. If a field is a list then

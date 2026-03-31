@@ -30,6 +30,9 @@ def describe_constraints(root_joint, bones, joint_to_bone_index):
     addr_to_joint = {}
     _build_addr_map(root_joint, addr_to_joint)
 
+    # Reverse map: bone_index → address (for O(1) parent lookups)
+    bone_idx_to_addr = {idx: addr for addr, idx in joint_to_bone_index.items()}
+
     # Build parent map from IRBone data
     bone_to_parent = {}
     for idx, bone in enumerate(bones):
@@ -48,7 +51,7 @@ def describe_constraints(root_joint, bones, joint_to_bone_index):
         joint_type = joint.flags & JOBJ_TYPE_MASK
 
         if joint_type == JOBJ_EFFECTOR:
-            result = _describe_ik(joint, bones, joint_to_bone_index, addr_to_joint)
+            result = _describe_ik(joint, bones, joint_to_bone_index, addr_to_joint, bone_idx_to_addr)
             if result:
                 ik.append(result)
         elif joint_type != JOBJ_JOINT2:
@@ -71,29 +74,28 @@ def _build_addr_map(joint, result):
         _build_addr_map(joint.next, result)
 
 
-def _get_parent(joint, bones, jtb, addr_to_joint):
+def _get_parent(joint, bones, jtb, addr_to_joint, bone_idx_to_addr):
     """Get parent Joint node using IRBone parent_index."""
     bone_idx = jtb.get(joint.address, 0)
     parent_idx = bones[bone_idx].parent_index
     if parent_idx is None:
         return None
-    # Find the address that maps to parent_idx
-    for addr, idx in jtb.items():
-        if idx == parent_idx:
-            return addr_to_joint.get(addr)
-    return None
+    parent_addr = bone_idx_to_addr.get(parent_idx)
+    if parent_addr is None:
+        return None
+    return addr_to_joint.get(parent_addr)
 
 
-def _describe_ik(joint, bones, jtb, addr_to_joint):
+def _describe_ik(joint, bones, jtb, addr_to_joint, bone_idx_to_addr):
     """Extract IK constraint from an effector joint."""
-    parent = _get_parent(joint, bones, jtb, addr_to_joint)
+    parent = _get_parent(joint, bones, jtb, addr_to_joint, bone_idx_to_addr)
     if not parent:
         return None
 
     parent_type = parent.flags & JOBJ_TYPE_MASK
     if parent_type == JOBJ_JOINT2:
         chain_length = 3
-        grandparent = _get_parent(parent, bones, jtb, addr_to_joint)
+        grandparent = _get_parent(parent, bones, jtb, addr_to_joint, bone_idx_to_addr)
     elif parent_type == JOBJ_JOINT1:
         chain_length = 2
         grandparent = parent

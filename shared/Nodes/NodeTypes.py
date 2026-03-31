@@ -1,3 +1,5 @@
+from functools import lru_cache
+
 from ..Constants import *
 from ..ClassLookup import get_class_from_name
 
@@ -13,6 +15,7 @@ def getClassWithName(class_name):
 	except KeyError:
 		return globals()["Dummy"]
 
+@lru_cache(maxsize=256)
 def get_type_length(field_type):
 	if isBracketedType(field_type):
 		return get_type_length(getBracketedSubType(field_type))
@@ -42,6 +45,7 @@ def get_type_length(field_type):
 	else:
 		return 0
 
+@lru_cache(maxsize=512)
 def get_alignment_at_offset(field_type, offset):
 	if isBracketedType(field_type):
 		return get_alignment_at_offset(getBracketedSubType(field_type), offset)
@@ -87,6 +91,7 @@ def get_alignment_at_offset(field_type, offset):
 # The @ symbol can be added before a Node class type to prevent it from being treated as a pointer to the node class.
 # A * won't be added and the @ will be removed from the final type output.
 # e.g. `@Joint[]` becomes `(Joint)[]`
+@lru_cache(maxsize=256)
 def markUpFieldType(type_string):
 
 	if type_string[0] == "@":
