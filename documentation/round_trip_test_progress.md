@@ -1,5 +1,7 @@
 # Round-Trip Test Progress
 
+Each round-trip test works by taking the result of an import step, running the equivalent export step on it, and checking how close the output is to what we started with. This is the most direct way to verify that each exporter step works as intended.
+
 This document tracks the fidelity of the export pipeline by measuring how accurately data survives each round-trip path. When NBN, NIN, and IBI all approach 100%, the exporter is functionally complete.
 
 ---
@@ -26,7 +28,11 @@ Parse a DAT binary, write it back, and compare the output bytes against the inpu
 
 ## Test Results
 
-| Model | Game | NBN | NIN | IBI | BNB |
+**Overall export pipeline completion: 🟡 51.0%** _(weighted: NBN 25%, NIN 40%, IBI 30%, BNB 5%)_
+
+_Average health: 🔴 0-20% · 🟠 21-40% · 🟡 41-60% · 🔵 61-80% · ✅ 81-100%_
+
+| Model | Game | NBN ✅ | NIN 🟡 | IBI 🔴 | BNB ✅ |
 |---|---|---|---|---|---|
 | nukenin | XD | 93.7% | 47.3% | — | 94.0% |
 | haganeil | XD | 91.8% | 51.4% | — | 91.8% |

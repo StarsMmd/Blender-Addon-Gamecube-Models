@@ -244,7 +244,7 @@ Nodes are cached by file offset (`nodes_cache_by_offset`). Nodes with `is_cachab
 
 NIN scores reflect the **full** node tree — not just the fields we've implemented compose for — so the percentage naturally increases as more compose helpers are added.
 
-See [Round-Trip Test Progress](documentation/round_trip_test_progress.md) for per-model scores across all test types.
+See [Round-Trip Test Progress](documentation/round_trip_test_progress.md) for per-model scores across all test types. **When running round-trip tests and scores change**, update both the per-model percentages and the column header emojis (🔴 0-20% · 🟠 21-40% · 🟡 41-60% · 🔵 61-80% · ✅ 81-100%) in that document to reflect current averages.
 
 ### Test Models
 
