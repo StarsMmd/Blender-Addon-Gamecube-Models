@@ -70,17 +70,20 @@ IBI uses **category-weighted scoring**: each IR category (bones, meshes, materia
 
 ## How to Run Round-Trip Tests
 
-All four test types (NBN, NIN, IBI, BNB) are run via a single script that operates on real model files. Requires `bpy` and `mathutils` as standalone Python modules (`pip install bpy mathutils`).
+All four test types (NBN, NIN, IBI, BNB) are run via a single script that operates on real model files. Requires Python 3.11 with `bpy==4.5.7` (see README for install instructions).
 
 ```bash
 # Single model
-python3 tests/round_trip/run_round_trips.py ~/Documents/Projects/DAT\ plugin/models/nukenin.pkx
+python3.11 tests/round_trip/run_round_trips.py ~/Documents/Projects/DAT\ plugin/models/nukenin.pkx
+
+# Multiple models
+python3.11 tests/round_trip/run_round_trips.py model1.pkx model2.pkx
 
 # All models in a directory
-python3 tests/round_trip/run_round_trips.py ~/Documents/Projects/DAT\ plugin/models/
+python3.11 tests/round_trip/run_round_trips.py ~/Documents/Projects/DAT\ plugin/models/
 
 # Verbose output (shows IBI mismatch details)
-python3 tests/round_trip/run_round_trips.py ~/Documents/Projects/DAT\ plugin/models/nukenin.pkx -v
+python3.11 tests/round_trip/run_round_trips.py ~/Documents/Projects/DAT\ plugin/models/nukenin.pkx -v
 ```
 
 Synthetic round-trip tests (no game files needed) also run as part of the main pytest suite:
@@ -88,3 +91,18 @@ Synthetic round-trip tests (no game files needed) also run as part of the main p
 ```bash
 python3 -m pytest tests/test_write_roundtrip.py -v
 ```
+
+---
+
+## IBI Category Breakdown
+
+Average per-category scores across all 20 test models:
+
+| Category | Score | Notes |
+|---|---|---|
+| Bones | ~57% | Missing: inverse_bind_matrix, some flags (SKELETON on deformation bones) |
+| Meshes | ~93% | Near-complete. Small gaps from parent_bone_index and weight type differences |
+| Materials | ~84% | Colors, textures, blend modes, bump maps working. Missing: fragment blending, TEV combiners, lightmap channels |
+| Animations | ~0% | Placeholder rest-pose stubs only. Real animation export not yet implemented |
+| Constraints | 0% | Not yet implemented in export describe phase |
+| Lights | — | Not yet implemented; excluded from scoring when absent |

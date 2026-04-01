@@ -499,7 +499,7 @@ Each adjacent phase pair should be tested independently:
 | NBN: Node → Binary → Node | ✅ Implemented (`tests/test_write_roundtrip.py`) |
 | BNB: Binary → Node → Binary | ✅ Implemented (`tests/test_write_roundtrip.py`) |
 | NIN: Node → IR → Node | ✅ Implemented (score reflects full node tree) |
-| IBI: IR → Blender → IR | ✅ Implemented (bones + meshes) |
+| IBI: IR → Blender → IR | ✅ Implemented (bones + meshes + materials) |
 
 See [Round-Trip Test Progress](round_trip_test_progress.md) for per-model scores.
 
