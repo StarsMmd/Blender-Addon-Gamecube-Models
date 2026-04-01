@@ -286,10 +286,17 @@ Do not linearize colors in the IR, parsing, or describe phases.
 
 The shiny filter is applied entirely in Phase 6 (post-processing), independent of the parsing/IR/build phases. Raw shiny parameters are extracted from PKX headers in Phase 1 and passed directly to Phase 6. There is no shiny data in the IR.
 
-The filter inserts two named nodes into each material's node tree:
+The filter inserts four named nodes into each material's node tree, split into two stages:
 
-- **`shiny_filter_shader`** — the ShaderNodeGroup instance referencing the `ShinyFilter_{model_name}` node group (contains a Gamma node internally for sRGB→linear correction)
-- **`shiny_filter_mix`** — the MixRGB node blending between normal and shiny output
+**Routing stage** (placed BEFORE vertex color multiply):
+- **`shiny_route_shader`** — ShaderNodeGroup referencing `ShinyRoute_{model_name}` (channel swizzle + Gamma linearization)
+- **`shiny_route_mix`** — MixRGB blending between normal and routed output
+
+**Brightness stage** (placed AFTER vertex color multiply):
+- **`shiny_bright_shader`** — ShaderNodeGroup referencing `ShinyBright_{model_name}` (per-channel brightness scaling)
+- **`shiny_bright_mix`** — MixRGB blending between normal and brightness-adjusted output
+
+This separation ensures channel routing only affects texture/material colors, not vertex colors. The vertex color multiply node is found by graph analysis (MixRGB MULTIPLY with ShaderNodeAttribute input), not by name.
 
 The exporter **must skip these nodes** when reading back materials — they are display-only and not part of the original model data. Identify them by the node names above.
 
@@ -317,3 +324,5 @@ The shiny parameters are stored as registered `bpy.props` properties on the arma
 - [ ] Code audit: identify opportunities to simplify and clean up code
 - [x] Code audit: identify opportunities to reduce algorithmic complexity — see [complexity optimization plan](documentation/complexity_optimization_plan.md)
 - [ ] Implement remaining complexity optimizations (items 1-3 in the plan above)
+- [x] Shiny filter: split into separate routing and brightness shaders. The routing shader (channel swizzle) only applies to texture colors, not vertex colors. The brightness shader applies to the final result after vertex color multiplication.
+- [ ] Ambient lighting: per-material `ambient_color` is parsed into IR but not used in Blender shaders (no equivalent in Principled BSDF). Currently lost on round-trip — export describe falls back to default gray. Options: (a) store as material custom property for export fidelity, (b) add as additive color node (changes visuals), (c) leave as-is. Scene-level `LOBJ_AMBIENT` lights are also ignored. See compatibility table.

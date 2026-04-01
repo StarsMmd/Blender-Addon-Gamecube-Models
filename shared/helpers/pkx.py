@@ -18,13 +18,23 @@ from .shiny_params import ShinyParams
 
 
 def _to_brightness(byte_val):
-    """Map a brightness byte [0, 255] to a float [-1.0, 1.0]."""
-    return (byte_val / 255.0 * 2.0) - 1.0
+    """Map a brightness byte [0, 255] to a float [-1.0, 1.0].
+
+    Byte 127 maps to 0.0 (no change). Values 0-126 scale linearly to
+    [-1.0, 0.0) and values 128-255 scale linearly to (0.0, 1.0].
+    """
+    if byte_val <= 127:
+        return (byte_val / 127.0) - 1.0
+    else:
+        return (byte_val - 127.0) / 128.0
 
 
 def _from_brightness(value):
     """Map a brightness float [-1.0, 1.0] to a byte [0, 255]."""
-    return max(0, min(255, round((value + 1.0) / 2.0 * 255)))
+    if value <= 0.0:
+        return max(0, round((value + 1.0) * 127.0))
+    else:
+        return min(255, round(value * 128.0) + 127)
 
 
 def _is_noop_shiny(route_r, route_g, route_b, route_a, raw_brightness):

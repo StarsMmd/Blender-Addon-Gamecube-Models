@@ -116,7 +116,8 @@ def _find_node(nodes, node_type):
     """Find the first node of the given type, skipping shiny filter nodes."""
     for node in nodes:
         if node.bl_idname == node_type:
-            if node.name in ('shiny_filter_shader', 'shiny_filter_mix'):
+            if node.name in ('shiny_route_shader', 'shiny_route_mix',
+                             'shiny_bright_shader', 'shiny_bright_mix'):
                 continue
             return node
     return None
@@ -127,7 +128,8 @@ def _find_nodes(nodes, node_type):
     result = []
     for node in nodes:
         if node.bl_idname == node_type:
-            if node.name in ('shiny_filter_shader', 'shiny_filter_mix'):
+            if node.name in ('shiny_route_shader', 'shiny_route_mix',
+                             'shiny_bright_shader', 'shiny_bright_mix'):
                 continue
             result.append(node)
     return result

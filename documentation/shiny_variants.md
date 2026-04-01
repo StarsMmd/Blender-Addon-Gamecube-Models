@@ -58,18 +58,37 @@ Raw shiny params bypass the IR entirely — they go from Phase 1 (Extract) direc
 
 Channel routing and brightness accept all four input channels (alpha is a valid source for routing), but only RGB outputs are applied in the shader. Alpha passes through unchanged.
 
-### Shader Node Group
+### Shader Node Groups
 
-The addon creates a reusable node group (`ShinyFilter_{model_name}`) containing:
+The addon creates two reusable node groups, inserted at different points in the material graph to ensure channel routing doesn't affect vertex colors:
 
+**`ShinyRoute_{model_name}`** — Channel routing (swizzle):
 1. **Separate Color** — splits the input into R, G, B channels
 2. **Channel routing** — reconnects source channels to output channels per the routing table
-3. **Brightness multiply** — scales each RGB channel by `brightness + 1.0`
-4. **Combine Color** — recombines into the output color (alpha from original)
+3. **Combine Color** — recombines into the output color
+4. **Gamma** — linearizes sRGB → linear for Blender's scene-linear pipeline
 
-This group is inserted into every material via a `MixRGB` node that blends between the original and shiny-filtered color. The mix factor is driven by the armature's `dat_shiny` property.
+**`ShinyBright_{model_name}`** — Brightness scaling:
+1. **Separate Color** — splits the input into R, G, B channels
+2. **Brightness multiply** — scales each RGB channel by `brightness + 1.0`
+3. **Combine Color** — recombines into the output color
 
-The node group is shared across all materials on the same model. When any shiny parameter property changes, the node group is cleared and rebuilt via `populate_shiny_node_group()`, and all material instances update automatically.
+Each group is inserted into every material via a `MixRGB` node that blends between the original and filtered color. The mix factor is driven by the armature's `dat_shiny` property.
+
+### Vertex Color Separation
+
+The routing stage is placed **before** any vertex color multiply node in the material graph, while the brightness stage is placed **after** it. This ensures the channel swizzle only transforms texture/material colors — vertex colors pass through unaffected.
+
+The vertex color multiply node is detected by graph analysis: walking backward from the shader input and looking for a `MixRGB` node with `MULTIPLY` blend type that has a `ShaderNodeAttribute` (vertex color) as one of its inputs. This works on any material, not just those created by the importer.
+
+```
+With vertex colors:    [textures] → [ShinyRoute] → [vtx_color MULTIPLY] → [ShinyBright] → [Principled BSDF]
+Without vertex colors: [textures] → [ShinyRoute] → [ShinyBright] → [Principled BSDF]
+```
+
+If no vertex color multiply is found, both stages are inserted in sequence at the shader input.
+
+Both node groups are shared across all materials on the same model. When any shiny parameter property changes, the relevant group is cleared and rebuilt, and all material instances update automatically.
 
 ### Armature Properties
 
@@ -111,7 +130,7 @@ The `dat_shiny` toggle uses a driver on the MixRGB factor input, with an update 
 | `importer/phases/post_process/post_process.py` | `_apply_shiny()` — orchestrates shiny setup in Phase 6 |
 | `importer/phases/post_process/shiny_filter.py` | Node group building, property setup, material insertion |
 | `BlenderPlugin.py` | Property registration, UI panel, update callbacks |
-| `scripts/add_shiny_filter.py` | Standalone script for manual shiny filter application (uses the same `_find_color_input` logic) |
+| `scripts/add_shiny_filter.py` | Standalone script for manual shiny filter application (imports from `shiny_filter.py`) |
 
 ## Reference
 
