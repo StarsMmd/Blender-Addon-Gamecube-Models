@@ -228,6 +228,22 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.80 | current | `obj.hide_render` | `exporter/meshes.py` | Mesh visibility |
 | 2.80 | current | `material.use_backface_culling` | `exporter/meshes.py` | Backface culling flag |
 | | | | | |
+| | | **Exporter — Describe Materials (Phase 1)** | | |
+| 2.80 | current | `material.use_nodes` | `exporter/materials.py` | Check for node-based material |
+| 2.80 | current | `material.node_tree.nodes` | `exporter/materials.py` | Access shader nodes |
+| 2.80 | current | `material.node_tree.links` | `exporter/materials.py` | Access node links |
+| 2.80 | current | `node.bl_idname` | `exporter/materials.py` | Identify node type |
+| 2.80 | current | `node.inputs[name].default_value` | `exporter/materials.py` | Read Principled BSDF inputs |
+| 2.80 | current | `node.outputs[0].default_value` | `exporter/materials.py` | Read RGB node color |
+| 2.80 | current | `node.attribute_name` | `exporter/materials.py` | Read ShaderNodeAttribute target |
+| 2.80 | current | `tex_node.image` | `exporter/materials.py` | Access texture image |
+| 2.80 | current | `tex_node.interpolation` | `exporter/materials.py` | Texture sampling mode |
+| 2.80 | current | `tex_node.extension` | `exporter/materials.py` | Texture wrap/extension mode |
+| 2.80 | current | `image.size` | `exporter/materials.py` | Image dimensions |
+| 2.80 | current | `image.pixels` | `exporter/materials.py` | Read image pixel data (float RGBA) |
+| 2.80 | current | `link.from_node` / `link.to_node` | `exporter/materials.py` | Trace node connections |
+| 2.80 | current | `link.from_socket` / `link.to_socket` | `exporter/materials.py` | Identify connected sockets |
+| | | | | |
 | | | **Third-Party Libraries** | | |
 | — | — | `numpy.frombuffer(bytes, dtype=np.uint8)` | `materials.py` | Image pixel conversion; bundled with Blender |
 | — | — | `ndarray.astype(np.float32) / 255.0` | `materials.py` | u8 → float32 normalization |

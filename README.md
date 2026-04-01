@@ -57,7 +57,7 @@ The exporter writes a Blender scene to a `.dat` or `.pkx` binary. Skeleton and m
 - [ ] Fog import
 - [x] Exporter: Blender scene → IR (skeleton + meshes)
 - [x] Exporter: IR → node trees (skeleton + meshes)
-- [ ] Exporter: Materials + textures
+- [x] Exporter: Materials + textures
 - [ ] Exporter: Bone animations
 - [ ] Exporter: Constraints
 - [ ] Exporter: Lights

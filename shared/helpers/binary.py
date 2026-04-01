@@ -83,6 +83,27 @@ def pack(type_name, value):
     return struct.pack(fmt, value)
 
 
+def pack_native(type_name, value):
+    """Pack a single value using native byte order (for keyframe data).
+
+    Args:
+        type_name: One of 'float', 'short', 'ushort', 'char', 'uchar'.
+        value: The value to pack.
+
+    Returns:
+        bytes of the packed value.
+    """
+    native_types = {
+        'float':  ('f', 4),
+        'short':  ('h', 2),
+        'ushort': ('H', 2),
+        'char':   ('b', 1),
+        'uchar':  ('B', 1),
+    }
+    fmt, _ = native_types[type_name]
+    return struct.pack(fmt, value)
+
+
 def pack_many(type_name, *values):
     """Pack multiple values of the same type into big-endian bytes.
 

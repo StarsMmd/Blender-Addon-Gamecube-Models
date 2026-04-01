@@ -11,10 +11,12 @@ try:
     from .....shared.IR.geometry import IRMesh, IRUVLayer, IRColorLayer, IRBoneWeights
     from .....shared.IR.enums import SkinType
     from .....shared.helpers.logger import StubLogger
+    from .materials import describe_material
 except (ImportError, SystemError):
     from shared.IR.geometry import IRMesh, IRUVLayer, IRColorLayer, IRBoneWeights
     from shared.IR.enums import SkinType
     from shared.helpers.logger import StubLogger
+    from exporter.phases.describe_blender.helpers.materials import describe_material
 
 
 def describe_meshes(armature, bones, logger=StubLogger()):
@@ -107,10 +109,13 @@ def _describe_mesh_object(mesh_obj, bone_name_to_index, bones, logger):
     # Visibility
     is_hidden = mesh_obj.hide_render
 
-    # Backface culling — read from the first material slot if present
+    # Material — extract from first material slot
+    ir_material = None
     cull_back = False
     if mesh_obj.data.materials and mesh_obj.data.materials[0]:
-        cull_back = mesh_obj.data.materials[0].use_backface_culling
+        blender_mat = mesh_obj.data.materials[0]
+        cull_back = blender_mat.use_backface_culling
+        ir_material = describe_material(blender_mat, logger=logger)
 
     ir_mesh = IRMesh(
         name=mesh_obj.name,
@@ -119,7 +124,7 @@ def _describe_mesh_object(mesh_obj, bone_name_to_index, bones, logger):
         uv_layers=uv_layers,
         color_layers=color_layers,
         normals=normals,
-        material=None,  # Material export not yet implemented
+        material=ir_material,
         bone_weights=bone_weights,
         is_hidden=is_hidden,
         parent_bone_index=parent_bone_index,
@@ -253,11 +258,11 @@ def _extract_bone_weights(mesh_obj, bone_name_to_index):
             bone_name=best_bone,
         )
 
-    # Multi-bone weights exist. For imported models, envelope deformation was
-    # baked into vertex positions during import — exporting as WEIGHTED would
-    # cause double-deformation. Use SINGLE_BONE with the most referenced bone.
-    # TODO: Support true WEIGHTED export for user-created models by detecting
-    # whether vertices are in local or deformed space.
+    # Multi-bone weights exist but each vertex only references one bone.
+    # Use SINGLE_BONE with the most referenced bone since the vertex
+    # positions are already in their final deformed space.
+    # TODO: Support true WEIGHTED export for models with genuine multi-bone
+    # vertex deformation (vertices in bind pose / local space).
     totals = {}
     for _, weight_list in assignments:
         for bone_name, weight in weight_list:

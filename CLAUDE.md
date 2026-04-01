@@ -42,7 +42,7 @@ The IR is a platform-agnostic dataclass hierarchy (`shared/IR/`) that decouples 
 
 The export pipeline reverses the import pipeline. All phases live under `exporter/phases/`. The entry point is `Exporter.run()` in `exporter/exporter.py`.
 
-**Important:** The exporter must handle **arbitrary Blender models**, not just models that were originally imported from Colo/XD. Do not assume bone naming conventions (e.g. `Bone_N`), bone ordering, or any importer-specific metadata when reading Blender scenes. The describe_blender phase should work with any well-formed Blender armature and mesh setup.
+**Important:** The exporter must handle **arbitrary Blender models**, not just models that were originally imported from Colo/XD. Do not assume bone naming conventions (e.g. `Bone_N`), bone ordering, or any importer-specific metadata when reading Blender scenes. The describe_blender phase should work with any well-formed Blender armature and mesh setup. When converting between Blender and GX conventions (UV coordinates, coordinate systems, color spaces), always frame the conversion as Blender↔GX, never as "reversing what the importer did".
 
 ```
 Pre-process (pre_process)    Validate output path + scene
@@ -178,7 +178,7 @@ Nodes are cached by file offset (`nodes_cache_by_offset`). Nodes with `is_cachab
 | Bone instances (JOBJ_INSTANCE) | ✅ Working |
 | Shape animation import | ❌ Stubs only (not implemented in legacy either) |
 | Camera / Fog import | ❌ Stubs only |
-| Exporter pipeline | ⚠️ Bones + meshes working, materials/animations TODO — see export pipeline plan |
+| Exporter pipeline | ⚠️ Bones + meshes + materials working, animations/constraints TODO — see export pipeline plan |
 | Exporter binary round-trip (DATBuilder) | ✅ Functional (0 value mismatches) |
 | Exporter PKX packaging | ✅ Working (DAT injection, shiny write-back, trailer preserved) |
 | IR pipeline | ✅ Default path (legacy available via toggle) |
@@ -301,7 +301,7 @@ The shiny parameters are stored as registered `bpy.props` properties on the arma
 
 - **Logger parameter:** Functions default to `StubLogger()`, never `None`. Always use `logger.info()`/`logger.debug()` instead of `print()` — logger output is written to log files on disk that persist after import and can be read directly for investigation. `print()` only goes to the Blender console which is transient.
 - **Imports:** Phase files use try/except for Blender (relative) vs pytest (absolute) imports.
-- **Binary reads:** Use `shared/helpers/binary.py` helpers (`read('uint', data, offset)`) instead of raw `struct.unpack`.
+- **Binary reads/writes:** Use `shared/helpers/binary.py` helpers with descriptive type names (`read('uint', data, offset)`, `pack('float', value)`, `pack_many('uchar', r, g, b, a)`) instead of raw `struct.pack`/`struct.unpack` with format codes. For keyframe data that uses native byte order, use `read_native`/`pack_native`.
 - **Errors:** Use `ValueError("descriptive message")` instead of custom exception classes. Only `ModelBuildError` (in build phase) carries structured data.
 - **No bpy in shared/:** All Blender-specific code lives in `importer/phases/build_blender/`.
 - **Do not modify `legacy/`:** The `legacy/` folder contains the pre-refactor importer and should not be changed unless explicitly asked to do so.

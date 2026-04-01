@@ -120,8 +120,9 @@ def describe_skeleton(armature, logger=StubLogger()):
         else:
             accumulated_scale = scale_tuple
 
-        # Flags — deduce from Blender state where possible
-        flags = JOBJ_SKELETON
+        # Flags — start at 0, refined later by _refine_bone_flags() after
+        # meshes are described and we know which bones own geometry.
+        flags = 0
         is_hidden = data['hide']
         if is_hidden:
             flags |= JOBJ_HIDDEN

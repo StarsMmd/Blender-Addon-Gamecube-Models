@@ -16,8 +16,8 @@ The exporter writes a Blender scene to a `.dat` or `.pkx` binary that can be use
 | Vertex Colors | ✅ Working |
 | Normals | ✅ Working |
 | Bone Weights / Skinning | ✅ Working (single-bone) |
-| Materials (colors, properties) | Not yet implemented |
-| Textures | Not yet implemented |
+| Materials (colors, properties) | ✅ Working |
+| Textures | ✅ Working |
 | Bone Animations | Not yet implemented |
 | Material Animations (color/alpha) | Not yet implemented |
 | Material Animations (texture UV) | Not yet implemented |
