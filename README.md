@@ -105,19 +105,24 @@ tests/round_trip/          # Round-trip tests with real model files (requires bp
 Install the following Python packages for development and testing:
 
 ```bash
-pip install pytest bpy mathutils
+pip install pytest
+
+# bpy 4.5 requires Python 3.11
+python3.11 -m pip install bpy==4.5.7
 ```
 
 | Package | Purpose |
 |---|---|
 | `pytest` | Required for running the unit test suite |
-| `bpy` | Required for round-trip tests (IBI) and CLI pipeline phases 5-6 |
-| `mathutils` | Required alongside `bpy` for Blender math operations |
+| `bpy` | Required for round-trip tests (IBI) and CLI pipeline phases 5-6. **Requires Python 3.11.** |
 
-**Note on bpy version:** The addon targets Blender 4.5, but the standalone `bpy` package on PyPI currently only provides version 3.4. Most core APIs (armatures, meshes, vertex groups, edit mode) work the same. Some Blender 4.5-specific APIs (e.g. action slots) are version-guarded in the codebase and will be skipped when running under bpy 3.4. To check your installed version:
+`bpy` bundles `mathutils` — no separate install needed.
+
+To verify:
 
 ```bash
-python3 -c "import bpy; print(bpy.app.version_string)"
+python3.11 -c "import bpy; print(bpy.app.version_string)"
+# Should print: 4.5.7 LTS
 ```
 
 ### Running the CLI Pipeline
