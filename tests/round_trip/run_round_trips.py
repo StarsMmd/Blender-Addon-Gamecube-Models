@@ -81,26 +81,9 @@ def describe_ir(sections, options=None):
 
 
 def build_in_blender(ir_scene, options=None):
-    """Run import phase 5 (build_blender). Returns build_results.
-
-    Strips animations and constraints before building since those features
-    are not yet implemented in the export describe_blender phase, and the
-    standalone bpy module may not support all Blender 4.5 animation APIs.
-    """
+    """Run import phase 5 (build_blender). Returns build_results."""
     if options is None:
         options = {"filepath": "test_model"}
-
-    # Strip features not yet supported by the export pipeline
-    for model in ir_scene.models:
-        model.bone_animations = []
-        model.shape_animations = []
-        model.ik_constraints = []
-        model.copy_location_constraints = []
-        model.track_to_constraints = []
-        model.copy_rotation_constraints = []
-        model.limit_rotation_constraints = []
-        model.limit_location_constraints = []
-
     return build_blender_scene(ir_scene, bpy.context, options)
 
 

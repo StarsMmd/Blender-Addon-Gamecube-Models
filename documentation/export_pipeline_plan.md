@@ -42,21 +42,21 @@ exporter/
     pre_process/
       pre_process.py                 # Pre-process: validate output path + scene       ✅
     describe_blender/
-      describe_blender.py            # Phase 1: Blender → IRScene + ShinyParams        bones+meshes
+      describe_blender.py            # Phase 1: Blender → IRScene + ShinyParams        bones+meshes+materials
       helpers/
         skeleton.py                  # Armature → IRBone list                           ✅
         meshes.py                    # Mesh objects → IRMesh list                       ✅
-        materials.py                 # Blender materials → IRMaterial
+        materials.py                 # Blender materials → IRMaterial              ✅
         animations.py                # Actions → IRBoneAnimationSet list
         constraints.py               # Bone constraints → IR constraint lists
         lights.py                    # Light objects → IRLight list
         material_animations.py       # NLA tracks → IRMaterialAnimationSet list
     compose/
-      compose.py                     # Phase 2: IRScene → root node trees              partial
+      compose.py                     # Phase 2: IRScene → root node trees              skel+mesh+mat
       helpers/
         bones.py                     # IRBone list → Joint tree                        ✅
         meshes.py                    # IRMesh list → Mesh/PObject chains               ✅
-        materials.py                 # IRMaterial → MaterialObject chain
+        materials.py                 # IRMaterial → MaterialObject chain           ✅
         display_list_encoder.py      # Vertices/faces → GX display list bytes
         image_encoder.py             # RGBA pixels → GX texture format bytes
         keyframe_encoder.py          # IRKeyframe list → HSD compressed byte stream
@@ -499,7 +499,7 @@ Each adjacent phase pair should be tested independently:
 | NBN: Node → Binary → Node | ✅ Implemented (`tests/test_write_roundtrip.py`) |
 | BNB: Binary → Node → Binary | ✅ Implemented (`tests/test_write_roundtrip.py`) |
 | NIN: Node → IR → Node | ✅ Implemented (score reflects full node tree) |
-| IBI: IR → Blender → IR | ✅ Implemented (bones + meshes) |
+| IBI: IR → Blender → IR | ✅ Implemented (bones + meshes + materials) |
 
 See [Round-Trip Test Progress](round_trip_test_progress.md) for per-model scores.
 
@@ -631,6 +631,7 @@ The BoundBox section contains per-animation-set, per-frame axis-aligned bounding
 | `exporter/phases/describe_blender/describe_blender.py` | ✅ Bones + meshes wired |
 | `exporter/phases/describe_blender/helpers/skeleton.py` | ✅ Armature → IRBone list |
 | `exporter/phases/describe_blender/helpers/meshes.py` | ✅ Mesh objects → IRMesh list |
+| `exporter/phases/describe_blender/helpers/materials.py` | ✅ Blender materials → IRMaterial |
 | `exporter/phases/compose/compose.py` | Partial (skeleton wired) |
 | `exporter/phases/compose/helpers/bones.py` | ✅ IRBone → Joint tree |
 | `exporter/phases/compose/helpers/meshes.py` | ✅ IRMesh → Mesh/PObject chains |

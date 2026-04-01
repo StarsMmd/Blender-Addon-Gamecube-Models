@@ -18,7 +18,7 @@ Parse a DAT binary into a node tree, run the describe phase to produce an IRScen
 
 ### IR → Blender → IR (IBI)
 
-Build an IRScene into Blender objects via the build phase, then read them back via the describe_blender phase to produce a new IRScene. Compare the two IR scenes field-by-field. Measures the Blender round-trip fidelity. Currently 0% as describe_blender is not yet implemented.
+Build an IRScene into Blender objects via the build phase, then read them back via the describe_blender phase to produce a new IRScene. Compare the two IR scenes using category-weighted scoring — each IR category (bones, meshes, materials, animations, constraints, lights) is scored independently, then averaged across categories that have data. This prevents large vertex arrays from inflating the score. Currently covers bones and mesh geometry; materials, animations, and constraints are not yet implemented in the export describe phase.
 
 ### Binary → Node tree → Binary (BNB)
 
@@ -28,34 +28,34 @@ Parse a DAT binary, write it back, and compare the output bytes against the inpu
 
 ## Test Results
 
-**Overall export pipeline completion: 🟡 47.4%** _(weighted: NBN 25%, NIN 40%, IBI 30%, BNB 5%)_
+**Overall export pipeline completion: 🔵 61.5%** _(weighted: NBN 25%, NIN 40%, IBI 30%, BNB 5%)_
 
 _Average health: 🔴 0-20% · 🟠 21-40% · 🟡 41-60% · 🔵 61-80% · ✅ 81-100%_
 
-IBI uses **category-weighted scoring**: each IR category (bones, meshes, materials, animations, constraints, lights) is scored independently, then averaged across categories that have data. This prevents large vertex arrays from inflating the score.
+IBI uses **category-weighted scoring**: each IR category (bones, meshes, materials, animations, constraints, lights) is scored independently, then averaged across categories that have data. This prevents large vertex arrays from inflating the score. Run with `python3.11` and `bpy==4.5.7`.
 
-| Model | Game | NBN ✅ | NIN 🟠 | IBI 🟠 | BNB 🔵 |
+| Model | Game | NBN ✅ | NIN 🟡 | IBI 🟡 | BNB 🔵 |
 |---|---|---|---|---|---|
-| nukenin | XD | 95.8% | 43.9% | 37.2% | 94.0% |
-| haganeil | XD | 92.4% | 29.7% | 40.3% | 91.8% |
-| cokodora | XD | 93.0% | 30.2% | 35.4% | 84.3% |
-| frygon | XD | 92.9% | 29.4% | 33.1% | 83.5% |
-| achamo | XD | 91.9% | 26.0% | 34.1% | 80.9% |
-| miniryu | XD | 90.0% | 18.0% | 33.3% | 80.9% |
-| bohmander | XD | 91.4% | 23.3% | 34.4% | 80.8% |
-| cerebi | XD | 89.5% | 16.2% | 31.9% | 71.0% |
-| gallop | XD | 91.6% | 24.4% | 35.6% | 77.3% |
-| usohachi | XD | 92.1% | 25.3% | 34.7% | 75.1% |
-| runpappa | XD | 92.4% | 28.4% | 34.1% | 81.4% |
-| rayquaza | XD | 93.1% | 26.6% | 32.3% | 84.6% |
-| ken_a1 | XD | 91.5% | 23.1% | 32.4% | 61.0% |
-| mage_0101 | XD | 91.6% | 22.0% | 32.2% | 56.1% |
-| heracros | Colo | 92.8% | 30.0% | 35.5% | 77.5% |
-| hinoarashi | Colo | 90.2% | 18.2% | 33.6% | 83.1% |
-| hizuki_a1 | Colo | 92.4% | 28.3% | 32.5% | 79.6% |
-| koduck | Colo | 93.8% | 35.6% | 35.0% | 82.5% |
-| ghos | Colo | 90.2% | 18.1% | 32.5% | 77.8% |
-| showers | Colo | 89.6% | 16.0% | 33.7% | 76.0% |
+| nukenin | XD | 95.8% | 72.9% | 49.9% | 94.0% |
+| haganeil | XD | 92.4% | 58.1% | 52.2% | 91.8% |
+| cokodora | XD | 93.0% | 55.0% | 47.4% | 84.3% |
+| frygon | XD | 92.9% | 58.9% | 46.0% | 83.5% |
+| achamo | XD | 91.9% | 54.2% | 47.1% | 80.9% |
+| miniryu | XD | 90.0% | 44.2% | 46.5% | 80.9% |
+| bohmander | XD | 91.4% | 53.4% | 47.1% | 80.8% |
+| cerebi | XD | 89.5% | 44.4% | 44.8% | 71.0% |
+| gallop | XD | 91.6% | 51.7% | 46.6% | 77.3% |
+| usohachi | XD | 92.1% | 46.3% | 39.7% | 75.1% |
+| runpappa | XD | 92.4% | 55.4% | 47.2% | 81.4% |
+| rayquaza | XD | 93.1% | 56.9% | 45.0% | 84.6% |
+| ken_a1 | XD | 91.5% | 49.7% | 37.9% | 61.0% |
+| mage_0101 | XD | 91.6% | 51.0% | 38.1% | 56.1% |
+| heracros | Colo | 92.8% | 57.3% | 48.2% | 77.5% |
+| hinoarashi | Colo | 90.2% | 46.4% | 44.9% | 83.1% |
+| hizuki_a1 | Colo | 92.4% | 53.7% | 37.3% | 79.6% |
+| koduck | Colo | 93.8% | 56.1% | 47.3% | 82.5% |
+| ghos | Colo | 90.2% | 41.3% | 44.1% | 77.8% |
+| showers | Colo | 89.6% | 45.6% | 46.4% | 76.0% |
 
 ---
 
@@ -64,23 +64,26 @@ IBI uses **category-weighted scoring**: each IR category (bones, meshes, materia
 - **BNB**: `compute_binary_match()` in `tests/test_write_roundtrip.py` — splits both binaries into 4-byte words, counts matching words by value (not position) using Counter intersection, divides by the larger word count.
 - **NBN**: Recursively compares all node fields after serialize → reparse. Counts mismatches vs total fields.
 - **NIN**: Walks the full original node tree as the denominator, compares against the composed node tree (after describe → compose).
-- **IBI**: Walks the full original IR as the denominator, compares against the round-tripped IR (after build → describe_blender). Uses a generic dataclass walker that automatically covers all IR fields.
+- **IBI**: Category-weighted scoring. Each IR category (bones, meshes, materials, animations, constraints, lights) is scored independently using a generic dataclass walker, then averaged across categories that have data in the original IR. Empty categories are excluded from the average.
 
 ---
 
 ## How to Run Round-Trip Tests
 
-All four test types (NBN, NIN, IBI, BNB) are run via a single script that operates on real model files. Requires `bpy` and `mathutils` as standalone Python modules (`pip install bpy mathutils`).
+All four test types (NBN, NIN, IBI, BNB) are run via a single script that operates on real model files. Requires Python 3.11 with `bpy==4.5.7` (see README for install instructions).
 
 ```bash
 # Single model
-python3 tests/round_trip/run_round_trips.py ~/Documents/Projects/DAT\ plugin/models/nukenin.pkx
+python3.11 tests/round_trip/run_round_trips.py ~/Documents/Projects/DAT\ plugin/models/nukenin.pkx
+
+# Multiple models
+python3.11 tests/round_trip/run_round_trips.py model1.pkx model2.pkx
 
 # All models in a directory
-python3 tests/round_trip/run_round_trips.py ~/Documents/Projects/DAT\ plugin/models/
+python3.11 tests/round_trip/run_round_trips.py ~/Documents/Projects/DAT\ plugin/models/
 
 # Verbose output (shows IBI mismatch details)
-python3 tests/round_trip/run_round_trips.py ~/Documents/Projects/DAT\ plugin/models/nukenin.pkx -v
+python3.11 tests/round_trip/run_round_trips.py ~/Documents/Projects/DAT\ plugin/models/nukenin.pkx -v
 ```
 
 Synthetic round-trip tests (no game files needed) also run as part of the main pytest suite:
@@ -88,3 +91,18 @@ Synthetic round-trip tests (no game files needed) also run as part of the main p
 ```bash
 python3 -m pytest tests/test_write_roundtrip.py -v
 ```
+
+---
+
+## IBI Category Breakdown
+
+Average per-category scores across all 20 test models:
+
+| Category | Score | Notes |
+|---|---|---|
+| Bones | ~57% | Missing: inverse_bind_matrix, some flags (SKELETON on deformation bones) |
+| Meshes | ~93% | Near-complete. Small gaps from parent_bone_index and weight type differences |
+| Materials | ~84% | Colors, textures, blend modes, bump maps working. Missing: fragment blending, TEV combiners, lightmap channels |
+| Animations | ~0% | Placeholder rest-pose stubs only. Real animation export not yet implemented |
+| Constraints | 0% | Not yet implemented in export describe phase |
+| Lights | — | Not yet implemented; excluded from scoring when absent |

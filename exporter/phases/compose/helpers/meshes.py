@@ -5,7 +5,6 @@ Takes IRMesh dataclasses and reconstructs the SysDolphin node tree
 structure with encoded vertex buffers and GX display lists.
 """
 import re
-import struct
 from collections import defaultdict
 
 try:
@@ -26,7 +25,9 @@ try:
         JOBJ_HIDDEN,
     )
     from .....shared.IR.enums import SkinType
+    from .....shared.helpers.binary import pack, pack_many
     from .....shared.helpers.logger import StubLogger
+    from .materials import compose_material
 except (ImportError, SystemError):
     from shared.Nodes.Classes.Mesh.Mesh import Mesh
     from shared.Nodes.Classes.Mesh.PObject import PObject
@@ -45,7 +46,9 @@ except (ImportError, SystemError):
         JOBJ_HIDDEN,
     )
     from shared.IR.enums import SkinType
+    from shared.helpers.binary import pack, pack_many
     from shared.helpers.logger import StubLogger
+    from exporter.phases.compose.helpers.materials import compose_material
 
 
 # Counter for generating unique synthetic base_pointer values.
@@ -101,7 +104,7 @@ def compose_meshes(meshes, joints, bones, logger=StubLogger()):
             mesh_node = Mesh(address=None, blender_obj=None)
             mesh_node.name = None
             mesh_node.next = None
-            mesh_node.mobject = None  # Material compose not yet implemented
+            mesh_node.mobject = compose_material(ir_mesh.material, logger=logger)
             mesh_node.pobject = pobj
             mesh_nodes.append(mesh_node)
 
@@ -176,9 +179,12 @@ def _build_pobj(ir_mesh, joints, bones, bone_name_to_index, logger):
         vertex_descs.append(nrm_desc)
         vertex_buffers.append(('normals', nrm_verts, nrm_indices))
 
-    # UV layers
+    # UV layers — convert from Blender UV convention to GX convention.
+    # Blender UV origin is bottom-left (V goes up), GX origin is top-left
+    # (V goes down). Flip V when encoding to GX vertex buffers.
     for uv_i, uv_layer in enumerate(ir_mesh.uv_layers):
-        uv_verts, uv_indices, uv_buffer = _encode_indexed_float2(uv_layer.uvs)
+        flipped_uvs = [(u, 1.0 - v) for u, v in uv_layer.uvs]
+        uv_verts, uv_indices, uv_buffer = _encode_indexed_float2(flipped_uvs)
         uv_idx = _parse_uv_index(uv_layer.name, uv_i)
         uv_desc = _make_vertex_desc(GX_VA_TEX0 + uv_idx, GX_TEX_ST, GX_F32, stride=8)
         uv_desc.raw_vertex_data = uv_buffer
@@ -187,7 +193,7 @@ def _build_pobj(ir_mesh, joints, bones, bone_name_to_index, logger):
 
     # Color layers
     for color_layer in ir_mesh.color_layers:
-        # Skip alpha-only layers (they're baked into the color layer on import)
+        # Skip alpha-only layers (alpha is part of RGBA in the color layer)
         if 'alpha_' in color_layer.name:
             continue
         clr_attr = GX_VA_CLR0 if 'color_0' in color_layer.name else GX_VA_CLR1
@@ -352,7 +358,7 @@ def _encode_float3_buffer(vertices):
     """
     buf = bytearray()
     for v in vertices:
-        buf.extend(struct.pack('>fff', v[0], v[1], v[2]))
+        buf.extend(pack_many('float', v[0], v[1], v[2]))
     return vertices, bytes(buf)
 
 
@@ -375,7 +381,7 @@ def _encode_indexed_float3(per_loop_data):
 
     buf = bytearray()
     for v in unique:
-        buf.extend(struct.pack('>fff', v[0], v[1], v[2]))
+        buf.extend(pack_many('float', v[0], v[1], v[2]))
     return unique, indices, bytes(buf)
 
 
@@ -398,7 +404,7 @@ def _encode_indexed_float2(per_loop_data):
 
     buf = bytearray()
     for v in unique:
-        buf.extend(struct.pack('>ff', v[0], v[1]))
+        buf.extend(pack_many('float', v[0], v[1]))
     return unique, indices, bytes(buf)
 
 
@@ -431,7 +437,7 @@ def _encode_indexed_rgba(per_loop_data):
         g = min(255, max(0, int(val[1] * 255 + 0.5)))
         b = min(255, max(0, int(val[2] * 255 + 0.5)))
         a = min(255, max(0, int(val[3] * 255 + 0.5)))
-        buf.extend(struct.pack('>BBBB', r, g, b, a))
+        buf.extend(pack_many('uchar', r, g, b, a))
     return unique, indices, bytes(buf)
 
 
@@ -485,13 +491,13 @@ def _encode_display_list(faces, vertices, vertex_descs, vertex_buffers):
     # Opcode: GX_DRAW_TRIANGLES
     buf.append(GX_DRAW_TRIANGLES)
     # Vertex count (ushort)
-    buf.extend(struct.pack('>H', vertex_count))
+    buf.extend(pack('ushort', vertex_count))
 
-    # Write vertex indices — note: the GX convention for triangles reverses
-    # winding order (v0, v2, v1) compared to the IR (v0, v1, v2).
+    # Write vertex indices with GX winding (swap indices 1↔2 to convert
+    # Blender CCW → GX CW). The parser's GX_DRAW_TRIANGLES handler will
+    # swap them back to produce CCW faces on re-import.
     for tri_idx, tri in enumerate(triangles):
         loop_idxs = tri_loop_indices[tri_idx]
-        # GX winding: v0, v2, v1
         for vi in [0, 2, 1]:
             pos_index = tri[vi]
             loop_index = loop_idxs[vi]
@@ -505,7 +511,7 @@ def _encode_display_list(faces, vertices, vertex_descs, vertex_buffers):
                     env_idx = env_map['vertex_to_env'].get(pos_index, 0)
                     buf.append(env_idx * 3)
                 elif desc.attribute == GX_VA_POS:
-                    buf.extend(struct.pack('>H', pos_index))
+                    buf.extend(pack('ushort', pos_index))
                 elif isinstance(vbuf, tuple) and len(vbuf) == 3:
                     # Per-loop attribute (normals, UVs, colors)
                     _, _, per_loop_indices = vbuf
@@ -513,9 +519,9 @@ def _encode_display_list(faces, vertices, vertex_descs, vertex_buffers):
                         idx = per_loop_indices[loop_index]
                     else:
                         idx = 0
-                    buf.extend(struct.pack('>H', idx))
+                    buf.extend(pack('ushort', idx))
                 else:
-                    buf.extend(struct.pack('>H', pos_index))
+                    buf.extend(pack('ushort', pos_index))
 
     # Pad to 32-byte alignment
     while len(buf) % 32 != 0:
