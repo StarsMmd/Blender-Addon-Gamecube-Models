@@ -515,6 +515,124 @@ class TestBinaryRoundtrip:
 # Real-file round-trip (opt-in, requires --dat-file)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# DAT header and alignment tests
+# ---------------------------------------------------------------------------
+
+class TestDATHeaderAndAlignment:
+    """Verify DAT header fields and file alignment."""
+
+    def test_file_size_includes_header(self):
+        """file_size field in DAT header includes the 0x20 header bytes."""
+        joint_data = build_joint(flags=1, scale=(1, 1, 1))
+        dat_bytes = build_dat_with_sections(
+            joint_data, relocations=[], sections=[(0, True)],
+            section_names=["test_joint"])
+
+        sections = _parse_sections(dat_bytes)
+        result = _rebuild(sections)
+
+        file_size = struct.unpack('>I', result[0:4])[0]
+        assert file_size > 32, "file_size should be larger than the 0x20 header"
+        # file_size should include the 0x20 header
+        assert file_size <= len(result), "file_size should not exceed total bytes"
+        # The content should end at file_size (rest is padding)
+        assert result[file_size - 1:file_size] == b'\x00', \
+            "last byte of content (at file_size-1) should be null terminator"
+
+    def test_file_size_ends_at_string_null_terminator(self):
+        """file_size points to the byte after the last section name's null terminator."""
+        joint_data = build_joint(flags=1, scale=(1, 1, 1))
+        dat_bytes = build_dat_with_sections(
+            joint_data, relocations=[], sections=[(0, True)],
+            section_names=["scene_data"])
+
+        sections = _parse_sections(dat_bytes, section_map={"scene_data": "Joint"})
+        result = _rebuild(sections)
+
+        file_size = struct.unpack('>I', result[0:4])[0]
+        # The content before the null terminator should be the section name
+        name_end = file_size - 1  # the null terminator
+        assert result[name_end] == 0, "should end with null terminator"
+        # Walk backward to find the start of the name
+        name_start = name_end - 1
+        while name_start > 0 and result[name_start] != 0:
+            name_start -= 1
+        name_start += 1  # skip past the previous null or section info
+        name_bytes = result[name_start:name_end]
+        assert name_bytes == b'scene_data', f"expected 'scene_data', got {name_bytes!r}"
+
+    def test_file_size_excludes_padding(self):
+        """file_size should not include trailing 0x20-alignment padding."""
+        joint_data = build_joint(flags=1, scale=(1, 1, 1))
+        dat_bytes = build_dat_with_sections(
+            joint_data, relocations=[], sections=[(0, True)],
+            section_names=["test_joint"])
+
+        sections = _parse_sections(dat_bytes)
+        result = _rebuild(sections)
+
+        file_size = struct.unpack('>I', result[0:4])[0]
+        # If the file was padded, file_size should be less than total length
+        # (unless content happens to be exactly aligned)
+        if len(result) != file_size:
+            # Padding bytes should all be zero
+            padding = result[file_size:]
+            assert all(b == 0 for b in padding), "padding bytes should be zero"
+
+    def test_serialize_output_0x20_aligned(self):
+        """serialize() output should be padded to 0x20 (32-byte) alignment."""
+        from exporter.phases.serialize.serialize import serialize
+        from shared.Nodes.Classes.Joints.Joint import Joint as JointNode
+        from shared.Nodes.Classes.Joints.ModelSet import ModelSet
+        from shared.Nodes.Classes.RootNodes.SceneData import SceneData
+
+        # Build a minimal scene
+        joint = JointNode(address=None, blender_obj=None)
+        joint.name = None
+        joint.flags = 1
+        joint.child = None
+        joint.next = None
+        joint.property = None
+        joint.rotation = [0, 0, 0]
+        joint.scale = [1, 1, 1]
+        joint.position = [0, 0, 0]
+        joint.inverse_bind = None
+        joint.reference = None
+
+        model_set = ModelSet(address=None, blender_obj=None)
+        model_set.root_joint = joint
+        model_set.animated_joints = None
+        model_set.animated_material_joints = None
+        model_set.animated_shape_joints = None
+
+        scene_data = SceneData(address=None, blender_obj=None)
+        scene_data.models = [model_set]
+        scene_data.camera = None
+        scene_data.lights = None
+        scene_data.fog = None
+
+        result = serialize([scene_data], ['scene_data'])
+        assert len(result) % 0x20 == 0, \
+            f"serialize output should be 0x20 aligned, got {len(result)} bytes ({len(result) % 0x20} remainder)"
+
+    def test_data_size_excludes_header(self):
+        """data_size field should not include the 0x20 header."""
+        joint_data = build_joint(flags=1, scale=(1, 1, 1))
+        dat_bytes = build_dat_with_sections(
+            joint_data, relocations=[], sections=[(0, True)],
+            section_names=["test_joint"])
+
+        sections = _parse_sections(dat_bytes)
+        result = _rebuild(sections)
+
+        data_size = struct.unpack('>I', result[4:8])[0]
+        file_size = struct.unpack('>I', result[0:4])[0]
+        assert data_size < file_size, "data_size should be less than file_size"
+        assert data_size < file_size - 32, \
+            "data_size should be significantly less than file_size (excludes header + relocs + sections)"
+
+
 class TestRealFileRoundtrip:
     """Round-trip a real .dat/.pkx file. Opt-in via --dat-file flag."""
 

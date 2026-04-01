@@ -34,37 +34,45 @@ _Average health: 🔴 0-20% · 🟠 21-40% · 🟡 41-60% · 🔵 61-80% · ✅ 
 
 IBI uses **category-weighted scoring**: each IR category (bones, meshes, materials, animations, constraints, lights) is scored independently, then averaged across categories that have data. This prevents large vertex arrays from inflating the score. Run with `python3.11` and `bpy==4.5.7`.
 
+All scores displayed as `match%(error/miss)` — see "How Scores Are Computed" for definitions.
+
 | Model | Game | NBN ✅ | NIN 🟡 | IBI 🟡 | BNB 🔵 |
 |---|---|---|---|---|---|
-| nukenin | XD | 95.8% | 72.9% | 49.9% | 94.0% |
-| haganeil | XD | 92.4% | 58.1% | 52.2% | 91.8% |
-| cokodora | XD | 93.0% | 55.0% | 47.4% | 84.3% |
-| frygon | XD | 92.9% | 58.9% | 46.0% | 83.5% |
-| achamo | XD | 91.9% | 54.2% | 47.1% | 80.9% |
-| miniryu | XD | 90.0% | 44.2% | 46.5% | 80.9% |
-| bohmander | XD | 91.4% | 53.4% | 47.1% | 80.8% |
-| cerebi | XD | 89.5% | 44.4% | 44.8% | 71.0% |
-| gallop | XD | 91.6% | 51.7% | 46.6% | 77.3% |
-| usohachi | XD | 92.1% | 46.3% | 39.7% | 75.1% |
-| runpappa | XD | 92.4% | 55.4% | 47.2% | 81.4% |
-| rayquaza | XD | 93.1% | 56.9% | 45.0% | 84.6% |
-| ken_a1 | XD | 91.5% | 49.7% | 37.9% | 61.0% |
-| mage_0101 | XD | 91.6% | 51.0% | 38.1% | 56.1% |
-| heracros | Colo | 92.8% | 57.3% | 48.2% | 77.5% |
-| hinoarashi | Colo | 90.2% | 46.4% | 44.9% | 83.1% |
-| hizuki_a1 | Colo | 92.4% | 53.7% | 37.3% | 79.6% |
-| koduck | Colo | 93.8% | 56.1% | 47.3% | 82.5% |
-| ghos | Colo | 90.2% | 41.3% | 44.1% | 77.8% |
-| showers | Colo | 89.6% | 45.6% | 46.4% | 76.0% |
+| nukenin | XD | 95.8%(4/0) | 72.9%(23/4) | 49.9%(4/46) | 94.0% |
+| haganeil | XD | 92.4%(8/0) | 58.1%(35/7) | 52.2%(5/43) | 91.8% |
+| cokodora | XD | 93.0%(7/0) | 55.0%(35/10) | 47.4%(5/48) | 84.3% |
+| frygon | XD | 92.9%(7/0) | 58.9%(35/6) | 46.0%(4/50) | 83.5% |
+| achamo | XD | 91.9%(8/0) | 54.2%(41/4) | 47.1%(4/49) | 80.9% |
+| miniryu | XD | 90.0%(10/0) | 44.2%(52/4) | 46.5%(4/50) | 80.9% |
+| bohmander | XD | 91.4%(9/0) | 53.4%(42/5) | 47.1%(4/49) | 80.8% |
+| cerebi | XD | 89.5%(10/0) | 44.4%(53/3) | 44.8%(5/50) | 71.0% |
+| gallop | XD | 91.6%(8/0) | 51.7%(42/6) | 46.6%(4/49) | 77.3% |
+| usohachi | XD | 92.1%(8/0) | 46.3%(35/19) | 39.7%(5/55) | 75.1% |
+| runpappa | XD | 92.4%(8/0) | 55.4%(40/5) | 47.2%(5/48) | 81.4% |
+| rayquaza | XD | 93.1%(7/0) | 56.9%(33/10) | 45.0%(5/50) | 84.6% |
+| ken_a1 | XD | 91.5%(9/0) | 49.7%(44/6) | 37.9%(3/59) | 61.0% |
+| mage_0101 | XD | 91.6%(8/0) | 51.0%(44/5) | 38.1%(3/59) | 56.1% |
+| heracros | Colo | 92.8%(7/0) | 57.3%(37/5) | 48.2%(6/46) | 77.5% |
+| hinoarashi | Colo | 90.2%(10/0) | 46.4%(48/5) | 44.9%(5/50) | 83.1% |
+| hizuki_a1 | Colo | 92.4%(8/0) | 53.7%(39/7) | 37.3%(4/59) | 79.6% |
+| koduck | Colo | 93.8%(6/0) | 56.1%(36/8) | 47.3%(6/47) | 82.5% |
+| ghos | Colo | 90.2%(10/0) | 41.3%(53/6) | 44.1%(5/51) | 77.8% |
+| showers | Colo | 89.6%(10/0) | 45.6%(51/3) | 46.4%(4/50) | 76.0% |
 
 ---
 
 ## How Scores Are Computed
 
-- **BNB**: `compute_binary_match()` in `tests/test_write_roundtrip.py` — splits both binaries into 4-byte words, counts matching words by value (not position) using Counter intersection, divides by the larger word count.
-- **NBN**: Recursively compares all node fields after serialize → reparse. Counts mismatches vs total fields.
-- **NIN**: Walks the full original node tree as the denominator, compares against the composed node tree (after describe → compose).
-- **IBI**: Category-weighted scoring. Each IR category (bones, meshes, materials, animations, constraints, lights) is scored independently using a generic dataclass walker, then averaged across categories that have data in the original IR. Empty categories are excluded from the average.
+All scores are displayed as **`match%(error/miss)`** where:
+- **match** — percentage of fields that round-tripped correctly
+- **error** — percentage of fields that existed in both but had different values (implementation bugs)
+- **miss** — percentage of fields that existed in the original but were missing/None in the round-tripped result (not yet implemented)
+
+Scoring methods:
+- **BNB**: Fuzzy 4-byte word matching — splits both binaries into words, counts matches by value (not position). All non-matches are errors (layout differences).
+- **NBN**: Recursively compares all node fields after serialize → reparse. Distinguishes errors (value mismatch) from misses (missing node/field).
+- **NIN**: Walks the full original node tree as the denominator. Missing subtrees in the composed output count as misses; differing values count as errors.
+- **IBI**: Category-weighted scoring. Each IR category (bones, meshes, materials, animations, constraints, lights) is scored independently, then averaged across categories that have data. Empty categories are excluded.
 
 ---
 
@@ -98,11 +106,11 @@ python3 -m pytest tests/test_write_roundtrip.py -v
 
 Average per-category scores across all 20 test models:
 
-| Category | Score | Notes |
-|---|---|---|
-| Bones | ~57% | Missing: inverse_bind_matrix, some flags (SKELETON on deformation bones) |
-| Meshes | ~93% | Near-complete. Small gaps from parent_bone_index and weight type differences |
-| Materials | ~84% | Colors, textures, blend modes, bump maps working. Missing: fragment blending, TEV combiners, lightmap channels |
-| Animations | ~0% | Placeholder rest-pose stubs only. Real animation export not yet implemented |
-| Constraints | 0% | Not yet implemented in export describe phase |
-| Lights | — | Not yet implemented; excluded from scoring when absent |
+| Category | Score | Error | Miss | Notes |
+|---|---|---|---|---|
+| Bones | ~57% | ~8% | ~36% | Errors: flag mismatches, rotation ambiguity. Misses: inverse_bind_matrix, SKELETON flag on deformation bones |
+| Meshes | ~93% | ~0% | ~7% | Near-complete geometry round-trip. Misses: parent_bone_index differences |
+| Materials | ~84% | ~15% | ~1% | Errors: blend modes, lightmap channels, fragment blending not fully extracted. Misses: minimal |
+| Animations | ~0% | ~0% | ~100% | Placeholder rest-pose stubs only. Real animation export not yet implemented |
+| Constraints | 0% | 0% | 100% | Not yet implemented in export describe phase |
+| Lights | — | — | — | Not yet implemented; excluded from scoring when absent |

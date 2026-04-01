@@ -163,9 +163,9 @@ class DATBuilder(BinaryWriter):
 			self.write(name, 'string')
 
 		# Write Archive Header
-		while (self._currentRelativeAddress()) % 16 != 0:
-			_ = self.write(0, 'uchar')
-		file_size = self._currentRelativeAddress()
+		# file_size = total file size including the 0x20 header, ending right
+		# after the last string null terminator (no trailing padding).
+		file_size = self._currentRelativeAddress() + self.DAT_header_length
 		relocations_count = len(self.relocations)
 		self.write(file_size, 'uint', 0, False)
 		self.write(data_section_length, 'uint', 4, False)
