@@ -143,6 +143,7 @@ class ExportHSD(bpy.types.Operator, ExportHelper):
 
     filename_ext = ".dat"
     filter_glob: StringProperty(default="*.dat;*.pkx", options={'HIDDEN'})
+    check_extension = False  # Allow .pkx files without forcing .dat extension
 
     write_logs: BoolProperty(default=True, name='Write Logs',
                             description='Write export logs to a temp file for debugging.')
@@ -329,9 +330,30 @@ _shiny_props = [
 ]
 
 
+_GX_FORMAT_ITEMS = [
+    ('AUTO', 'Auto', 'Automatically select the best GX format based on pixel content'),
+    ('CMPR', 'CMPR (Compressed)', 'S3TC/DXT1 compressed — best for most textures'),
+    ('RGBA8', 'RGBA8 (Full Quality)', '32-bit full quality RGBA'),
+    ('RGB565', 'RGB565 (No Alpha)', '16-bit RGB, no alpha'),
+    ('RGB5A3', 'RGB5A3 (RGB+Alpha)', '16-bit with optional alpha'),
+    ('I4', 'I4 (Grayscale 4-bit)', '4-bit grayscale'),
+    ('I8', 'I8 (Grayscale 8-bit)', '8-bit grayscale (intensity = alpha)'),
+    ('IA4', 'IA4 (Intensity+Alpha 4-bit)', '4-bit intensity + 4-bit alpha'),
+    ('IA8', 'IA8 (Intensity+Alpha 8-bit)', '8-bit intensity + 8-bit alpha'),
+    ('C4', 'C4 (4-bit Palette)', 'Palette indexed, up to 16 colors'),
+    ('C8', 'C8 (8-bit Palette)', 'Palette indexed, up to 256 colors'),
+]
+
+
 def register():
     for prop_name, prop in _shiny_props:
         setattr(bpy.types.Object, prop_name, prop)
+    bpy.types.Image.dat_gx_format = EnumProperty(
+        name="GX Texture Format",
+        description="GX texture format used when exporting this texture. Auto selects based on pixel content.",
+        items=_GX_FORMAT_ITEMS,
+        default='AUTO',
+    )
     for cls in classes:
         bpy.utils.register_class(cls)
     bpy.types.TOPBAR_MT_file_import.append(menu_func_import)
@@ -346,3 +368,5 @@ def unregister():
     for prop_name, _ in _shiny_props:
         if hasattr(bpy.types.Object, prop_name):
             delattr(bpy.types.Object, prop_name)
+    if hasattr(bpy.types.Image, 'dat_gx_format'):
+        delattr(bpy.types.Image, 'dat_gx_format')

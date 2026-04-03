@@ -5,6 +5,7 @@ from .enums import (
     ColorSource, LightingModel, CoordType, WrapMode, TextureInterpolation,
     LayerBlendMode, LightmapChannel, CombinerInputSource, CombinerOp,
     CombinerBias, CombinerScale, OutputBlendEffect, BlendFactor,
+    GXTextureFormat,
 )
 
 
@@ -61,6 +62,7 @@ class IRImage:
     pixels: bytes  # raw RGBA u8 bytes, row-major, bottom-to-top
     image_id: int
     palette_id: int
+    gx_format_override: GXTextureFormat = GXTextureFormat.AUTO
 
 
 @dataclass

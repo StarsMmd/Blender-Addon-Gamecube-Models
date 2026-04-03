@@ -9,7 +9,9 @@ try:
     from .....shared.Nodes.Classes.Material.Material import Material as MaterialNode
     from .....shared.Nodes.Classes.Texture.Texture import Texture
     from .....shared.Nodes.Classes.Texture.Image import Image
+    from .....shared.Nodes.Classes.Texture.Palette import Palette
     from .....shared.Nodes.Classes.Texture.TextureLOD import TextureLOD
+    from .....shared.texture_encoder import analyze_pixels, select_format, encode_texture
     from .....shared.Nodes.Classes.Colors.RGBAColor import RGBAColor
     from .....shared.Constants.hsd import (
         RENDER_DIFFUSE, RENDER_SPECULAR, RENDER_XLU,
@@ -38,7 +40,9 @@ except (ImportError, SystemError):
     from shared.Nodes.Classes.Material.Material import Material as MaterialNode
     from shared.Nodes.Classes.Texture.Texture import Texture
     from shared.Nodes.Classes.Texture.Image import Image
+    from shared.Nodes.Classes.Texture.Palette import Palette
     from shared.Nodes.Classes.Texture.TextureLOD import TextureLOD
+    from shared.texture_encoder import analyze_pixels, select_format, encode_texture
     from shared.Nodes.Classes.Colors.RGBAColor import RGBAColor
     from shared.Constants.hsd import (
         RENDER_DIFFUSE, RENDER_SPECULAR, RENDER_XLU,
@@ -223,9 +227,19 @@ def _build_texture_node(ir_layer, tex_index, logger):
     tex.blending = ir_layer.blend_factor
     tex.mag_filter = 1  # GX_LINEAR
 
-    # Image
-    tex.image = _build_image_node(ir_layer.image)
-    tex.palette = None
+    # Image and palette
+    img, encode_result = _build_image_node(ir_layer.image, logger)
+    tex.image = img
+    if encode_result['palette_data'] is not None:
+        pal = Palette(address=None, blender_obj=None)
+        pal.format = encode_result['palette_format']
+        pal.entry_count = encode_result['palette_count']
+        pal.raw_data = encode_result['palette_data']
+        pal.data = 0  # Set during write
+        pal.table_name = None
+        tex.palette = pal
+    else:
+        tex.palette = None
     tex.lod = None
     tex.tev = None
 
@@ -300,90 +314,34 @@ def _map_wrap_mode_to_gx(wrap):
 # Image node construction
 # ---------------------------------------------------------------------------
 
-def _build_image_node(ir_image):
+def _build_image_node(ir_image, logger=StubLogger()):
     """Create an Image node from an IRImage.
 
-    Stores the raw pixel data for round-trip serialization. Uses RGBA8
-    format (format 6) for simplicity — lossless encoding.
+    Selects the best GX texture format based on pixel content analysis
+    (or user override), encodes the pixels, and returns the Image node.
+    For palette-indexed formats, also returns palette data.
+
+    Returns:
+        (Image node, palette_data dict or None)
     """
     img = Image(address=None, blender_obj=None)
     img.width = ir_image.width
     img.height = ir_image.height
-    img.format = 6  # GX_TF_RGBA8
     img.mipmap = 0
     img.minLOD = 0.0
     img.maxLOD = 0.0
     img.data_address = 0  # Set during write
 
-    # Encode RGBA8 pixels into GX tile format
-    img.raw_image_data = _encode_rgba8(
-        ir_image.pixels, ir_image.width, ir_image.height)
+    # Select format and encode
+    analysis = analyze_pixels(ir_image.pixels, ir_image.width, ir_image.height)
+    format_id = select_format(analysis, ir_image.gx_format_override)
+    result = encode_texture(ir_image.pixels, ir_image.width, ir_image.height, format_id)
 
-    return img
+    img.format = format_id
+    img.raw_image_data = result['image_data']
 
+    logger.debug("      image '%s' %dx%d: format=%d, %d bytes",
+                 ir_image.name, ir_image.width, ir_image.height,
+                 format_id, len(result['image_data']))
 
-def _encode_rgba8(pixels, width, height):
-    """Encode RGBA u8 pixels into GX RGBA8 tiled format.
-
-    GX RGBA8 is stored as 4x4 tiles, each tile split into two 32-byte
-    halves: AR (alpha+red) then GB (green+blue). Pixels are in top-to-bottom
-    order (GX convention), so we flip vertically from the IR's bottom-to-top.
-
-    Args:
-        pixels: bytes — RGBA u8 data, bottom-to-top row order.
-        width: Image width.
-        height: Image height.
-
-    Returns:
-        bytes — GX RGBA8 encoded tile data.
-    """
-    if not pixels or width == 0 or height == 0:
-        return b''
-
-    # Pad dimensions to multiple of 4 for tiling
-    tile_w = (width + 3) // 4 * 4
-    tile_h = (height + 3) // 4 * 4
-
-    output = bytearray(tile_w * tile_h * 4)  # Same size as input (4 bytes/pixel)
-    out_idx = 0
-
-    for ty in range(0, tile_h, 4):
-        for tx in range(0, tile_w, 4):
-            # AR half (16 bytes: 4x4 pixels, 2 bytes each)
-            for py in range(4):
-                for px in range(4):
-                    x = tx + px
-                    # Flip Y: GX is top-to-bottom, IR is bottom-to-top
-                    y = (height - 1) - (ty + py)
-
-                    if x < width and y >= 0 and y < height:
-                        src = (y * width + x) * 4
-                        a = pixels[src + 3] if src + 3 < len(pixels) else 0
-                        r = pixels[src + 0] if src < len(pixels) else 0
-                    else:
-                        a, r = 0, 0
-
-                    if out_idx + 1 < len(output):
-                        output[out_idx] = a
-                        output[out_idx + 1] = r
-                    out_idx += 2
-
-            # GB half (16 bytes: 4x4 pixels, 2 bytes each)
-            for py in range(4):
-                for px in range(4):
-                    x = tx + px
-                    y = (height - 1) - (ty + py)
-
-                    if x < width and y >= 0 and y < height:
-                        src = (y * width + x) * 4
-                        g = pixels[src + 1] if src + 1 < len(pixels) else 0
-                        b = pixels[src + 2] if src + 2 < len(pixels) else 0
-                    else:
-                        g, b = 0, 0
-
-                    if out_idx + 1 < len(output):
-                        output[out_idx] = g
-                        output[out_idx + 1] = b
-                    out_idx += 2
-
-    return bytes(output[:out_idx])
+    return img, result

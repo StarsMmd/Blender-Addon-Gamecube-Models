@@ -44,3 +44,30 @@ After running, use the **Shiny Variant** panel in Object Properties to tweak par
 - "Select an armature object" — no armature is selected
 - "Already has a shiny filter" — the armature already has shiny data (edit existing parameters instead)
 - "DAT plugin addon must be enabled" — the addon isn't active, so shiny properties aren't registered
+
+---
+
+## set_texture_formats.py
+
+**Purpose:** Set the GX texture format on all textures of the selected armature. The exporter uses this property to determine which format to encode each texture in.
+
+**Usage:**
+1. Select an armature in the viewport
+2. Open the Scripting workspace
+3. Open `scripts/set_texture_formats.py`
+4. Click **Run Script**
+
+**What it does:**
+- Finds all textures on the armature's child mesh materials
+- Analyzes each texture's pixel content (grayscale, alpha, color count)
+- Sets the `dat_gx_format` property to the recommended format
+- Prints a summary showing each texture's dimensions, analysis, and selected format
+
+**Formats:**
+- **CMPR** — S3TC/DXT1 compressed (default for most textures)
+- **I8** — 8-bit grayscale (for grayscale textures with alpha)
+- **RGBA8** — full quality 32-bit RGBA
+- **C4/C8** — palette-indexed (for textures with few unique colors)
+- Other formats available via manual override in Blender's Image properties
+
+The format can also be set manually per-texture by selecting the image in the Image Editor and changing the `dat_gx_format` dropdown in its properties.

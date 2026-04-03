@@ -239,10 +239,13 @@ def _build_pobj(ir_mesh, joints, bones, bone_name_to_index, logger):
         pobj.flags |= POBJ_ENVELOPE
     elif bw and bw.type == SkinType.SINGLE_BONE and bw.bone_name:
         bone_idx = bone_name_to_index.get(bw.bone_name)
-        if bone_idx is not None and bone_idx < len(joints):
+        if bone_idx is not None and bone_idx < len(joints) and bone_idx != ir_mesh.parent_bone_index:
+            # SKIN: deformed by a different bone than the parent
             pobj.property = joints[bone_idx]
-            pobj.flags |= POBJ_SKIN
+            # POBJ_SKIN is 0x0 (default type field value), no flag to set
         else:
+            # Rigid attachment: bone is the parent joint itself.
+            # No property needed — deformation comes from the Joint hierarchy.
             pobj.property = None
     else:
         pobj.property = None

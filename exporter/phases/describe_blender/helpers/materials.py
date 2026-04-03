@@ -369,6 +369,15 @@ def _extract_image(bpy_image):
             pixel_bytes[i] = min(255, max(0, int(flat[i] * 255 + 0.5)))
         pixels = bytes(pixel_bytes)
 
+    # Read user's GX format override if the property exists
+    from .....shared.IR.enums import GXTextureFormat
+    gx_format = GXTextureFormat.AUTO
+    format_str = getattr(bpy_image, 'dat_gx_format', 'AUTO')
+    try:
+        gx_format = GXTextureFormat(format_str)
+    except (ValueError, KeyError):
+        pass
+
     return IRImage(
         name=bpy_image.name,
         width=width,
@@ -376,4 +385,5 @@ def _extract_image(bpy_image):
         pixels=pixels,
         image_id=0,
         palette_id=0,
+        gx_format_override=gx_format,
     )
