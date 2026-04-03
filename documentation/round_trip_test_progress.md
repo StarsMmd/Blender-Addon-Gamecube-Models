@@ -28,7 +28,7 @@ Parse a DAT binary, write it back, and compare the output bytes against the inpu
 
 ## Test Results
 
-**Overall export pipeline completion: 🔵 61.5%** _(weighted: NBN 25%, NIN 40%, IBI 30%, BNB 5%)_
+**Overall export pipeline completion: 🔵 62.3%** _(weighted: NBN 25%, NIN 40%, IBI 30%, BNB 5%)_
 
 _Average health: 🔴 0-20% · 🟠 21-40% · 🟡 41-60% · 🔵 61-80% · ✅ 81-100%_
 
@@ -38,26 +38,26 @@ All scores displayed as `match%(error/miss)` — see "How Scores Are Computed" f
 
 | Model | Game | NBN ✅ | NIN 🟡 | IBI 🟡 | BNB 🔵 |
 |---|---|---|---|---|---|
-| nukenin | XD | 95.8%(4/0) | 72.9%(23/4) | 49.9%(4/46) | 94.0% |
-| haganeil | XD | 92.4%(8/0) | 58.1%(35/7) | 52.2%(5/43) | 91.8% |
-| cokodora | XD | 93.0%(7/0) | 55.0%(35/10) | 47.4%(5/48) | 84.3% |
-| frygon | XD | 92.9%(7/0) | 58.9%(35/6) | 46.0%(4/50) | 83.5% |
-| achamo | XD | 91.9%(8/0) | 54.2%(41/4) | 47.1%(4/49) | 80.9% |
-| miniryu | XD | 90.0%(10/0) | 44.2%(52/4) | 46.5%(4/50) | 80.9% |
-| bohmander | XD | 91.4%(9/0) | 53.4%(42/5) | 47.1%(4/49) | 80.8% |
-| cerebi | XD | 89.5%(10/0) | 44.4%(53/3) | 44.8%(5/50) | 71.0% |
-| gallop | XD | 91.6%(8/0) | 51.7%(42/6) | 46.6%(4/49) | 77.3% |
-| usohachi | XD | 92.1%(8/0) | 46.3%(35/19) | 39.7%(5/55) | 75.1% |
-| runpappa | XD | 92.4%(8/0) | 55.4%(40/5) | 47.2%(5/48) | 81.4% |
-| rayquaza | XD | 93.1%(7/0) | 56.9%(33/10) | 45.0%(5/50) | 84.6% |
-| ken_a1 | XD | 91.5%(9/0) | 49.7%(44/6) | 37.9%(3/59) | 61.0% |
-| mage_0101 | XD | 91.6%(8/0) | 51.0%(44/5) | 38.1%(3/59) | 56.1% |
-| heracros | Colo | 92.8%(7/0) | 57.3%(37/5) | 48.2%(6/46) | 77.5% |
-| hinoarashi | Colo | 90.2%(10/0) | 46.4%(48/5) | 44.9%(5/50) | 83.1% |
-| hizuki_a1 | Colo | 92.4%(8/0) | 53.7%(39/7) | 37.3%(4/59) | 79.6% |
-| koduck | Colo | 93.8%(6/0) | 56.1%(36/8) | 47.3%(6/47) | 82.5% |
-| ghos | Colo | 90.2%(10/0) | 41.3%(53/6) | 44.1%(5/51) | 77.8% |
-| showers | Colo | 89.6%(10/0) | 45.6%(51/3) | 46.4%(4/50) | 76.0% |
+| nukenin | XD | 95.8%(4/0) | 73.2%(23/4) | 52.8%(1/46) | 94.0% |
+| haganeil | XD | 92.4%(8/0) | 58.1%(35/7) | 54.7%(2/43) | 91.8% |
+| cokodora | XD | 93.0%(7/0) | 55.0%(35/10) | 50.4%(2/48) | 84.3% |
+| frygon | XD | 92.9%(7/0) | 58.9%(35/6) | 48.7%(1/50) | 83.5% |
+| achamo | XD | 91.9%(8/0) | 54.2%(41/4) | 49.9%(2/49) | 80.9% |
+| miniryu | XD | 90.0%(10/0) | 44.2%(52/4) | 49.3%(1/50) | 80.9% |
+| bohmander | XD | 91.4%(9/0) | 53.4%(42/5) | 50.1%(1/49) | 80.8% |
+| cerebi | XD | 89.5%(10/0) | 44.4%(53/3) | 47.9%(2/50) | 71.0% |
+| gallop | XD | 91.6%(8/0) | 51.7%(42/6) | 49.3%(1/49) | 77.3% |
+| usohachi | XD | 92.1%(8/0) | 46.4%(35/19) | 42.0%(3/55) | 75.1% |
+| runpappa | XD | 92.4%(8/0) | 55.5%(40/5) | 50.0%(2/48) | 81.4% |
+| rayquaza | XD | 93.1%(7/0) | 57.1%(32/10) | 47.1%(3/50) | 84.6% |
+| ken_a1 | XD | 91.5%(9/0) | 49.7%(44/6) | 40.1%(1/59) | 61.0% |
+| mage_0101 | XD | 91.6%(8/0) | 51.1%(44/5) | 40.2%(1/59) | 56.1% |
+| heracros | Colo | 92.8%(7/0) | 57.3%(37/5) | 50.8%(4/46) | 77.5% |
+| hinoarashi | Colo | 90.2%(10/0) | 46.4%(48/5) | 47.8%(2/50) | 83.1% |
+| hizuki_a1 | Colo | 92.4%(8/0) | 53.7%(39/7) | 39.2%(2/59) | 79.6% |
+| koduck | Colo | 93.8%(6/0) | 56.1%(36/8) | 50.6%(3/47) | 82.5% |
+| ghos | Colo | 90.2%(10/0) | 41.3%(53/6) | 46.8%(2/51) | 77.8% |
+| showers | Colo | 89.6%(10/0) | 45.6%(51/3) | 49.4%(1/50) | 76.0% |
 
 ---
 
@@ -108,9 +108,9 @@ Average per-category scores across all 20 test models:
 
 | Category | Score | Error | Miss | Notes |
 |---|---|---|---|---|
-| Bones | ~57% | ~8% | ~36% | Errors: flag mismatches, rotation ambiguity. Misses: inverse_bind_matrix, SKELETON flag on deformation bones |
+| Bones | ~57% | ~5% | ~38% | Errors: flag mismatches, rotation ambiguity. Misses: inverse_bind_matrix, SKELETON flag on deformation bones |
 | Meshes | ~93% | ~0% | ~7% | Near-complete geometry round-trip. Misses: parent_bone_index differences |
-| Materials | ~84% | ~15% | ~1% | Errors: blend modes, lightmap channels, fragment blending not fully extracted. Misses: minimal |
+| Materials | ~99% | ~1% | ~0% | Specular mapped via Specular Tint correction, ambient via Emission node. Convenience fields (image_id, palette_id) excluded from scoring. |
 | Animations | ~0% | ~0% | ~100% | Placeholder rest-pose stubs only. Real animation export not yet implemented |
 | Constraints | 0% | 0% | 100% | Not yet implemented in export describe phase |
 | Lights | — | — | — | Not yet implemented; excluded from scoring when absent |
