@@ -71,3 +71,31 @@ After running, use the **Shiny Variant** panel in Object Properties to tweak par
 - Other formats available via manual override in Blender's Image properties
 
 The format can also be set manually per-texture by selecting the image in the Image Editor and changing the `dat_gx_format` dropdown in its properties.
+
+---
+
+## add_ambient_lighting.py
+
+**Purpose:** Add ambient lighting nodes to all materials on the selected armature. The exporter reads the ambient color from these nodes when writing the DAT file.
+
+**Usage:**
+1. Select an armature in the viewport
+2. Open the Scripting workspace
+3. Open `scripts/add_ambient_lighting.py`
+4. Click **Run Script**
+
+**What it does:**
+- For each material on the armature's child meshes:
+  - Adds a `dat_ambient_emission` Emission node (default: mid-gray at 0.1 strength)
+  - Adds a `dat_ambient_add` Add Shader node to mix the ambient with the main shader
+  - Skips materials that already have ambient nodes
+- Materials will appear slightly self-illuminated, approximating the game's per-material ambient lighting
+
+**Adjusting ambient:**
+- Select the material in the Shader Editor
+- Find the `dat_ambient_emission` node
+- Change the **Color** to set the ambient color
+- Change the **Strength** to control how visible the ambient contribution is
+
+**Errors:**
+- "Select an armature object" — no armature is selected

@@ -267,6 +267,10 @@ _SKIP_FIELDS = {
     'normalized_local_matrix', 'scale_correction', 'accumulated_scale',
     # Pre-computed deformed geometry — derived from bone weights + vertices
     'deformed_vertices', 'deformed_normals',
+    # Convenience/metadata — DAT file offsets used as cache keys, not model data
+    'image_id', 'palette_id',
+    # Export-only field — not present in original IR
+    'gx_format_override',
 }
 
 # Maximum number of detail lines per category

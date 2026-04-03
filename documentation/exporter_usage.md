@@ -52,13 +52,31 @@ Each mesh must be parented to the armature. Bone assignments are determined from
 - **Single-bone binding**: Meshes where all vertices belong to one bone's vertex group
 - **No vertex groups**: Meshes with no vertex groups are bound to the root bone
 
+### Ambient Lighting
+
+The game uses per-material ambient colors to control how materials respond to ambient light. In Blender, this is approximated with an Emission node.
+
+To set up ambient lighting for export:
+1. Add an Emission node named `dat_ambient_emission` to the material
+2. Set its Color to the desired ambient color
+3. Add an Add Shader node named `dat_ambient_add` to mix it with the main shader
+4. Connect: `main_shader → Add Shader input 0`, `Emission → Add Shader input 1`, `Add Shader → Material Output`
+
+The exporter reads the ambient color from the `dat_ambient_emission` node. If no such node exists, a default of (0.5, 0.5, 0.5) is used.
+
+Use the standalone script `scripts/add_ambient_lighting.py` to add ambient nodes to all materials at once.
+
+### Specular Color
+
+The exporter computes the specular color from Blender's Principled BSDF Specular Tint and diffuse color. No manual setup is needed — the exporter reads the Specular Tint value and reverse-maps it to the game's absolute specular color.
+
 ### Base Model
 
 _WIP_
 
 ### Bound Boxes
 
-_WIP_
+Bound boxes are generated automatically from the model's mesh vertices. Each animation slot gets an axis-aligned bounding box (AABB) encompassing the full model extent.
 
 ### Shiny Filter
 
