@@ -147,6 +147,8 @@ class ExportHSD(bpy.types.Operator, ExportHelper):
 
     write_logs: BoolProperty(default=True, name='Write Logs',
                             description='Write export logs to a temp file for debugging.')
+    strip_names: BoolProperty(default=False, name='Strip Node Names',
+                             description='Remove bone/node names from the output. Enable for compatibility with models that have empty name fields.')
 
     @classmethod
     def poll(cls, context):
@@ -162,7 +164,9 @@ class ExportHSD(bpy.types.Operator, ExportHelper):
         else:
             logger = StubLogger()
 
-        options = {}
+        options = {
+            'strip_names': self.strip_names,
+        }
 
         try:
             Exporter.run(context, self.filepath, options, logger=logger)

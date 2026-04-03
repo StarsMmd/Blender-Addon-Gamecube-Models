@@ -178,13 +178,13 @@ Nodes are cached by file offset (`nodes_cache_by_offset`). Nodes with `is_cachab
 | Bone instances (JOBJ_INSTANCE) | ✅ Working |
 | Shape animation import | ❌ Stubs only (not implemented in legacy either) |
 | Camera / Fog import | ❌ Stubs only |
-| Exporter pipeline | ⚠️ Bones + meshes + materials working, animations/constraints TODO — see export pipeline plan |
+| Exporter pipeline | ⚠️ Bones + meshes + materials + textures (CMPR) + bound box + placeholder animations working. Real animations/constraints TODO — see export pipeline plan |
 | Exporter binary round-trip (DATBuilder) | ✅ Functional (0 value mismatches) |
 | Exporter PKX packaging | ✅ Working (DAT injection, shiny write-back, trailer preserved) |
 | IR pipeline | ✅ Default path (legacy available via toggle) |
 | FSYS archive import | ✅ Working (multi-model extraction + LZSS decompression) |
 | Shiny variant filter | ✅ Working (PKX color extraction, live-editable shader node group, per-parameter UI) |
-| Unit tests | ✅ 475 passing |
+| Unit tests | ✅ 475 passing (27 texture encoder, 5 DAT header/alignment) |
 | Shader node auto-layout | ✅ Working (topological sort from output→inputs, left-to-right) |
 | Scale inheritance (animation baking) | ⚠️ Partially resolved — hybrid approach, see below |
 
@@ -325,4 +325,5 @@ The shiny parameters are stored as registered `bpy.props` properties on the arma
 - [x] Code audit: identify opportunities to reduce algorithmic complexity — see [complexity optimization plan](documentation/complexity_optimization_plan.md)
 - [ ] Implement remaining complexity optimizations (items 1-3 in the plan above)
 - [x] Shiny filter: split into separate routing and brightness shaders. The routing shader (channel swizzle) only applies to texture colors, not vertex colors. The brightness shader applies to the final result after vertex color multiplication.
-- [ ] Ambient lighting: per-material `ambient_color` is parsed into IR but not used in Blender shaders (no equivalent in Principled BSDF). Currently lost on round-trip — export describe falls back to default gray. Options: (a) store as material custom property for export fidelity, (b) add as additive color node (changes visuals), (c) leave as-is. Scene-level `LOBJ_AMBIENT` lights are also ignored. See compatibility table.
+- [x] Ambient lighting: approximated with per-material Emission node (`dat_ambient_emission`), read back on export. Scene-level `LOBJ_AMBIENT` lights still ignored.
+- [ ] Bone inverse_bind_matrix: the HSD inverse bind matrix has a complex relationship to the bone hierarchy that depends on `_envelope_coord_system()` — it's NOT simply `world_matrix.inverted()`. Cannot be computed for arbitrary Blender models without fully reverse-engineering the HSD skeleton conventions. Only needed for true WEIGHTED/envelope skinning export (currently converted to SINGLE_BONE). Low priority until envelope export is implemented.

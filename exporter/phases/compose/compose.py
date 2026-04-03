@@ -19,7 +19,6 @@ except (ImportError, SystemError):
 
 from .helpers.bones import compose_bones
 from .helpers.meshes import compose_meshes
-from .helpers.animations import compose_placeholder_animation
 
 
 def compose_scene(ir_scene, options=None, logger=StubLogger()):
@@ -53,18 +52,15 @@ def compose_scene(ir_scene, options=None, logger=StubLogger()):
 
         compose_meshes(model.meshes, joints, model.bones, logger)
 
-        # Placeholder animations — one rest pose per animation set found in Blender
-        anim_count = max(1, len(model.bone_animations))
-        anim_roots = []
-        for ai in range(anim_count):
-            anim_root = compose_placeholder_animation(joints, model.bones, logger)
-            if anim_root:
-                anim_roots.append(anim_root)
-        logger.info("    Created %d placeholder animation slot(s)", len(anim_roots))
+        # Strip node names if requested (for round-trip testing against
+        # original models that have empty name fields)
+        if options.get('strip_names', False):
+            for joint in joints:
+                joint.name = None
 
         model_set = ModelSet(address=None, blender_obj=None)
         model_set.root_joint = root_joint
-        model_set.animated_joints = anim_roots if anim_roots else None
+        model_set.animated_joints = None
         model_set.animated_material_joints = None
         model_set.animated_shape_joints = None
 
@@ -77,7 +73,8 @@ def compose_scene(ir_scene, options=None, logger=StubLogger()):
         root_nodes.append(scene_data)
         section_names.append('scene_data')
 
-        # Bound box — one AABB per animation set, computed from mesh vertices
+        # Bound box — one AABB per animation set (or 1 if no animations)
+        anim_count = max(1, len(model.bone_animations))
         bb = _compose_bound_box(model, anim_count, logger)
         if bb:
             root_nodes.append(bb)

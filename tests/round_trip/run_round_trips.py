@@ -194,7 +194,7 @@ def compute_nin_score(filepath):
     ir_scene = describe_ir(sections, options={})
 
     # Compose (phase 2 export)
-    composed_nodes, _ = compose_scene(ir_scene, {})
+    composed_nodes, _ = compose_scene(ir_scene, {'strip_names': True})
 
     # Compare original root nodes against composed root nodes
     # The compose phase only produces scene_data roots, so match by section
@@ -552,7 +552,7 @@ def _compare_node_trees(node_a, node_b):
             return
 
         for field_name, _ in a.fields:
-            if field_name == 'address':
+            if field_name in _NODE_SKIP_FIELDS:
                 continue
             val_a = getattr(a, field_name, None)
             val_b = getattr(b, field_name, None)
@@ -594,6 +594,11 @@ def _compare_node_trees(node_a, node_b):
     return total, errors, misses
 
 
+# Node fields to skip in NIN/NBN comparisons — file offsets and
+# address-like fields that change between builds but aren't model data
+_NODE_SKIP_FIELDS = {'address', 'data_address', 'display_list_address', 'base_pointer'}
+
+
 def _compare_node_trees_nin(orig, composed):
     """NIN comparison: walk the ORIGINAL tree to count all fields.
 
@@ -617,7 +622,7 @@ def _compare_node_trees_nin(orig, composed):
             return
 
         for field_name, _ in orig_node.fields:
-            if field_name == 'address':
+            if field_name in _NODE_SKIP_FIELDS:
                 continue
 
             val_orig = getattr(orig_node, field_name, None)
