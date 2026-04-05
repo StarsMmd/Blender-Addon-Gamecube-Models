@@ -84,9 +84,8 @@ def compose_scene(ir_scene, options=None, logger=StubLogger()):
         root_nodes.append(scene_data)
         section_names.append('scene_data')
 
-        # Bound box — one AABB per animation set (or 1 if no animations)
-        anim_count = max(1, len(model.bone_animations))
-        bb = _compose_bound_box(model, anim_count, logger)
+        # Bound box — per-frame AABBs across all animation sets
+        bb = _compose_bound_box(model, logger)
         if bb:
             root_nodes.append(bb)
             section_names.append('bound_box')
@@ -96,16 +95,21 @@ def compose_scene(ir_scene, options=None, logger=StubLogger()):
     return root_nodes, section_names
 
 
-def _compose_bound_box(model, anim_count, logger):
-    """Create a BoundBox node with static AABBs computed from mesh vertices.
+def _compose_bound_box(model, logger):
+    """Create a BoundBox node with per-frame AABBs computed from mesh vertices.
 
     Computes a single axis-aligned bounding box encompassing all mesh
-    vertices and replicates it for each animation set. For placeholder
-    animations (single-frame rest pose), this is the correct AABB.
+    vertices and replicates it for each frame of each animation set.
+    The static AABB is correct for the rest pose; per-frame animated
+    AABBs would require evaluating the skeleton at each frame.
+
+    The BoundBox fields are:
+        anim_set_count: number of animation sets
+        unknown: frame count of the first animation set (end_frame + 1)
+        raw_aabb_data: one AABB (24 bytes) per frame across all sets
 
     Args:
-        model: IRModel with meshes populated.
-        anim_count: Number of animation sets.
+        model: IRModel with meshes and bone_animations populated.
         logger: Logger instance.
 
     Returns:
@@ -141,16 +145,27 @@ def _compose_bound_box(model, anim_count, logger):
     max_y += margin
     max_z += margin
 
-    # Build AABB data — one identical AABB per animation set
+    # Compute per-animation-set frame counts
+    anim_sets = model.bone_animations or []
+    anim_count = max(1, len(anim_sets))
+    frame_counts = []
+    for anim_set in anim_sets:
+        max_ef = max((int(t.end_frame) for t in anim_set.tracks), default=0)
+        frame_counts.append(max_ef + 1)
+    if not frame_counts:
+        frame_counts = [1]
+
+    # Build AABB data — one identical AABB per frame across all sets
+    total_frames = sum(frame_counts)
     aabb_bytes = struct.pack('>ffffff', min_x, min_y, min_z, max_x, max_y, max_z)
-    raw_data = aabb_bytes * anim_count
+    raw_data = aabb_bytes * total_frames
 
     bb = BoundBox(address=None, blender_obj=None)
     bb.anim_set_count = anim_count
-    bb.unknown = 0
+    bb.unknown = frame_counts[0]  # Frame count of the first animation set
     bb.raw_aabb_data = raw_data
 
-    logger.info("    Bound box: min=(%.2f,%.2f,%.2f) max=(%.2f,%.2f,%.2f), %d AABB(s)",
-                min_x, min_y, min_z, max_x, max_y, max_z, anim_count)
+    logger.info("    Bound box: min=(%.2f,%.2f,%.2f) max=(%.2f,%.2f,%.2f), %d set(s), %d total frames",
+                min_x, min_y, min_z, max_x, max_y, max_z, anim_count, total_frames)
 
     return bb

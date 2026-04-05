@@ -206,16 +206,19 @@ def compute_nin_score(filepath):
     # Compose (phase 2 export)
     composed_nodes, _ = compose_scene(ir_scene, {'strip_names': True})
 
-    # Compare original root nodes against composed root nodes
-    # The compose phase only produces scene_data roots, so match by section
+    # Compare original root nodes against composed root nodes.
+    # Match by node type — each original section finds the composed node
+    # of the same class (SceneData↔SceneData, BoundBox↔BoundBox, etc.).
     total, errors, misses = 0, 0, 0
     all_details = []
+    comp_by_type = {}
+    for node in composed_nodes:
+        comp_by_type[type(node).__name__] = node
+
     for section in sections:
         orig_root = section.root_node
-        # Find corresponding composed node (compose outputs one root per model)
-        comp_root = None
-        if composed_nodes:
-            comp_root = composed_nodes[0] if len(composed_nodes) > 0 else None
+        orig_type = type(orig_root).__name__
+        comp_root = comp_by_type.get(orig_type)
 
         t, e, m, details = _compare_node_trees_nin(orig_root, comp_root)
         total += t
