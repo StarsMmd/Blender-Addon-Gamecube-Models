@@ -226,12 +226,15 @@ def _build_material_node(ir_mat):
 
 
 def _make_rgba_color(color_tuple):
-    """Create an RGBAColor node from a normalized (r, g, b, a) tuple."""
+    """Create an RGBAColor node from a normalized (r, g, b, a) tuple.
+
+    IR stores colors as sRGB [0-1]. RGBAColor fields are u8 [0-255].
+    """
     c = RGBAColor(address=None, blender_obj=None)
-    c.red = color_tuple[0]
-    c.green = color_tuple[1]
-    c.blue = color_tuple[2]
-    c.alpha = color_tuple[3] if len(color_tuple) > 3 else 1.0
+    c.red = int(color_tuple[0] * 255 + 0.5)
+    c.green = int(color_tuple[1] * 255 + 0.5)
+    c.blue = int(color_tuple[2] * 255 + 0.5)
+    c.alpha = int((color_tuple[3] if len(color_tuple) > 3 else 1.0) * 255 + 0.5)
     return c
 
 

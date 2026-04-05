@@ -68,7 +68,7 @@ def compose_lights(ir_lights, logger=StubLogger()):
     # Wrap in LightSet
     light_set = LightSet(address=None, blender_obj=None)
     light_set.light = light_nodes[0]
-    light_set.animations = []
+    light_set.animations = None
 
     logger.info("    Composed %d light(s)", len(light_nodes))
     return [light_set]
