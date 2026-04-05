@@ -793,7 +793,7 @@ class TestBoundBoxNode:
         data = build_bound_box(unknown_1=42, unknown_2=0xABCD)
         node = _parse(BoundBox, 0, data)
         assert node.anim_set_count == 42
-        assert node.unknown == 0xABCD
+        assert node.first_anim_frame_count == 0xABCD
 
 
 # ===========================================================================

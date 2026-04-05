@@ -162,7 +162,7 @@ def _compose_bound_box(model, logger):
 
     bb = BoundBox(address=None, blender_obj=None)
     bb.anim_set_count = anim_count
-    bb.unknown = frame_counts[0]  # Frame count of the first animation set
+    bb.first_anim_frame_count = frame_counts[0]
     bb.raw_aabb_data = raw_data
 
     logger.info("    Bound box: min=(%.2f,%.2f,%.2f) max=(%.2f,%.2f,%.2f), %d set(s), %d total frames",
