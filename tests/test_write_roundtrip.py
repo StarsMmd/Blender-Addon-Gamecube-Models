@@ -831,6 +831,44 @@ class TestTextureAlignment:
             assert img.data_address % 32 == 0, \
                 f"Image[{i}] not 32-byte aligned: 0x{img.data_address:X} (data size={sizes[i]})"
 
+    def test_opcode_node_count_roundtrip(self):
+        """Opcode encoding must produce counts the decoder reconstructs correctly.
+
+        Regression: the encoder used subtraction (count - 7) instead of
+        bit-shifting (count >> 3), causing extension bytes to encode wrong
+        values for runs > 8 keyframes.
+        """
+        from exporter.phases.compose.helpers.animations import _encode_opcode
+        from shared.Constants.hsd import (
+            HSD_A_OP_LIN, HSD_A_OP_SPL, HSD_A_OP_CON,
+            HSD_A_OP_MASK, HSD_A_PACK0_MASK, HSD_A_PACK0_SHIFT,
+            HSD_A_PACK_EXT, HSD_A_PACK1_MASK, HSD_A_PACK1_BIT,
+        )
+
+        def decode_opcode(data):
+            """Decode opcode and node count from encoded bytes."""
+            cur_pos = 0
+            opcode = data[cur_pos] & HSD_A_OP_MASK
+            node_count = (data[cur_pos] & HSD_A_PACK0_MASK) >> HSD_A_PACK0_SHIFT
+            shift = 0
+            while data[cur_pos] & HSD_A_PACK_EXT:
+                cur_pos += 1
+                node_count += (data[cur_pos] & HSD_A_PACK1_MASK) << (HSD_A_PACK1_BIT * shift + 3)
+                shift += 1
+            node_count += 1
+            return opcode, node_count
+
+        # Test various counts including edge cases
+        for opcode in [HSD_A_OP_LIN, HSD_A_OP_SPL, HSD_A_OP_CON]:
+            for count in [1, 2, 7, 8, 9, 12, 15, 16, 50, 96, 100, 200, 500]:
+                raw = bytearray()
+                _encode_opcode(raw, opcode, count)
+                decoded_op, decoded_count = decode_opcode(raw)
+                assert decoded_op == opcode, \
+                    f"Opcode mismatch for count={count}: {decoded_op} vs {opcode}"
+                assert decoded_count == count, \
+                    f"Count mismatch for opcode={opcode}, count={count}: decoded {decoded_count}"
+
     def test_zero_offset_raw_pointer_relocated(self):
         """_raw_pointer_fields with value 0 must still be relocated."""
         from shared.Nodes.Classes.Texture.Image import Image
