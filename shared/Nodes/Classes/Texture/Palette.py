@@ -35,11 +35,17 @@ class Palette(Node):
         self.raw_data = parser.read_chunk(data_size, self.data, parser._startOffset(True))
 
     def writePrimitivePointers(self, builder):
-        """Write shared palette data (Phase 1)."""
+        """Write shared palette data (Phase 1).
+
+        GX hardware requires palette data to be 32-byte aligned.
+        """
         if not hasattr(self, '_raw_pointer_fields'):
             self._raw_pointer_fields = set()
         if hasattr(self, 'raw_data') and self.raw_data:
             builder.seek(0, 'end')
+            # Pad to 32-byte alignment (GX palette data requirement)
+            while builder._currentRelativeAddress() % 32 != 0:
+                builder.write(0, 'uchar')
             self.data = builder._currentRelativeAddress()
             for byte in self.raw_data:
                 builder.write(byte, 'uchar')
