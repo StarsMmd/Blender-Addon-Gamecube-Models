@@ -184,7 +184,7 @@ def _compose_anim_set(anim_set, joints, bones, logger):
 
         track = track_by_bone.get(i)
         if track:
-            aj.animation = _build_animation(track, joints[i], anim_set.loop)
+            aj.animation = _build_animation(track, anim_set.loop)
         else:
             aj.animation = None
 
@@ -210,12 +210,12 @@ def _compose_anim_set(anim_set, joints, bones, logger):
     return anim_joints[roots[0]] if roots else None
 
 
-def _build_animation(track, joint, loop):
+def _build_animation(track, loop):
     """Build an Animation node from an IRBoneTrack."""
     anim = Animation(address=None, blender_obj=None)
     anim.flags = AOBJ_ANIM_LOOP if loop else 0
     anim.end_frame = float(track.end_frame)
-    anim.joint = joint
+    anim.joint = None  # Not set in original binaries
 
     # Build Frame linked list for each SRT channel
     frames = []
