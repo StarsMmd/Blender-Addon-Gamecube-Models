@@ -323,6 +323,7 @@ The shiny parameters are stored as registered `bpy.props` properties on the arma
 - **Standalone scripts:** Any standalone Blender scripts (run from the Scripting panel) go in `scripts/` and must be documented in `documentation/scripts.md`.
 - **Blender API tracking:** Whenever a `bpy` API call is added, moved, removed, or modified, update `documentation/blender_api_usage.md` to match.
 - **Test count:** Whenever tests are added or removed, update the unit test count in the Current Status table above.
+- **Bug fix tests:** Whenever a bug is successfully fixed, add a unit test case that covers the fixed logic to prevent regressions.
 
 ---
 
