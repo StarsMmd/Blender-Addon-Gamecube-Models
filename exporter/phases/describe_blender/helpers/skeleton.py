@@ -16,11 +16,13 @@ try:
     from .....shared.IR.enums import ScaleInheritance
     from .....shared.Constants.hsd import JOBJ_SKELETON, JOBJ_HIDDEN
     from .....shared.helpers.logger import StubLogger
+    from .....shared.helpers.math_shim import compile_srt_matrix
 except (ImportError, SystemError):
     from shared.IR.skeleton import IRBone
     from shared.IR.enums import ScaleInheritance
     from shared.Constants.hsd import JOBJ_SKELETON, JOBJ_HIDDEN
     from shared.helpers.logger import StubLogger
+    from shared.helpers.math_shim import compile_srt_matrix
 
 
 # Blender Z-up → GameCube Y-up: inverse of the pi/2 X rotation applied on import
@@ -87,6 +89,7 @@ def describe_skeleton(armature, logger=StubLogger()):
 
     bones = []
     gc_world_matrices = {}  # {index: Matrix} in GameCube Y-up space
+    srt_world_matrices = {}  # {index: Matrix} world from SRT accumulation (no coord rotation)
 
     for i, data in enumerate(edit_bone_data):
         parent_index = bone_name_to_index.get(data['parent_name']) if data['parent_name'] else None
@@ -113,6 +116,17 @@ def describe_skeleton(armature, logger=StubLogger()):
         rotation = (euler.x, euler.y, euler.z)
         scale_tuple = (scale.x, scale.y, scale.z)
 
+        # Accumulate SRT world matrix for inverse bind computation.
+        # Reconstructs the world transform from SRT values (matching HSD's
+        # Joint hierarchy accumulation) without coordinate rotation.
+        # HSDLib: InverseWorldTransform = WorldTransform.Inverted()
+        srt_local = compile_srt_matrix(scale_tuple, rotation, position)
+        if parent_index is not None:
+            srt_world = srt_world_matrices[parent_index] @ srt_local
+        else:
+            srt_world = srt_local
+        srt_world_matrices[i] = srt_world
+
         # Accumulated scale (product of this bone's scale with all ancestors)
         if parent_index is not None:
             parent_accum = bones[parent_index].accumulated_scale
@@ -127,10 +141,17 @@ def describe_skeleton(armature, logger=StubLogger()):
         if is_hidden:
             flags |= JOBJ_HIDDEN
 
-        # Matrix representations for IR
-        world_list = _matrix_to_list(gc_world)
-        local_list = _matrix_to_list(gc_local)
+        # Matrix representations for IR — use SRT-accumulated matrices
+        # (native HSD space, no coordinate rotation) to match the importer's
+        # world_matrix computation from Joint SRT values.
+        world_list = _matrix_to_list(srt_world)
+        local_list = _matrix_to_list(srt_local)
         identity_list = _matrix_to_list(Matrix.Identity(4))
+
+        # Inverse bind matrix: inverse of the bone's SRT-accumulated world
+        # transform. Matches HSDLib convention (WorldTransform.Inverted()).
+        # Only kept for skinning target bones (cleared by _refine_bone_flags).
+        inverse_bind = _matrix_to_list(srt_world.inverted())
 
         bone = IRBone(
             name=data['name'],
@@ -138,7 +159,7 @@ def describe_skeleton(armature, logger=StubLogger()):
             position=position,
             rotation=rotation,
             scale=scale_tuple,
-            inverse_bind_matrix=None,
+            inverse_bind_matrix=inverse_bind,
             flags=flags,
             is_hidden=is_hidden,
             inherit_scale=ScaleInheritance.ALIGNED,

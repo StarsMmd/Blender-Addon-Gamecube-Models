@@ -67,8 +67,11 @@ def _alloc_base_pointer():
 def compose_meshes(meshes, joints, bones, logger=StubLogger()):
     """Convert IRMesh list into Mesh node chains attached to Joints.
 
-    Groups meshes by parent_bone_index, creates one Mesh → PObject chain
-    per bone, and sets joint.property to the head Mesh node.
+    Groups meshes by parent_bone_index. Within each bone, meshes that
+    share the same material are grouped under one DObject (Mesh node)
+    with PObjects chained via PObject.next. Different materials get
+    separate DObjects linked via Mesh.next. This matches the HSD
+    convention where a DObject owns one material and one or more PObjects.
 
     Args:
         meshes: list[IRMesh] from the IR.
@@ -95,23 +98,47 @@ def compose_meshes(meshes, joints, bones, logger=StubLogger()):
     bone_name_to_index = {bone.name: i for i, bone in enumerate(bones)}
 
     for bone_idx, ir_meshes in meshes_by_bone.items():
-        mesh_nodes = []
+        # Group IRMeshes by material identity. Meshes with the same
+        # material (by id) share a DObject; each gets its own PObject.
+        # Preserve original order: use the first occurrence of each
+        # material id as the group key order.
+        material_groups = []  # [(material_id, [ir_mesh, ...])]
+        mat_id_to_group = {}
         for ir_mesh in ir_meshes:
-            pobj = _build_pobj(ir_mesh, joints, bones, bone_name_to_index, logger)
-            if pobj is None:
+            mat_id = id(ir_mesh.material)
+            if mat_id not in mat_id_to_group:
+                group = []
+                mat_id_to_group[mat_id] = group
+                material_groups.append((ir_mesh.material, group))
+            mat_id_to_group[mat_id].append(ir_mesh)
+
+        mesh_nodes = []
+        for ir_material, group_meshes in material_groups:
+            # Build PObjects for each mesh in this material group
+            pobjs = []
+            for ir_mesh in group_meshes:
+                pobj = _build_pobj(ir_mesh, joints, bones, bone_name_to_index, logger)
+                if pobj is not None:
+                    pobjs.append(pobj)
+
+            if not pobjs:
                 continue
+
+            # Chain PObjects via .next under one DObject
+            for i in range(len(pobjs) - 1):
+                pobjs[i].next = pobjs[i + 1]
 
             mesh_node = Mesh(address=None, blender_obj=None)
             mesh_node.name = None
             mesh_node.next = None
-            mesh_node.mobject = compose_material(ir_mesh.material, logger=logger)
-            mesh_node.pobject = pobj
+            mesh_node.mobject = compose_material(ir_material, logger=logger)
+            mesh_node.pobject = pobjs[0]
             mesh_nodes.append(mesh_node)
 
         if not mesh_nodes:
             continue
 
-        # Link mesh nodes into a linked list via .next
+        # Link DObject nodes into a linked list via .next
         for i in range(len(mesh_nodes) - 1):
             mesh_nodes[i].next = mesh_nodes[i + 1]
 
@@ -156,7 +183,7 @@ def _build_pobj(ir_mesh, joints, bones, bone_name_to_index, logger):
         pnmtx_desc.attribute = GX_VA_PNMTXIDX
         pnmtx_desc.attribute_type = GX_DIRECT
         pnmtx_desc.component_count = 0
-        pnmtx_desc.component_type = 0
+        pnmtx_desc.component_type = GX_F32
         pnmtx_desc.component_frac = 0
         pnmtx_desc.stride = 0
         pnmtx_desc.base_pointer = 0
@@ -191,10 +218,15 @@ def _build_pobj(ir_mesh, joints, bones, bone_name_to_index, logger):
         vertex_descs.append(uv_desc)
         vertex_buffers.append(('uv', uv_verts, uv_indices))
 
-    # Color layers
+    # Color layers — only include if colors actually vary per vertex.
+    # Uniform color layers (all identical values) are material-level defaults
+    # that should not be encoded as vertex attributes.
     for color_layer in ir_mesh.color_layers:
         # Skip alpha-only layers (alpha is part of RGBA in the color layer)
         if 'alpha_' in color_layer.name:
+            continue
+        # Skip uniform color layers (no per-vertex variation)
+        if color_layer.colors and all(c == color_layer.colors[0] for c in color_layer.colors):
             continue
         clr_attr = GX_VA_CLR0 if 'color_0' in color_layer.name else GX_VA_CLR1
         clr_verts, clr_indices, clr_buffer = _encode_indexed_rgba(color_layer.colors)
@@ -226,26 +258,27 @@ def _build_pobj(ir_mesh, joints, bones, bone_name_to_index, logger):
     pobj.face_lists = []
     pobj.normals = []
 
-    # Cull flags
+    # Cull flags — POBJ_CULLBACK is the default in HSD (backface culling on)
+    pobj.flags |= POBJ_CULLBACK
     if ir_mesh.cull_front:
         pobj.flags |= POBJ_CULLFRONT
-    if ir_mesh.cull_back:
-        pobj.flags |= POBJ_CULLBACK
+    if not ir_mesh.cull_back:
+        pobj.flags &= ~POBJ_CULLBACK
 
     # Skinning
     if is_envelope:
         pobj.property = _build_envelope_lists(
             envelope_map, joints, bone_name_to_index)
-        pobj.flags |= POBJ_ENVELOPE
+        pobj.flags |= POBJ_ENVELOPE | 0x1  # bit 0 always set alongside ENVELOPE
     elif bw and bw.type == SkinType.SINGLE_BONE and bw.bone_name:
         bone_idx = bone_name_to_index.get(bw.bone_name)
-        if bone_idx is not None and bone_idx < len(joints) and bone_idx != ir_mesh.parent_bone_index:
-            # SKIN: deformed by a different bone than the parent
+        if bone_idx is not None and bone_idx < len(joints):
+            # Set SKIN property — the Joint reference tells the game which
+            # bone deforms this mesh. For self-referencing (bone == parent),
+            # the mesh vertices are already positioned by the Joint hierarchy.
             pobj.property = joints[bone_idx]
             # POBJ_SKIN is 0x0 (default type field value), no flag to set
         else:
-            # Rigid attachment: bone is the parent joint itself.
-            # No property needed — deformation comes from the Joint hierarchy.
             pobj.property = None
     else:
         pobj.property = None

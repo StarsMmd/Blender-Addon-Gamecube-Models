@@ -12,6 +12,7 @@ try:
         ColorSource, LightingModel, CoordType, WrapMode, TextureInterpolation,
         LayerBlendMode, LightmapChannel, CombinerInputSource, CombinerOp,
         CombinerBias, CombinerScale, OutputBlendEffect, BlendFactor,
+        GXTextureFormat,
     )
     from .....shared.Constants.hsd import *
     from .....shared.Constants.gx import *
@@ -24,6 +25,7 @@ except (ImportError, SystemError):
         ColorSource, LightingModel, CoordType, WrapMode, TextureInterpolation,
         LayerBlendMode, LightmapChannel, CombinerInputSource, CombinerOp,
         CombinerBias, CombinerScale, OutputBlendEffect, BlendFactor,
+        GXTextureFormat,
     )
     from shared.Constants.hsd import *
     from shared.Constants.gx import *
@@ -193,6 +195,27 @@ def _describe_texture(texture, image_cache):
     )
 
 
+# Map GX format ID → GXTextureFormat enum for preserving original format
+_GX_FORMAT_ID_TO_ENUM = {
+    0x0: GXTextureFormat.I4,
+    0x1: GXTextureFormat.I8,
+    0x2: GXTextureFormat.IA4,
+    0x3: GXTextureFormat.IA8,
+    0x4: GXTextureFormat.RGB565,
+    0x5: GXTextureFormat.RGB5A3,
+    0x6: GXTextureFormat.RGBA8,
+    0x8: GXTextureFormat.C4,
+    0x9: GXTextureFormat.C8,
+    0xA: GXTextureFormat.C14X2,
+    0xE: GXTextureFormat.CMPR,
+}
+
+
+def _gx_format_id_to_enum(format_id):
+    """Convert a GX texture format ID to GXTextureFormat enum."""
+    return _GX_FORMAT_ID_TO_ENUM.get(format_id, GXTextureFormat.AUTO)
+
+
 def _build_ir_image(texture):
     """Build an IRImage from a Texture node's pre-decoded pixel data.
 
@@ -212,6 +235,9 @@ def _build_ir_image(texture):
     width = image_node.width
     height = image_node.height
 
+    # Preserve the original GX texture format so the exporter can reproduce it
+    gx_format = _gx_format_id_to_enum(image_node.format)
+
     return IRImage(
         name=f"tex_{image_node.address:X}",
         width=width,
@@ -219,6 +245,7 @@ def _build_ir_image(texture):
         pixels=bytes(pixel_data),
         image_id=image_node.address,
         palette_id=texture.palette.address if texture.palette else 0,
+        gx_format_override=gx_format,
     )
 
 

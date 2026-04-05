@@ -1,6 +1,6 @@
 # Exporter Usage
 
-> **Status:** Work in progress — skeleton and mesh export functional, materials and animations not yet implemented.
+> **Status:** Work in progress — skeleton, mesh (including envelope skinning), material, and texture export functional. Animations, constraints, and lights not yet implemented.
 
 The exporter writes a Blender scene to a `.dat` or `.pkx` binary that can be used in Pokemon Colosseum or Pokemon XD: Gale of Darkness. The output is not directly compatible with other games that use `.dat` models (e.g. Super Smash Bros. Melee).
 
@@ -15,16 +15,16 @@ The exporter writes a Blender scene to a `.dat` or `.pkx` binary that can be use
 | UV Mapping | ✅ Working |
 | Vertex Colors | ✅ Working |
 | Normals | ✅ Working |
-| Bone Weights / Skinning | ✅ Working (single-bone) |
+| Bone Weights / Skinning | ✅ Working (single-bone + envelope/weighted) |
 | Materials (colors, properties) | ✅ Working |
-| Textures | ✅ Working |
-| Bone Animations | Not yet implemented |
+| Textures (all GX formats) | ✅ Working (preserves original format on re-export) |
+| Bone Animations | ⚠️ Placeholder stubs (rest-pose only) |
 | Material Animations (color/alpha) | Not yet implemented |
 | Material Animations (texture UV) | Not yet implemented |
 | Lights | Not yet implemented |
 | Bone Constraints | Not yet implemented |
 | Shape Animations | Not yet implemented |
-| Bound Box | Not yet implemented |
+| Bound Box | ✅ Working (static AABB per animation slot) |
 
 ---
 
@@ -86,9 +86,7 @@ _WIP_
 
 ## How to Export
 
-> This section is a work in progress. The exporter is not yet functional.
-
-Once implemented, exporting will be available via **File > Export > Gamecube model (.dat)** in Blender.
+Export via **File > Export > Gamecube model (.dat)** in Blender.
 
 ### Output Formats
 

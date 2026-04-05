@@ -100,10 +100,8 @@ def _describe_mesh_object(mesh_obj, bone_name_to_index, bones, logger):
     # Normals — per-loop custom split normals if available
     normals = _extract_normals(mesh_data, faces)
 
-    # Bone weights
+    # Bone weights and parent bone index
     bone_weights = _extract_bone_weights(mesh_obj, bone_name_to_index)
-
-    # Parent bone index — determined from bone weights
     parent_bone_index = _determine_parent_bone(bone_weights, bone_name_to_index, bones)
 
     # Visibility
@@ -244,33 +242,12 @@ def _extract_bone_weights(mesh_obj, bone_name_to_index):
             bone_name=bone_name,
         )
 
-    # All vertices reference one bone each, but different bones →
-    # SINGLE_BONE with the most common bone. This covers imported envelope
-    # meshes where deformation was baked into vertex positions — using
-    # WEIGHTED would cause double-deformation on re-import.
-    if all_single:
-        totals = {}
-        for _, weight_list in assignments:
-            totals[weight_list[0][0]] = totals.get(weight_list[0][0], 0) + 1
-        best_bone = max(totals, key=totals.get)
-        return IRBoneWeights(
-            type=SkinType.SINGLE_BONE,
-            bone_name=best_bone,
-        )
-
-    # Multi-bone weights exist but each vertex only references one bone.
-    # Use SINGLE_BONE with the most referenced bone since the vertex
-    # positions are already in their final deformed space.
-    # TODO: Support true WEIGHTED export for models with genuine multi-bone
-    # vertex deformation (vertices in bind pose / local space).
-    totals = {}
-    for _, weight_list in assignments:
-        for bone_name, weight in weight_list:
-            totals[bone_name] = totals.get(bone_name, 0.0) + weight
-    best_bone = max(totals, key=totals.get)
+    # Multiple bones referenced — use WEIGHTED to preserve per-vertex
+    # bone assignments. The compose phase encodes these as EnvelopeList
+    # entries (HSD envelope skinning).
     return IRBoneWeights(
-        type=SkinType.SINGLE_BONE,
-        bone_name=best_bone,
+        type=SkinType.WEIGHTED,
+        assignments=assignments,
     )
 
 
@@ -278,9 +255,11 @@ def _determine_parent_bone(bone_weights, bone_name_to_index, bones):
     """Determine which bone index a mesh should be attached to.
 
     For SINGLE_BONE: uses the named bone directly.
-    For WEIGHTED: finds the lowest common ancestor of all referenced
-    bones. In HSD, envelope-weighted meshes attach to the skeleton
-    root that owns the deformation chain, not the individual bones.
+    For WEIGHTED: attaches to the root bone (index 0). HSD's envelope
+    deformation formula depends on the parent bone's flags via
+    _envelope_coord_system(). With the root bone (SKELETON_ROOT),
+    coord=None and deformation simplifies to bone_world @ IBM @ vertex,
+    which equals identity at rest pose when IBM = world.inverted().
     Falls back to 0 (root) if no weights exist.
 
     Args:
@@ -297,50 +276,4 @@ def _determine_parent_bone(bone_weights, bone_name_to_index, bones):
     if bone_weights.type == SkinType.SINGLE_BONE and bone_weights.bone_name:
         return bone_name_to_index.get(bone_weights.bone_name, 0)
 
-    if bone_weights.type == SkinType.WEIGHTED and bone_weights.assignments:
-        # Collect all referenced bone indices
-        referenced = set()
-        for _, weight_list in bone_weights.assignments:
-            for bone_name, _ in weight_list:
-                idx = bone_name_to_index.get(bone_name)
-                if idx is not None:
-                    referenced.add(idx)
-
-        if not referenced:
-            return 0
-
-        # Find the lowest common ancestor of all referenced bones
-        return _find_common_ancestor(referenced, bones)
-
     return 0
-
-
-def _find_common_ancestor(bone_indices, bones):
-    """Find the lowest common ancestor of a set of bone indices.
-
-    Walks parent chains to find the deepest bone that is an ancestor
-    of all given bones.
-    """
-    if not bone_indices:
-        return 0
-
-    def _ancestor_chain(idx):
-        chain = []
-        while idx is not None:
-            chain.append(idx)
-            idx = bones[idx].parent_index
-        chain.reverse()
-        return chain
-
-    chains = [_ancestor_chain(idx) for idx in bone_indices]
-
-    # Find longest common prefix
-    lca = 0
-    for depth in range(min(len(c) for c in chains)):
-        vals = set(c[depth] for c in chains)
-        if len(vals) == 1:
-            lca = vals.pop()
-        else:
-            break
-
-    return lca

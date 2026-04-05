@@ -19,6 +19,7 @@ except (ImportError, SystemError):
 
 from .helpers.bones import compose_bones
 from .helpers.meshes import compose_meshes
+from .helpers.animations import compose_bone_animations
 
 
 def compose_scene(ir_scene, options=None, logger=StubLogger()):
@@ -58,9 +59,13 @@ def compose_scene(ir_scene, options=None, logger=StubLogger()):
             for joint in joints:
                 joint.name = None
 
+        # Compose animations
+        anim_roots = compose_bone_animations(
+            model.bone_animations, joints, model.bones, logger)
+
         model_set = ModelSet(address=None, blender_obj=None)
         model_set.root_joint = root_joint
-        model_set.animated_joints = None
+        model_set.animated_joints = anim_roots
         model_set.animated_material_joints = None
         model_set.animated_shape_joints = None
 

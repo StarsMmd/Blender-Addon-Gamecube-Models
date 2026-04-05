@@ -178,7 +178,7 @@ Nodes are cached by file offset (`nodes_cache_by_offset`). Nodes with `is_cachab
 | Bone instances (JOBJ_INSTANCE) | ✅ Working |
 | Shape animation import | ❌ Stubs only (not implemented in legacy either) |
 | Camera / Fog import | ❌ Stubs only |
-| Exporter pipeline | ⚠️ Bones + meshes + materials + textures (CMPR) + bound box + placeholder animations working. Real animations/constraints TODO — see export pipeline plan |
+| Exporter pipeline | ⚠️ Bones + meshes (RIGID/SINGLE_BONE/ENVELOPE) + materials + textures (all GX formats) + bound box + placeholder animations working. Real animations/constraints TODO |
 | Exporter binary round-trip (DATBuilder) | ✅ Functional (0 value mismatches) |
 | Exporter PKX packaging | ✅ Working (DAT injection, shiny write-back, trailer preserved) |
 | IR pipeline | ✅ Default path (legacy available via toggle) |
@@ -326,4 +326,4 @@ The shiny parameters are stored as registered `bpy.props` properties on the arma
 - [ ] Implement remaining complexity optimizations (items 1-3 in the plan above)
 - [x] Shiny filter: split into separate routing and brightness shaders. The routing shader (channel swizzle) only applies to texture colors, not vertex colors. The brightness shader applies to the final result after vertex color multiplication.
 - [x] Ambient lighting: approximated with per-material Emission node (`dat_ambient_emission`), read back on export. Scene-level `LOBJ_AMBIENT` lights still ignored.
-- [ ] Bone inverse_bind_matrix: the HSD inverse bind matrix has a complex relationship to the bone hierarchy that depends on `_envelope_coord_system()` — it's NOT simply `world_matrix.inverted()`. Cannot be computed for arbitrary Blender models without fully reverse-engineering the HSD skeleton conventions. Only needed for true WEIGHTED/envelope skinning export (currently converted to SINGLE_BONE). Low priority until envelope export is implemented.
+- [x] Bone inverse_bind_matrix: computed as `srt_world.inverted()` — the inverse of the SRT-accumulated world matrix (no coordinate rotation). Only set on skinning target bones, cleared on others. See "Envelope Skinning" section in [export pipeline plan](documentation/export_pipeline_plan.md).

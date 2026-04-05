@@ -199,6 +199,7 @@ def compute_nin_score(filepath):
     # Compare original root nodes against composed root nodes
     # The compose phase only produces scene_data roots, so match by section
     total, errors, misses = 0, 0, 0
+    all_details = []
     for section in sections:
         orig_root = section.root_node
         # Find corresponding composed node (compose outputs one root per model)
@@ -206,15 +207,16 @@ def compute_nin_score(filepath):
         if composed_nodes:
             comp_root = composed_nodes[0] if len(composed_nodes) > 0 else None
 
-        t, e, m = _compare_node_trees_nin(orig_root, comp_root)
+        t, e, m, details = _compare_node_trees_nin(orig_root, comp_root)
         total += t
         errors += e
         misses += m
+        all_details.extend(details)
 
     pct = ((total - errors - misses) / total * 100) if total > 0 else 100.0
     err_pct = (errors / total * 100) if total > 0 else 0.0
     miss_pct = (misses / total * 100) if total > 0 else 0.0
-    return pct, err_pct, miss_pct
+    return pct, err_pct, miss_pct, all_details
 
 
 # ---------------------------------------------------------------------------
@@ -269,8 +271,6 @@ _SKIP_FIELDS = {
     'deformed_vertices', 'deformed_normals',
     # Convenience/metadata — DAT file offsets used as cache keys, not model data
     'image_id', 'palette_id',
-    # Export-only field — not present in original IR
-    'gx_format_override',
 }
 
 # Maximum number of detail lines per category
@@ -608,9 +608,15 @@ def _compare_node_trees_nin(orig, composed):
     total = 0
     errors = 0
     misses = 0
+    details = []
     visited = set()
 
-    def _walk(orig_node, comp_node):
+    def _node_label(node):
+        cls = type(node).__name__
+        addr = getattr(node, 'address', None)
+        return f"{cls}@{addr:#x}" if addr is not None else cls
+
+    def _walk(orig_node, comp_node, path="root"):
         nonlocal total, errors, misses
         if orig_node is None:
             return
@@ -621,27 +627,32 @@ def _compare_node_trees_nin(orig, composed):
         if not hasattr(orig_node, 'fields'):
             return
 
+        node_path = f"{path}({_node_label(orig_node)})"
         for field_name, _ in orig_node.fields:
             if field_name in _NODE_SKIP_FIELDS:
                 continue
 
             val_orig = getattr(orig_node, field_name, None)
             val_comp = getattr(comp_node, field_name, None) if comp_node is not None else None
+            fp = f"{node_path}.{field_name}"
 
             if isinstance(val_orig, Node):
                 total += 1
                 comp_child = val_comp if isinstance(val_comp, Node) else None
                 if comp_child is None:
                     misses += 1
-                _walk(val_orig, comp_child)
+                    details.append(f"MISS {fp}: {_node_label(val_orig)} vs None")
+                _walk(val_orig, comp_child, fp)
             elif isinstance(val_orig, (list, tuple)):
                 comp_list = val_comp if isinstance(val_comp, (list, tuple)) else []
                 total += 1
                 if len(val_orig) != len(comp_list):
                     if len(comp_list) == 0:
                         misses += 1
+                        details.append(f"MISS {fp}: len={len(val_orig)} vs empty")
                     else:
                         errors += 1
+                        details.append(f"ERR  {fp}: len={len(val_orig)} vs {len(comp_list)}")
                 for i, item in enumerate(val_orig):
                     comp_item = comp_list[i] if i < len(comp_list) else None
                     if isinstance(item, Node):
@@ -649,28 +660,35 @@ def _compare_node_trees_nin(orig, composed):
                         comp_node_item = comp_item if isinstance(comp_item, Node) else None
                         if comp_node_item is None:
                             misses += 1
-                        _walk(item, comp_node_item)
+                            details.append(f"MISS {fp}[{i}]: {_node_label(item)} vs None")
+                        _walk(item, comp_node_item, f"{fp}[{i}]")
                     else:
                         total += 1
                         if comp_item is None:
                             misses += 1
+                            details.append(f"MISS {fp}[{i}]: {item} vs None")
                         elif isinstance(item, float) and isinstance(comp_item, float):
                             if abs(item - comp_item) > 1e-5:
                                 errors += 1
+                                details.append(f"ERR  {fp}[{i}]: {item} vs {comp_item}")
                         elif item != comp_item:
                             errors += 1
+                            details.append(f"ERR  {fp}[{i}]: {item} vs {comp_item}")
             else:
                 total += 1
                 if val_comp is None and val_orig is not None:
                     misses += 1
+                    details.append(f"MISS {fp}: {repr(val_orig)[:60]} vs None")
                 elif isinstance(val_orig, float) and isinstance(val_comp, float):
                     if abs(val_orig - val_comp) > 1e-5:
                         errors += 1
+                        details.append(f"ERR  {fp}: {val_orig} vs {val_comp}")
                 elif val_orig != val_comp:
                     errors += 1
+                    details.append(f"ERR  {fp}: {repr(val_orig)[:60]} vs {repr(val_comp)[:60]}")
 
     _walk(orig, composed)
-    return total, errors, misses
+    return total, errors, misses, details
 
 
 def _fuzzy_binary_match(data_a, data_b):
@@ -746,10 +764,11 @@ def run_all_tests(filepath):
 
     # NIN
     try:
-        pct, err_pct, miss_pct = compute_nin_score(filepath)
+        pct, err_pct, miss_pct, nin_details = compute_nin_score(filepath)
         scores['nin'] = pct
         scores['nin_err'] = err_pct
         scores['nin_miss'] = miss_pct
+        scores['nin_details'] = nin_details
     except Exception as e:
         scores['nin'] = f"ERROR: {e}"
         scores['nin_err'] = 0.0
@@ -829,6 +848,10 @@ def main():
                 cat_parts.append(f"{cat_name}={cat['pct']:.0f}%({err_pct:.0f}/{miss_pct:.0f})")
         if cat_parts:
             print(f"    IBI breakdown: {', '.join(cat_parts)}")
+
+        if verbose and scores.get('nin_details'):
+            for detail in scores['nin_details'][:20]:
+                print(f"    NIN: {detail}")
 
         if verbose and scores.get('ibi_details'):
             for detail in scores['ibi_details'][:20]:

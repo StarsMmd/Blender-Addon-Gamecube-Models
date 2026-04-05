@@ -18,46 +18,46 @@ Parse a DAT binary into a node tree, run the describe phase to produce an IRScen
 
 ### IR → Blender → IR (IBI)
 
-Build an IRScene into Blender objects via the build phase, then read them back via the describe_blender phase to produce a new IRScene. Compare the two IR scenes using category-weighted scoring — each IR category (bones, meshes, materials, animations, constraints, lights) is scored independently, then averaged across categories that have data. This prevents large vertex arrays from inflating the score. Currently covers bones and mesh geometry; materials, animations, and constraints are not yet implemented in the export describe phase.
+Build an IRScene into Blender objects via the build phase, then read them back via the describe_blender phase to produce a new IRScene. Compare the two IR scenes using category-weighted scoring — each IR category (bones, meshes, materials, animations, constraints, lights) is scored independently, then averaged across categories that have data. This prevents large vertex arrays from inflating the score.
 
 ### Binary → Node tree → Binary (BNB)
 
-Parse a DAT binary, write it back, and compare the output bytes against the input using a fuzzy 4-byte word matching algorithm. This measures binary-level fidelity — whether the output file would be byte-identical to the input. Exact 1:1 binary matches are a stretch goal that will require matching the original SysDolphin compiler's layout conventions (alignment, node ordering, padding). Current scores are 70–95% due to layout differences. A high BNB score is purely aesthetic — it has no functional benefit. NBN determines the practical accuracy of the exporter.
+Parse a DAT binary, write it back, and compare the output bytes against the input using a fuzzy 4-byte word matching algorithm. This measures binary-level fidelity — whether the output file would be byte-identical to the input. Exact 1:1 binary matches are a stretch goal that will require matching the original SysDolphin compiler's layout conventions (alignment, node ordering, padding). A high BNB score is purely aesthetic — it has no functional benefit. NBN determines the practical accuracy of the exporter.
 
 ---
 
 ## Test Results
 
-**Overall export pipeline completion: 🔵 62.6%** _(weighted: NBN 25%, NIN 40%, IBI 30%, BNB 5%)_
+**Overall export pipeline completion: 🟡 60%** _(weighted: NBN 25%, NIN 40%, IBI 30%, BNB 5%)_
 
 _Average health: 🔴 0-20% · 🟠 21-40% · 🟡 41-60% · 🔵 61-80% · ✅ 81-100%_
 
-IBI uses **category-weighted scoring**: each IR category (bones, meshes, materials, animations, constraints, lights) is scored independently, then averaged across categories that have data. This prevents large vertex arrays from inflating the score. Run with `python3.11` and `bpy==4.5.7`.
+IBI uses **category-weighted scoring**: each IR category (bones, meshes, materials, animations, constraints, lights) is scored independently, then averaged across categories that have data. Run with `python3.11` and `bpy==4.5.7`.
 
 All scores displayed as `match%(error/miss)` — see "How Scores Are Computed" for definitions.
 
 | Model | Game | NBN ✅ | NIN 🟡 | IBI 🟡 | BNB 🔵 |
 |---|---|---|---|---|---|
-| nukenin | XD | 97.1%(3/0) | 75.2%(21/4) | 52.8%(1/46) | 94.0% |
-| haganeil | XD | 92.7%(7/0) | 58.7%(34/7) | 54.7%(2/43) | 91.8% |
-| cokodora | XD | 93.4%(7/0) | 55.7%(35/10) | 50.4%(2/48) | 84.3% |
-| frygon | XD | 93.0%(7/0) | 59.3%(35/6) | 48.7%(1/50) | 83.5% |
-| achamo | XD | 92.0%(8/0) | 54.7%(41/4) | 49.9%(2/49) | 80.9% |
-| miniryu | XD | 90.2%(10/0) | 44.5%(51/4) | 49.3%(1/50) | 80.9% |
-| bohmander | XD | 91.5%(9/0) | 53.7%(42/5) | 50.1%(1/49) | 80.8% |
-| cerebi | XD | 89.6%(10/0) | 44.7%(52/3) | 47.9%(2/50) | 71.0% |
-| gallop | XD | 91.7%(8/0) | 52.1%(42/6) | 49.3%(1/49) | 77.3% |
-| usohachi | XD | 92.3%(8/0) | 46.6%(34/19) | 42.0%(3/55) | 75.1% |
-| runpappa | XD | 92.5%(7/0) | 55.9%(39/5) | 50.0%(2/48) | 81.4% |
-| rayquaza | XD | 93.6%(6/0) | 57.7%(32/10) | 47.1%(3/50) | 84.6% |
-| ken_a1 | XD | 91.6%(8/0) | 50.0%(44/6) | 40.1%(1/59) | 61.0% |
-| mage_0101 | XD | 91.8%(8/0) | 51.4%(44/4) | 40.2%(1/59) | 56.1% |
-| heracros | Colo | 93.0%(7/0) | 57.8%(37/5) | 50.8%(4/46) | 77.5% |
-| hinoarashi | Colo | 90.3%(10/0) | 46.6%(48/5) | 47.8%(2/50) | 83.1% |
-| hizuki_a1 | Colo | 92.5%(7/0) | 54.2%(39/7) | 39.2%(2/59) | 79.6% |
-| koduck | Colo | 94.0%(6/0) | 56.7%(35/8) | 50.6%(3/47) | 82.5% |
-| ghos | Colo | 90.3%(10/0) | 41.6%(52/6) | 46.8%(2/51) | 77.8% |
-| showers | Colo | 89.7%(10/0) | 45.8%(51/3) | 49.4%(1/50) | 76.0% |
+| nukenin | XD | 97.1%(3/0) | 82.2%(14/3) | 66.6%(11/22) | 94.0% |
+| haganeil | XD | 92.7%(7/0) | 63.0%(30/7) | 62.0%(15/23) | 91.8% |
+| cokodora | XD | 93.4%(7/0) | 65.6%(28/6) | 62.1%(15/23) | 84.3% |
+| frygon | XD | 93.0%(7/0) | 65.8%(29/6) | 59.9%(15/25) | 83.5% |
+| achamo | XD | 92.0%(8/0) | 59.8%(36/4) | 61.3%(17/22) | 80.9% |
+| miniryu | XD | 90.2%(10/0) | 46.1%(50/4) | 66.2%(11/23) | 80.9% |
+| bohmander | XD | 91.5%(9/0) | 58.8%(37/4) | 61.3%(16/23) | 80.8% |
+| cerebi | XD | 89.6%(10/0) | 45.1%(52/3) | 62.2%(13/25) | 71.0% |
+| gallop | XD | 91.7%(8/0) | 58.0%(36/6) | 61.6%(13/25) | 77.3% |
+| usohachi | XD | 92.3%(8/0) | 52.4%(28/19) | 51.3%(11/37) | 75.1% |
+| runpappa | XD | 92.5%(7/0) | 61.0%(34/5) | 60.0%(18/22) | 81.4% |
+| rayquaza | XD | 93.6%(6/0) | 67.5%(24/8) | 57.0%(22/21) | 84.6% |
+| ken_a1 | XD | 91.6%(8/0) | 58.2%(36/6) | 57.9%(4/38) | 61.0% |
+| mage_0101 | XD | 91.8%(8/0) | 63.4%(34/2) | 48.9%(1/50) | 56.1% |
+| heracros | Colo | 93.0%(7/0) | 63.6%(31/5) | 61.6%(17/22) | 77.5% |
+| hinoarashi | Colo | 90.3%(10/0) | 48.7%(46/5) | 61.9%(7/31) | 83.1% |
+| hizuki_a1 | Colo | 92.5%(7/0) | 63.8%(30/6) | 58.8%(5/37) | 79.6% |
+| koduck | Colo | 94.0%(6/0) | 66.7%(27/6) | 58.8%(10/31) | 82.5% |
+| ghos | Colo | 90.3%(10/0) | 44.1%(50/6) | 61.2%(13/26) | 77.8% |
+| showers | Colo | 89.7%(10/0) | 47.5%(50/3) | 66.3%(10/24) | 76.0% |
 
 ---
 
@@ -65,7 +65,7 @@ All scores displayed as `match%(error/miss)` — see "How Scores Are Computed" f
 
 All scores are displayed as **`match%(error/miss)`** where:
 - **match** — percentage of fields that round-tripped correctly
-- **error** — percentage of fields that existed in both but had different values (implementation bugs)
+- **error** — percentage of fields that existed in both but had different values (implementation bugs or inherent limitations)
 - **miss** — percentage of fields that existed in the original but were missing/None in the round-tripped result (not yet implemented)
 
 Scoring methods:
@@ -90,7 +90,7 @@ python3.11 tests/round_trip/run_round_trips.py model1.pkx model2.pkx
 # All models in a directory
 python3.11 tests/round_trip/run_round_trips.py ~/Documents/Projects/DAT\ plugin/models/
 
-# Verbose output (shows IBI mismatch details)
+# Verbose output (shows NIN and IBI mismatch details)
 python3.11 tests/round_trip/run_round_trips.py ~/Documents/Projects/DAT\ plugin/models/nukenin.pkx -v
 ```
 
@@ -108,9 +108,19 @@ Average per-category scores across all 20 test models:
 
 | Category | Score | Error | Miss | Notes |
 |---|---|---|---|---|
-| Bones | ~57% | ~5% | ~38% | Errors: flag mismatches, rotation ambiguity. Misses: inverse_bind_matrix, SKELETON flag on deformation bones |
-| Meshes | ~93% | ~0% | ~7% | Near-complete geometry round-trip. Misses: parent_bone_index differences |
-| Materials | ~99% | ~1% | ~0% | Specular mapped via Specular Tint correction, ambient via Emission node. Convenience fields (image_id, palette_id) excluded from scoring. |
-| Animations | ~0% | ~0% | ~100% | Placeholder rest-pose stubs only. Real animation export not yet implemented |
+| Bones | ~82% | ~14% | ~4% | Errors: inverse_bind_matrix (different computation than original), rotation Euler ambiguity, scale inheritance position drift. Misses: hidden state (importer doesn't set edit_bone.hide) |
+| Meshes | ~98% | ~0% | ~2% | Near-complete geometry round-trip. Vertex positions, bone weights, and parent_bone_index all preserved |
+| Materials | ~97% | ~3% | ~0% | Specular mapped via Specular Tint correction, ambient via Emission node. Texture format override preserves original GX format |
+| Animations | ~37% | ~53% | ~9% | Placeholder rest-pose stubs — real animation export not yet implemented |
 | Constraints | 0% | 0% | 100% | Not yet implemented in export describe phase |
-| Lights | — | — | — | Not yet implemented; excluded from scoring when absent |
+| Lights | 0% | 0% | 100% | Not yet implemented in export describe phase |
+
+### Limiting Factors by Test Type
+
+**IBI** — The largest drag on IBI scores is unimplemented features (animations, constraints, lights) which contribute 100% miss rates. Bone errors are inherent Blender round-trip limitations: IBM values differ from original (our IBM is self-consistent but computed differently than the game tools), Euler decomposition ambiguity produces equivalent but numerically different rotation values, and accumulated parent scale drifts through Blender's edit bone normalization.
+
+**NIN** — Display list chunk count differences (we use GX_DRAW_TRIANGLES without triangle strip optimization, producing ~1.5-2x larger display lists) and palette data differences (C8 re-encoding produces different color quantization). Structural parity is solid: DObject grouping, PObject chaining, vertex descriptors, flags, and texture format selection all match the original.
+
+**NBN** — Pointer resolution edge cases and alignment differences in DATBuilder. Functionally correct (field values match).
+
+**BNB** — Layout differences from DATBuilder's node ordering and alignment conventions vs the original SysDolphin compiler.
