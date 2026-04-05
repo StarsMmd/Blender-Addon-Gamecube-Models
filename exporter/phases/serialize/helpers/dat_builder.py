@@ -7,6 +7,23 @@ except (ImportError, SystemError):
     from shared.Constants import *
     from shared.helpers.file_io import *
 
+def _coerce_pointer(value, node, field_name):
+	"""Coerce a field value to a uint pointer address for serialization.
+
+	Handles None (→ 0), Node (→ address), empty list (→ 0, null pointer),
+	and int (pass through). Raises ValueError with context for anything else.
+	"""
+	if value is None or (isinstance(value, list) and len(value) == 0):
+		return 0
+	if isinstance(value, Node):
+		return value.address if value.address is not None else 0
+	if isinstance(value, int):
+		return value
+	raise ValueError(
+		"Cannot serialize {}.{}: expected Node, None, or int for pointer field, "
+		"got {} ({})".format(type(node).__name__, field_name, type(value).__name__, repr(value)[:60]))
+
+
 # Serializes a node tree to DAT binary format.
 # The build process has 4 internal steps:
 # 1) Collect nodes via DFS post-order traversal into an ordered list (leaf-first).
@@ -303,27 +320,18 @@ class DATBuilder(BinaryWriter):
 				if isPointerType(inner):
 					field_type = 'uint'
 					is_pointer_field = True
-					if field_value is None:
-						field_value = 0
-					elif isinstance(field_value, Node):
-						field_value = field_value.address if field_value.address is not None else 0
+					field_value = _coerce_pointer(field_value, node, field_name)
 				elif isNodeClassType(inner):
 					# Inline struct (@-prefixed) — write its fields directly
 					is_inline_struct = True
 			elif isPointerType(field_type):
 				field_type = 'uint'
 				is_pointer_field = True
-				if field_value is None:
-					field_value = 0
-				elif isinstance(field_value, Node):
-					field_value = field_value.address if field_value.address is not None else 0
+				field_value = _coerce_pointer(field_value, node, field_name)
 			elif isNodeClassType(field_type):
 				field_type = 'uint'
 				is_pointer_field = True
-				if field_value is None:
-					field_value = 0
-				elif isinstance(field_value, Node):
-					field_value = field_value.address if field_value.address is not None else 0
+				field_value = _coerce_pointer(field_value, node, field_name)
 
 			if is_inline_struct:
 				# Write inline struct by delegating to its writeBinary
@@ -374,7 +382,12 @@ class DATBuilder(BinaryWriter):
 					self.relocations.append(write_address + current_offset)
 
 				# Write at current position (sequential within the node's allocated space)
-				super().write(field_type, field_value)
+				try:
+					super().write(field_type, field_value)
+				except (ValueError, Exception) as e:
+					raise ValueError(
+						"Serializing {}.{} (type '{}'): {}".format(
+							node.__class__.__name__, field_name, field[1], e)) from e
 				current_offset += get_type_length(field_type)
 
 		return write_address
