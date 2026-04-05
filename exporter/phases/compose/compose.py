@@ -21,6 +21,7 @@ except (ImportError, SystemError):
 from .helpers.bones import compose_bones
 from .helpers.meshes import compose_meshes
 from .helpers.animations import compose_bone_animations
+from .helpers.material_animations import compose_material_animations
 from .helpers.lights import compose_lights
 from .helpers.constraints import compose_constraints
 
@@ -69,10 +70,21 @@ def compose_scene(ir_scene, options=None, logger=StubLogger()):
         anim_roots = compose_bone_animations(
             model.bone_animations, joints, model.bones, logger)
 
+        # Compose material animations
+        mat_anim_roots = None
+        if model.bone_animations:
+            mat_roots = []
+            for anim_set in model.bone_animations:
+                if anim_set.material_tracks:
+                    root = compose_material_animations(anim_set, model.bones, logger)
+                    if root:
+                        mat_roots.append(root)
+            mat_anim_roots = mat_roots if mat_roots else None
+
         model_set = ModelSet(address=None, blender_obj=None)
         model_set.root_joint = root_joint
         model_set.animated_joints = anim_roots
-        model_set.animated_material_joints = None
+        model_set.animated_material_joints = mat_anim_roots
         model_set.animated_shape_joints = None
 
         scene_data = SceneData(address=None, blender_obj=None)
