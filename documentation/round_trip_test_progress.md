@@ -41,22 +41,22 @@ All scores displayed as `match%(error/miss)` — see "How Scores Are Computed" f
 | nukenin | XD | 97.1%(3/0) | 82.2%(15/3) | 86.9%(11/2) | 94.0% |
 | haganeil | XD | 92.7%(7/0) | 63.0%(30/7) | 82.3%(14/3) | 91.8% |
 | cokodora | XD | 93.4%(7/0) | 65.6%(28/6) | 82.4%(15/3) | 84.3% |
-| frygon | XD | 93.0%(7/0) | 65.8%(29/6) | 80.3%(15/5) | 83.5% |
+| frygon | XD | 93.0%(7/0) | 65.9%(29/5) | 80.3%(15/5) | 83.5% |
 | achamo | XD | 92.0%(8/0) | 59.8%(36/4) | 81.7%(16/2) | 80.9% |
 | miniryu | XD | 90.2%(10/0) | 46.1%(50/4) | 86.5%(10/3) | 80.9% |
 | bohmander | XD | 91.5%(9/0) | 58.7%(37/4) | 81.7%(16/3) | 80.8% |
 | cerebi | XD | 89.6%(10/0) | 45.1%(52/3) | 82.5%(13/5) | 71.0% |
-| gallop | XD | 91.7%(8/0) | 58.0%(36/6) | 81.9%(13/5) | 77.3% |
+| gallop | XD | 91.7%(8/0) | 58.1%(36/6) | 81.9%(13/5) | 77.3% |
 | usohachi | XD | 92.3%(8/0) | 52.6%(28/19) | 84.5%(12/4) | 75.1% |
 | runpappa | XD | 92.5%(7/0) | 61.0%(34/5) | 80.3%(18/2) | 81.4% |
-| rayquaza | XD | 93.6%(6/0) | 67.5%(24/8) | 77.4%(21/1) | 84.6% |
+| rayquaza | XD | 93.6%(6/0) | 69.7%(25/5) | 77.4%(21/1) | 84.6% |
 | ken_a1 | XD | 91.6%(8/0) | 58.5%(36/5) | 90.4%(5/5) | 61.0% |
 | mage_0101 | XD | 91.8%(8/0) | 63.8%(34/2) | 82.6%(1/16) | 56.1% |
 | heracros | Colo | 93.0%(7/0) | 63.6%(31/5) | 81.9%(16/2) | 77.5% |
-| hinoarashi | Colo | 90.3%(10/0) | 48.7%(46/5) | 82.2%(7/11) | 83.1% |
-| hizuki_a1 | Colo | 92.5%(7/0) | 64.1%(30/6) | 90.6%(6/3) | 79.6% |
+| hinoarashi | Colo | 90.3%(10/0) | 49.2%(47/4) | 82.2%(7/11) | 83.1% |
+| hizuki_a1 | Colo | 92.5%(7/0) | 64.3%(30/5) | 90.6%(6/3) | 79.6% |
 | koduck | Colo | 94.0%(6/0) | 66.7%(27/6) | 78.9%(10/11) | 82.5% |
-| ghos | Colo | 90.3%(10/0) | 44.1%(50/6) | 81.6%(13/6) | 77.8% |
+| ghos | Colo | 90.3%(10/0) | 44.4%(50/6) | 81.6%(13/6) | 77.8% |
 | showers | Colo | 89.7%(10/0) | 47.5%(50/3) | 86.6%(10/4) | 76.0% |
 
 ---
@@ -119,7 +119,7 @@ Average per-category scores across all 20 test models:
 
 **IBI** — The largest drag on IBI scores is animation accuracy (~37% match due to keyframe sparsification and Euler decomposition ambiguity). Bone errors are inherent Blender round-trip limitations: IBM values differ from original (our IBM is self-consistent but computed differently than the game tools), Euler decomposition ambiguity produces equivalent but numerically different rotation values, and accumulated parent scale drifts through Blender's edit bone normalization. Constraints and lights now round-trip at ~95-100%.
 
-**NIN** — Display list chunk count differences (we use GX_DRAW_TRIANGLES without triangle strip optimization, producing ~1.5-2x larger display lists) and palette data differences (C8 re-encoding produces different color quantization). Structural parity is solid: DObject grouping, PObject chaining, vertex descriptors, flags, and texture format selection all match the original.
+**NIN** — Display list chunk count differences (we use GX_DRAW_TRIANGLES without triangle strip optimization, producing ~1.5-2x larger display lists) and palette data differences (C8 re-encoding produces different color quantization). Fragment blending (PixelEngine) and TEV combiner (TextureTEV) are now composed. TEV nodes with `active=0x0` (no-op stages with dead data) are excluded from NIN scoring. Structural parity is solid: DObject grouping, PObject chaining, vertex descriptors, flags, and texture format selection all match the original.
 
 **NBN** — Pointer resolution edge cases and alignment differences in DATBuilder. Functionally correct (field values match).
 

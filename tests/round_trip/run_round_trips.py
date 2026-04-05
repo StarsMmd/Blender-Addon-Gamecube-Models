@@ -616,6 +616,14 @@ def _compare_node_trees(node_a, node_b):
 _NODE_SKIP_FIELDS = {'address', 'data_address', 'display_list_address', 'base_pointer'}
 
 
+def _is_inactive_tev(field_name, node):
+    """Return True if this is a TEV node with no active stages (dead data)."""
+    if field_name != 'tev':
+        return False
+    return (type(node).__name__ == 'TextureTEV'
+            and getattr(node, 'active', None) == 0)
+
+
 def _compare_node_trees_nin(orig, composed):
     """NIN comparison: walk the ORIGINAL tree to count all fields.
 
@@ -654,6 +662,9 @@ def _compare_node_trees_nin(orig, composed):
             fp = f"{node_path}.{field_name}"
 
             if isinstance(val_orig, Node):
+                # Skip TEV nodes with no active stages — dead data
+                if _is_inactive_tev(field_name, val_orig):
+                    continue
                 total += 1
                 comp_child = val_comp if isinstance(val_comp, Node) else None
                 if comp_child is None:
