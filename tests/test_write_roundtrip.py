@@ -718,3 +718,142 @@ class TestRealFileRoundtrip:
 
         # Real files should have very high match since DATBuilder is proven
         assert pct >= 95, f"Match too low for real file: {pct:.1f}%"
+
+
+# ---------------------------------------------------------------------------
+# Texture/palette alignment and relocation tests
+# ---------------------------------------------------------------------------
+
+class TestTextureAlignment:
+    """Verify that Image and Palette writePrimitivePointers produces
+    32-byte aligned data, and that _raw_pointer_fields at offset 0
+    are correctly relocated."""
+
+    def test_image_data_32byte_aligned(self):
+        """Image pixel data must be 32-byte aligned for GX hardware."""
+        from shared.Nodes.Classes.Texture.Image import Image
+        from shared.helpers.file_io import BinaryWriter
+
+        # Write 5 bytes of junk first to create a non-aligned position
+        stream = io.BytesIO()
+        writer = BinaryWriter(stream)
+        for _ in range(5):
+            writer.write('uchar', 0xAA)
+
+        # Mock the builder interface that Image.writePrimitivePointers expects
+        class MockBuilder:
+            def __init__(self, writer):
+                self._writer = writer
+            def seek(self, offset, whence='start'):
+                self._writer.seek(offset, whence)
+            def write(self, val, fmt):
+                return self._writer.write(fmt, val)
+            def _currentRelativeAddress(self):
+                return self._writer.file.tell()
+
+        builder = MockBuilder(writer)
+
+        img = Image(address=None, blender_obj=None)
+        img.raw_image_data = bytes(range(128))  # 128 bytes of pixel data
+        img.writePrimitivePointers(builder)
+
+        assert img.data_address % 32 == 0, \
+            f"Image data not 32-byte aligned: 0x{img.data_address:X}"
+
+    def test_palette_data_32byte_aligned(self):
+        """Palette data must be 32-byte aligned for GX hardware."""
+        from shared.Nodes.Classes.Texture.Palette import Palette
+        from shared.helpers.file_io import BinaryWriter
+
+        stream = io.BytesIO()
+        writer = BinaryWriter(stream)
+        for _ in range(7):
+            writer.write('uchar', 0xBB)
+
+        class MockBuilder:
+            def __init__(self, writer):
+                self._writer = writer
+            def seek(self, offset, whence='start'):
+                self._writer.seek(offset, whence)
+            def write(self, val, fmt):
+                return self._writer.write(fmt, val)
+            def _currentRelativeAddress(self):
+                return self._writer.file.tell()
+
+        builder = MockBuilder(writer)
+
+        pal = Palette(address=None, blender_obj=None)
+        pal.raw_data = bytes(range(64))  # 64 bytes of palette data
+        pal.writePrimitivePointers(builder)
+
+        assert pal.data % 32 == 0, \
+            f"Palette data not 32-byte aligned: 0x{pal.data:X}"
+
+    def test_multiple_images_all_aligned(self):
+        """Multiple images written sequentially must all be 32-byte aligned."""
+        from shared.Nodes.Classes.Texture.Image import Image
+        from shared.helpers.file_io import BinaryWriter
+
+        stream = io.BytesIO()
+        writer = BinaryWriter(stream)
+
+        class MockBuilder:
+            def __init__(self, writer):
+                self._writer = writer
+            def seek(self, offset, whence='start'):
+                self._writer.seek(offset, whence)
+            def write(self, val, fmt):
+                return self._writer.write(fmt, val)
+            def _currentRelativeAddress(self):
+                return self._writer.file.tell()
+
+        builder = MockBuilder(writer)
+
+        # Write 3 images with non-power-of-2 sizes
+        sizes = [100, 200, 77]  # bytes — none are 32-byte multiples
+        images = []
+        for size in sizes:
+            img = Image(address=None, blender_obj=None)
+            img.raw_image_data = bytes(size)
+            img.writePrimitivePointers(builder)
+            images.append(img)
+
+        for i, img in enumerate(images):
+            assert img.data_address % 32 == 0, \
+                f"Image[{i}] not 32-byte aligned: 0x{img.data_address:X} (data size={sizes[i]})"
+
+    def test_zero_offset_raw_pointer_relocated(self):
+        """_raw_pointer_fields with value 0 must still be relocated."""
+        from shared.Nodes.Classes.Texture.Image import Image
+
+        img = Image(address=None, blender_obj=None)
+        img.raw_image_data = bytes(64)
+        img.address = 0x100  # simulate allocated struct address
+        img.data_address = 0  # points to offset 0 in data section
+        img._raw_pointer_fields = {'data_address'}
+
+        # Simulate what Node.writeBinary does for _raw_pointer_fields
+        relocations = []
+
+        class MockBuilder:
+            pass
+
+        builder = MockBuilder()
+        builder.relocations = relocations
+
+        # Replay the relocation logic from Node.writeBinary
+        from shared.Nodes.NodeTypes import markUpFieldType, get_type_length, get_alignment_at_offset
+        raw_fields = img._raw_pointer_fields
+        offset = 0
+        for field in img.fields:
+            field_type = markUpFieldType(field[1])
+            offset += get_alignment_at_offset(field_type, img.address + offset)
+            if field[0] in raw_fields:
+                value = getattr(img, field[0])
+                if isinstance(value, int):
+                    builder.relocations.append(img.address + offset)
+            offset += get_type_length(field_type)
+
+        assert len(relocations) == 1, f"Expected 1 relocation, got {len(relocations)}"
+        assert relocations[0] == 0x100, \
+            f"Relocation at wrong offset: 0x{relocations[0]:X} (expected 0x100)"

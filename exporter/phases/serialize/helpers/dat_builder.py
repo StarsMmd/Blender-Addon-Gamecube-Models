@@ -359,7 +359,7 @@ class DATBuilder(BinaryWriter):
 						current_offset += sub_alignment
 						if isinstance(element, Node):
 							addr = element.address if element.address is not None else 0
-							if relative_to_header and addr != 0:
+							if relative_to_header and (addr != 0 or element.address == 0):
 								self.relocations.append(write_address + current_offset)
 							super().write('uint', addr)
 						else:
@@ -377,8 +377,11 @@ class DATBuilder(BinaryWriter):
 					self.file.write(b'\x00')
 				current_offset += alignment
 
-				# Record relocation for non-zero pointer fields
-				if is_pointer_field and relative_to_header and field_value != 0:
+				# Record relocation for pointer fields. Normally skip zero (null
+				# pointer), but fields in _raw_pointer_fields are real data pointers
+				# that happen to point to offset 0 (start of data section).
+				force_reloc = hasattr(node, '_raw_pointer_fields') and field_name in node._raw_pointer_fields
+				if is_pointer_field and relative_to_header and (field_value != 0 or force_reloc):
 					self.relocations.append(write_address + current_offset)
 
 				# Write at current position (sequential within the node's allocated space)
