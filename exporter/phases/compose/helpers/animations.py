@@ -75,11 +75,13 @@ _QUANT_CANDIDATES = [
 def _pick_quantization(values, channel_type=None):
     """Pick the smallest quantization format for a set of float values.
 
-    Matches the SysDolphin compiler's strategy:
-      frac_bits = total_bits - max(1, ceil(log2(max_abs + 1)))
-    where total_bits is 8/16 for unsigned, 7/15 for signed. The min-1
-    integer bit ensures trivial (all-zero) channels get type_bits-1
-    frac_bits (e.g. U8:7, S16:14), matching original defaults.
+    Uses the formula frac_bits = type_bits - ceil(log2(max_abs + 1))
+    to compute the optimal fractional precision for each type, then
+    verifies all values fit within tolerance. This matches the Colo/XD
+    compiler's behavior of maximizing precision within the type's range.
+
+    Note: HSDLib (Melee) uses a different strategy (lowest frac_bits
+    first), but Colo/XD binaries consistently use higher frac_bits.
 
     Args:
         values: iterable of float values to encode.
@@ -119,7 +121,7 @@ def _pick_quantization(values, channel_type=None):
             continue
 
         # Verify all values fit in range AND precision is adequate.
-        # Tolerance of 0.004 matches the original compiler's behavior:
+        # Tolerance of 0.004 matches the Colo/XD compiler's behavior:
         # U8:7 (max error 0.0039) passes, U8:6 (max error 0.0078) gets
         # rejected for non-trivial values, pushing to wider types.
         scale = 1 << frac_bits
