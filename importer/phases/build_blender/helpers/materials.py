@@ -286,6 +286,10 @@ def _get_or_create_bpy_image(ir_image, image_cache):
     bpy_image.alpha_mode = 'CHANNEL_PACKED'
     bpy_image.pack()
 
+    # Preserve original GX texture format for round-trip export
+    if ir_image.gx_format_override and hasattr(bpy_image, 'dat_gx_format'):
+        bpy_image.dat_gx_format = ir_image.gx_format_override.value
+
     image_cache[cache_key] = bpy_image
     return bpy_image
 

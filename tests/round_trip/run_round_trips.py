@@ -55,6 +55,21 @@ from importer.phases.parse.helpers.dat_parser import DATParser
 from shared.Nodes.Node import Node
 from shared.helpers.logger import StubLogger
 
+# Register custom bpy properties needed for round-trip tests
+# (normally registered by BlenderPlugin.register())
+if not hasattr(bpy.types.Image, 'dat_gx_format'):
+    from bpy.props import EnumProperty
+    bpy.types.Image.dat_gx_format = EnumProperty(
+        name="GX Texture Format",
+        items=[
+            ('AUTO', 'Auto', ''), ('CMPR', 'CMPR', ''), ('RGBA8', 'RGBA8', ''),
+            ('RGB565', 'RGB565', ''), ('RGB5A3', 'RGB5A3', ''),
+            ('I4', 'I4', ''), ('I8', 'I8', ''), ('IA4', 'IA4', ''), ('IA8', 'IA8', ''),
+            ('C4', 'C4', ''), ('C8', 'C8', ''),
+        ],
+        default='AUTO',
+    )
+
 
 # ---------------------------------------------------------------------------
 # Pipeline helpers
