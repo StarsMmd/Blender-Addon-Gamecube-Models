@@ -36,11 +36,12 @@ IBI uses **category-weighted scoring**: each IR category (bones, meshes, materia
 
 All scores displayed as `match%(error/miss)` — see "How Scores Are Computed" for definitions.
 
+### Character / Pokémon Models
+
 | Model | Game | NBN ✅ | NIN 🔵 | IBI ✅ | BNB 🔵 |
 |---|---|---|---|---|---|
 | nukenin | XD | 97.1%(3/0) | 87.0%(10/3) | 84.6%(8/7) | 94.0% |
 | haganeil | XD | 92.7%(7/0) | 76.9%(16/7) | 80.2%(10/10) | 91.8% |
-| cokodora | XD | 93.4%(7/0) | 77.8%(16/6) | 80.2%(11/8) | 84.3% |
 | frygon | XD | 93.0%(7/0) | 73.3%(21/5) | 78.1%(12/10) | 83.5% |
 | achamo | XD | 92.0%(8/0) | 70.9%(25/4) | 79.5%(13/8) | 80.9% |
 | miniryu | XD | 90.2%(10/0) | 54.4%(42/4) | 84.0%(7/9) | 80.9% |
@@ -52,12 +53,18 @@ All scores displayed as `match%(error/miss)` — see "How Scores Are Computed" f
 | rayquaza | XD | 93.6%(6/0) | 79.7%(15/5) | 75.5%(16/9) | 84.6% |
 | ken_a1 | XD | 91.6%(8/0) | 71.5%(23/5) | 88.2%(4/8) | 61.0% |
 | mage_0101 | XD | 91.8%(8/0) | 75.5%(23/2) | 82.3%(1/17) | 56.1% |
-| heracros | Colo | 93.0%(7/0) | 76.5%(18/5) | 79.8%(13/8) | 77.5% |
 | hinoarashi | Colo | 90.3%(10/0) | 61.2%(35/4) | 79.8%(6/14) | 83.1% |
 | hizuki_a1 | Colo | 92.5%(7/0) | 76.8%(18/5) | 88.6%(6/6) | 79.6% |
-| koduck | Colo | 94.0%(6/0) | 75.5%(18/6) | 77.2%(8/15) | 82.5% |
 | ghos | Colo | 90.3%(10/0) | 58.9%(35/6) | 78.9%(11/10) | 77.8% |
 | showers | Colo | 89.7%(10/0) | 59.7%(37/3) | 84.2%(6/9) | 76.0% |
+
+### Map / Scene Models (stretch goal)
+
+| Model | Game | NBN | NIN | IBI | BNB |
+|---|---|---|---|---|---|
+| D6_out_all | XD | 96.4%(4/0) | 24.7%(1/74) | 64.0%(14/22) | 18.7% |
+| M1_out | XD | 98.3%(2/0) | 23.3%(0/77) | 66.3%(9/25) | 2.6% |
+| M3_out | XD | 99.2%(1/0) | 22.8%(0/77) | 67.3%(10/23) | 1.5% |
 
 ---
 
