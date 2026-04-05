@@ -22,6 +22,7 @@ from .helpers.bones import compose_bones
 from .helpers.meshes import compose_meshes
 from .helpers.animations import compose_bone_animations
 from .helpers.lights import compose_lights
+from .helpers.constraints import compose_constraints
 
 
 def compose_scene(ir_scene, options=None, logger=StubLogger()):
@@ -60,6 +61,9 @@ def compose_scene(ir_scene, options=None, logger=StubLogger()):
         if options.get('strip_names', False):
             for joint in joints:
                 joint.name = None
+
+        # Compose constraints (must happen before animations — sets joint type flags)
+        compose_constraints(model, joints, model.bones, logger)
 
         # Compose animations
         anim_roots = compose_bone_animations(

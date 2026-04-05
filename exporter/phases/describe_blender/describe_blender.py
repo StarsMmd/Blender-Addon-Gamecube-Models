@@ -24,6 +24,7 @@ try:
     from .helpers.meshes import describe_meshes
     from .helpers.animations import describe_bone_animations
     from .helpers.lights import describe_lights
+    from .helpers.constraints import describe_constraints
 except (ImportError, SystemError):
     from shared.IR import IRScene, IRModel
     from shared.IR.animation import IRBoneAnimationSet
@@ -37,6 +38,7 @@ except (ImportError, SystemError):
     from exporter.phases.describe_blender.helpers.meshes import describe_meshes
     from exporter.phases.describe_blender.helpers.animations import describe_bone_animations
     from exporter.phases.describe_blender.helpers.lights import describe_lights
+    from exporter.phases.describe_blender.helpers.constraints import describe_constraints
 
 
 def describe_blender_scene(context, options=None, logger=StubLogger()):
@@ -96,11 +98,20 @@ def describe_blender_scene(context, options=None, logger=StubLogger()):
         # Describe animations from Blender actions
         bone_animations = describe_bone_animations(armature, bones, logger=logger)
 
+        # Describe constraints from pose bones
+        ik_c, cl_c, tt_c, cr_c, lr_c, ll_c = describe_constraints(armature, bones, logger=logger)
+
         model = IRModel(
             name=armature.name,
             bones=bones,
             meshes=meshes,
             bone_animations=bone_animations,
+            ik_constraints=ik_c,
+            copy_location_constraints=cl_c,
+            track_to_constraints=tt_c,
+            copy_rotation_constraints=cr_c,
+            limit_rotation_constraints=lr_c,
+            limit_location_constraints=ll_c,
         )
         models.append(model)
 
