@@ -44,9 +44,9 @@ except (ImportError, SystemError):
 def describe_blender_scene(context, options=None, logger=StubLogger()):
     """Read the active Blender scene and produce an IRScene.
 
-    Exports all currently selected armatures. Each armature becomes one
-    IRModel. Meshes parented to a selected armature are automatically
-    included. Meshes not parented to any selected armature are ignored.
+    Exports the entire Blender scene. Each armature becomes one IRModel
+    with its parented meshes, animations, and constraints. Scene-level
+    lights are also included.
 
     Args:
         context: Blender context with active scene.
@@ -62,15 +62,15 @@ def describe_blender_scene(context, options=None, logger=StubLogger()):
 
     logger.info("=== Export Phase 1: Describe Blender Scene ===")
 
-    # Collect selected armatures
+    # Collect all armatures in the scene
     armatures = [
-        obj for obj in context.selected_objects
+        obj for obj in context.scene.objects
         if obj.type == 'ARMATURE'
     ]
 
     if not armatures:
         raise ValueError(
-            "No armatures selected. Select the armature(s) you want to export."
+            "No armatures in the scene. The scene must contain at least one armature to export."
         )
 
     models = []

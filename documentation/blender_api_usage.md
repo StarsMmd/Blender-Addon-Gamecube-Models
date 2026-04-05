@@ -203,7 +203,7 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.80 | current | `matrix.decompose()` | `animations.py` | Returns `(trans, rot, scale)` |
 | | | | | |
 | | | **Exporter — Describe Blender (Phase 1)** | | |
-| 2.80 | current | `context.selected_objects` | `describe_blender.py` | Find selected armatures |
+| 2.80 | current | `context.scene.objects` | `describe_blender.py` | Find all armatures in scene |
 | 2.80 | current | `obj.type` | `describe_blender.py`, `exporter/meshes.py` | Filter ARMATURE / MESH |
 | 2.80 | current | `bpy.context.view_layer.objects.active` | `exporter/skeleton.py` | Set active for mode switch |
 | 2.80 | current | `bpy.ops.object.select_all(action='DESELECT')` | `exporter/skeleton.py` | Clean selection state |

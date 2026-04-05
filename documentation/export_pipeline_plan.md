@@ -153,7 +153,7 @@ This is the foundation — everything else depends on a working skeleton and mes
 **`describe_blender/helpers/skeleton.py`** — Armature → IRBone list ✅
 
 Implementation:
-1. Exports only the **currently selected armature(s)** — each becomes one IRModel
+1. Exports all **armatures in the scene** — each becomes one IRModel
 2. Enter EDIT mode, walk the bone hierarchy in **depth-first order** (parents before children)
 3. For each edit bone:
    - Undo the pi/2 X-axis coordinate rotation to get GameCube Y-up world matrix

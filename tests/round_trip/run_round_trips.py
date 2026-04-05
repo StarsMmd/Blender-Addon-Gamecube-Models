@@ -107,15 +107,8 @@ def build_in_blender(ir_scene, options=None):
 def read_back_from_blender(build_results):
     """Run export phase 1 (describe_blender). Returns (IRScene, shiny_params).
 
-    Selects the armatures created during build before calling describe_blender.
+    Describes all armatures in the scene (no selection needed).
     """
-    # Select all armatures from the build
-    bpy.ops.object.select_all(action='DESELECT')
-    for result in build_results:
-        armature = result['armature']
-        armature.select_set(True)
-        bpy.context.view_layer.objects.active = armature
-
     return describe_blender_scene(bpy.context)
 
 

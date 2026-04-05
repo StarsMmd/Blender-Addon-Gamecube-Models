@@ -152,7 +152,7 @@ class ExportHSD(bpy.types.Operator, ExportHelper):
 
     @classmethod
     def poll(cls, context):
-        return any(obj.type == 'ARMATURE' and obj.select_get() for obj in context.selected_objects)
+        return any(obj.type == 'ARMATURE' for obj in context.scene.objects)
 
     def execute(self, context):
         from .exporter.exporter import Exporter
