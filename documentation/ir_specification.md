@@ -248,6 +248,8 @@ class IRKeyframe:
     interpolation: Interpolation                       # CONSTANT, LINEAR, BEZIER
     handle_left: tuple[float, float] | None            # (frame, value) for Bezier
     handle_right: tuple[float, float] | None
+    slope_in: float | None                             # incoming tangent (derivative)
+    slope_out: float | None                            # outgoing tangent (derivative)
 
 @dataclass
 class IRBoneTrack:

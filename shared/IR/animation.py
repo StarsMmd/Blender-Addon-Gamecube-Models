@@ -12,6 +12,8 @@ class IRKeyframe:
     interpolation: Interpolation
     handle_left: tuple[float, float] | None = None
     handle_right: tuple[float, float] | None = None
+    slope_in: float | None = None
+    slope_out: float | None = None
 
 
 @dataclass
