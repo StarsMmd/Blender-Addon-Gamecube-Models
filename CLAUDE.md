@@ -248,9 +248,15 @@ See [Round-Trip Test Progress](documentation/round_trip_test_progress.md) for pe
 
 Real `.pkx`/`.dat` model files are used for round-trip testing (not committed — gitignored). Source models are in `~/Documents/Projects/DAT plugin/models/`.
 
-Available XD models: achamo, bohmander, cerebi, cokodora, frygon, gallop, haganeil, ken_a1, mage_0101, miniryu, rayquaza, runpappa, nukenin, usohachi.
+**Character / Pokémon models** (primary focus — run during regular score updates):
 
-Available Colosseum models: ghos, heracros, hinoarashi, hizuki_a1, koduck, showers.
+Available XD models: achamo, bohmander, cerebi, frygon, gallop, haganeil, ken_a1, mage_0101, miniryu, rayquaza, runpappa, nukenin, usohachi.
+
+Available Colosseum models: ghos, hinoarashi, hizuki_a1, showers.
+
+**Map / scene models** (stretch goal — only run as part of full status reports, not during regular updates):
+
+Available XD models: D6_out_all, M1_out, M3_out.
 
 ---
 
