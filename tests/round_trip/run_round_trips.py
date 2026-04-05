@@ -99,6 +99,8 @@ def build_in_blender(ir_scene, options=None):
     """Run import phase 5 (build_blender). Returns build_results."""
     if options is None:
         options = {"filepath": "test_model"}
+    # Enable all optional features for round-trip testing
+    options.setdefault("import_lights", True)
     return build_blender_scene(ir_scene, bpy.context, options)
 
 

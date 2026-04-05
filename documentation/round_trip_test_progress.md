@@ -111,7 +111,7 @@ Average per-category scores across all 20 test models:
 | Bones | ~82% | ~14% | ~4% | Errors: inverse_bind_matrix (different computation than original), rotation Euler ambiguity, scale inheritance position drift. Misses: hidden state (importer doesn't set edit_bone.hide) |
 | Meshes | ~98% | ~0% | ~2% | Near-complete geometry round-trip. Vertex positions, bone weights, and parent_bone_index all preserved |
 | Materials | ~99% | ~1% | ~0% | Specular mapped via Specular Tint correction, ambient via Emission node. GX texture format preserved via `dat_gx_format` custom property on Blender images |
-| Animations | ~37% | ~53% | ~9% | Placeholder rest-pose stubs — real animation export not yet implemented |
+| Animations | ~37% | ~53% | ~9% | Implemented — errors from keyframe sparsification and Euler decomposition ambiguity |
 | Constraints | 0% | 0% | 100% | Not yet implemented in export describe phase |
 | Lights | 0% | 0% | 100% | Not yet implemented in export describe phase |
 

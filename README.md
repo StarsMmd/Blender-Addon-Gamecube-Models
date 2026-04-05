@@ -59,10 +59,9 @@ The exporter writes a Blender scene to a `.dat` or `.pkx` binary. Skeleton and m
 - [x] Exporter: IR → node trees (skeleton + meshes + materials)
 - [x] Exporter: Materials + textures (CMPR, I8, RGBA8 + all GX formats)
 - [x] Exporter: Bound box section
-- [x] Exporter: Placeholder animations (rest-pose stubs per animation slot)
-- [ ] Exporter: Real bone animations
+- [x] Exporter: Bone animations
+- [x] Exporter: Lights
 - [ ] Exporter: Constraints
-- [ ] Exporter: Lights
 - [ ] Code audit: identify opportunities to simplify and clean up code
 - [ ] Code audit: identify opportunities to reduce algorithmic complexity
 

@@ -23,6 +23,7 @@ try:
     from .helpers.skeleton import describe_skeleton
     from .helpers.meshes import describe_meshes
     from .helpers.animations import describe_bone_animations
+    from .helpers.lights import describe_lights
 except (ImportError, SystemError):
     from shared.IR import IRScene, IRModel
     from shared.IR.animation import IRBoneAnimationSet
@@ -35,6 +36,7 @@ except (ImportError, SystemError):
     from exporter.phases.describe_blender.helpers.skeleton import describe_skeleton
     from exporter.phases.describe_blender.helpers.meshes import describe_meshes
     from exporter.phases.describe_blender.helpers.animations import describe_bone_animations
+    from exporter.phases.describe_blender.helpers.lights import describe_lights
 
 
 def describe_blender_scene(context, options=None, logger=StubLogger()):
@@ -102,7 +104,10 @@ def describe_blender_scene(context, options=None, logger=StubLogger()):
         )
         models.append(model)
 
-    ir_scene = IRScene(models=models, lights=[])
+    # Describe lights from the Blender scene
+    ir_lights = describe_lights(context, logger=logger)
+
+    ir_scene = IRScene(models=models, lights=ir_lights)
 
     # Extract shiny filter parameters from the first armature that has them
     shiny_params = _extract_shiny_params(armatures, logger)

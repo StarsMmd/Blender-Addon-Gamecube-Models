@@ -47,7 +47,7 @@ exporter/
         skeleton.py                  # Armature → IRBone list (+ IBM)                  ✅
         meshes.py                    # Mesh objects → IRMesh list (+ envelope weights) ✅
         materials.py                 # Blender materials → IRMaterial                  ✅
-        animations.py                # Actions → IRBoneAnimationSet list               stub
+        animations.py                # Actions → IRBoneAnimationSet list                ✅
         constraints.py               # Bone constraints → IR constraint lists
         lights.py                    # Light objects → IRLight list
         material_animations.py       # NLA tracks → IRMaterialAnimationSet list
@@ -57,7 +57,7 @@ exporter/
         bones.py                     # IRBone list → Joint tree                        ✅
         meshes.py                    # IRMesh → Mesh/PObject/EnvelopeList chains       ✅
         materials.py                 # IRMaterial → MaterialObject chain                ✅
-        animations.py                # IRBoneAnimationSet → AnimationJoint tree         stub
+        animations.py                # IRBoneAnimationSet → AnimationJoint tree         ✅
         constraints.py               # IR constraints → Reference objects on Joints
         lights.py                    # IRLight → Light/LightSet nodes
         material_animations.py       # IRMaterialAnimationSet → MatAnimJoint tree
@@ -702,12 +702,12 @@ The compose phase (`compose/helpers/meshes.py`) groups IRMeshes sharing a materi
 | `exporter/phases/describe_blender/helpers/skeleton.py` | ✅ Armature → IRBone list + IBM (srt_world.inv) |
 | `exporter/phases/describe_blender/helpers/meshes.py` | ✅ Mesh objects → IRMesh list + envelope weights |
 | `exporter/phases/describe_blender/helpers/materials.py` | ✅ Blender materials → IRMaterial |
-| `exporter/phases/describe_blender/helpers/animations.py` | stub (rest-pose placeholders) |
+| `exporter/phases/describe_blender/helpers/animations.py` | ✅ Fcurve reading + unbaking |
 | `exporter/phases/compose/compose.py` | ✅ Full scene composition |
 | `exporter/phases/compose/helpers/bones.py` | ✅ IRBone → Joint tree |
 | `exporter/phases/compose/helpers/meshes.py` | ✅ IRMesh → Mesh/PObject/EnvelopeList chains |
 | `exporter/phases/compose/helpers/materials.py` | ✅ IRMaterial → MaterialObject chain |
-| `exporter/phases/compose/helpers/animations.py` | stub (keyframe encoding framework) |
+| `exporter/phases/compose/helpers/animations.py` | ✅ Keyframe encoding |
 | `exporter/phases/serialize/serialize.py` | ✅ DATBuilder wrapper |
 | `exporter/phases/package/package.py` | ✅ .dat passthrough + .pkx injection |
 | `shared/helpers/pkx.py` | ✅ PKXContainer (shared by extract + package) |

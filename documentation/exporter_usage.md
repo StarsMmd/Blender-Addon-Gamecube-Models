@@ -18,10 +18,10 @@ The exporter writes a Blender scene to a `.dat` or `.pkx` binary that can be use
 | Bone Weights / Skinning | ✅ Working (single-bone + envelope/weighted) |
 | Materials (colors, properties) | ✅ Working |
 | Textures (all GX formats) | ✅ Working (preserves original format on re-export) |
-| Bone Animations | ⚠️ Placeholder stubs (rest-pose only) |
+| Bone Animations | ✅ Working |
 | Material Animations (color/alpha) | Not yet implemented |
 | Material Animations (texture UV) | Not yet implemented |
-| Lights | Not yet implemented |
+| Lights (SUN, POINT, SPOT) | ✅ Working |
 | Bone Constraints | Not yet implemented |
 | Shape Animations | Not yet implemented |
 | Bound Box | ✅ Working (static AABB per animation slot) |
