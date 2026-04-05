@@ -107,6 +107,17 @@ class DATBuilder(BinaryWriter):
 	def _currentRelativeAddress(self, relative_to_header=True):
 		return super().currentAddress() - (self.DAT_header_length if relative_to_header else 0)
 
+	def align_buffer(self):
+		"""Pad to 32-byte alignment before writing a raw data buffer.
+
+		Matches HSDLib's IsBuffer alignment: buffers (vertex data, textures,
+		palettes, display lists) must be 32-byte aligned for GX hardware.
+		Called by node writePrimitivePointers/writePrivateData before writing
+		any raw data blob.
+		"""
+		while self._currentRelativeAddress() % 32 != 0:
+			self.write(0, 'uchar')
+
 	def build(self):
 		# --- Phase 1: Write shared raw data ---
 		# Vertex buffers (deduplicated), image pixels, palette data.

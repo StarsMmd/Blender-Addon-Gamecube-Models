@@ -750,6 +750,9 @@ class TestTextureAlignment:
                 return self._writer.write(fmt, val)
             def _currentRelativeAddress(self):
                 return self._writer.file.tell()
+            def align_buffer(self):
+                while self._currentRelativeAddress() % 32 != 0:
+                    self.write(0, 'uchar')
 
         builder = MockBuilder(writer)
 
@@ -779,6 +782,9 @@ class TestTextureAlignment:
                 return self._writer.write(fmt, val)
             def _currentRelativeAddress(self):
                 return self._writer.file.tell()
+            def align_buffer(self):
+                while self._currentRelativeAddress() % 32 != 0:
+                    self.write(0, 'uchar')
 
         builder = MockBuilder(writer)
 
@@ -806,6 +812,9 @@ class TestTextureAlignment:
                 return self._writer.write(fmt, val)
             def _currentRelativeAddress(self):
                 return self._writer.file.tell()
+            def align_buffer(self):
+                while self._currentRelativeAddress() % 32 != 0:
+                    self.write(0, 'uchar')
 
         builder = MockBuilder(writer)
 

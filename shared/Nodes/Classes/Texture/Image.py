@@ -75,17 +75,12 @@ class Image(Node):
             self.raw_image_data = b''
 
     def writePrimitivePointers(self, builder):
-        """Write shared image pixel data (Phase 1).
-
-        GX hardware requires texture data to be 32-byte aligned.
-        """
+        """Write shared image pixel data (Phase 1)."""
         if not hasattr(self, '_raw_pointer_fields'):
             self._raw_pointer_fields = set()
         if self.raw_image_data:
             builder.seek(0, 'end')
-            # Pad to 32-byte alignment (GX texture data requirement)
-            while builder._currentRelativeAddress() % 32 != 0:
-                builder.write(0, 'uchar')
+            builder.align_buffer()
             self.data_address = builder._currentRelativeAddress()
             for byte in self.raw_image_data:
                 builder.write(byte, 'uchar')
