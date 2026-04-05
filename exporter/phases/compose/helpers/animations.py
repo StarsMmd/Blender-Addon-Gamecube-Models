@@ -347,27 +347,29 @@ def _encode_typed_value(raw, value, pack_type, frac_bits, is_float):
 def _encode_opcode(raw, opcode, node_count):
     """Encode an opcode byte with packed node count.
 
-    node_count is decremented by 1 (the format stores count-1).
+    The first byte stores the opcode in bits 0-2 and the bottom 3 bits
+    of (count-1) in bits 4-6. Extension bytes store subsequent 7-bit
+    chunks. The decoder reconstructs: count = first_3 + (ext << 3) + 1.
     """
     count = node_count - 1
 
-    # Pack count into the opcode byte (3 bits in bits 4-6)
-    first_byte = opcode | ((min(count, 7)) << 4)
+    # First byte: opcode (bits 0-2) + bottom 3 bits of count (bits 4-6)
+    first_3 = count & 7
+    remaining = count >> 3
 
-    remaining = count - min(count, 7)
+    first_byte = opcode | (first_3 << 4)
     if remaining > 0:
         first_byte |= 0x80  # extension flag
-        raw.append(first_byte)
 
-        # Extension bytes (7 bits each, MSB = continue flag)
-        while remaining > 0:
-            ext_byte = remaining & 0x7F
-            remaining >>= 7
-            if remaining > 0:
-                ext_byte |= 0x80
-            raw.append(ext_byte)
-    else:
-        raw.append(first_byte)
+    raw.append(first_byte)
+
+    # Extension bytes (7 bits each, MSB = continue flag)
+    while remaining > 0:
+        ext_byte = remaining & 0x7F
+        remaining >>= 7
+        if remaining > 0:
+            ext_byte |= 0x80
+        raw.append(ext_byte)
 
 
 def _encode_wait(raw, wait):
