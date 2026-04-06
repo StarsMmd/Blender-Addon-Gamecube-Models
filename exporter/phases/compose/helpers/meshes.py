@@ -26,6 +26,7 @@ try:
     )
     from .....shared.IR.enums import SkinType
     from .....shared.helpers.binary import pack, pack_many
+    from .....shared.helpers.math_shim import Matrix, Vector
     from .....shared.helpers.logger import StubLogger
     from .materials import compose_material
 except (ImportError, SystemError):
@@ -47,6 +48,7 @@ except (ImportError, SystemError):
     )
     from shared.IR.enums import SkinType
     from shared.helpers.binary import pack, pack_many
+    from shared.helpers.math_shim import Matrix, Vector
     from shared.helpers.logger import StubLogger
     from exporter.phases.compose.helpers.materials import compose_material
 
@@ -191,8 +193,18 @@ def _build_pobj(ir_mesh, joints, bones, bone_name_to_index, logger):
         vertex_descs.append(pnmtx_desc)
         vertex_buffers.append(('pnmtxidx', envelope_map))
 
-    # Position — always present
-    pos_data, pos_buffer = _encode_float3_buffer(ir_mesh.vertices)
+    # Position — always present.
+    # For envelope-skinned meshes, reverse the deformation applied by the
+    # describe phase. The IR stores vertices in world space (deformed by
+    # bone_world @ bone_IBM), but the DAT format stores them in bind-pose
+    # space. Multiply by the inverse deformation matrix per-envelope.
+    export_vertices = ir_mesh.vertices
+    if is_envelope and bones:
+        export_vertices = _undeform_vertices(
+            ir_mesh.vertices, bw.assignments, bones, bone_name_to_index,
+            ir_mesh.parent_bone_index, logger)
+
+    pos_data, pos_buffer = _encode_float3_buffer(export_vertices)
     pos_desc = _make_vertex_desc(GX_VA_POS, GX_POS_XYZ, GX_F32, stride=12)
     pos_desc.raw_vertex_data = pos_buffer
     vertex_descs.append(pos_desc)
@@ -298,6 +310,116 @@ def _build_pobj(ir_mesh, joints, bones, bone_name_to_index, logger):
 # ---------------------------------------------------------------------------
 # Envelope (WEIGHTED skinning) helpers
 # ---------------------------------------------------------------------------
+
+def _undeform_vertices(vertices, assignments, bones, bone_name_to_index,
+                       parent_bone_index, logger):
+    """Reverse the envelope deformation applied by the describe phase.
+
+    The describe phase transforms vertices via:
+        world_pos = (bone_world @ bone_IBM [@ coord]) @ bind_pos
+    This reverses it by computing the same deformation matrices and
+    inverting them, matching describe/meshes.py's _extract_envelope_weights.
+    """
+    try:
+        from .....shared.Constants.hsd import JOBJ_SKELETON_ROOT
+    except (ImportError, SystemError):
+        from shared.Constants.hsd import JOBJ_SKELETON_ROOT
+
+    # Build per-vertex envelope index mapping
+    vertex_to_env = {}
+    env_combos = []
+    combo_to_idx = {}
+    for vertex_idx, weight_list in assignments:
+        key = tuple(sorted((name, round(w, 6)) for name, w in weight_list))
+        if key not in combo_to_idx:
+            combo_to_idx[key] = len(env_combos)
+            env_combos.append(weight_list)
+        vertex_to_env[vertex_idx] = combo_to_idx[key]
+
+    # Compute envelope coordinate system (mirrors describe phase)
+    coord = _envelope_coord_system(parent_bone_index, bones, JOBJ_SKELETON_ROOT)
+
+    # Compute inverse deformation matrix per envelope
+    inv_deform = []
+    for weight_list in env_combos:
+        zero = [[0] * 4 for _ in range(4)]
+        matrix = Matrix(zero)
+
+        for bone_name, weight in weight_list:
+            bone_idx = bone_name_to_index.get(bone_name, 0)
+            bone = bones[bone_idx]
+            bone_world = Matrix(bone.world_matrix)
+            bone_ibm = _get_invbind_matrix(bone_idx, bones)
+            contrib = bone_world @ bone_ibm
+            for i in range(4):
+                for j in range(4):
+                    matrix[i][j] += weight * contrib[i][j]
+
+        if coord:
+            matrix = matrix @ coord
+
+        try:
+            inv_deform.append(matrix.inverted())
+        except (ValueError, ZeroDivisionError):
+            inv_deform.append(Matrix([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]]))
+
+    # Apply inverse deformation to each vertex
+    result = list(vertices)
+    for vertex_idx, env_idx in vertex_to_env.items():
+        if vertex_idx < len(result) and env_idx < len(inv_deform):
+            old_pos = result[vertex_idx]
+            new_pos = inv_deform[env_idx] @ Vector(old_pos)
+            result[vertex_idx] = (new_pos[0], new_pos[1], new_pos[2])
+
+    return result
+
+
+def _get_invbind_matrix(bone_index, bones):
+    """Walk up the bone hierarchy to find the nearest inverse bind matrix."""
+    idx = bone_index
+    while idx is not None:
+        bone = bones[idx]
+        if bone.inverse_bind_matrix:
+            return Matrix(bone.inverse_bind_matrix)
+        idx = bone.parent_index
+    return Matrix([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]])
+
+
+def _find_skeleton_bone(bone_index, bones, JOBJ_SKELETON_ROOT):
+    """Find the skeleton root bone for a given bone."""
+    idx = bone_index
+    while idx is not None:
+        if bones[idx].flags & JOBJ_SKELETON_ROOT:
+            return idx
+        idx = bones[idx].parent_index
+    return None
+
+
+def _envelope_coord_system(bone_index, bones, JOBJ_SKELETON_ROOT):
+    """Compute envelope coordinate system matrix for a bone.
+
+    Mirrors importer/phases/describe/helpers/meshes.py:_envelope_coord_system.
+    """
+    bone = bones[bone_index]
+    if bone.flags & JOBJ_SKELETON_ROOT:
+        return None
+
+    skel_idx = _find_skeleton_bone(bone_index, bones, JOBJ_SKELETON_ROOT)
+    if skel_idx is None:
+        return None
+
+    inv_bind = _get_invbind_matrix(bone_index, bones)
+    bone_world = Matrix(bone.world_matrix)
+
+    if skel_idx == bone_index:
+        return inv_bind.inverted()
+    elif bones[skel_idx].flags & JOBJ_SKELETON_ROOT:
+        skel_world = Matrix(bones[skel_idx].world_matrix)
+        return skel_world.inverted() @ bone_world
+    else:
+        skel_world = Matrix(bones[skel_idx].world_matrix)
+        return (skel_world @ inv_bind).inverted() @ bone_world
+
 
 def _build_envelope_map(assignments, bone_name_to_index):
     """Build a mapping from vertex indices to envelope indices.
