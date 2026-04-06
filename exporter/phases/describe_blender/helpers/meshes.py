@@ -102,7 +102,7 @@ def _describe_mesh_object(mesh_obj, bone_name_to_index, bones, logger):
 
     # Bone weights and parent bone index
     bone_weights = _extract_bone_weights(mesh_obj, bone_name_to_index)
-    parent_bone_index = _determine_parent_bone(mesh_obj, bone_weights, bone_name_to_index, bones)
+    parent_bone_index = _determine_parent_bone(bone_weights, bone_name_to_index, bones)
 
     # Visibility
     is_hidden = mesh_obj.hide_render
@@ -234,26 +234,12 @@ def _extract_bone_weights(mesh_obj, bone_name_to_index):
         for bone_name, _ in weight_list:
             referenced_bones.add(bone_name)
 
-    # All vertices reference exactly one bone (same bone).
-    # Use SINGLE_BONE only if the mesh is parented to that same bone
-    # (or has no bone parenting). If it's parented to a DIFFERENT bone,
-    # this indicates envelope skinning where the mesh lives on a container
-    # bone but is deformed by another — use WEIGHTED to trigger proper
-    # coordinate space handling in compose.
+    # All vertices reference exactly one bone → SINGLE_BONE
     if all_single and len(referenced_bones) == 1:
         bone_name = next(iter(referenced_bones))
-        parent_bone = None
-        if mesh_obj.parent_type == 'BONE' and mesh_obj.parent_bone:
-            parent_bone = mesh_obj.parent_bone
-        if parent_bone is None or parent_bone == bone_name:
-            return IRBoneWeights(
-                type=SkinType.SINGLE_BONE,
-                bone_name=bone_name,
-            )
-        # Parent bone differs from weight bone → envelope skinning
         return IRBoneWeights(
-            type=SkinType.WEIGHTED,
-            assignments=assignments,
+            type=SkinType.SINGLE_BONE,
+            bone_name=bone_name,
         )
 
     # Multiple bones referenced — use WEIGHTED to preserve per-vertex
@@ -265,17 +251,15 @@ def _extract_bone_weights(mesh_obj, bone_name_to_index):
     )
 
 
-def _determine_parent_bone(mesh_obj, bone_weights, bone_name_to_index, bones):
+def _determine_parent_bone(bone_weights, bone_name_to_index, bones):
     """Determine which bone index a mesh should be attached to.
 
-    Uses Blender's bone parenting if set (parent_type='BONE'), which is
-    the standard way to express mesh→bone ownership. Falls back to
-    heuristics for meshes without explicit bone parenting:
-    - SINGLE_BONE: uses the named bone
-    - WEIGHTED: nearest common ancestor of all weighted bones
+    For SINGLE_BONE: uses the named bone directly.
+    For WEIGHTED: finds the nearest common ancestor of all bones
+    referenced in the weight assignments.
+    Falls back to 0 (root) if no weights exist.
 
     Args:
-        mesh_obj: Blender mesh object.
         bone_weights: IRBoneWeights or None.
         bone_name_to_index: dict mapping bone name → index.
         bones: list[IRBone] for parent chain traversal.
@@ -283,12 +267,6 @@ def _determine_parent_bone(mesh_obj, bone_weights, bone_name_to_index, bones):
     Returns:
         int — bone index.
     """
-    # Bone parenting — the standard Blender way to express mesh→bone ownership
-    if mesh_obj.parent_type == 'BONE' and mesh_obj.parent_bone:
-        idx = bone_name_to_index.get(mesh_obj.parent_bone)
-        if idx is not None:
-            return idx
-
     if bone_weights is None:
         return 0
 
