@@ -41,11 +41,11 @@ def main():
     if armature is None or armature.type != 'ARMATURE':
         raise ValueError("Select an armature object before running this script.")
 
-    if armature.get("dat_has_shiny"):
+    if armature.get("dat_pkx_has_shiny"):
         raise ValueError("This armature already has a shiny filter. "
                          "Edit the parameters in the Shiny Variant panel instead.")
 
-    if not hasattr(armature, 'dat_shiny'):
+    if not hasattr(armature, 'dat_pkx_shiny'):
         raise ValueError("The DAT plugin addon must be enabled for shiny properties to work. "
                          "Enable it in Edit > Preferences > Extensions.")
 

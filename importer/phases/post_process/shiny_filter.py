@@ -5,7 +5,7 @@ Creates two node groups for the PKX shiny color transformation:
   - ShinyBright: brightness scaling — applied AFTER vertex color multiply
 
 This separation ensures that channel routing only affects texture/material
-colors, not vertex colors. Both stages are driven by a single dat_shiny
+colors, not vertex colors. Both stages are driven by a single dat_pkx_shiny
 toggle on the armature.
 
 The node groups are rebuilt whenever any shiny parameter property changes,
@@ -200,19 +200,19 @@ def setup_shiny_properties(armature, shiny_filter, route_group_name, bright_grou
         route_group_name: Name of the ShinyRoute node group.
         bright_group_name: Name of the ShinyBright node group.
     """
-    armature["dat_has_shiny"] = True
-    armature["dat_shiny_route_group"] = route_group_name
-    armature["dat_shiny_bright_group"] = bright_group_name
+    armature["dat_pkx_has_shiny"] = True
+    armature["dat_pkx_shiny_route_group"] = route_group_name
+    armature["dat_pkx_shiny_bright_group"] = bright_group_name
 
-    armature.dat_shiny = False
-    armature.dat_shiny_route_r = _CHANNEL_TO_PROP[shiny_filter.channel_routing[0]]
-    armature.dat_shiny_route_g = _CHANNEL_TO_PROP[shiny_filter.channel_routing[1]]
-    armature.dat_shiny_route_b = _CHANNEL_TO_PROP[shiny_filter.channel_routing[2]]
-    armature.dat_shiny_route_a = _CHANNEL_TO_PROP[shiny_filter.channel_routing[3]]
-    armature.dat_shiny_brightness_r = shiny_filter.brightness[0]
-    armature.dat_shiny_brightness_g = shiny_filter.brightness[1]
-    armature.dat_shiny_brightness_b = shiny_filter.brightness[2]
-    armature.dat_shiny_brightness_a = shiny_filter.brightness[3]
+    armature.dat_pkx_shiny = False
+    armature.dat_pkx_shiny_route_r = _CHANNEL_TO_PROP[shiny_filter.channel_routing[0]]
+    armature.dat_pkx_shiny_route_g = _CHANNEL_TO_PROP[shiny_filter.channel_routing[1]]
+    armature.dat_pkx_shiny_route_b = _CHANNEL_TO_PROP[shiny_filter.channel_routing[2]]
+    armature.dat_pkx_shiny_route_a = _CHANNEL_TO_PROP[shiny_filter.channel_routing[3]]
+    armature.dat_pkx_shiny_brightness_r = shiny_filter.brightness[0]
+    armature.dat_pkx_shiny_brightness_g = shiny_filter.brightness[1]
+    armature.dat_pkx_shiny_brightness_b = shiny_filter.brightness[2]
+    armature.dat_pkx_shiny_brightness_a = shiny_filter.brightness[3]
 
 
 def rebuild_shiny_node_group(armature):
@@ -221,23 +221,23 @@ def rebuild_shiny_node_group(armature):
     Called by the property update callbacks in BlenderPlugin.py.
     """
     routing = (
-        _PROP_TO_CHANNEL[armature.dat_shiny_route_r],
-        _PROP_TO_CHANNEL[armature.dat_shiny_route_g],
-        _PROP_TO_CHANNEL[armature.dat_shiny_route_b],
-        _PROP_TO_CHANNEL[armature.dat_shiny_route_a],
+        _PROP_TO_CHANNEL[armature.dat_pkx_shiny_route_r],
+        _PROP_TO_CHANNEL[armature.dat_pkx_shiny_route_g],
+        _PROP_TO_CHANNEL[armature.dat_pkx_shiny_route_b],
+        _PROP_TO_CHANNEL[armature.dat_pkx_shiny_route_a],
     )
     brightness = (
-        armature.dat_shiny_brightness_r,
-        armature.dat_shiny_brightness_g,
-        armature.dat_shiny_brightness_b,
-        armature.dat_shiny_brightness_a,
+        armature.dat_pkx_shiny_brightness_r,
+        armature.dat_pkx_shiny_brightness_g,
+        armature.dat_pkx_shiny_brightness_b,
+        armature.dat_pkx_shiny_brightness_a,
     )
 
-    route_name = armature.get("dat_shiny_route_group")
+    route_name = armature.get("dat_pkx_shiny_route_group")
     if route_name and route_name in bpy.data.node_groups:
         populate_shiny_route_node_group(bpy.data.node_groups[route_name], routing)
 
-    bright_name = armature.get("dat_shiny_bright_group")
+    bright_name = armature.get("dat_pkx_shiny_bright_group")
     if bright_name and bright_name in bpy.data.node_groups:
         populate_shiny_bright_node_group(bpy.data.node_groups[bright_name], brightness)
 
@@ -476,7 +476,7 @@ def _find_color_input(nodes):
 
 
 def _add_shiny_driver(factor_input, armature):
-    """Add a driver to a mix node's Factor input driven by armature.dat_shiny."""
+    """Add a driver to a mix node's Factor input driven by armature.dat_pkx_shiny."""
     factor_input.default_value = 0.0
 
     driver_data = factor_input.driver_add("default_value")
@@ -489,7 +489,7 @@ def _add_shiny_driver(factor_input, armature):
     target = var.targets[0]
     target.id_type = 'OBJECT'
     target.id = armature
-    target.data_path = 'dat_shiny'
+    target.data_path = 'dat_pkx_shiny'
 
 
 def _auto_layout(nodes, links, output_type='OUTPUT_MATERIAL'):

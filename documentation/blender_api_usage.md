@@ -23,17 +23,17 @@ Every Blender Python API call used by this addon, with the Blender version range
 | | | **Properties (bpy.props)** | | |
 | 2.80 | current | `bpy.props.CollectionProperty` | `BlenderPlugin.py` | File list |
 | 2.80 | current | `bpy.props.StringProperty` | `BlenderPlugin.py` | Section name, filter glob |
-| 2.80 | current | `bpy.props.BoolProperty` | `BlenderPlugin.py` | Operator toggles + `dat_shiny` on Object |
+| 2.80 | current | `bpy.props.BoolProperty` | `BlenderPlugin.py` | Operator toggles + `dat_pkx_shiny` on Object |
 | 2.80 | current | `bpy.props.IntProperty` | `BlenderPlugin.py` | Max frame |
-| 2.80 | current | `bpy.props.FloatProperty` | `BlenderPlugin.py` | `dat_shiny_brightness_*` on Object |
-| 2.80 | current | `bpy.props.EnumProperty` | `BlenderPlugin.py` | `dat_shiny_route_*` on Object |
+| 2.80 | current | `bpy.props.FloatProperty` | `BlenderPlugin.py` | `dat_pkx_shiny_brightness_*` on Object |
+| 2.80 | current | `bpy.props.EnumProperty` | `BlenderPlugin.py` | `dat_pkx_shiny_route_*` on Object |
 | 2.80 | current | `setattr(bpy.types.Object, name, prop)` | `BlenderPlugin.py` | Register shiny properties on Object type |
 | 2.80 | current | `delattr(bpy.types.Object, name)` | `BlenderPlugin.py` | Unregister shiny properties |
 | 2.80 | current | Property `update` callback | `BlenderPlugin.py` | `_on_shiny_toggle_update`, `_on_shiny_param_update` |
 | | | | | |
 | | | **Custom Properties** | | |
-| 2.80 | current | `object["key"] = value` | `shiny_filter.py` | `dat_has_shiny`, `dat_shiny_group` |
-| 2.80 | current | `object.get("key", default)` | `shiny_filter.py`, `BlenderPlugin.py` | Panel poll, group name lookup |
+| 2.80 | current | `object["key"] = value` | `shiny_filter.py`, `post_process.py` | `dat_pkx_has_shiny`, `dat_pkx_shiny_*_group`, `dat_pkx_*` metadata |
+| 2.80 | current | `object.get("key", default)` | `shiny_filter.py`, `BlenderPlugin.py`, `describe_blender.py` | Panel poll, group name lookup, PKX metadata extraction |
 | | | | | |
 | | | **IO Helpers (bpy_extras)** | | |
 | 2.80 | current | `bpy_extras.io_utils.ImportHelper` | `BlenderPlugin.py` | |
@@ -159,12 +159,12 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 4.0 | current | `group.interface.remove(item)` | `shiny_filter.py` | Remove Alpha socket on rebuild |
 | | | | | |
 | | | **Drivers** | | |
-| 2.80 | current | `socket.driver_add("default_value")` | `shiny_filter.py` | Drive MixRGB factor from `dat_shiny` |
+| 2.80 | current | `socket.driver_add("default_value")` | `shiny_filter.py` | Drive MixRGB factor from `dat_pkx_shiny` |
 | 2.80 | current | `driver.type = 'AVERAGE'` | `shiny_filter.py` | |
 | 2.80 | current | `driver.variables.new()` | `shiny_filter.py` | |
 | 2.80 | current | `var.type = 'SINGLE_PROP'` | `shiny_filter.py` | |
 | 2.80 | current | `target.id_type = 'OBJECT'` | `shiny_filter.py` | |
-| 2.80 | current | `target.data_path = 'dat_shiny'` | `shiny_filter.py` | Registered property path |
+| 2.80 | current | `target.data_path = 'dat_pkx_shiny'` | `shiny_filter.py` | Registered property path |
 | | | | | |
 | | | **Animation Data** | | |
 | 2.80 | current | `object.animation_data_create()` | `animations.py`, `material_animations.py` | |

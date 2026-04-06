@@ -227,7 +227,7 @@ def menu_func_export(self, context):
 class DAT_PT_ShinyPanel(bpy.types.Panel):
     """Panel for the shiny color variant parameters."""
     bl_label = "Shiny Variant"
-    bl_idname = "OBJECT_PT_dat_shiny"
+    bl_idname = "OBJECT_PT_dat_pkx_shiny"
     bl_space_type = 'PROPERTIES'
     bl_region_type = 'WINDOW'
     bl_context = "object"
@@ -235,30 +235,30 @@ class DAT_PT_ShinyPanel(bpy.types.Panel):
     @classmethod
     def poll(cls, context):
         obj = context.active_object
-        return obj is not None and obj.type == 'ARMATURE' and obj.get("dat_has_shiny", False)
+        return obj is not None and obj.type == 'ARMATURE' and obj.get("dat_pkx_has_shiny", False)
 
     def draw(self, context):
         obj = context.active_object
         layout = self.layout
 
-        layout.prop(obj, "dat_shiny", text="Enable")
+        layout.prop(obj, "dat_pkx_shiny", text="Enable")
 
         col = layout.column()
-        col.active = obj.dat_shiny
+        col.active = obj.dat_pkx_shiny
 
         col.label(text="Channel Routing:")
         row = col.row(align=True)
-        row.prop(obj, "dat_shiny_route_r", text="R")
-        row.prop(obj, "dat_shiny_route_g", text="G")
+        row.prop(obj, "dat_pkx_shiny_route_r", text="R")
+        row.prop(obj, "dat_pkx_shiny_route_g", text="G")
         row = col.row(align=True)
-        row.prop(obj, "dat_shiny_route_b", text="B")
-        row.prop(obj, "dat_shiny_route_a", text="A")
+        row.prop(obj, "dat_pkx_shiny_route_b", text="B")
+        row.prop(obj, "dat_pkx_shiny_route_a", text="A")
 
         col.label(text="Brightness:")
-        col.prop(obj, "dat_shiny_brightness_r", text="R")
-        col.prop(obj, "dat_shiny_brightness_g", text="G")
-        col.prop(obj, "dat_shiny_brightness_b", text="B")
-        col.prop(obj, "dat_shiny_brightness_a", text="A")
+        col.prop(obj, "dat_pkx_shiny_brightness_r", text="R")
+        col.prop(obj, "dat_pkx_shiny_brightness_g", text="G")
+        col.prop(obj, "dat_pkx_shiny_brightness_b", text="B")
+        col.prop(obj, "dat_pkx_shiny_brightness_a", text="A")
 
 
 classes = (ImportHSD, ExportHSD, DAT_PT_ShinyPanel)
@@ -295,39 +295,39 @@ def _on_shiny_param_update(obj, context):
 
 
 _shiny_props = [
-    ('dat_shiny', BoolProperty(
+    ('dat_pkx_shiny', BoolProperty(
         name="Shiny", description="Toggle shiny color variant",
         default=False, update=_on_shiny_toggle_update,
     )),
-    ('dat_shiny_route_r', EnumProperty(
+    ('dat_pkx_shiny_route_r', EnumProperty(
         name="Route R", description="Source channel for red output",
         items=_SHINY_CHANNEL_ITEMS, default='RED', update=_on_shiny_param_update,
     )),
-    ('dat_shiny_route_g', EnumProperty(
+    ('dat_pkx_shiny_route_g', EnumProperty(
         name="Route G", description="Source channel for green output",
         items=_SHINY_CHANNEL_ITEMS, default='GREEN', update=_on_shiny_param_update,
     )),
-    ('dat_shiny_route_b', EnumProperty(
+    ('dat_pkx_shiny_route_b', EnumProperty(
         name="Route B", description="Source channel for blue output",
         items=_SHINY_CHANNEL_ITEMS, default='BLUE', update=_on_shiny_param_update,
     )),
-    ('dat_shiny_route_a', EnumProperty(
+    ('dat_pkx_shiny_route_a', EnumProperty(
         name="Route A", description="Source channel for alpha output",
         items=_SHINY_CHANNEL_ITEMS, default='ALPHA', update=_on_shiny_param_update,
     )),
-    ('dat_shiny_brightness_r', FloatProperty(
+    ('dat_pkx_shiny_brightness_r', FloatProperty(
         name="Brightness R", description="Red channel brightness (-1 = black, 0 = unchanged, 1 = 2x bright)",
         default=0.0, min=-1.0, max=1.0, step=1, precision=3, update=_on_shiny_param_update,
     )),
-    ('dat_shiny_brightness_g', FloatProperty(
+    ('dat_pkx_shiny_brightness_g', FloatProperty(
         name="Brightness G", description="Green channel brightness (-1 = black, 0 = unchanged, 1 = 2x bright)",
         default=0.0, min=-1.0, max=1.0, step=1, precision=3, update=_on_shiny_param_update,
     )),
-    ('dat_shiny_brightness_b', FloatProperty(
+    ('dat_pkx_shiny_brightness_b', FloatProperty(
         name="Brightness B", description="Blue channel brightness (-1 = black, 0 = unchanged, 1 = 2x bright)",
         default=0.0, min=-1.0, max=1.0, step=1, precision=3, update=_on_shiny_param_update,
     )),
-    ('dat_shiny_brightness_a', FloatProperty(
+    ('dat_pkx_shiny_brightness_a', FloatProperty(
         name="Brightness A", description="Alpha channel brightness (-1 = black, 0 = unchanged, 1 = 2x bright)",
         default=0.0, min=-1.0, max=1.0, step=1, precision=3, update=_on_shiny_param_update,
     )),
