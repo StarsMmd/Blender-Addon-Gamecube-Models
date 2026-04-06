@@ -119,7 +119,7 @@ def describe_scene(sections, options, logger=StubLogger()):
         logger.info("Describing model: %s", model_name)
 
         t1 = time.time()
-        bones, joint_to_bone_index = describe_bones(root_joint, options)
+        bones, joint_to_bone_index = describe_bones(root_joint, options, logger=logger)
         logger.info("  Bones: %d (%.3fs)", len(bones), time.time() - t1)
 
         t2 = time.time()

@@ -9,7 +9,9 @@ try:
     from .....shared.IR.enums import ScaleInheritance
     from .....shared.Constants.hsd import (
         JOBJ_HIDDEN, JOBJ_INSTANCE, JOBJ_EFFECTOR, JOBJ_SPLINE,
-        JOBJ_TYPE_MASK,
+        JOBJ_TYPE_MASK, JOBJ_CLASSICAL_SCALING, JOBJ_USE_QUATERNION,
+        JOBJ_BILLBOARD_FIELD, JOBJ_BILLBOARD, JOBJ_VBILLBOARD,
+        JOBJ_HBILLBOARD, JOBJ_RBILLBOARD,
     )
 except (ImportError, SystemError):
     from shared.helpers.math_shim import Matrix, Vector, Euler, compile_srt_matrix, matrix_to_list
@@ -17,16 +19,19 @@ except (ImportError, SystemError):
     from shared.IR.enums import ScaleInheritance
     from shared.Constants.hsd import (
         JOBJ_HIDDEN, JOBJ_INSTANCE, JOBJ_EFFECTOR, JOBJ_SPLINE,
-        JOBJ_TYPE_MASK,
+        JOBJ_TYPE_MASK, JOBJ_CLASSICAL_SCALING, JOBJ_USE_QUATERNION,
+        JOBJ_BILLBOARD_FIELD, JOBJ_BILLBOARD, JOBJ_VBILLBOARD,
+        JOBJ_HBILLBOARD, JOBJ_RBILLBOARD,
     )
 
 
-def describe_bones(root_joint, options=None):
+def describe_bones(root_joint, options=None, logger=None):
     """Walk a Joint tree and produce a flat list of IRBone.
 
     Args:
         root_joint: Root Joint node from the parsed node tree.
         options: dict of importer options (uses 'ik_hack').
+        logger: optional Logger instance.
 
     Returns:
         (list[IRBone], dict[int, int]) — bones list and joint_address→bone_index map.
@@ -50,6 +55,21 @@ def describe_bones(root_joint, options=None):
         name = 'Bone_' + str(bone_count[0])
         bone_count[0] += 1
 
+        # Warn about special JOBJ flags that we preserve but don't fully handle.
+        if logger:
+            if joint.flags & JOBJ_USE_QUATERNION:
+                logger.info("  WARNING: %s has JOBJ_USE_QUATERNION flag (0x%X) — "
+                            "rotation may be incorrect if stored as quaternion",
+                            name, joint.flags)
+            billboard_type = joint.flags & JOBJ_BILLBOARD_FIELD
+            if billboard_type:
+                bb_names = {
+                    JOBJ_BILLBOARD: 'BILLBOARD', JOBJ_VBILLBOARD: 'VBILLBOARD',
+                    JOBJ_HBILLBOARD: 'HBILLBOARD', JOBJ_RBILLBOARD: 'RBILLBOARD',
+                }
+                logger.info("  INFO: %s has billboard flag: %s (camera-dependent, not visualized)",
+                            name, bb_names.get(billboard_type, hex(billboard_type)))
+
         # Determine IK shrink
         ik_shrink = bool(
             options.get("ik_hack")
@@ -57,11 +77,19 @@ def describe_bones(root_joint, options=None):
                  or joint.flags & JOBJ_SPLINE)
         )
 
-        # Accumulate parent scales for aligned scale inheritance
+        # Accumulate parent scales for aligned scale inheritance.
+        # When JOBJ_CLASSICAL_SCALING is set, the bone's own scale does NOT
+        # accumulate into the chain — only the parent's accumulated scale
+        # passes through. Confirmed in HSD_JObjMakeMatrix.s: the flag
+        # causes a direct copy of parent accumulated_scale, skipping the
+        # multiplication by own scale.
         if parent_data:
-            accumulated_scale = tuple(
-                joint.scale[i] * parent_data['scl'][i] for i in range(3)
-            )
+            if joint.flags & JOBJ_CLASSICAL_SCALING:
+                accumulated_scale = parent_data['scl']
+            else:
+                accumulated_scale = tuple(
+                    joint.scale[i] * parent_data['scl'][i] for i in range(3)
+                )
             parent_scl = parent_data['scl']
         else:
             accumulated_scale = tuple(joint.scale)

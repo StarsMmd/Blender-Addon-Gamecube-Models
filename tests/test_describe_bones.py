@@ -212,6 +212,81 @@ class TestDescribeBonesMatrices:
         assert abs(bones[1].accumulated_scale[1] - 6.0) < 1e-5
         assert abs(bones[1].accumulated_scale[2] - 4.0) < 1e-5
 
+    def test_classical_scaling_skips_own_scale_in_accumulation(self):
+        """JOBJ_CLASSICAL_SCALING bones pass parent's accumulated scale
+        through without multiplying their own scale.
+
+        Confirmed from HSD_JObjMakeMatrix.s: when the flag is set, the
+        bone copies parent's accumulated_scale unchanged.
+        """
+        from shared.Constants.hsd import JOBJ_CLASSICAL_SCALING
+        child_offset = JOINT_SIZE
+        grandchild_offset = 2 * JOINT_SIZE
+        # Root: scale (2, 3, 1)
+        root_data = build_joint(child_ptr=child_offset, scale=(2.0, 3.0, 1.0))
+        # Child: CLASSICAL_SCALING set, own scale (0.5, 0.5, 0.5)
+        child_data = build_joint(
+            flags=JOBJ_CLASSICAL_SCALING,
+            child_ptr=grandchild_offset,
+            scale=(0.5, 0.5, 0.5),
+        )
+        # Grandchild: normal bone, scale (1, 1, 1)
+        grandchild_data = build_joint(scale=(1.0, 1.0, 1.0))
+        data = root_data + child_data + grandchild_data
+        relocations = [8, JOINT_SIZE + 8]
+
+        joint = _parse_joint_tree(data, relocations)
+        bones, _ = describe_bones(joint)
+
+        # Root: accumulated = own scale = (2, 3, 1)
+        assert abs(bones[0].accumulated_scale[0] - 2.0) < 1e-5
+        assert abs(bones[0].accumulated_scale[1] - 3.0) < 1e-5
+        assert abs(bones[0].accumulated_scale[2] - 1.0) < 1e-5
+        # Child (CLASSICAL_SCALING): accumulated = parent's accumulated = (2, 3, 1)
+        # NOT (0.5*2, 0.5*3, 0.5*1) = (1, 1.5, 0.5)
+        assert abs(bones[1].accumulated_scale[0] - 2.0) < 1e-5
+        assert abs(bones[1].accumulated_scale[1] - 3.0) < 1e-5
+        assert abs(bones[1].accumulated_scale[2] - 1.0) < 1e-5
+        # Grandchild: accumulated = own * parent_accum = (1*2, 1*3, 1*1)
+        assert abs(bones[2].accumulated_scale[0] - 2.0) < 1e-5
+        assert abs(bones[2].accumulated_scale[1] - 3.0) < 1e-5
+        assert abs(bones[2].accumulated_scale[2] - 1.0) < 1e-5
+
+    def test_classical_scaling_root_bone(self):
+        """CLASSICAL_SCALING on root bone has no effect (no parent)."""
+        from shared.Constants.hsd import JOBJ_CLASSICAL_SCALING
+        data = build_joint(flags=JOBJ_CLASSICAL_SCALING, scale=(2.0, 3.0, 4.0))
+        joint = _parse_joint_tree(data, relocations=[])
+        bones, _ = describe_bones(joint)
+
+        # Root always uses own scale regardless of flag
+        assert abs(bones[0].accumulated_scale[0] - 2.0) < 1e-5
+        assert abs(bones[0].accumulated_scale[1] - 3.0) < 1e-5
+        assert abs(bones[0].accumulated_scale[2] - 4.0) < 1e-5
+
+
+    def test_use_quaternion_flag_preserved(self):
+        """JOBJ_USE_QUATERNION flag is preserved in IRBone.flags."""
+        from shared.Constants.hsd import JOBJ_USE_QUATERNION
+        data = build_joint(flags=JOBJ_USE_QUATERNION, scale=(1, 1, 1))
+        joint = _parse_joint_tree(data, relocations=[])
+        bones, _ = describe_bones(joint)
+        assert bones[0].flags & JOBJ_USE_QUATERNION
+
+    def test_billboard_flags_preserved(self):
+        """All 4 billboard flag types are preserved in IRBone.flags."""
+        from shared.Constants.hsd import (
+            JOBJ_BILLBOARD, JOBJ_VBILLBOARD, JOBJ_HBILLBOARD,
+            JOBJ_RBILLBOARD, JOBJ_BILLBOARD_FIELD,
+        )
+        for flag in [JOBJ_BILLBOARD, JOBJ_VBILLBOARD, JOBJ_HBILLBOARD, JOBJ_RBILLBOARD]:
+            data = build_joint(flags=flag, scale=(1, 1, 1))
+            joint = _parse_joint_tree(data, relocations=[])
+            bones, _ = describe_bones(joint)
+            assert bones[0].flags & JOBJ_BILLBOARD_FIELD == flag, (
+                f"Flag {hex(flag)} not preserved: got {hex(bones[0].flags & JOBJ_BILLBOARD_FIELD)}"
+            )
+
 
 class TestCompileSRTMatrix:
 
