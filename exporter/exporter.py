@@ -45,7 +45,7 @@ class Exporter:
         pre_process(context, filepath, options, logger)
 
         # Phase 1 — Describe Blender Scene: Blender context → IRScene
-        ir_scene, shiny_params = describe_blender_scene(context, options, logger)
+        ir_scene, shiny_params, pkx_header = describe_blender_scene(context, options, logger)
 
         # Phase 2 — Compose: IRScene → node trees
         root_nodes, section_names = compose_scene(ir_scene, options, logger)
@@ -55,7 +55,8 @@ class Exporter:
 
         # Phase 4 — Package: DAT bytes → final output
         final_bytes = package_output(dat_bytes, filepath, options, logger,
-                                     shiny_params=shiny_params)
+                                     shiny_params=shiny_params,
+                                     pkx_header=pkx_header)
 
         # Write to disk
         with open(filepath, 'wb') as f:

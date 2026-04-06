@@ -16,8 +16,8 @@ except (ImportError, SystemError):
 
 
 def post_process(armature_names, shiny_params=None, options=None, logger=StubLogger(),
-                 build_results=None):
-    """Post-process imported models: reset poses, select animations, apply shiny.
+                 build_results=None, pkx_header=None):
+    """Post-process imported models: reset poses, select animations, apply shiny, store PKX metadata.
 
     Args:
         armature_names: set of armature object names to post-process (used for legacy path).
@@ -26,9 +26,11 @@ def post_process(armature_names, shiny_params=None, options=None, logger=StubLog
         logger: Logger instance.
         build_results: list of dicts from Phase 5 with armature/actions/mat_slot_indices.
             When provided, uses these directly instead of rediscovering actions by name.
+        pkx_header: PKXHeader from Phase 1 extract, or None.
     """
     logger.info("=== Phase 6: Post-Processing ===")
     logger.info("  Shiny params: %s", shiny_params is not None)
+    logger.info("  PKX header: %s", pkx_header is not None)
     logger.info("  Options: %s", options)
 
     include_shiny = True if options is None else options.get("include_shiny", True)
@@ -45,6 +47,9 @@ def post_process(armature_names, shiny_params=None, options=None, logger=StubLog
 
             if include_shiny and shiny_params is not None:
                 _apply_shiny(armature, shiny_params, logger)
+
+            if pkx_header is not None:
+                _store_pkx_metadata(armature, pkx_header, logger)
     else:
         # Legacy path: discover actions by name matching
         logger.info("  Armatures: %s", armature_names)
@@ -59,6 +64,9 @@ def post_process(armature_names, shiny_params=None, options=None, logger=StubLog
 
             if include_shiny and shiny_params is not None:
                 _apply_shiny(armature, shiny_params, logger)
+
+            if pkx_header is not None:
+                _store_pkx_metadata(armature, pkx_header, logger)
 
     bpy.context.scene.frame_set(0)
     logger.info("=== Phase 6 complete ===")
@@ -180,6 +188,97 @@ def _apply_shiny(armature, shiny_params, logger):
 
     if count:
         logger.info("  Inserted shiny filter into %d material(s) on %s", count, armature.name)
+
+
+def _store_pkx_metadata(armature, pkx_header, logger):
+    """Store PKX header fields as custom properties on the armature.
+
+    Uses dat_pkx_* naming convention. Bone indices are resolved to bone names
+    using the armature's bone list.
+
+    Args:
+        armature: The Blender armature object.
+        pkx_header: PKXHeader instance from extract phase.
+        logger: Logger instance.
+    """
+    try:
+        from ....shared.helpers.pkx_header import NULL_JOINT_NAMES
+    except (ImportError, SystemError):
+        from shared.helpers.pkx_header import NULL_JOINT_NAMES
+
+    h = pkx_header
+
+    # Preamble
+    armature["dat_pkx_format"] = "XD" if h.is_xd else "COLOSSEUM"
+    armature["dat_pkx_species_id"] = h.species_id
+    armature["dat_pkx_particle_orientation"] = h.particle_orientation
+    armature["dat_pkx_flags"] = h.flags
+    armature["dat_pkx_distortion_param"] = h.distortion_param
+    armature["dat_pkx_distortion_type"] = h.distortion_type
+    armature["dat_pkx_model_type"] = "TRAINER" if h.species_id == 0 and h.particle_orientation == 0 else "POKEMON"
+
+    # Resolve head bone index to name
+    bones = armature.data.bones
+    bone_list = list(bones)
+    armature["dat_pkx_head_bone"] = _bone_name_for_index(bone_list, h.head_bone_index)
+
+    # Shiny routing + brightness (raw values for PKX header reconstruction)
+    armature["dat_pkx_shiny_route"] = list(h.shiny_route)
+    armature["dat_pkx_shiny_brightness"] = list(h.shiny_brightness)
+
+    # Part animation data (XD only)
+    if h.is_xd:
+        for i, pad in enumerate(h.part_anim_data):
+            prefix = "dat_pkx_part_%d" % i
+            armature[prefix + "_has_data"] = pad.has_data
+            armature[prefix + "_sub_param"] = pad.sub_param
+            armature[prefix + "_bone_config"] = pad.bone_config.hex()
+            armature[prefix + "_anim_ref"] = pad.anim_index_ref
+    else:
+        for i in range(3):
+            armature["dat_pkx_colo_part_ref_%d" % i] = h.colo_part_anim_refs[i]
+
+    # Null joint bones (model-level, from first active entry)
+    first_active = h.anim_entries[0] if h.anim_entries else None
+    if first_active:
+        for j in range(16):
+            bone_idx = first_active.null_joint_bones[j]
+            armature["dat_pkx_null_bone_%d" % j] = _bone_name_for_index(bone_list, bone_idx)
+
+    # Animation metadata entries
+    armature["dat_pkx_anim_count"] = len(h.anim_entries)
+    for i, entry in enumerate(h.anim_entries):
+        prefix = "dat_pkx_anim_%02d" % i
+        armature[prefix + "_type"] = entry.anim_type
+        armature[prefix + "_sub_count"] = entry.sub_anim_count
+        armature[prefix + "_damage_flags"] = entry.damage_flags
+        armature[prefix + "_timing_1"] = entry.timing[0]
+        armature[prefix + "_timing_2"] = entry.timing[1]
+        armature[prefix + "_timing_3"] = entry.timing[2]
+        armature[prefix + "_timing_4"] = entry.timing[3]
+        armature[prefix + "_terminator"] = entry.terminator
+
+        # Sub-animations
+        for s in range(min(len(entry.sub_anims), 3)):
+            armature[prefix + "_sub_%d_motion" % s] = entry.sub_anims[s].motion_type
+            armature[prefix + "_sub_%d_anim" % s] = entry.sub_anims[s].anim_index
+
+        # Per-entry null joint bone overrides (only if different from model-level)
+        if first_active and entry.null_joint_bones != first_active.null_joint_bones:
+            for j in range(16):
+                if entry.null_joint_bones[j] != first_active.null_joint_bones[j]:
+                    bone_name = _bone_name_for_index(bone_list, entry.null_joint_bones[j])
+                    armature[prefix + "_bone_%d" % j] = bone_name
+
+    logger.info("  Stored PKX metadata on %s: format=%s, species=%d, %d anim entries",
+                armature.name, armature["dat_pkx_format"], h.species_id, len(h.anim_entries))
+
+
+def _bone_name_for_index(bone_list, index):
+    """Resolve a bone index to a bone name. Returns '' for -1 or out-of-range."""
+    if index < 0 or index >= len(bone_list):
+        return ""
+    return bone_list[index].name
 
 
 def _register_action_sync_handler(armature, mat_slot_indices):

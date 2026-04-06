@@ -51,23 +51,25 @@ def _make_bone(name, parent_index=None, position=(0, 0, 0), rotation=(0, 0, 0),
 
 
 def _build_colo_pkx(dat_body_size=64, shiny_color1=(0, 1, 2, 3), shiny_color2=(128, 128, 128, 128)):
-    """Build a minimal Colosseum PKX: [0x40 header][DAT][trailer with shiny]."""
+    """Build a minimal Colosseum PKX: [0x40 header][DAT padded][shiny 20 bytes]."""
     marker = dat_body_size
-    header = struct.pack('>I', marker) + b'\x00' * 0x3C
+    header = bytearray(0x40)
+    struct.pack_into('>I', header, 0, marker)  # dat_file_size
+    struct.pack_into('>I', header, 8, 0)  # anim_section_count = 0 (no entries for minimal test)
     dat_body = struct.pack('>I', marker) + b'\x00' * (dat_body_size - 4)
-    # Trailer: 32 bytes of padding + 17 bytes of shiny data
-    trailer = bytearray(49)
-    base = len(trailer) - 17
-    trailer[base + 0] = shiny_color1[0]
-    trailer[base + 4] = shiny_color1[1]
-    trailer[base + 8] = shiny_color1[2]
-    trailer[base + 12] = shiny_color1[3]
-    # ABGR order for Colosseum
-    trailer[base + 13] = shiny_color2[0]
-    trailer[base + 14] = shiny_color2[1]
-    trailer[base + 15] = shiny_color2[2]
-    trailer[base + 16] = shiny_color2[3]
-    return bytes(header + dat_body + trailer)
+    # Pad DAT to 0x20 boundary
+    pad = (0x20 - (len(dat_body) % 0x20)) % 0x20
+    dat_padded = dat_body + b'\x00' * pad
+    # Shiny: 4 × uint32 routing + 1 × uint32 ARGB color (20 bytes)
+    shiny = bytearray(20)
+    struct.pack_into('>I', shiny, 0, shiny_color1[0])
+    struct.pack_into('>I', shiny, 4, shiny_color1[1])
+    struct.pack_into('>I', shiny, 8, shiny_color1[2])
+    struct.pack_into('>I', shiny, 12, shiny_color1[3])
+    # ARGB from RGBA: brightness_r=color2[0], g=[1], b=[2], a=[3] → ARGB
+    argb = (shiny_color2[3] << 24) | (shiny_color2[0] << 16) | (shiny_color2[1] << 8) | shiny_color2[2]
+    struct.pack_into('>I', shiny, 16, argb)
+    return bytes(header) + dat_padded + bytes(shiny)
 
 
 def _build_xd_pkx(dat_body_size=64, shiny_color1=(0, 1, 2, 3), shiny_color2=(128, 128, 128, 128)):
@@ -78,18 +80,19 @@ def _build_xd_pkx(dat_body_size=64, shiny_color1=(0, 1, 2, 3), shiny_color2=(128
     struct.pack_into('>I', raw, 0, dat_body_size)
     struct.pack_into('>I', raw, 0x40, 0xBBBBBBBB)
     struct.pack_into('>I', raw, 8, 0)  # GPT1 size = 0
+    struct.pack_into('>I', raw, 0x10, 17)  # anim_section_count = 17
     # DAT file_size field
     struct.pack_into('>I', raw, header_size, dat_body_size)
-    # Shiny at 0x73
-    base = 0x73
-    raw[base + 0] = shiny_color1[0]
-    raw[base + 4] = shiny_color1[1]
-    raw[base + 8] = shiny_color1[2]
-    raw[base + 12] = shiny_color1[3]
-    raw[base + 13] = shiny_color2[0]
-    raw[base + 14] = shiny_color2[1]
-    raw[base + 15] = shiny_color2[2]
-    raw[base + 16] = shiny_color2[3]
+    # Shiny routing: 4 × uint32 at 0x70
+    struct.pack_into('>I', raw, 0x70, shiny_color1[0])
+    struct.pack_into('>I', raw, 0x74, shiny_color1[1])
+    struct.pack_into('>I', raw, 0x78, shiny_color1[2])
+    struct.pack_into('>I', raw, 0x7C, shiny_color1[3])
+    # Shiny brightness: 4 × uint8 at 0x80
+    raw[0x80] = shiny_color2[0]
+    raw[0x81] = shiny_color2[1]
+    raw[0x82] = shiny_color2[2]
+    raw[0x83] = shiny_color2[3]
     return bytes(raw)
 
 

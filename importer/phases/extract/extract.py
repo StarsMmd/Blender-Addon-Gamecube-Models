@@ -16,6 +16,11 @@ except (ImportError, SystemError):
     from shared.helpers.shiny_params import ShinyParams
 
 try:
+    from ....shared.helpers.pkx_header import PKXHeader
+except (ImportError, SystemError):
+    from shared.helpers.pkx_header import PKXHeader
+
+try:
     from .helpers.fsys import is_fsys, parse_fsys
 except (ImportError, SystemError):
     from importer.phases.extract.helpers.fsys import is_fsys, parse_fsys
@@ -26,6 +31,8 @@ class ContainerMetadata:
     """Metadata about the source container."""
     filename: str
     shiny_params: ShinyParams | None = None
+    pkx_header: PKXHeader | None = None
+    gpt1_data: bytes = b''
 
 
 def extract_dat(raw_bytes, filename, options=None):
@@ -60,7 +67,14 @@ def _extract_pkx(raw, filename, options):
     """Extract DAT bytes from a PKX container."""
     pkx = PKXContainer(raw)
     shiny_params = pkx.shiny_params if options.get("include_shiny") else None
-    metadata = ContainerMetadata(filename=filename, shiny_params=shiny_params)
+    pkx_header = pkx.header
+    gpt1_data = pkx.gpt1_data
+    metadata = ContainerMetadata(
+        filename=filename,
+        shiny_params=shiny_params,
+        pkx_header=pkx_header,
+        gpt1_data=gpt1_data,
+    )
     return [(pkx.dat_bytes, metadata)]
 
 

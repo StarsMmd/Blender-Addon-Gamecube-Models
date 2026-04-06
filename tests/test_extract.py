@@ -37,12 +37,14 @@ def test_pkx_colo_header_stripped():
 
 
 def test_pkx_xd_header_stripped():
-    """An XD PKX has a 0xE60 byte header stripped (no GPT1)."""
-    header = b'\x00' * 0xE60
-    header = struct.pack('>I', 0xAAAAAAAA) + b'\x00' * 4 + struct.pack('>I', 0) + header[12:]
-    header = header[:0x40] + struct.pack('>I', 0xBBBBBBBB) + header[0x44:]
+    """An XD PKX has a 0xE60 byte header stripped (no GPT1, 17 anim entries)."""
+    header = bytearray(0xE60)
+    struct.pack_into('>I', header, 0x00, 0xAAAAAAAA)  # dat_file_size (signals XD when != 0x40)
+    struct.pack_into('>I', header, 0x08, 0)  # gpt1_length = 0
+    struct.pack_into('>I', header, 0x10, 17)  # anim_section_count = 17
+    struct.pack_into('>I', header, 0x40, 0xBBBBBBBB)  # different from 0x00 → XD detected
     dat_body = b'\xFF' * 64
-    raw = header + dat_body
+    raw = bytes(header) + dat_body
     entries = extract_dat(raw, 'model.pkx')
     assert len(entries) == 1
     assert entries[0][0] == dat_body
