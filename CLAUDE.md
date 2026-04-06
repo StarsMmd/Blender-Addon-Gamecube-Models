@@ -181,11 +181,11 @@ Nodes are cached by file offset (`nodes_cache_by_offset`). Nodes with `is_cachab
 | Exporter pipeline | ⚠️ Bones + meshes (RIGID/SINGLE_BONE/ENVELOPE) + materials + textures (all GX formats) + bound box + animations + material animations + lights + constraints working |
 | Exporter binary round-trip (DATBuilder) | ✅ Functional (0 value mismatches) |
 | Exporter PKX packaging | ✅ Working (DAT injection, shiny write-back, trailer preserved) |
-| In-game loading | ✅ BNB, NIN, and IBI paths all produce correct geometry + textures in-game. IBI IBM uses `srt_world.inv()` which produces identity deformation at rest pose — game handles this correctly. |
+| In-game loading | ✅ Working — all three paths (BNB, NIN, IBI) produce correct geometry + textures in both Blender and in-game simultaneously |
 | IR pipeline | ✅ Default path (legacy available via toggle) |
 | FSYS archive import | ✅ Working (multi-model extraction + LZSS decompression) |
 | Shiny variant filter | ✅ Working (PKX color extraction, live-editable shader node group, per-parameter UI) |
-| Unit tests | ✅ 480 passing (27 texture encoder, 10 DAT header/alignment/relocation) |
+| Unit tests | ✅ 483 passing (27 texture encoder, 13 DAT serialization/alignment/relocation/vertex-space) |
 | Shader node auto-layout | ✅ Working (topological sort from output→inputs, left-to-right) |
 | Scale inheritance (animation baking) | ⚠️ Partially resolved — hybrid approach, see below |
 

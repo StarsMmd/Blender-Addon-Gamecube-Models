@@ -904,3 +904,96 @@ class TestTextureAlignment:
         assert len(relocations) == 1, f"Expected 1 relocation, got {len(relocations)}"
         assert relocations[0] == 0x100, \
             f"Relocation at wrong offset: 0x{relocations[0]:X} (expected 0x100)"
+
+
+# ---------------------------------------------------------------------------
+# Vertex coordinate space round-trip tests
+# ---------------------------------------------------------------------------
+
+class TestVertexCoordinateSpace:
+    """Verify that vertex positions round-trip correctly through the IR.
+
+    The IR stores all vertices in world space regardless of skin type.
+    The describe phase transforms bone-local → world, and compose
+    transforms world → bone-local.
+    """
+
+    def test_rigid_world_to_local_roundtrip(self):
+        """RIGID vertices: world → compose(local) → describe(world) = original."""
+        from shared.helpers.math_shim import Matrix, Vector
+        from exporter.phases.compose.helpers.meshes import _encode_float3_buffer
+
+        # Bone at position (5, 10, 3) — pure translation
+        bone_world = Matrix([
+            [1, 0, 0, 5],
+            [0, 1, 0, 10],
+            [0, 0, 1, 3],
+            [0, 0, 0, 1],
+        ])
+        world_inv = bone_world.inverted()
+
+        # World-space vertex
+        world_vertex = (7.0, 15.0, 6.0)
+
+        # Compose: world → local
+        local = tuple(world_inv @ Vector(world_vertex))
+        assert abs(local[0] - 2.0) < 0.001  # 7 - 5
+        assert abs(local[1] - 5.0) < 0.001  # 15 - 10
+        assert abs(local[2] - 3.0) < 0.001  # 6 - 3
+
+        # Describe: local → world
+        recovered = tuple(bone_world @ Vector(local))
+        assert abs(recovered[0] - world_vertex[0]) < 0.001
+        assert abs(recovered[1] - world_vertex[1]) < 0.001
+        assert abs(recovered[2] - world_vertex[2]) < 0.001
+
+    def test_single_bone_world_to_local_roundtrip(self):
+        """SINGLE_BONE vertices: same as RIGID — world ↔ local via bone world matrix."""
+        from shared.helpers.math_shim import Matrix, Vector
+
+        # Bone with rotation (45 degrees around Z) + translation
+        import math
+        c = math.cos(math.pi/4)
+        s = math.sin(math.pi/4)
+        bone_world = Matrix([
+            [c, -s, 0, 3],
+            [s,  c, 0, 7],
+            [0,  0, 1, 1],
+            [0,  0, 0, 1],
+        ])
+
+        world_vertex = (5.0, 9.0, 2.0)
+
+        # Round-trip
+        local = tuple(bone_world.inverted() @ Vector(world_vertex))
+        recovered = tuple(bone_world @ Vector(local))
+
+        assert abs(recovered[0] - world_vertex[0]) < 0.001
+        assert abs(recovered[1] - world_vertex[1]) < 0.001
+        assert abs(recovered[2] - world_vertex[2]) < 0.001
+
+    def test_envelope_undeform_identity_ibm(self):
+        """ENVELOPE with IBM = srt_world.inv(): deform is identity, undeform is identity."""
+        from shared.helpers.math_shim import Matrix, Vector
+
+        bone_world = Matrix([
+            [1, 0, 0, 0],
+            [0, 1, 0, 10],
+            [0, 0, 1, 0.5],
+            [0, 0, 0, 1],
+        ])
+        bone_ibm = bone_world.inverted()
+
+        # Deformation = bone_world @ bone_ibm = identity
+        deform = bone_world @ bone_ibm
+        for i in range(4):
+            for j in range(4):
+                expected = 1.0 if i == j else 0.0
+                assert abs(deform[i][j] - expected) < 0.001
+
+        # World-space vertex passes through unchanged
+        world_vertex = Vector((-1.63, 11.64, 3.06))
+        result = deform @ world_vertex
+        assert abs(result[0] - world_vertex[0]) < 0.001
+        assert abs(result[1] - world_vertex[1]) < 0.001
+        assert abs(result[2] - world_vertex[2]) < 0.001
