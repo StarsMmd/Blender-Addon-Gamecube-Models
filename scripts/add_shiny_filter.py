@@ -1,265 +1,39 @@
 """Standalone Blender script: Add shiny filter to the selected armature.
 
 Run this from Blender's Scripting panel (Text Editor > Run Script) with an
-armature selected. It creates a ShinyFilter node group with no-op (identity)
-parameters and inserts it into every material on the armature's child meshes.
+armature selected. It creates ShinyRoute and ShinyBright node groups with
+no-op (identity) parameters and inserts them into every material on the
+armature's child meshes.
+
+The routing stage is placed BEFORE any vertex color multiply node, and the
+brightness stage is placed AFTER it. This ensures channel routing only
+affects texture/material colors, not vertex colors.
 
 The Shiny Variant panel in Object Properties will appear on the armature,
 allowing live editing of all 8 shiny parameters (4 channel routing + 4 brightness).
 
 Requires the DAT plugin addon to be enabled (for the registered shiny properties).
+
+Supported material setups:
+  - Principled BSDF or Emission shader
+  - Vertex colors applied via MixRGB Multiply with ShaderNodeAttribute input
 """
 import bpy
-from enum import Enum
+import sys
+import os
 
+# Add the addon directory to path so we can import from the plugin
+addon_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if addon_dir not in sys.path:
+    sys.path.insert(0, addon_dir)
 
-# ---------------------------------------------------------------------------
-# Minimal ShinyChannel enum (mirrors shared/IR/enums.py without import dep)
-# ---------------------------------------------------------------------------
+from importer.phases.post_process.shiny_filter import (
+    build_shiny_route_node_group, build_shiny_bright_node_group,
+    setup_shiny_properties, insert_shiny_filter,
+)
+from shared.IR.shiny import IRShinyFilter
+from shared.IR.enums import ShinyChannel
 
-class ShinyChannel(Enum):
-    RED = 0
-    GREEN = 1
-    BLUE = 2
-    ALPHA = 3
-
-
-# ---------------------------------------------------------------------------
-# Node group construction (mirrors shiny_filter.py logic)
-# ---------------------------------------------------------------------------
-
-def _populate_shiny_node_group(group, routing, brightness):
-    """Populate a node group with the shiny filter nodes."""
-    nodes = group.nodes
-    links = group.links
-    nodes.clear()
-
-    group_in = nodes.new('NodeGroupInput')
-    group_out = nodes.new('NodeGroupOutput')
-
-    separate = nodes.new('ShaderNodeSeparateColor')
-    separate.mode = 'RGB'
-    links.new(group_in.outputs[0], separate.inputs[0])
-
-    needs_alpha_input = any(
-        routing[i] == ShinyChannel.ALPHA for i in range(4)
-    )
-
-    channel_sources = {
-        ShinyChannel.RED: separate.outputs[0],
-        ShinyChannel.GREEN: separate.outputs[1],
-        ShinyChannel.BLUE: separate.outputs[2],
-    }
-
-    if needs_alpha_input:
-        has_alpha_socket = len(group.interface.items_tree) > 2
-        if not has_alpha_socket:
-            group.interface.new_socket('Alpha', in_out='INPUT', socket_type='NodeSocketFloat')
-        channel_sources[ShinyChannel.ALPHA] = group_in.outputs[1]
-    else:
-        items = list(group.interface.items_tree)
-        if len(items) > 2:
-            for item in items:
-                if item.name == 'Alpha' and item.in_out == 'INPUT':
-                    group.interface.remove(item)
-                    break
-        channel_sources[ShinyChannel.ALPHA] = None
-
-    # For each RGBA output channel: route source → multiply by brightness
-    channel_names = ['R', 'G', 'B', 'A']
-    scaled_channels = []
-    for i in range(4):
-        source_channel = routing[i]
-        source_socket = channel_sources[source_channel]
-        brightness_multiplier = brightness[i] + 1.0
-
-        if source_socket is not None:
-            mult = nodes.new('ShaderNodeMath')
-            mult.operation = 'MULTIPLY'
-            mult.name = 'Brightness_%s' % channel_names[i]
-            links.new(source_socket, mult.inputs[0])
-            mult.inputs[1].default_value = brightness_multiplier
-            scaled_channels.append(mult.outputs[0])
-        else:
-            value = nodes.new('ShaderNodeValue')
-            value.outputs[0].default_value = 0.0
-            scaled_channels.append(value.outputs[0])
-
-    # Recombine RGB channels
-    combine = nodes.new('ShaderNodeCombineColor')
-    combine.mode = 'RGB'
-    links.new(scaled_channels[0], combine.inputs[0])
-    links.new(scaled_channels[1], combine.inputs[1])
-    links.new(scaled_channels[2], combine.inputs[2])
-
-    # Gamma node: linearize the shiny output (sRGB → linear) so Blender's
-    # scene-linear pipeline produces accurate colors.
-    gamma = nodes.new('ShaderNodeGamma')
-    gamma.name = 'Gamma'
-    gamma.inputs[1].default_value = 2.2
-    links.new(combine.outputs[0], gamma.inputs[0])
-
-    links.new(gamma.outputs[0], group_out.inputs[0])
-
-    # Alpha output
-    _ensure_alpha_output(group)
-    links.new(scaled_channels[3], group_out.inputs[1])
-
-    _auto_layout(nodes, links, output_type='GROUP_OUTPUT')
-
-
-def _ensure_alpha_output(group):
-    """Add an Alpha output socket if it doesn't already exist."""
-    for item in group.interface.items_tree:
-        if item.name == 'Alpha' and item.in_out == 'OUTPUT':
-            return
-    group.interface.new_socket('Alpha', in_out='OUTPUT', socket_type='NodeSocketFloat')
-
-
-def _find_color_input(nodes):
-    """Find the main color input on the output shader.
-
-    Checks Principled BSDF first, but only if its Base Color has an incoming
-    link. Unlit materials set Base Color to black and route the actual color
-    through an Emission node instead.
-    """
-    for node in nodes:
-        if node.type == 'BSDF_PRINCIPLED':
-            base_color = node.inputs['Base Color']
-            if base_color.is_linked:
-                return node, base_color
-    for node in nodes:
-        if node.type == 'EMISSION':
-            return node, node.inputs['Color']
-    # Fallback: Principled BSDF with no link (solid color)
-    for node in nodes:
-        if node.type == 'BSDF_PRINCIPLED':
-            return node, node.inputs['Base Color']
-    return None, None
-
-
-def _insert_shiny_filter(material, node_group, armature):
-    """Insert the shiny filter node group into a material's node tree."""
-    if not material.use_nodes:
-        return
-
-    nodes = material.node_tree.nodes
-    links = material.node_tree.links
-
-    # Skip if already has a shiny filter
-    for node in nodes:
-        if node.name == 'shiny_filter_shader':
-            return
-
-    target_node, target_input = _find_color_input(nodes)
-    if target_node is None:
-        return
-
-    source_link = None
-    for link in links:
-        if link.to_node == target_node and link.to_socket == target_input:
-            source_link = link
-            break
-
-    if source_link is None:
-        default_color = list(target_input.default_value)
-        rgb_node = nodes.new('ShaderNodeRGB')
-        rgb_node.outputs[0].default_value[:] = default_color
-        source_output = rgb_node.outputs[0]
-    else:
-        source_output = source_link.from_socket
-        links.remove(source_link)
-
-    group_node = nodes.new('ShaderNodeGroup')
-    group_node.node_tree = node_group
-    group_node.name = 'shiny_filter_shader'
-
-    links.new(source_output, group_node.inputs[0])
-
-    if len(group_node.inputs) > 1:
-        group_node.inputs[1].default_value = 1.0
-
-    mix_node = nodes.new('ShaderNodeMixRGB')
-    mix_node.blend_type = 'MIX'
-    mix_node.name = 'shiny_filter_mix'
-    mix_node.inputs[0].default_value = 0.0
-
-    links.new(source_output, mix_node.inputs[1])
-    links.new(group_node.outputs[0], mix_node.inputs[2])
-    links.new(mix_node.outputs[0], target_input)
-
-    # Driver: mix factor driven by armature.dat_shiny
-    driver_data = mix_node.inputs[0].driver_add("default_value")
-    driver = driver_data.driver
-    driver.type = 'AVERAGE'
-    var = driver.variables.new()
-    var.name = "shiny"
-    var.type = 'SINGLE_PROP'
-    target = var.targets[0]
-    target.id_type = 'OBJECT'
-    target.id = armature
-    target.data_path = 'dat_shiny'
-
-    _auto_layout(nodes, material.node_tree.links)
-
-
-def _auto_layout(nodes, links, output_type='OUTPUT_MATERIAL'):
-    """Arrange shader nodes left-to-right via topological sort from output."""
-    NODE_WIDTH = 300
-    NODE_HEIGHT = 200
-
-    output = None
-    for node in nodes:
-        if node.type == output_type:
-            output = node
-            break
-    if output is None:
-        return
-
-    inputs_of = {}
-    for link in links:
-        target = link.to_node
-        source = link.from_node
-        if target not in inputs_of:
-            inputs_of[target] = []
-        if source not in inputs_of[target]:
-            inputs_of[target].append(source)
-
-    column_of = {output: 0}
-    queue = [output]
-    while queue:
-        node = queue.pop(0)
-        col = column_of[node]
-        for source in inputs_of.get(node, []):
-            new_col = col + 1
-            if source not in column_of or column_of[source] < new_col:
-                column_of[source] = new_col
-                queue.append(source)
-
-    max_col = max(column_of.values()) if column_of else 0
-    for node in nodes:
-        if node not in column_of:
-            max_col += 1
-            column_of[node] = max_col
-
-    columns = {}
-    for node, col in column_of.items():
-        columns.setdefault(col, []).append(node)
-
-    for col in columns:
-        columns[col].sort(key=lambda n: n.name)
-
-    max_column = max(columns.keys()) if columns else 0
-    for col, col_nodes in columns.items():
-        x = (max_column - col) * NODE_WIDTH
-        for i, node in enumerate(col_nodes):
-            y = -i * NODE_HEIGHT
-            node.location = (x, y)
-
-
-# ---------------------------------------------------------------------------
-# Main script
-# ---------------------------------------------------------------------------
 
 def main():
     armature = bpy.context.active_object
@@ -271,46 +45,31 @@ def main():
         raise ValueError("This armature already has a shiny filter. "
                          "Edit the parameters in the Shiny Variant panel instead.")
 
-    # Verify the addon is enabled (shiny properties must be registered)
     if not hasattr(armature, 'dat_shiny'):
         raise ValueError("The DAT plugin addon must be enabled for shiny properties to work. "
                          "Enable it in Edit > Preferences > Extensions.")
 
     model_name = armature.name
-    group_name = "ShinyFilter_%s" % model_name
 
     # No-op parameters: identity routing, zero brightness
-    noop_routing = (ShinyChannel.RED, ShinyChannel.GREEN, ShinyChannel.BLUE, ShinyChannel.ALPHA)
-    noop_brightness = (0.0, 0.0, 0.0, 0.0)
+    ir_filter = IRShinyFilter(
+        channel_routing=(ShinyChannel.RED, ShinyChannel.GREEN, ShinyChannel.BLUE, ShinyChannel.ALPHA),
+        brightness=(0.0, 0.0, 0.0, 0.0),
+    )
 
-    # Create the node group
-    group = bpy.data.node_groups.new(group_name, 'ShaderNodeTree')
-    group.interface.new_socket('Color', in_out='INPUT', socket_type='NodeSocketColor')
-    group.interface.new_socket('Color', in_out='OUTPUT', socket_type='NodeSocketColor')
-    group.interface.new_socket('Alpha', in_out='OUTPUT', socket_type='NodeSocketFloat')
-    _populate_shiny_node_group(group, noop_routing, noop_brightness)
+    route_name = "ShinyRoute_%s" % model_name
+    bright_name = "ShinyBright_%s" % model_name
+    route_group = build_shiny_route_node_group(ir_filter, route_name)
+    bright_group = build_shiny_bright_node_group(ir_filter, bright_name)
+    setup_shiny_properties(armature, ir_filter, route_name, bright_name)
 
-    # Set up armature properties
-    armature["dat_has_shiny"] = True
-    armature["dat_shiny_group"] = group_name
-    armature.dat_shiny = False
-    armature.dat_shiny_route_r = 'RED'
-    armature.dat_shiny_route_g = 'GREEN'
-    armature.dat_shiny_route_b = 'BLUE'
-    armature.dat_shiny_route_a = 'ALPHA'
-    armature.dat_shiny_brightness_r = 0.0
-    armature.dat_shiny_brightness_g = 0.0
-    armature.dat_shiny_brightness_b = 0.0
-    armature.dat_shiny_brightness_a = 0.0
-
-    # Insert into all child mesh materials
     count = 0
     for child in armature.children:
         if child.type != 'MESH':
             continue
         for slot in child.material_slots:
             if slot.material:
-                _insert_shiny_filter(slot.material, group, armature)
+                insert_shiny_filter(slot.material, route_group, bright_group, armature)
                 count += 1
 
     print("Added shiny filter to %d material(s) on '%s'." % (count, model_name))

@@ -4,7 +4,7 @@ from ...Node import Node
 # Contains per-animation-set, per-frame axis-aligned bounding boxes (AABBs).
 # Structure:
 #   ushort  anim_set_count    — number of animation sets (matches ModelSet.animated_joints length)
-#   uint    unknown           — purpose unclear (varies per model)
+#   uint    first_anim_frame_count — frame count of the first animation set (end_frame + 1)
 #   [inline AABB data]        — (total_frames × 24 bytes) of min/max vec3 pairs,
 #                               one AABB per frame per animation set, concatenated
 #
@@ -15,7 +15,7 @@ class BoundBox(Node):
     class_name = "Bound Box"
     fields = [
         ('anim_set_count', 'ushort'),
-        ('unknown', 'uint'),
+        ('first_anim_frame_count', 'uint'),
     ]
 
     def loadFromBinary(self, parser):

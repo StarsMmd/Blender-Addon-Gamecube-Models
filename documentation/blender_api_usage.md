@@ -85,7 +85,7 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.80 | current | `armature_data.display_type = '...'` | `skeleton.py` | |
 | | | | | |
 | | | **Pose Bones** | | |
-| 2.80 | current | `armature.pose.bones` | `skeleton.py`, `constraints.py` | |
+| 2.80 | current | `armature.pose.bones` | `skeleton.py`, `constraints.py`, `export/constraints.py` | |
 | 2.80 | current | `pose_bone.rotation_mode = 'XYZ'` | `skeleton.py` | |
 | | | | | |
 | | | **Constraints** | | |
@@ -94,6 +94,15 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.80 | current | `constraint.subtarget = name` | `constraints.py` | |
 | 2.80 | current | `constraint.chain_count = n` | `constraints.py` | IK |
 | 2.80 | current | `constraint.pole_target = obj` | `constraints.py` | IK |
+| 2.80 | current | `constraint.type` | `export/constraints.py` | Read constraint type string |
+| 2.80 | current | `constraint.enabled` | `export/constraints.py` | Check if constraint is active |
+| 2.80 | current | `constraint.influence` | `export/constraints.py` | Copy Location influence weight |
+| 2.80 | current | `constraint.track_axis` | `export/constraints.py` | Track To axis |
+| 2.80 | current | `constraint.up_axis` | `export/constraints.py` | Track To up axis |
+| 2.80 | current | `constraint.owner_space` | `export/constraints.py` | Constraint evaluation space |
+| 2.80 | current | `constraint.target_space` | `export/constraints.py` | Copy Rotation target space |
+| 2.80 | current | `constraint.use_min_x` etc | `export/constraints.py` | Limit constraint axis enables |
+| 2.80 | current | `constraint.min_x` etc | `export/constraints.py` | Limit constraint axis values |
 | | | | | |
 | | | **Mesh Data** | | |
 | 2.80 | current | `mesh.from_pydata(verts, edges, faces)` | `meshes.py` | |
@@ -194,7 +203,7 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.80 | current | `matrix.decompose()` | `animations.py` | Returns `(trans, rot, scale)` |
 | | | | | |
 | | | **Exporter — Describe Blender (Phase 1)** | | |
-| 2.80 | current | `context.selected_objects` | `describe_blender.py` | Find selected armatures |
+| 2.80 | current | `context.scene.objects` | `describe_blender.py` | Find all armatures in scene |
 | 2.80 | current | `obj.type` | `describe_blender.py`, `exporter/meshes.py` | Filter ARMATURE / MESH |
 | 2.80 | current | `bpy.context.view_layer.objects.active` | `exporter/skeleton.py` | Set active for mode switch |
 | 2.80 | current | `bpy.ops.object.select_all(action='DESELECT')` | `exporter/skeleton.py` | Clean selection state |

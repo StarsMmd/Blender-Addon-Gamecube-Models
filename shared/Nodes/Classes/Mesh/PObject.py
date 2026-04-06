@@ -61,9 +61,7 @@ class PObject(Node):
         super().writePrivateData(builder)
         if self.raw_display_list:
             builder.seek(0, 'end')
-            # Display lists are aligned to 32-byte boundaries on the GameCube
-            while builder._currentRelativeAddress() % 32 != 0:
-                builder.write(0, 'uchar')
+            builder.align_buffer()
             self.display_list_address = builder._currentRelativeAddress()
             for byte in self.raw_display_list:
                 builder.write(byte, 'uchar')

@@ -55,8 +55,8 @@ class VertexList(Node):
                 orig_bp = vertex._orig_base_pointer
                 if orig_bp not in builder._vertex_buffer_cache:
                     max_data = builder._vertex_buffer_max.get(orig_bp, vertex.raw_vertex_data)
-                    # Write the largest buffer once
                     builder.seek(0, 'end')
+                    builder.align_buffer()
                     new_addr = builder._currentRelativeAddress()
                     builder.file.write(bytes(max_data))
                     builder._vertex_buffer_cache[orig_bp] = new_addr

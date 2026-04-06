@@ -55,6 +55,21 @@ from importer.phases.parse.helpers.dat_parser import DATParser
 from shared.Nodes.Node import Node
 from shared.helpers.logger import StubLogger
 
+# Register custom bpy properties needed for round-trip tests
+# (normally registered by BlenderPlugin.register())
+if not hasattr(bpy.types.Image, 'dat_gx_format'):
+    from bpy.props import EnumProperty
+    bpy.types.Image.dat_gx_format = EnumProperty(
+        name="GX Texture Format",
+        items=[
+            ('AUTO', 'Auto', ''), ('CMPR', 'CMPR', ''), ('RGBA8', 'RGBA8', ''),
+            ('RGB565', 'RGB565', ''), ('RGB5A3', 'RGB5A3', ''),
+            ('I4', 'I4', ''), ('I8', 'I8', ''), ('IA4', 'IA4', ''), ('IA8', 'IA8', ''),
+            ('C4', 'C4', ''), ('C8', 'C8', ''),
+        ],
+        default='AUTO',
+    )
+
 
 # ---------------------------------------------------------------------------
 # Pipeline helpers
@@ -84,21 +99,16 @@ def build_in_blender(ir_scene, options=None):
     """Run import phase 5 (build_blender). Returns build_results."""
     if options is None:
         options = {"filepath": "test_model"}
+    # Enable all optional features for round-trip testing
+    options.setdefault("import_lights", True)
     return build_blender_scene(ir_scene, bpy.context, options)
 
 
 def read_back_from_blender(build_results):
     """Run export phase 1 (describe_blender). Returns (IRScene, shiny_params).
 
-    Selects the armatures created during build before calling describe_blender.
+    Describes all armatures in the scene (no selection needed).
     """
-    # Select all armatures from the build
-    bpy.ops.object.select_all(action='DESELECT')
-    for result in build_results:
-        armature = result['armature']
-        armature.select_set(True)
-        bpy.context.view_layer.objects.active = armature
-
     return describe_blender_scene(bpy.context)
 
 
@@ -146,15 +156,17 @@ def compute_nbn_score(filepath):
     sections_rebuilt = parser2.sections
     parser2.close()
 
-    total, mismatches = 0, 0
+    total, errors, misses = 0, 0, 0
     for orig, rebuilt in zip(sections_orig, sections_rebuilt):
-        t, m = _compare_node_trees(orig.root_node, rebuilt.root_node)
+        t, e, m = _compare_node_trees(orig.root_node, rebuilt.root_node)
         total += t
-        mismatches += m
+        errors += e
+        misses += m
 
-    matched = total - mismatches
-    pct = (matched / total * 100) if total > 0 else 100.0
-    return matched, total, pct
+    pct = ((total - errors - misses) / total * 100) if total > 0 else 100.0
+    err_pct = (errors / total * 100) if total > 0 else 0.0
+    miss_pct = (misses / total * 100) if total > 0 else 0.0
+    return pct, err_pct, miss_pct
 
 
 # ---------------------------------------------------------------------------
@@ -173,7 +185,11 @@ def compute_bnb_score(filepath):
     rebuilt_bytes = out_buf.getvalue()
 
     # Compare DAT content (skip first 32 bytes = header)
-    return _fuzzy_binary_match(dat_bytes[32:], rebuilt_bytes[32:])
+    matched, total, errors, misses = _fuzzy_binary_match(dat_bytes[32:], rebuilt_bytes[32:])
+    pct = (matched / total * 100) if total > 0 else 100.0
+    err_pct = (errors / total * 100) if total > 0 else 0.0
+    miss_pct = (misses / total * 100) if total > 0 else 0.0
+    return pct, err_pct, miss_pct
 
 
 # ---------------------------------------------------------------------------
@@ -188,25 +204,32 @@ def compute_nin_score(filepath):
     ir_scene = describe_ir(sections, options={})
 
     # Compose (phase 2 export)
-    composed_nodes, _ = compose_scene(ir_scene, {})
+    composed_nodes, _ = compose_scene(ir_scene, {'strip_names': True})
 
-    # Compare original root nodes against composed root nodes
-    # The compose phase only produces scene_data roots, so match by section
-    total, mismatches = 0, 0
+    # Compare original root nodes against composed root nodes.
+    # Match by node type — each original section finds the composed node
+    # of the same class (SceneData↔SceneData, BoundBox↔BoundBox, etc.).
+    total, errors, misses = 0, 0, 0
+    all_details = []
+    comp_by_type = {}
+    for node in composed_nodes:
+        comp_by_type[type(node).__name__] = node
+
     for section in sections:
         orig_root = section.root_node
-        # Find corresponding composed node (compose outputs one root per model)
-        comp_root = None
-        if composed_nodes:
-            comp_root = composed_nodes[0] if len(composed_nodes) > 0 else None
+        orig_type = type(orig_root).__name__
+        comp_root = comp_by_type.get(orig_type)
 
-        t, m = _compare_node_trees_nin(orig_root, comp_root)
+        t, e, m, details = _compare_node_trees_nin(orig_root, comp_root)
         total += t
-        mismatches += m
+        errors += e
+        misses += m
+        all_details.extend(details)
 
-    matched = total - mismatches
-    pct = (matched / total * 100) if total > 0 else 100.0
-    return matched, total, pct
+    pct = ((total - errors - misses) / total * 100) if total > 0 else 100.0
+    err_pct = (errors / total * 100) if total > 0 else 0.0
+    miss_pct = (misses / total * 100) if total > 0 else 0.0
+    return pct, err_pct, miss_pct, all_details
 
 
 # ---------------------------------------------------------------------------
@@ -239,11 +262,13 @@ def compute_ibi_score(filepath):
     scored = {k: v for k, v in categories.items() if v['total'] > 0}
     if scored:
         pct = sum(v['pct'] for v in scored.values()) / len(scored)
+        err_pct = sum(v['errors'] / v['total'] * 100 for v in scored.values()) / len(scored)
+        miss_pct = sum(v['misses'] / v['total'] * 100 for v in scored.values()) / len(scored)
     else:
-        pct = 100.0
+        pct, err_pct, miss_pct = 100.0, 0.0, 0.0
 
     clear_blender_scene()
-    return 0, 0, pct, details, categories
+    return pct, err_pct, miss_pct, details, categories
 
 
 # ---------------------------------------------------------------------------
@@ -257,6 +282,8 @@ _SKIP_FIELDS = {
     'normalized_local_matrix', 'scale_correction', 'accumulated_scale',
     # Pre-computed deformed geometry — derived from bone weights + vertices
     'deformed_vertices', 'deformed_normals',
+    # Convenience/metadata — DAT file offsets used as cache keys, not model data
+    'image_id', 'palette_id',
 }
 
 # Maximum number of detail lines per category
@@ -362,7 +389,7 @@ def _score_category(categories, all_details, cat_name, list_a, list_b, path_pref
     recorded with total=0 so they're excluded from the average.
     """
     if cat_name not in categories:
-        categories[cat_name] = {'total': 0, 'mismatches': 0, 'pct': 0.0}
+        categories[cat_name] = {'total': 0, 'errors': 0, 'misses': 0, 'pct': 0.0}
 
     # Skip categories where the original has no data — nothing to test
     orig_items = list_a if isinstance(list_a, (list, tuple)) else [list_a]
@@ -372,23 +399,43 @@ def _score_category(categories, all_details, cat_name, list_a, list_b, path_pref
     cat = categories[cat_name]
     details = []
 
-    total, mismatches = _compare_ir_values(list_a, list_b, path_prefix, details)
+    total, errors, misses = _compare_ir_values(list_a, list_b, path_prefix, details)
     cat['total'] += total
-    cat['mismatches'] += mismatches
-    cat['pct'] = ((cat['total'] - cat['mismatches']) / cat['total'] * 100
+    cat['errors'] += errors
+    cat['misses'] += misses
+    cat['pct'] = ((cat['total'] - cat['errors'] - cat['misses']) / cat['total'] * 100
                   if cat['total'] > 0 else 0.0)
 
     all_details.extend(details[:_MAX_DETAILS_PER_CAT])
 
 
 def _compare_ir_values(orig, comp, path, details):
-    """Compare two IR values recursively. Returns (total, mismatches)."""
-    total = [0]
-    mismatches = [0]
+    """Compare two IR values recursively.
 
-    def _add_mismatch(p, msg):
-        mismatches[0] += 1
+    Returns (total, errors, misses) where:
+        total  — number of comparable fields in the original
+        errors — fields present in both but with different values
+        misses — fields present in original but missing/None in round-tripped
+    """
+    total = [0]
+    errors = [0]
+    misses = [0]
+
+    def _add_error(p, msg):
+        errors[0] += 1
         details.append(f"{p}: {msg}")
+
+    def _add_miss(p, msg):
+        misses[0] += 1
+        details.append(f"{p}: [MISS] {msg}")
+
+    def _add_miss_count(count):
+        """Bulk-add misses for missing subtree fields."""
+        misses[0] += count
+
+    def _is_missing(val):
+        """Check if a round-tripped value is missing (None or wrong type)."""
+        return val is None
 
     def _walk(orig_val, comp_val, p):
         if orig_val is None:
@@ -409,12 +456,15 @@ def _compare_ir_values(orig, comp, path, details):
             total[0] += 1
             comp_list = comp_val if isinstance(comp_val, (list, tuple)) else []
             if len(orig_val) != len(comp_list):
-                _add_mismatch(p, f"length {len(orig_val)} vs {len(comp_list)}")
+                if len(comp_list) == 0 and len(orig_val) > 0:
+                    _add_miss(p, f"length {len(orig_val)} vs {len(comp_list)}")
+                else:
+                    _add_error(p, f"length {len(orig_val)} vs {len(comp_list)}")
                 if len(comp_list) < len(orig_val):
                     for i in range(len(comp_list), len(orig_val)):
                         count = _count_fields(orig_val[i])
                         total[0] += count
-                        mismatches[0] += count
+                        _add_miss_count(count)
                 for i in range(min(len(orig_val), len(comp_list))):
                     _walk(orig_val[i], comp_list[i], f"{p}[{i}]")
             else:
@@ -426,30 +476,39 @@ def _compare_ir_values(orig, comp, path, details):
         if isinstance(orig_val, bytes):
             total[0] += 1
             if orig_val != comp_val:
-                _add_mismatch(p, f"{len(orig_val)} bytes vs {len(comp_val) if isinstance(comp_val, bytes) else type(comp_val).__name__}")
+                if _is_missing(comp_val):
+                    _add_miss(p, f"{len(orig_val)} bytes vs None")
+                else:
+                    _add_error(p, f"{len(orig_val)} bytes vs {len(comp_val) if isinstance(comp_val, bytes) else type(comp_val).__name__}")
             return
 
         # Enum
         if hasattr(orig_val, 'value') and hasattr(type(orig_val), '__members__'):
             total[0] += 1
-            if comp_val is None or not hasattr(comp_val, 'value') or orig_val.value != comp_val.value:
-                _add_mismatch(p, f"{orig_val!r} vs {comp_val!r}")
+            if comp_val is None or not hasattr(comp_val, 'value'):
+                _add_miss(p, f"{orig_val!r} vs {comp_val!r}")
+            elif orig_val.value != comp_val.value:
+                _add_error(p, f"{orig_val!r} vs {comp_val!r}")
             return
 
         # Float
         if isinstance(orig_val, float):
             total[0] += 1
-            if not isinstance(comp_val, (int, float)) or abs(orig_val - comp_val) > 1e-4:
-                _add_mismatch(p, f"{orig_val:.6f} vs {comp_val}")
+            if _is_missing(comp_val):
+                _add_miss(p, f"{orig_val:.6f} vs None")
+            elif not isinstance(comp_val, (int, float)) or abs(orig_val - comp_val) > 1e-4:
+                _add_error(p, f"{orig_val:.6f} vs {comp_val}")
             return
 
         # Other primitives
         total[0] += 1
-        if orig_val != comp_val:
-            _add_mismatch(p, f"{orig_val!r} vs {comp_val!r}")
+        if _is_missing(comp_val):
+            _add_miss(p, f"{orig_val!r} vs None")
+        elif orig_val != comp_val:
+            _add_error(p, f"{orig_val!r} vs {comp_val!r}")
 
     _walk(orig, comp, path)
-    return total[0], mismatches[0]
+    return total[0], errors[0], misses[0]
 
 
 def _is_dataclass(obj):
@@ -484,18 +543,19 @@ def _count_fields(obj):
 # ---------------------------------------------------------------------------
 
 def _compare_node_trees(node_a, node_b):
-    """Recursively compare two node trees. Returns (total_fields, mismatches)."""
+    """Recursively compare two node trees. Returns (total, errors, misses)."""
     total = 0
-    mismatches = 0
+    errors = 0
+    misses = 0
     visited = set()
 
     def _walk(a, b):
-        nonlocal total, mismatches
+        nonlocal total, errors, misses
         if a is None and b is None:
             return
         if a is None or b is None:
             total += 1
-            mismatches += 1
+            misses += 1
             return
         if id(a) in visited:
             return
@@ -505,7 +565,7 @@ def _compare_node_trees(node_a, node_b):
             return
 
         for field_name, _ in a.fields:
-            if field_name == 'address':
+            if field_name in _NODE_SKIP_FIELDS:
                 continue
             val_a = getattr(a, field_name, None)
             val_b = getattr(b, field_name, None)
@@ -513,52 +573,72 @@ def _compare_node_trees(node_a, node_b):
             if isinstance(val_a, Node):
                 total += 1
                 if not isinstance(val_b, Node):
-                    mismatches += 1
+                    misses += 1
                 else:
                     _walk(val_a, val_b)
             elif isinstance(val_a, (list, tuple)):
                 total += 1
                 if not isinstance(val_b, (list, tuple)) or len(val_a) != len(val_b):
-                    mismatches += 1
+                    errors += 1
                 else:
                     for i, (ia, ib) in enumerate(zip(val_a, val_b)):
                         if isinstance(ia, Node):
                             total += 1
                             if not isinstance(ib, Node):
-                                mismatches += 1
+                                misses += 1
                             else:
                                 _walk(ia, ib)
                         else:
                             total += 1
                             if isinstance(ia, float) and isinstance(ib, float):
                                 if abs(ia - ib) > 1e-5:
-                                    mismatches += 1
+                                    errors += 1
                             elif ia != ib:
-                                mismatches += 1
+                                errors += 1
             else:
                 total += 1
                 if isinstance(val_a, float) and isinstance(val_b, float):
                     if abs(val_a - val_b) > 1e-5:
-                        mismatches += 1
+                        errors += 1
                 elif val_a != val_b:
-                    mismatches += 1
+                    errors += 1
 
     _walk(node_a, node_b)
-    return total, mismatches
+    return total, errors, misses
+
+
+# Node fields to skip in NIN/NBN comparisons — file offsets and
+# address-like fields that change between builds but aren't model data
+_NODE_SKIP_FIELDS = {'address', 'data_address', 'display_list_address', 'base_pointer'}
+
+
+def _is_inactive_tev(field_name, node):
+    """Return True if this is a TEV node with no active stages (dead data)."""
+    if field_name != 'tev':
+        return False
+    return (type(node).__name__ == 'TextureTEV'
+            and getattr(node, 'active', None) == 0)
 
 
 def _compare_node_trees_nin(orig, composed):
     """NIN comparison: walk the ORIGINAL tree to count all fields.
 
     When the composed side is missing a subtree, all fields in that
-    original subtree count as mismatches.
+    original subtree count as misses.
     """
     total = 0
-    mismatches = 0
+    errors = 0
+    misses = 0
+    details = []
     visited = set()
 
-    def _walk(orig_node, comp_node):
-        nonlocal total, mismatches
+    def _node_label(node):
+        cls = type(node).__name__
+        addr = getattr(node, 'address', None)
+        return f"{cls}@{addr:#x}" if addr is not None else cls
+
+    def _walk(orig_node, comp_node, path="root"):
+        nonlocal total, errors, misses
         if orig_node is None:
             return
         if id(orig_node) in visited:
@@ -568,55 +648,82 @@ def _compare_node_trees_nin(orig, composed):
         if not hasattr(orig_node, 'fields'):
             return
 
+        node_path = f"{path}({_node_label(orig_node)})"
         for field_name, _ in orig_node.fields:
-            if field_name == 'address':
+            if field_name in _NODE_SKIP_FIELDS:
                 continue
 
             val_orig = getattr(orig_node, field_name, None)
             val_comp = getattr(comp_node, field_name, None) if comp_node is not None else None
+            fp = f"{node_path}.{field_name}"
 
             if isinstance(val_orig, Node):
+                # Skip TEV nodes with no active stages — dead data
+                if _is_inactive_tev(field_name, val_orig):
+                    continue
                 total += 1
                 comp_child = val_comp if isinstance(val_comp, Node) else None
                 if comp_child is None:
-                    mismatches += 1
-                _walk(val_orig, comp_child)
+                    misses += 1
+                    details.append(f"MISS {fp}: {_node_label(val_orig)} vs None")
+                _walk(val_orig, comp_child, fp)
             elif isinstance(val_orig, (list, tuple)):
                 comp_list = val_comp if isinstance(val_comp, (list, tuple)) else []
                 total += 1
                 if len(val_orig) != len(comp_list):
-                    mismatches += 1
+                    if len(comp_list) == 0:
+                        misses += 1
+                        details.append(f"MISS {fp}: len={len(val_orig)} vs empty")
+                    else:
+                        errors += 1
+                        details.append(f"ERR  {fp}: len={len(val_orig)} vs {len(comp_list)}")
                 for i, item in enumerate(val_orig):
                     comp_item = comp_list[i] if i < len(comp_list) else None
                     if isinstance(item, Node):
                         total += 1
                         comp_node_item = comp_item if isinstance(comp_item, Node) else None
                         if comp_node_item is None:
-                            mismatches += 1
-                        _walk(item, comp_node_item)
+                            misses += 1
+                            details.append(f"MISS {fp}[{i}]: {_node_label(item)} vs None")
+                        _walk(item, comp_node_item, f"{fp}[{i}]")
                     else:
                         total += 1
-                        if isinstance(item, float) and isinstance(comp_item, float):
+                        if comp_item is None:
+                            misses += 1
+                            details.append(f"MISS {fp}[{i}]: {item} vs None")
+                        elif isinstance(item, float) and isinstance(comp_item, float):
                             if abs(item - comp_item) > 1e-5:
-                                mismatches += 1
+                                errors += 1
+                                details.append(f"ERR  {fp}[{i}]: {item} vs {comp_item}")
                         elif item != comp_item:
-                            mismatches += 1
+                            errors += 1
+                            details.append(f"ERR  {fp}[{i}]: {item} vs {comp_item}")
             else:
                 total += 1
-                if isinstance(val_orig, float) and isinstance(val_comp, float):
+                if val_comp is None and val_orig is not None:
+                    misses += 1
+                    details.append(f"MISS {fp}: {repr(val_orig)[:60]} vs None")
+                elif isinstance(val_orig, float) and isinstance(val_comp, float):
                     if abs(val_orig - val_comp) > 1e-5:
-                        mismatches += 1
+                        errors += 1
+                        details.append(f"ERR  {fp}: {val_orig} vs {val_comp}")
                 elif val_orig != val_comp:
-                    mismatches += 1
+                    errors += 1
+                    details.append(f"ERR  {fp}: {repr(val_orig)[:60]} vs {repr(val_comp)[:60]}")
 
     _walk(orig, composed)
-    return total, mismatches
+    return total, errors, misses, details
 
 
 def _fuzzy_binary_match(data_a, data_b):
-    """Compare two byte sequences using 4-byte word frequency matching."""
+    """Compare two byte sequences using 4-byte word frequency matching.
+
+    Returns (matched, total, errors, misses) where errors are words present
+    in both but different, and misses are words in one but not the other.
+    For binary matching, all non-matches are errors (the data exists but differs).
+    """
     if len(data_a) < 4 and len(data_b) < 4:
-        return 0, 0, 100.0
+        return 0, 0, 0, 0
 
     words_a = Counter()
     words_b = Counter()
@@ -627,8 +734,9 @@ def _fuzzy_binary_match(data_a, data_b):
 
     matched = sum((words_a & words_b).values())
     total = max(sum(words_a.values()), sum(words_b.values()))
-    pct = (matched / total * 100) if total > 0 else 100.0
-    return matched, total, pct
+    # For binary comparison, all non-matches are errors (layout differences)
+    errors = total - matched
+    return matched, total, errors, 0
 
 
 # ---------------------------------------------------------------------------
@@ -658,33 +766,50 @@ def run_all_tests(filepath):
 
     # NBN
     try:
-        matched, total, pct = compute_nbn_score(filepath)
+        pct, err_pct, miss_pct = compute_nbn_score(filepath)
         scores['nbn'] = pct
+        scores['nbn_err'] = err_pct
+        scores['nbn_miss'] = miss_pct
     except Exception as e:
         scores['nbn'] = f"ERROR: {e}"
+        scores['nbn_err'] = 0.0
+        scores['nbn_miss'] = 0.0
 
     # BNB
     try:
-        matched, total, pct = compute_bnb_score(filepath)
+        pct, err_pct, miss_pct = compute_bnb_score(filepath)
         scores['bnb'] = pct
+        scores['bnb_err'] = err_pct
+        scores['bnb_miss'] = miss_pct
     except Exception as e:
         scores['bnb'] = f"ERROR: {e}"
+        scores['bnb_err'] = 0.0
+        scores['bnb_miss'] = 0.0
 
     # NIN
     try:
-        matched, total, pct = compute_nin_score(filepath)
+        pct, err_pct, miss_pct, nin_details = compute_nin_score(filepath)
         scores['nin'] = pct
+        scores['nin_err'] = err_pct
+        scores['nin_miss'] = miss_pct
+        scores['nin_details'] = nin_details
     except Exception as e:
         scores['nin'] = f"ERROR: {e}"
+        scores['nin_err'] = 0.0
+        scores['nin_miss'] = 0.0
 
     # IBI
     try:
-        _, _, pct, details, categories = compute_ibi_score(filepath)
+        pct, err_pct, miss_pct, details, categories = compute_ibi_score(filepath)
         scores['ibi'] = pct
+        scores['ibi_err'] = err_pct
+        scores['ibi_miss'] = miss_pct
         scores['ibi_details'] = details
         scores['ibi_categories'] = categories
     except Exception as e:
         scores['ibi'] = f"ERROR: {e}"
+        scores['ibi_err'] = 0.0
+        scores['ibi_miss'] = 0.0
         import traceback
         scores['ibi_details'] = [traceback.format_exc()]
         scores['ibi_categories'] = {}
@@ -720,40 +845,63 @@ def main():
         all_scores.append(scores)
 
         parts = []
-        for key in ('nbn', 'nin', 'ibi', 'bnb'):
+        for key in ('nbn', 'nin', 'ibi'):
             val = scores.get(key)
             if isinstance(val, float):
-                parts.append(f"{key.upper()}={val:.1f}%")
+                err = scores.get(f'{key}_err', 0.0)
+                miss = scores.get(f'{key}_miss', 0.0)
+                parts.append(f"{key.upper()}={val:.1f}%({err:.0f}/{miss:.0f})")
             else:
                 parts.append(f"{key.upper()}={val}")
+        # BNB without error/miss (binary matching has no meaningful miss distinction)
+        bnb_val = scores.get('bnb')
+        if isinstance(bnb_val, float):
+            parts.append(f"BNB={bnb_val:.1f}%")
+        else:
+            parts.append(f"BNB={bnb_val}")
         print('  '.join(parts))
 
-        # Show IBI category breakdown (only categories with data)
+        # Show IBI category breakdown with error/miss rates
         cats = scores.get('ibi_categories', {})
         cat_parts = []
         for cat_name in ('bones', 'meshes', 'materials', 'animations', 'constraints', 'lights'):
             cat = cats.get(cat_name)
             if cat and cat['total'] > 0:
-                cat_parts.append(f"{cat_name}={cat['pct']:.0f}%")
+                err_pct = cat['errors'] / cat['total'] * 100
+                miss_pct = cat['misses'] / cat['total'] * 100
+                cat_parts.append(f"{cat_name}={cat['pct']:.0f}%({err_pct:.0f}/{miss_pct:.0f})")
         if cat_parts:
             print(f"    IBI breakdown: {', '.join(cat_parts)}")
+
+        if verbose and scores.get('nin_details'):
+            for detail in scores['nin_details'][:20]:
+                print(f"    NIN: {detail}")
 
         if verbose and scores.get('ibi_details'):
             for detail in scores['ibi_details'][:20]:
                 print(f"    {detail}")
 
     # Summary table
-    print(f"\n{'='*70}")
-    print(f"{'Model':<20} {'NBN':>8} {'NIN':>8} {'IBI':>8} {'BNB':>8}")
-    print(f"{'-'*20} {'-'*8} {'-'*8} {'-'*8} {'-'*8}")
+    col_w = 18
+    print(f"\n{'='*(20 + col_w * 3 + 8 + 4)}")
+    print(f"{'Model':<20} {'NBN':>{col_w}} {'NIN':>{col_w}} {'IBI':>{col_w}} {'BNB':>8}")
+    print(f"{'-'*20} {'-'*col_w} {'-'*col_w} {'-'*col_w} {'-'*8}")
     for scores in all_scores:
         row = f"{scores['name']:<20}"
-        for key in ('nbn', 'nin', 'ibi', 'bnb'):
+        for key in ('nbn', 'nin', 'ibi'):
             val = scores.get(key)
             if isinstance(val, float):
-                row += f" {val:>7.1f}%"
+                err = scores.get(f'{key}_err', 0.0)
+                miss = scores.get(f'{key}_miss', 0.0)
+                cell = f"{val:.1f}%({err:.0f}/{miss:.0f})"
+                row += f" {cell:>{col_w}}"
             else:
-                row += f" {'ERR':>7}%"
+                row += f" {'ERR':>{col_w}}"
+        bnb_val = scores.get('bnb')
+        if isinstance(bnb_val, float):
+            row += f" {bnb_val:>7.1f}%"
+        else:
+            row += f" {'ERR':>7}%"
         print(row)
 
 

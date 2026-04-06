@@ -170,7 +170,9 @@ class Node(object):
                 offset += get_alignment_at_offset(field_type, self.address + offset)
                 if field[0] in raw_fields:
                     value = getattr(self, field[0])
-                    if isinstance(value, int) and value != 0:
+                    if isinstance(value, int):
+                        # Always relocate _raw_pointer_fields — even value 0
+                        # is a valid data-section-relative pointer (offset 0).
                         builder.relocations.append(self.address + offset)
                 offset += get_type_length(field_type)
 

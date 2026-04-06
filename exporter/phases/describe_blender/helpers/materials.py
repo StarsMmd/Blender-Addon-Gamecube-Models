@@ -14,7 +14,7 @@ try:
         ColorSource, LightingModel, CoordType, WrapMode,
         TextureInterpolation, LayerBlendMode, LightmapChannel,
     )
-    from .....shared.helpers.srgb import linear_to_srgb
+    from .....shared.helpers.srgb import linear_to_srgb, srgb_to_linear
     from .....shared.helpers.logger import StubLogger
 except (ImportError, SystemError):
     from shared.IR.material import (
@@ -24,7 +24,7 @@ except (ImportError, SystemError):
         ColorSource, LightingModel, CoordType, WrapMode,
         TextureInterpolation, LayerBlendMode, LightmapChannel,
     )
-    from shared.helpers.srgb import linear_to_srgb
+    from shared.helpers.srgb import linear_to_srgb, srgb_to_linear
     from shared.helpers.logger import StubLogger
 
 
@@ -54,28 +54,53 @@ def describe_material(blender_mat, logger=StubLogger()):
     # Determine lighting model
     lighting = LightingModel.UNLIT if (emission and not principled) else LightingModel.LIT
 
-    # Extract base colors from RGB nodes
+    # Extract diffuse color from RGB nodes or Principled BSDF
     diffuse_color = _extract_rgb_node_color(nodes, links, 'diffuse') or (0.7, 0.7, 0.7, 1.0)
-    ambient_color = _extract_rgb_node_color(nodes, links, 'ambient') or (0.5, 0.5, 0.5, 1.0)
-    specular_color = _extract_rgb_node_color(nodes, links, 'specular') or (1.0, 1.0, 1.0, 1.0)
-
-    # If no RGB nodes found, try extracting from Principled BSDF
     if principled and diffuse_color == (0.7, 0.7, 0.7, 1.0):
         base_color = principled.inputs['Base Color'].default_value
         diffuse_color = _linear_to_srgb_rgba(base_color)
+
+    # Extract ambient color from the dat_ambient_emission node
+    ambient_color = (0.5, 0.5, 0.5, 1.0)
+    ambient_node = None
+    for node in nodes:
+        if node.name == 'dat_ambient_emission':
+            ambient_node = node
+            break
+    if ambient_node:
+        amb_linear = ambient_node.inputs['Color'].default_value
+        ambient_color = _linear_to_srgb_rgba(amb_linear)
+
+    # Extract specular color from Specular Tint + diffuse color.
+    # Blender: specular = mix(white, base, tint) = 1 + tint*(base-1)
+    # Reverse: specular_color = 1 + tint * (diffuse - 1)
+    specular_color = (1.0, 1.0, 1.0, 1.0)
+    if principled and 'Specular Tint' in principled.inputs:
+        tint = principled.inputs['Specular Tint'].default_value
+        if hasattr(tint, '__len__') and len(tint) >= 3:
+            spec = [0.0, 0.0, 0.0, 1.0]
+            for c in range(3):
+                diff_linear = srgb_to_linear(diffuse_color[c])
+                spec_linear = 1.0 + tint[c] * (diff_linear - 1.0)
+                spec[c] = linear_to_srgb(max(0.0, min(1.0, spec_linear)))
+            specular_color = tuple(spec)
 
     # Alpha
     alpha = 1.0
     if principled and 'Alpha' in principled.inputs:
         alpha = principled.inputs['Alpha'].default_value
 
-    # Shininess
+    # Shininess — read the Specular IOR Level and convert back.
+    # The importer writes shininess/50 when specular is enabled, 0 when disabled.
+    # We store the raw value: if the shader has 0, default to 50.0 (the IR default)
+    # since the original shininess is lost when specular is disabled.
     shininess = 50.0
+    enable_specular = False
     if principled and 'Specular IOR Level' in principled.inputs:
-        shininess = principled.inputs['Specular IOR Level'].default_value * 50.0
-
-    # Enable specular
-    enable_specular = shininess > 0.0
+        spec_val = principled.inputs['Specular IOR Level'].default_value
+        if spec_val > 0.001:
+            shininess = spec_val * 50.0
+            enable_specular = True
 
     # Color/alpha source detection
     color_source, alpha_source = _detect_color_sources(nodes, links)
@@ -116,7 +141,9 @@ def _find_node(nodes, node_type):
     """Find the first node of the given type, skipping shiny filter nodes."""
     for node in nodes:
         if node.bl_idname == node_type:
-            if node.name in ('shiny_filter_shader', 'shiny_filter_mix'):
+            if node.name in ('shiny_route_shader', 'shiny_route_mix',
+                             'shiny_bright_shader', 'shiny_bright_mix',
+                             'dat_ambient_emission', 'dat_ambient_add'):
                 continue
             return node
     return None
@@ -127,7 +154,9 @@ def _find_nodes(nodes, node_type):
     result = []
     for node in nodes:
         if node.bl_idname == node_type:
-            if node.name in ('shiny_filter_shader', 'shiny_filter_mix'):
+            if node.name in ('shiny_route_shader', 'shiny_route_mix',
+                             'shiny_bright_shader', 'shiny_bright_mix',
+                             'dat_ambient_emission', 'dat_ambient_add'):
                 continue
             result.append(node)
     return result
@@ -292,13 +321,13 @@ def _describe_texture_node(tex_node, nodes, links, logger):
     ext = tex_node.extension if hasattr(tex_node, 'extension') else 'REPEAT'
     wrap = wrap_map.get(ext, WrapMode.REPEAT)
 
-    # Interpolation
+    # Interpolation — None means no LOD node (the original default).
+    # Only set a value if the texture uses a non-default interpolation.
     interp_map = {
         'Closest': TextureInterpolation.CLOSEST,
-        'Linear': TextureInterpolation.LINEAR,
         'Cubic': TextureInterpolation.CUBIC,
     }
-    interpolation = interp_map.get(tex_node.interpolation, TextureInterpolation.LINEAR)
+    interpolation = interp_map.get(tex_node.interpolation, None)
 
     # Detect blend mode and bump by tracing the texture's Color output
     color_blend, blend_factor, is_bump = _detect_blend_mode(tex_node, links)
@@ -316,9 +345,9 @@ def _describe_texture_node(tex_node, nodes, links, logger):
         repeat_t=repeat_t,
         interpolation=interpolation,
         color_blend=color_blend,
-        alpha_blend=LayerBlendMode.REPLACE,
+        alpha_blend=LayerBlendMode.NONE,
         blend_factor=blend_factor,
-        lightmap_channel=LightmapChannel.NONE,
+        lightmap_channel=LightmapChannel.DIFFUSE,
         is_bump=is_bump,
     )
 
@@ -344,7 +373,7 @@ def _detect_blend_mode(tex_node, links):
                 factor = target.inputs[0].default_value
                 return blend_type, factor, False
             if target.bl_idname == 'ShaderNodeBump':
-                return LayerBlendMode.MIX, 1.0, True
+                return LayerBlendMode.MIX, 0.0, True
             # Direct connection to a shader input → REPLACE
             return LayerBlendMode.REPLACE, 1.0, False
 
@@ -367,6 +396,18 @@ def _extract_image(bpy_image):
             pixel_bytes[i] = min(255, max(0, int(flat[i] * 255 + 0.5)))
         pixels = bytes(pixel_bytes)
 
+    # Read user's GX format override if the property exists
+    try:
+        from .....shared.IR.enums import GXTextureFormat
+    except (ImportError, SystemError):
+        from shared.IR.enums import GXTextureFormat
+    gx_format = GXTextureFormat.AUTO
+    format_str = getattr(bpy_image, 'dat_gx_format', 'AUTO')
+    try:
+        gx_format = GXTextureFormat(format_str)
+    except (ValueError, KeyError):
+        pass
+
     return IRImage(
         name=bpy_image.name,
         width=width,
@@ -374,4 +415,5 @@ def _extract_image(bpy_image):
         pixels=pixels,
         image_id=0,
         palette_id=0,
+        gx_format_override=gx_format,
     )

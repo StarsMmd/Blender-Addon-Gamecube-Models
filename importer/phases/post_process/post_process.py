@@ -131,11 +131,13 @@ def _apply_shiny(armature, shiny_params, logger):
     """
     try:
         from .shiny_filter import (
-            build_shiny_node_group, setup_shiny_properties, insert_shiny_filter,
+            build_shiny_route_node_group, build_shiny_bright_node_group,
+            setup_shiny_properties, insert_shiny_filter,
         )
     except (ImportError, SystemError):
         from importer.phases.post_process.shiny_filter import (
-            build_shiny_node_group, setup_shiny_properties, insert_shiny_filter,
+            build_shiny_route_node_group, build_shiny_bright_node_group,
+            setup_shiny_properties, insert_shiny_filter,
         )
 
     try:
@@ -161,17 +163,19 @@ def _apply_shiny(armature, shiny_params, logger):
     ir_filter = IRShinyFilter(channel_routing=routing, brightness=brightness)
 
     model_name = armature.name.replace('Armature_', '')
-    group_name = "ShinyFilter_%s" % model_name
-    node_group = build_shiny_node_group(ir_filter, group_name)
-    setup_shiny_properties(armature, ir_filter, group_name)
-    logger.info("  Built shiny filter node group: %s", group_name)
+    route_name = "ShinyRoute_%s" % model_name
+    bright_name = "ShinyBright_%s" % model_name
+    route_group = build_shiny_route_node_group(ir_filter, route_name)
+    bright_group = build_shiny_bright_node_group(ir_filter, bright_name)
+    setup_shiny_properties(armature, ir_filter, route_name, bright_name)
+    logger.info("  Built shiny filter node groups: %s, %s", route_name, bright_name)
 
     count = 0
     for child in armature.children:
         if child.type == 'MESH':
             for mat in child.data.materials:
                 if mat and mat.use_nodes:
-                    insert_shiny_filter(mat, node_group, armature, logger=logger)
+                    insert_shiny_filter(mat, route_group, bright_group, armature, logger=logger)
                     count += 1
 
     if count:

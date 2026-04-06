@@ -80,6 +80,7 @@ class Image(Node):
             self._raw_pointer_fields = set()
         if self.raw_image_data:
             builder.seek(0, 'end')
+            builder.align_buffer()
             self.data_address = builder._currentRelativeAddress()
             for byte in self.raw_image_data:
                 builder.write(byte, 'uchar')

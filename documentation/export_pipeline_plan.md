@@ -25,8 +25,8 @@ pre-process  Phase 1   Phase 2    Phase 3      Phase 4
 | Step | Name | Input | Output | Status |
 |------|------|-------|--------|--------|
 | Pre | Pre-process | filepath + context | validation pass/fail | ✅ Implemented |
-| 1 | Describe Blender Scene | Blender context | IRScene + ShinyParams | Bones + meshes done |
-| 2 | Compose | IRScene | Node trees (root nodes) | Skeleton done |
+| 1 | Describe Blender Scene | Blender context | IRScene + ShinyParams | ✅ Bones + meshes + materials |
+| 2 | Compose | IRScene | Node trees (root nodes) | ✅ Skeleton + meshes + materials + envelope skinning |
 | 3 | Serialize | Root nodes → DAT bytes (via DATBuilder) | DAT bytes | ✅ Implemented |
 | 4 | Package | DAT bytes + target filepath | Final output bytes | ✅ Implemented |
 
@@ -42,25 +42,22 @@ exporter/
     pre_process/
       pre_process.py                 # Pre-process: validate output path + scene       ✅
     describe_blender/
-      describe_blender.py            # Phase 1: Blender → IRScene + ShinyParams        bones+meshes+materials
+      describe_blender.py            # Phase 1: Blender → IRScene + ShinyParams        ✅
       helpers/
-        skeleton.py                  # Armature → IRBone list                           ✅
-        meshes.py                    # Mesh objects → IRMesh list                       ✅
-        materials.py                 # Blender materials → IRMaterial              ✅
-        animations.py                # Actions → IRBoneAnimationSet list
+        skeleton.py                  # Armature → IRBone list (+ IBM)                  ✅
+        meshes.py                    # Mesh objects → IRMesh list (+ envelope weights) ✅
+        materials.py                 # Blender materials → IRMaterial                  ✅
+        animations.py                # Actions → IRBoneAnimationSet list                ✅
         constraints.py               # Bone constraints → IR constraint lists
         lights.py                    # Light objects → IRLight list
         material_animations.py       # NLA tracks → IRMaterialAnimationSet list
     compose/
-      compose.py                     # Phase 2: IRScene → root node trees              skel+mesh+mat
+      compose.py                     # Phase 2: IRScene → root node trees              ✅
       helpers/
         bones.py                     # IRBone list → Joint tree                        ✅
-        meshes.py                    # IRMesh list → Mesh/PObject chains               ✅
-        materials.py                 # IRMaterial → MaterialObject chain           ✅
-        display_list_encoder.py      # Vertices/faces → GX display list bytes
-        image_encoder.py             # RGBA pixels → GX texture format bytes
-        keyframe_encoder.py          # IRKeyframe list → HSD compressed byte stream
-        animations.py                # IRBoneAnimationSet → AnimationJoint tree
+        meshes.py                    # IRMesh → Mesh/PObject/EnvelopeList chains       ✅
+        materials.py                 # IRMaterial → MaterialObject chain                ✅
+        animations.py                # IRBoneAnimationSet → AnimationJoint tree         ✅
         constraints.py               # IR constraints → Reference objects on Joints
         lights.py                    # IRLight → Light/LightSet nodes
         material_animations.py       # IRMaterialAnimationSet → MatAnimJoint tree
@@ -156,16 +153,15 @@ This is the foundation — everything else depends on a working skeleton and mes
 **`describe_blender/helpers/skeleton.py`** — Armature → IRBone list ✅
 
 Implementation:
-1. Exports only the **currently selected armature(s)** — each becomes one IRModel
+1. Exports all **armatures in the scene** — each becomes one IRModel
 2. Enter EDIT mode, walk the bone hierarchy in **depth-first order** (parents before children)
 3. For each edit bone:
    - Undo the pi/2 X-axis coordinate rotation to get GameCube Y-up world matrix
    - Compute local matrix from `parent_world.inverted() @ child_world`
    - Decompose local matrix to position (translation), rotation (Euler XYZ), scale
    - Compute accumulated_scale (product with all ancestor scales)
-4. **Flags**: Deduced from Blender state — `JOBJ_SKELETON` on all bones, `JOBJ_HIDDEN` from `edit_bone.hide`
-   - Flags that can't be deduced (e.g. `JOBJ_SPLINE`, `JOBJ_EFFECTOR`) are not set. May be exposed as custom properties later.
-5. `inverse_bind_matrix` is set to None (not yet computed)
+4. **Flags**: Initially set from Blender state (`JOBJ_HIDDEN` from `edit_bone.hide`), then refined by `_refine_bone_flags()` after meshes are described: `JOBJ_SKELETON_ROOT` on root bones, `JOBJ_SKELETON` on deformation bones, `JOBJ_ENVELOPE_MODEL` on bones owning WEIGHTED meshes, `JOBJ_ROOT_OPA` on all ancestor bones of mesh-owning bones
+5. `inverse_bind_matrix` = `srt_world.inverted()` — SRT-accumulated world matrix inverse, cleared for non-deformation bones by `_refine_bone_flags()`
 6. `scale_correction` is identity (edit bones don't carry scale)
 
 **`describe_blender/helpers/meshes.py`** — Mesh objects → IRMesh list ✅
@@ -180,17 +176,14 @@ Implementation:
    - `material=None` (material export not yet implemented)
 3. **Bone weight classification** from vertex groups:
    - Filter vertex groups to only those matching bone names
-   - SINGLE_BONE: all vertices reference exactly one bone
-   - WEIGHTED: vertices reference multiple bones
+   - SINGLE_BONE: all vertices reference exactly one bone (same bone)
+   - WEIGHTED: vertices reference multiple different bones → preserves per-vertex assignments for EnvelopeList encoding
    - No vertex groups → `bone_weights=None`, bound to root bone
-4. **Parent bone index**: bone with highest total vertex weight across all vertices, or 0 (root) if no weights
+4. **Parent bone index**: SINGLE_BONE → the named bone. WEIGHTED → bone 0 (root, SKELETON_ROOT). See "Envelope Skinning" section.
 5. `cull_back` from `material.use_backface_culling` on first material slot
 6. `is_hidden` from `mesh_obj.hide_render`
 
-**Remaining work for Feature 1:**
-- Vertex un-deformation for envelope-weighted meshes (reverse of `_extract_envelope_weights()`)
-- `inverse_bind_matrix` computation for weighted bones
-- RIGID skin type classification (currently only SINGLE_BONE and WEIGHTED)
+**Envelope skinning solution (WEIGHTED meshes):** See "Envelope Skinning" section below.
 
 #### Phase 2: Compose IR → Node Trees
 
@@ -266,17 +259,21 @@ DATBuilder lives at `exporter/phases/serialize/helpers/dat_builder.py`.
 
 The exporter deduces HSD values from Blender state rather than relying on custom properties stored during import. This allows it to work with arbitrary Blender models, not just re-exported imports.
 
-**Current flag deduction:**
-- `JOBJ_SKELETON` — set on all bones
-- `JOBJ_HIDDEN` — set when `edit_bone.hide` is True
+**Current flag deduction** (set by `_refine_bone_flags()` in `describe_blender.py`):
+- `JOBJ_SKELETON_ROOT` — root bones (parent_index is None)
+- `JOBJ_SKELETON` — bones referenced by mesh bone weights (deformation bones)
+- `JOBJ_ENVELOPE_MODEL` — bones owning WEIGHTED (envelope) meshes
+- `JOBJ_LIGHTING` / `JOBJ_OPA` — bones owning any meshes
+- `JOBJ_ROOT_OPA` — all bones in the hierarchy above mesh-owning bones
+- `JOBJ_HIDDEN` — bones with `edit_bone.hide` True, or bones where all attached meshes are hidden
 
-**Flags not yet deduced:** `JOBJ_SPLINE`, `JOBJ_EFFECTOR`, `JOBJ_INSTANCE`, `JOBJ_SKELETON_ROOT`. These may be exposed as custom properties in the future for users who need fine-grained control.
+**Flags not yet deduced:** `JOBJ_SPLINE`, `JOBJ_EFFECTOR`, `JOBJ_INSTANCE`. These may be exposed as custom properties in the future for users who need fine-grained control.
 
 **Skin type classification:**
-- SINGLE_BONE — all vertices reference exactly one bone via vertex groups
-- WEIGHTED — vertices reference multiple bones via vertex groups
-- No vertex groups — mesh bound to root bone (index 0)
-- RIGID — not yet distinguished from SINGLE_BONE (both use same vertex group pattern)
+- SINGLE_BONE — all vertices reference exactly one bone (same bone) via vertex groups
+- WEIGHTED — vertices reference multiple different bones via vertex groups → encoded as EnvelopeList (HSD ENVELOPE)
+- No vertex groups → `bone_weights=None`, bound to root bone (index 0)
+- RIGID — not produced by the exporter (RIGID requires bone-local vertex positions set via `matrix_local`, which is an import-only concept)
 
 ---
 
@@ -482,13 +479,16 @@ Steps (reverse of `describe_material_animations()`):
 
 BNB uses `compute_binary_match()` which splits both binaries into 4-byte words and counts matching words by value (not position) using `Counter` intersection. This tolerates layout differences from DATBuilder's alignment/ordering.
 
-### Current Scores (nukenin)
+### Current Scores (20-model average)
 
-| Test | Score | Notes |
-|---|---|---|
-| BNB | 94.0% | Layout differences from DATBuilder conventions |
-| NBN | 93.7% | Field mismatches from unresolved pointer edge cases |
-| NIN (skeleton) | 100.0% | compose_bones perfectly reverses describe_bones |
+| Test | Average | Range | Notes |
+|---|---|---|---|
+| NBN | ~92% | 89.6–97.1% | Pointer resolution edge cases |
+| NIN | ~59% | 44.1–82.2% | Display list size (no tri-strip), palette encoding |
+| IBI | ~60% | 48.9–66.6% | Animations/constraints/lights not yet implemented |
+| BNB | ~79% | 56.1–94.0% | Layout/alignment differences |
+
+See [round_trip_test_progress.md](round_trip_test_progress.md) for per-model scores.
 
 ### Phase-Level Round-Trip Tests
 
@@ -538,6 +538,76 @@ The BoundBox section contains per-animation-set, per-frame axis-aligned bounding
 1. For each animation set, evaluate the skeleton + mesh at each frame to compute a world-space AABB
 2. Build a BoundBox node with `anim_set_count` and the concatenated AABB data
 3. Write as a `"bound_box"` section alongside `"scene_data"` in the serialize phase
+
+---
+
+## Envelope Skinning (WEIGHTED meshes) — ✅ Solved
+
+Envelope skinning was the hardest part of mesh export. Three pieces must be correct simultaneously, and getting any one wrong causes severe mesh deformation.
+
+### The problem
+
+HSD's envelope vertex deformation formula (in the importer's `_extract_envelope_weights`):
+```
+deform = (bone_world @ bone_IBM) [@ coord]
+vertex_final = deform @ vertex_original
+```
+
+Where:
+- `bone_world` = bone's world matrix from SRT accumulation
+- `bone_IBM` = inverse bind matrix stored on the Joint node
+- `coord` = coordinate system from `_envelope_coord_system(parent_bone)`, depends on parent bone flags
+
+At rest pose, `deform` must equal identity so vertices stay at their original positions.
+
+### The solution (three interdependent parts)
+
+**1. IBM = `srt_world.inverted()`** (`describe_blender/helpers/skeleton.py`)
+
+The inverse bind matrix is the inverse of the bone's SRT-accumulated world matrix. This world matrix is computed by accumulating `compile_srt_matrix(scale, rotation, position)` through the parent chain **without coordinate rotation** — producing a matrix in HSD's native Y-up space. This matches HSDLib's convention (`WorldTransform.Inverted()` in `LiveJObj.RecalculateInverseBinds`).
+
+**2. WEIGHTED meshes attach to bone 0 (root, SKELETON_ROOT)** (`describe_blender/helpers/meshes.py`)
+
+When the parent bone has `JOBJ_SKELETON_ROOT`, `_envelope_coord_system()` returns `None`. This eliminates the coord factor and simplifies deformation to `bone_world @ IBM @ vertex`. Since `IBM = srt_world.inv` and the reimporter computes `bone_world` from the same SRT values, `bone_world @ IBM = identity`.
+
+Attaching to any other bone type produces a non-None coord that requires IBM values matching the original game tools' computation — which we can't reproduce from Blender data.
+
+**3. IBM always participates in deformation** (`importer/phases/describe/helpers/meshes.py`)
+
+The importer's `_extract_envelope_weights` was previously skipping IBM when `coord=None`:
+```python
+# OLD (broken for exported models):
+if coord:
+    matrix = entry_world @ entry_invbind
+else:
+    matrix = entry_world  # IBM skipped!
+```
+
+This caused exported models (with SKELETON_ROOT mesh parents) to have raw world transforms applied to vertices instead of identity. Fixed to always include IBM:
+```python
+# NEW (correct):
+matrix = entry_world @ entry_invbind  # IBM always applied
+```
+
+This doesn't affect original game models because their envelope meshes are never on SKELETON_ROOT bones — they use dedicated ENVELOPE_MODEL container bones where coord is always set.
+
+### Why IBM values don't match the original
+
+The original DAT file stores precomputed IBM values from the game's authoring tools. These correspond to a specific skeleton state that may differ from what SRT decomposition→recomposition produces through Blender. The important property is **internal consistency**: our exported IBM is the exact inverse of our exported world matrix, so `bone_world @ IBM = identity` after serialize→reparse.
+
+### Compose phase structure
+
+The compose phase (`compose/helpers/meshes.py`) groups IRMeshes sharing a material under one DObject (Mesh node) with PObjects chained via `.next`, matching HSD convention. Each ENVELOPE PObject gets:
+- `property` = list of EnvelopeList nodes (one per unique bone weight combination)
+- `flags` = `POBJ_ENVELOPE | POBJ_CULLBACK | 0x1`
+- PNMTXIDX vertex descriptor with `component_type = GX_F32`
+- Display list with `env_idx * 3` as PNMTXIDX direct values
+
+### Key files
+- `exporter/phases/describe_blender/helpers/skeleton.py` — `srt_world` accumulation + `inverse_bind = srt_world.inverted()`
+- `exporter/phases/describe_blender/helpers/meshes.py` — `_determine_parent_bone()` returns 0 for WEIGHTED; `_extract_bone_weights()` classifies multi-bone as WEIGHTED
+- `exporter/phases/compose/helpers/meshes.py` — `_build_envelope_map()`, `_build_envelope_lists()`, DObject grouping
+- `importer/phases/describe/helpers/meshes.py` — `_extract_envelope_weights()` deformation formula fix
 
 ---
 
@@ -628,13 +698,16 @@ The BoundBox section contains per-animation-set, per-frame axis-aligned bounding
 |------|--------|
 | `exporter/exporter.py` | ✅ Pipeline entry point |
 | `exporter/phases/pre_process/pre_process.py` | ✅ PKX validation + scene validation stub |
-| `exporter/phases/describe_blender/describe_blender.py` | ✅ Bones + meshes wired |
-| `exporter/phases/describe_blender/helpers/skeleton.py` | ✅ Armature → IRBone list |
-| `exporter/phases/describe_blender/helpers/meshes.py` | ✅ Mesh objects → IRMesh list |
+| `exporter/phases/describe_blender/describe_blender.py` | ✅ Bones + meshes + materials + flag refinement |
+| `exporter/phases/describe_blender/helpers/skeleton.py` | ✅ Armature → IRBone list + IBM (srt_world.inv) |
+| `exporter/phases/describe_blender/helpers/meshes.py` | ✅ Mesh objects → IRMesh list + envelope weights |
 | `exporter/phases/describe_blender/helpers/materials.py` | ✅ Blender materials → IRMaterial |
-| `exporter/phases/compose/compose.py` | Partial (skeleton wired) |
+| `exporter/phases/describe_blender/helpers/animations.py` | ✅ Fcurve reading + unbaking |
+| `exporter/phases/compose/compose.py` | ✅ Full scene composition |
 | `exporter/phases/compose/helpers/bones.py` | ✅ IRBone → Joint tree |
-| `exporter/phases/compose/helpers/meshes.py` | ✅ IRMesh → Mesh/PObject chains |
+| `exporter/phases/compose/helpers/meshes.py` | ✅ IRMesh → Mesh/PObject/EnvelopeList chains |
+| `exporter/phases/compose/helpers/materials.py` | ✅ IRMaterial → MaterialObject chain |
+| `exporter/phases/compose/helpers/animations.py` | ✅ Keyframe encoding |
 | `exporter/phases/serialize/serialize.py` | ✅ DATBuilder wrapper |
 | `exporter/phases/package/package.py` | ✅ .dat passthrough + .pkx injection |
 | `shared/helpers/pkx.py` | ✅ PKXContainer (shared by extract + package) |

@@ -178,13 +178,14 @@ Nodes are cached by file offset (`nodes_cache_by_offset`). Nodes with `is_cachab
 | Bone instances (JOBJ_INSTANCE) | ✅ Working |
 | Shape animation import | ❌ Stubs only (not implemented in legacy either) |
 | Camera / Fog import | ❌ Stubs only |
-| Exporter pipeline | ⚠️ Bones + meshes + materials working, animations/constraints TODO — see export pipeline plan |
+| Exporter pipeline | ⚠️ Bones + meshes (RIGID/SINGLE_BONE/ENVELOPE) + materials + textures (all GX formats) + bound box + animations + material animations + lights + constraints working |
 | Exporter binary round-trip (DATBuilder) | ✅ Functional (0 value mismatches) |
 | Exporter PKX packaging | ✅ Working (DAT injection, shiny write-back, trailer preserved) |
+| In-game loading | ✅ Working — all three paths (BNB, NIN, IBI) produce correct geometry + textures in both Blender and in-game simultaneously |
 | IR pipeline | ✅ Default path (legacy available via toggle) |
 | FSYS archive import | ✅ Working (multi-model extraction + LZSS decompression) |
 | Shiny variant filter | ✅ Working (PKX color extraction, live-editable shader node group, per-parameter UI) |
-| Unit tests | ✅ 443 passing |
+| Unit tests | ✅ 483 passing (27 texture encoder, 13 DAT serialization/alignment/relocation/vertex-space) |
 | Shader node auto-layout | ✅ Working (topological sort from output→inputs, left-to-right) |
 | Scale inheritance (animation baking) | ⚠️ Partially resolved — hybrid approach, see below |
 
@@ -248,9 +249,15 @@ See [Round-Trip Test Progress](documentation/round_trip_test_progress.md) for pe
 
 Real `.pkx`/`.dat` model files are used for round-trip testing (not committed — gitignored). Source models are in `~/Documents/Projects/DAT plugin/models/`.
 
-Available XD models: achamo, bohmander, cerebi, cokodora, frygon, gallop, haganeil, ken_a1, mage_0101, miniryu, rayquaza, runpappa, nukenin, usohachi.
+**Character / Pokémon models** (primary focus — run during regular score updates):
 
-Available Colosseum models: ghos, heracros, hinoarashi, hizuki_a1, koduck, showers.
+Available XD models: achamo, bohmander, cerebi, frygon, gallop, haganeil, ken_a1, mage_0101, miniryu, rayquaza, runpappa, nukenin, usohachi.
+
+Available Colosseum models: ghos, hinoarashi, hizuki_a1, showers.
+
+**Map / scene models** (stretch goal — only run as part of full status reports, not during regular updates):
+
+Available XD models: D6_out_all, M1_out, M3_out.
 
 ---
 
@@ -286,10 +293,17 @@ Do not linearize colors in the IR, parsing, or describe phases.
 
 The shiny filter is applied entirely in Phase 6 (post-processing), independent of the parsing/IR/build phases. Raw shiny parameters are extracted from PKX headers in Phase 1 and passed directly to Phase 6. There is no shiny data in the IR.
 
-The filter inserts two named nodes into each material's node tree:
+The filter inserts four named nodes into each material's node tree, split into two stages:
 
-- **`shiny_filter_shader`** — the ShaderNodeGroup instance referencing the `ShinyFilter_{model_name}` node group (contains a Gamma node internally for sRGB→linear correction)
-- **`shiny_filter_mix`** — the MixRGB node blending between normal and shiny output
+**Routing stage** (placed BEFORE vertex color multiply):
+- **`shiny_route_shader`** — ShaderNodeGroup referencing `ShinyRoute_{model_name}` (channel swizzle + Gamma linearization)
+- **`shiny_route_mix`** — MixRGB blending between normal and routed output
+
+**Brightness stage** (placed AFTER vertex color multiply):
+- **`shiny_bright_shader`** — ShaderNodeGroup referencing `ShinyBright_{model_name}` (per-channel brightness scaling)
+- **`shiny_bright_mix`** — MixRGB blending between normal and brightness-adjusted output
+
+This separation ensures channel routing only affects texture/material colors, not vertex colors. The vertex color multiply node is found by graph analysis (MixRGB MULTIPLY with ShaderNodeAttribute input), not by name.
 
 The exporter **must skip these nodes** when reading back materials — they are display-only and not part of the original model data. Identify them by the node names above.
 
@@ -309,6 +323,7 @@ The shiny parameters are stored as registered `bpy.props` properties on the arma
 - **Standalone scripts:** Any standalone Blender scripts (run from the Scripting panel) go in `scripts/` and must be documented in `documentation/scripts.md`.
 - **Blender API tracking:** Whenever a `bpy` API call is added, moved, removed, or modified, update `documentation/blender_api_usage.md` to match.
 - **Test count:** Whenever tests are added or removed, update the unit test count in the Current Status table above.
+- **Bug fix tests:** Whenever a bug is successfully fixed, add a unit test case that covers the fixed logic to prevent regressions.
 
 ---
 
@@ -317,3 +332,6 @@ The shiny parameters are stored as registered `bpy.props` properties on the arma
 - [ ] Code audit: identify opportunities to simplify and clean up code
 - [x] Code audit: identify opportunities to reduce algorithmic complexity — see [complexity optimization plan](documentation/complexity_optimization_plan.md)
 - [ ] Implement remaining complexity optimizations (items 1-3 in the plan above)
+- [x] Shiny filter: split into separate routing and brightness shaders. The routing shader (channel swizzle) only applies to texture colors, not vertex colors. The brightness shader applies to the final result after vertex color multiplication.
+- [x] Ambient lighting: approximated with per-material Emission node (`dat_ambient_emission`), read back on export. Scene-level `LOBJ_AMBIENT` lights still ignored.
+- [x] Bone inverse_bind_matrix: computed as `srt_world.inverted()` — the inverse of the SRT-accumulated world matrix (no coordinate rotation). Only set on skinning target bones, cleared on others. See "Envelope Skinning" section in [export pipeline plan](documentation/export_pipeline_plan.md).

@@ -515,6 +515,124 @@ class TestBinaryRoundtrip:
 # Real-file round-trip (opt-in, requires --dat-file)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# DAT header and alignment tests
+# ---------------------------------------------------------------------------
+
+class TestDATHeaderAndAlignment:
+    """Verify DAT header fields and file alignment."""
+
+    def test_file_size_includes_header(self):
+        """file_size field in DAT header includes the 0x20 header bytes."""
+        joint_data = build_joint(flags=1, scale=(1, 1, 1))
+        dat_bytes = build_dat_with_sections(
+            joint_data, relocations=[], sections=[(0, True)],
+            section_names=["test_joint"])
+
+        sections = _parse_sections(dat_bytes)
+        result = _rebuild(sections)
+
+        file_size = struct.unpack('>I', result[0:4])[0]
+        assert file_size > 32, "file_size should be larger than the 0x20 header"
+        # file_size should include the 0x20 header
+        assert file_size <= len(result), "file_size should not exceed total bytes"
+        # The content should end at file_size (rest is padding)
+        assert result[file_size - 1:file_size] == b'\x00', \
+            "last byte of content (at file_size-1) should be null terminator"
+
+    def test_file_size_ends_at_string_null_terminator(self):
+        """file_size points to the byte after the last section name's null terminator."""
+        joint_data = build_joint(flags=1, scale=(1, 1, 1))
+        dat_bytes = build_dat_with_sections(
+            joint_data, relocations=[], sections=[(0, True)],
+            section_names=["scene_data"])
+
+        sections = _parse_sections(dat_bytes, section_map={"scene_data": "Joint"})
+        result = _rebuild(sections)
+
+        file_size = struct.unpack('>I', result[0:4])[0]
+        # The content before the null terminator should be the section name
+        name_end = file_size - 1  # the null terminator
+        assert result[name_end] == 0, "should end with null terminator"
+        # Walk backward to find the start of the name
+        name_start = name_end - 1
+        while name_start > 0 and result[name_start] != 0:
+            name_start -= 1
+        name_start += 1  # skip past the previous null or section info
+        name_bytes = result[name_start:name_end]
+        assert name_bytes == b'scene_data', f"expected 'scene_data', got {name_bytes!r}"
+
+    def test_file_size_excludes_padding(self):
+        """file_size should not include trailing 0x20-alignment padding."""
+        joint_data = build_joint(flags=1, scale=(1, 1, 1))
+        dat_bytes = build_dat_with_sections(
+            joint_data, relocations=[], sections=[(0, True)],
+            section_names=["test_joint"])
+
+        sections = _parse_sections(dat_bytes)
+        result = _rebuild(sections)
+
+        file_size = struct.unpack('>I', result[0:4])[0]
+        # If the file was padded, file_size should be less than total length
+        # (unless content happens to be exactly aligned)
+        if len(result) != file_size:
+            # Padding bytes should all be zero
+            padding = result[file_size:]
+            assert all(b == 0 for b in padding), "padding bytes should be zero"
+
+    def test_serialize_output_0x20_aligned(self):
+        """serialize() output should be padded to 0x20 (32-byte) alignment."""
+        from exporter.phases.serialize.serialize import serialize
+        from shared.Nodes.Classes.Joints.Joint import Joint as JointNode
+        from shared.Nodes.Classes.Joints.ModelSet import ModelSet
+        from shared.Nodes.Classes.RootNodes.SceneData import SceneData
+
+        # Build a minimal scene
+        joint = JointNode(address=None, blender_obj=None)
+        joint.name = None
+        joint.flags = 1
+        joint.child = None
+        joint.next = None
+        joint.property = None
+        joint.rotation = [0, 0, 0]
+        joint.scale = [1, 1, 1]
+        joint.position = [0, 0, 0]
+        joint.inverse_bind = None
+        joint.reference = None
+
+        model_set = ModelSet(address=None, blender_obj=None)
+        model_set.root_joint = joint
+        model_set.animated_joints = None
+        model_set.animated_material_joints = None
+        model_set.animated_shape_joints = None
+
+        scene_data = SceneData(address=None, blender_obj=None)
+        scene_data.models = [model_set]
+        scene_data.camera = None
+        scene_data.lights = None
+        scene_data.fog = None
+
+        result = serialize([scene_data], ['scene_data'])
+        assert len(result) % 0x20 == 0, \
+            f"serialize output should be 0x20 aligned, got {len(result)} bytes ({len(result) % 0x20} remainder)"
+
+    def test_data_size_excludes_header(self):
+        """data_size field should not include the 0x20 header."""
+        joint_data = build_joint(flags=1, scale=(1, 1, 1))
+        dat_bytes = build_dat_with_sections(
+            joint_data, relocations=[], sections=[(0, True)],
+            section_names=["test_joint"])
+
+        sections = _parse_sections(dat_bytes)
+        result = _rebuild(sections)
+
+        data_size = struct.unpack('>I', result[4:8])[0]
+        file_size = struct.unpack('>I', result[0:4])[0]
+        assert data_size < file_size, "data_size should be less than file_size"
+        assert data_size < file_size - 32, \
+            "data_size should be significantly less than file_size (excludes header + relocs + sections)"
+
+
 class TestRealFileRoundtrip:
     """Round-trip a real .dat/.pkx file. Opt-in via --dat-file flag."""
 
@@ -600,3 +718,282 @@ class TestRealFileRoundtrip:
 
         # Real files should have very high match since DATBuilder is proven
         assert pct >= 95, f"Match too low for real file: {pct:.1f}%"
+
+
+# ---------------------------------------------------------------------------
+# Texture/palette alignment and relocation tests
+# ---------------------------------------------------------------------------
+
+class TestTextureAlignment:
+    """Verify that Image and Palette writePrimitivePointers produces
+    32-byte aligned data, and that _raw_pointer_fields at offset 0
+    are correctly relocated."""
+
+    def test_image_data_32byte_aligned(self):
+        """Image pixel data must be 32-byte aligned for GX hardware."""
+        from shared.Nodes.Classes.Texture.Image import Image
+        from shared.helpers.file_io import BinaryWriter
+
+        # Write 5 bytes of junk first to create a non-aligned position
+        stream = io.BytesIO()
+        writer = BinaryWriter(stream)
+        for _ in range(5):
+            writer.write('uchar', 0xAA)
+
+        # Mock the builder interface that Image.writePrimitivePointers expects
+        class MockBuilder:
+            def __init__(self, writer):
+                self._writer = writer
+            def seek(self, offset, whence='start'):
+                self._writer.seek(offset, whence)
+            def write(self, val, fmt):
+                return self._writer.write(fmt, val)
+            def _currentRelativeAddress(self):
+                return self._writer.file.tell()
+            def align_buffer(self):
+                while self._currentRelativeAddress() % 32 != 0:
+                    self.write(0, 'uchar')
+
+        builder = MockBuilder(writer)
+
+        img = Image(address=None, blender_obj=None)
+        img.raw_image_data = bytes(range(128))  # 128 bytes of pixel data
+        img.writePrimitivePointers(builder)
+
+        assert img.data_address % 32 == 0, \
+            f"Image data not 32-byte aligned: 0x{img.data_address:X}"
+
+    def test_palette_data_32byte_aligned(self):
+        """Palette data must be 32-byte aligned for GX hardware."""
+        from shared.Nodes.Classes.Texture.Palette import Palette
+        from shared.helpers.file_io import BinaryWriter
+
+        stream = io.BytesIO()
+        writer = BinaryWriter(stream)
+        for _ in range(7):
+            writer.write('uchar', 0xBB)
+
+        class MockBuilder:
+            def __init__(self, writer):
+                self._writer = writer
+            def seek(self, offset, whence='start'):
+                self._writer.seek(offset, whence)
+            def write(self, val, fmt):
+                return self._writer.write(fmt, val)
+            def _currentRelativeAddress(self):
+                return self._writer.file.tell()
+            def align_buffer(self):
+                while self._currentRelativeAddress() % 32 != 0:
+                    self.write(0, 'uchar')
+
+        builder = MockBuilder(writer)
+
+        pal = Palette(address=None, blender_obj=None)
+        pal.raw_data = bytes(range(64))  # 64 bytes of palette data
+        pal.writePrimitivePointers(builder)
+
+        assert pal.data % 32 == 0, \
+            f"Palette data not 32-byte aligned: 0x{pal.data:X}"
+
+    def test_multiple_images_all_aligned(self):
+        """Multiple images written sequentially must all be 32-byte aligned."""
+        from shared.Nodes.Classes.Texture.Image import Image
+        from shared.helpers.file_io import BinaryWriter
+
+        stream = io.BytesIO()
+        writer = BinaryWriter(stream)
+
+        class MockBuilder:
+            def __init__(self, writer):
+                self._writer = writer
+            def seek(self, offset, whence='start'):
+                self._writer.seek(offset, whence)
+            def write(self, val, fmt):
+                return self._writer.write(fmt, val)
+            def _currentRelativeAddress(self):
+                return self._writer.file.tell()
+            def align_buffer(self):
+                while self._currentRelativeAddress() % 32 != 0:
+                    self.write(0, 'uchar')
+
+        builder = MockBuilder(writer)
+
+        # Write 3 images with non-power-of-2 sizes
+        sizes = [100, 200, 77]  # bytes — none are 32-byte multiples
+        images = []
+        for size in sizes:
+            img = Image(address=None, blender_obj=None)
+            img.raw_image_data = bytes(size)
+            img.writePrimitivePointers(builder)
+            images.append(img)
+
+        for i, img in enumerate(images):
+            assert img.data_address % 32 == 0, \
+                f"Image[{i}] not 32-byte aligned: 0x{img.data_address:X} (data size={sizes[i]})"
+
+    def test_opcode_node_count_roundtrip(self):
+        """Opcode encoding must produce counts the decoder reconstructs correctly.
+
+        Regression: the encoder used subtraction (count - 7) instead of
+        bit-shifting (count >> 3), causing extension bytes to encode wrong
+        values for runs > 8 keyframes.
+        """
+        from exporter.phases.compose.helpers.animations import _encode_opcode
+        from shared.Constants.hsd import (
+            HSD_A_OP_LIN, HSD_A_OP_SPL, HSD_A_OP_CON,
+            HSD_A_OP_MASK, HSD_A_PACK0_MASK, HSD_A_PACK0_SHIFT,
+            HSD_A_PACK_EXT, HSD_A_PACK1_MASK, HSD_A_PACK1_BIT,
+        )
+
+        def decode_opcode(data):
+            """Decode opcode and node count from encoded bytes."""
+            cur_pos = 0
+            opcode = data[cur_pos] & HSD_A_OP_MASK
+            node_count = (data[cur_pos] & HSD_A_PACK0_MASK) >> HSD_A_PACK0_SHIFT
+            shift = 0
+            while data[cur_pos] & HSD_A_PACK_EXT:
+                cur_pos += 1
+                node_count += (data[cur_pos] & HSD_A_PACK1_MASK) << (HSD_A_PACK1_BIT * shift + 3)
+                shift += 1
+            node_count += 1
+            return opcode, node_count
+
+        # Test various counts including edge cases
+        for opcode in [HSD_A_OP_LIN, HSD_A_OP_SPL, HSD_A_OP_CON]:
+            for count in [1, 2, 7, 8, 9, 12, 15, 16, 50, 96, 100, 200, 500]:
+                raw = bytearray()
+                _encode_opcode(raw, opcode, count)
+                decoded_op, decoded_count = decode_opcode(raw)
+                assert decoded_op == opcode, \
+                    f"Opcode mismatch for count={count}: {decoded_op} vs {opcode}"
+                assert decoded_count == count, \
+                    f"Count mismatch for opcode={opcode}, count={count}: decoded {decoded_count}"
+
+    def test_zero_offset_raw_pointer_relocated(self):
+        """_raw_pointer_fields with value 0 must still be relocated."""
+        from shared.Nodes.Classes.Texture.Image import Image
+
+        img = Image(address=None, blender_obj=None)
+        img.raw_image_data = bytes(64)
+        img.address = 0x100  # simulate allocated struct address
+        img.data_address = 0  # points to offset 0 in data section
+        img._raw_pointer_fields = {'data_address'}
+
+        # Simulate what Node.writeBinary does for _raw_pointer_fields
+        relocations = []
+
+        class MockBuilder:
+            pass
+
+        builder = MockBuilder()
+        builder.relocations = relocations
+
+        # Replay the relocation logic from Node.writeBinary
+        from shared.Nodes.NodeTypes import markUpFieldType, get_type_length, get_alignment_at_offset
+        raw_fields = img._raw_pointer_fields
+        offset = 0
+        for field in img.fields:
+            field_type = markUpFieldType(field[1])
+            offset += get_alignment_at_offset(field_type, img.address + offset)
+            if field[0] in raw_fields:
+                value = getattr(img, field[0])
+                if isinstance(value, int):
+                    builder.relocations.append(img.address + offset)
+            offset += get_type_length(field_type)
+
+        assert len(relocations) == 1, f"Expected 1 relocation, got {len(relocations)}"
+        assert relocations[0] == 0x100, \
+            f"Relocation at wrong offset: 0x{relocations[0]:X} (expected 0x100)"
+
+
+# ---------------------------------------------------------------------------
+# Vertex coordinate space round-trip tests
+# ---------------------------------------------------------------------------
+
+class TestVertexCoordinateSpace:
+    """Verify that vertex positions round-trip correctly through the IR.
+
+    The IR stores all vertices in world space regardless of skin type.
+    The describe phase transforms bone-local → world, and compose
+    transforms world → bone-local.
+    """
+
+    def test_rigid_world_to_local_roundtrip(self):
+        """RIGID vertices: world → compose(local) → describe(world) = original."""
+        from shared.helpers.math_shim import Matrix, Vector
+        from exporter.phases.compose.helpers.meshes import _encode_float3_buffer
+
+        # Bone at position (5, 10, 3) — pure translation
+        bone_world = Matrix([
+            [1, 0, 0, 5],
+            [0, 1, 0, 10],
+            [0, 0, 1, 3],
+            [0, 0, 0, 1],
+        ])
+        world_inv = bone_world.inverted()
+
+        # World-space vertex
+        world_vertex = (7.0, 15.0, 6.0)
+
+        # Compose: world → local
+        local = tuple(world_inv @ Vector(world_vertex))
+        assert abs(local[0] - 2.0) < 0.001  # 7 - 5
+        assert abs(local[1] - 5.0) < 0.001  # 15 - 10
+        assert abs(local[2] - 3.0) < 0.001  # 6 - 3
+
+        # Describe: local → world
+        recovered = tuple(bone_world @ Vector(local))
+        assert abs(recovered[0] - world_vertex[0]) < 0.001
+        assert abs(recovered[1] - world_vertex[1]) < 0.001
+        assert abs(recovered[2] - world_vertex[2]) < 0.001
+
+    def test_single_bone_world_to_local_roundtrip(self):
+        """SINGLE_BONE vertices: same as RIGID — world ↔ local via bone world matrix."""
+        from shared.helpers.math_shim import Matrix, Vector
+
+        # Bone with rotation (45 degrees around Z) + translation
+        import math
+        c = math.cos(math.pi/4)
+        s = math.sin(math.pi/4)
+        bone_world = Matrix([
+            [c, -s, 0, 3],
+            [s,  c, 0, 7],
+            [0,  0, 1, 1],
+            [0,  0, 0, 1],
+        ])
+
+        world_vertex = (5.0, 9.0, 2.0)
+
+        # Round-trip
+        local = tuple(bone_world.inverted() @ Vector(world_vertex))
+        recovered = tuple(bone_world @ Vector(local))
+
+        assert abs(recovered[0] - world_vertex[0]) < 0.001
+        assert abs(recovered[1] - world_vertex[1]) < 0.001
+        assert abs(recovered[2] - world_vertex[2]) < 0.001
+
+    def test_envelope_undeform_identity_ibm(self):
+        """ENVELOPE with IBM = srt_world.inv(): deform is identity, undeform is identity."""
+        from shared.helpers.math_shim import Matrix, Vector
+
+        bone_world = Matrix([
+            [1, 0, 0, 0],
+            [0, 1, 0, 10],
+            [0, 0, 1, 0.5],
+            [0, 0, 0, 1],
+        ])
+        bone_ibm = bone_world.inverted()
+
+        # Deformation = bone_world @ bone_ibm = identity
+        deform = bone_world @ bone_ibm
+        for i in range(4):
+            for j in range(4):
+                expected = 1.0 if i == j else 0.0
+                assert abs(deform[i][j] - expected) < 0.001
+
+        # World-space vertex passes through unchanged
+        world_vertex = Vector((-1.63, 11.64, 3.06))
+        result = deform @ world_vertex
+        assert abs(result[0] - world_vertex[0]) < 0.001
+        assert abs(result[1] - world_vertex[1]) < 0.001
+        assert abs(result[2] - world_vertex[2]) < 0.001

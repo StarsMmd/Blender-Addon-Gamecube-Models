@@ -33,7 +33,12 @@ def serialize(root_nodes, section_names, logger=StubLogger()):
 
     dat_bytes = stream.getvalue()
 
+    # Pad to 0x20 alignment
+    remainder = len(dat_bytes) % 0x20
+    if remainder != 0:
+        dat_bytes += b'\x00' * (0x20 - remainder)
+
     logger.info("  Node count: %d", len(builder.node_list))
     logger.info("  Relocations: %d", len(builder.relocations))
-    logger.info("=== Export Phase 3 complete: %d bytes ===", len(dat_bytes))
+    logger.info("=== Export Phase 3 complete: %d bytes (0x20 aligned) ===", len(dat_bytes))
     return dat_bytes

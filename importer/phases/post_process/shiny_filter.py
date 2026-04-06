@@ -1,10 +1,14 @@
 """Build and insert shiny color filter shader nodes.
 
-Creates a node group that applies the PKX shiny color transformation
-(channel routing + brightness scaling) and inserts it into material
-node trees with a driver-controlled mix for runtime toggling.
+Creates two node groups for the PKX shiny color transformation:
+  - ShinyRoute: channel routing (swizzle) — applied BEFORE vertex color multiply
+  - ShinyBright: brightness scaling — applied AFTER vertex color multiply
 
-The node group is rebuilt whenever any shiny parameter property changes,
+This separation ensures that channel routing only affects texture/material
+colors, not vertex colors. Both stages are driven by a single dat_shiny
+toggle on the armature.
+
+The node groups are rebuilt whenever any shiny parameter property changes,
 so all 8 parameters (4 routing + 4 brightness) can be tweaked live.
 """
 import bpy
@@ -26,16 +30,55 @@ _PROP_TO_CHANNEL = {
 _CHANNEL_TO_PROP = {v: k for k, v in _PROP_TO_CHANNEL.items()}
 
 
-def populate_shiny_node_group(group, routing, brightness):
-    """Populate (or repopulate) a node group with the shiny filter nodes.
+# ---------------------------------------------------------------------------
+# Node group construction
+# ---------------------------------------------------------------------------
 
-    Clears any existing nodes and rebuilds from scratch. Since all material
-    group node instances reference this group, changes propagate automatically.
+def build_shiny_route_node_group(shiny_filter, name):
+    """Create a node group that performs channel routing (swizzle).
+
+    Args:
+        shiny_filter: IRShinyFilter with channel_routing.
+        name: Name for the node group (e.g. "ShinyRoute_model_name").
+
+    Returns:
+        bpy.types.ShaderNodeTree (the node group).
+    """
+    group = bpy.data.node_groups.new(name, 'ShaderNodeTree')
+    group.interface.new_socket('Color', in_out='INPUT', socket_type='NodeSocketColor')
+    group.interface.new_socket('Color', in_out='OUTPUT', socket_type='NodeSocketColor')
+
+    populate_shiny_route_node_group(group, shiny_filter.channel_routing)
+    return group
+
+
+def build_shiny_bright_node_group(shiny_filter, name):
+    """Create a node group that performs per-channel brightness scaling.
+
+    Args:
+        shiny_filter: IRShinyFilter with brightness.
+        name: Name for the node group (e.g. "ShinyBright_model_name").
+
+    Returns:
+        bpy.types.ShaderNodeTree (the node group).
+    """
+    group = bpy.data.node_groups.new(name, 'ShaderNodeTree')
+    group.interface.new_socket('Color', in_out='INPUT', socket_type='NodeSocketColor')
+    group.interface.new_socket('Color', in_out='OUTPUT', socket_type='NodeSocketColor')
+
+    populate_shiny_bright_node_group(group, shiny_filter.brightness)
+    return group
+
+
+def populate_shiny_route_node_group(group, routing):
+    """Populate a node group with channel routing (swizzle) nodes.
+
+    Clears existing nodes and rebuilds. Since all material group node
+    instances reference this group, changes propagate automatically.
 
     Args:
         group: bpy.types.ShaderNodeTree (the node group to populate).
         routing: tuple of 4 ShinyChannel values (R, G, B, A output mapping).
-        brightness: tuple of 4 floats in [-1.0, 1.0].
     """
     nodes = group.nodes
     links = group.links
@@ -60,107 +103,106 @@ def populate_shiny_node_group(group, routing, brightness):
     }
 
     if needs_alpha_input:
-        # Add Alpha input socket if not already present
-        has_alpha_socket = len(group.interface.items_tree) > 2
+        has_alpha_socket = any(
+            item.name == 'Alpha' and item.in_out == 'INPUT'
+            for item in group.interface.items_tree
+        )
         if not has_alpha_socket:
             group.interface.new_socket('Alpha', in_out='INPUT', socket_type='NodeSocketFloat')
         alpha_input = group_in.outputs[1]
         channel_sources[ShinyChannel.ALPHA] = alpha_input
     else:
-        # Remove Alpha socket if present (more than 2 interface items = input + output + alpha)
-        items = list(group.interface.items_tree)
-        if len(items) > 2:
-            for item in items:
-                if item.name == 'Alpha' and item.in_out == 'INPUT':
-                    group.interface.remove(item)
-                    break
+        for item in list(group.interface.items_tree):
+            if item.name == 'Alpha' and item.in_out == 'INPUT':
+                group.interface.remove(item)
+                break
         channel_sources[ShinyChannel.ALPHA] = None
 
-    # For each RGBA output channel: route source → multiply by brightness
-    channel_names = ['R', 'G', 'B', 'A']
-    scaled_channels = []
-    for i in range(4):
-        source_channel = routing[i]
-        source_socket = channel_sources[source_channel]
-        brightness_multiplier = brightness[i] + 1.0  # [-1,1] → [0,2]
-
-        if source_socket is not None:
-            mult = nodes.new('ShaderNodeMath')
-            mult.operation = 'MULTIPLY'
-            mult.name = 'Brightness_%s' % channel_names[i]
-            links.new(source_socket, mult.inputs[0])
-            mult.inputs[1].default_value = brightness_multiplier
-            scaled_channels.append(mult.outputs[0])
+    # Route each output channel from its source
+    routed = []
+    for i in range(3):  # R, G, B only
+        source = channel_sources[routing[i]]
+        if source is not None:
+            routed.append(source)
         else:
             value = nodes.new('ShaderNodeValue')
             value.outputs[0].default_value = 0.0
-            scaled_channels.append(value.outputs[0])
+            routed.append(value.outputs[0])
 
-    # Recombine RGB channels
+    # Recombine RGB
     combine = nodes.new('ShaderNodeCombineColor')
     combine.mode = 'RGB'
-    links.new(scaled_channels[0], combine.inputs[0])
-    links.new(scaled_channels[1], combine.inputs[1])
-    links.new(scaled_channels[2], combine.inputs[2])
+    links.new(routed[0], combine.inputs[0])
+    links.new(routed[1], combine.inputs[1])
+    links.new(routed[2], combine.inputs[2])
 
-    # Gamma node: linearize the shiny output (sRGB → linear) so Blender's
-    # scene-linear pipeline produces accurate colors.
+    # Gamma: linearize (sRGB → linear) for Blender's scene-linear pipeline
     gamma = nodes.new('ShaderNodeGamma')
-    gamma.name = 'Gamma'
     gamma.inputs[1].default_value = 2.2
     links.new(combine.outputs[0], gamma.inputs[0])
 
     links.new(gamma.outputs[0], group_out.inputs[0])
 
-    # Alpha output
-    _ensure_socket(group, 'Alpha', 'OUTPUT', 'NodeSocketFloat')
-    links.new(scaled_channels[3], group_out.inputs[1])
+    _auto_layout_node_group(nodes, links)
+
+
+def populate_shiny_bright_node_group(group, brightness):
+    """Populate a node group with per-channel brightness scaling.
+
+    Args:
+        group: bpy.types.ShaderNodeTree (the node group to populate).
+        brightness: tuple of 4 floats in [-1.0, 1.0].
+    """
+    nodes = group.nodes
+    links = group.links
+    nodes.clear()
+
+    group_in = nodes.new('NodeGroupInput')
+    group_out = nodes.new('NodeGroupOutput')
+
+    # Separate Color → R, G, B
+    separate = nodes.new('ShaderNodeSeparateColor')
+    separate.mode = 'RGB'
+    links.new(group_in.outputs[0], separate.inputs[0])
+
+    channel_names = ['R', 'G', 'B']
+    scaled = []
+    for i in range(3):
+        mult = nodes.new('ShaderNodeMath')
+        mult.operation = 'MULTIPLY'
+        mult.name = 'Brightness_%s' % channel_names[i]
+        links.new(separate.outputs[i], mult.inputs[0])
+        mult.inputs[1].default_value = brightness[i] + 1.0  # [-1,1] → [0,2]
+        scaled.append(mult.outputs[0])
+
+    # Recombine RGB
+    combine = nodes.new('ShaderNodeCombineColor')
+    combine.mode = 'RGB'
+    links.new(scaled[0], combine.inputs[0])
+    links.new(scaled[1], combine.inputs[1])
+    links.new(scaled[2], combine.inputs[2])
+
+    links.new(combine.outputs[0], group_out.inputs[0])
 
     _auto_layout_node_group(nodes, links)
 
 
-def _ensure_socket(group, name, in_out, socket_type):
-    """Add an interface socket if it doesn't already exist."""
-    for item in group.interface.items_tree:
-        if item.name == name and item.in_out == in_out:
-            return
-    group.interface.new_socket(name, in_out=in_out, socket_type=socket_type)
+# ---------------------------------------------------------------------------
+# Property setup and rebuild
+# ---------------------------------------------------------------------------
 
-
-def build_shiny_node_group(shiny_filter, name):
-    """Create a reusable node group implementing the shiny color transformation.
-
-    Args:
-        shiny_filter: IRShinyFilter with channel_routing and brightness.
-        name: Name for the node group (e.g. "ShinyFilter_model_name").
-
-    Returns:
-        bpy.types.ShaderNodeTree (the node group).
-    """
-    group = bpy.data.node_groups.new(name, 'ShaderNodeTree')
-
-    group.interface.new_socket('Color', in_out='INPUT', socket_type='NodeSocketColor')
-    group.interface.new_socket('Color', in_out='OUTPUT', socket_type='NodeSocketColor')
-    group.interface.new_socket('Alpha', in_out='OUTPUT', socket_type='NodeSocketFloat')
-
-    populate_shiny_node_group(group, shiny_filter.channel_routing, shiny_filter.brightness)
-
-    return group
-
-
-def setup_shiny_properties(armature, shiny_filter, group_name):
+def setup_shiny_properties(armature, shiny_filter, route_group_name, bright_group_name):
     """Initialize all shiny properties on the armature from an IRShinyFilter.
-
-    The properties themselves are registered on bpy.types.Object in BlenderPlugin.register().
-    This sets initial values and stores the node group name for live rebuilding.
 
     Args:
         armature: The Blender armature object.
         shiny_filter: IRShinyFilter with channel_routing and brightness.
-        group_name: Name of the ShinyFilter node group (for rebuilding).
+        route_group_name: Name of the ShinyRoute node group.
+        bright_group_name: Name of the ShinyBright node group.
     """
     armature["dat_has_shiny"] = True
-    armature["dat_shiny_group"] = group_name
+    armature["dat_shiny_route_group"] = route_group_name
+    armature["dat_shiny_bright_group"] = bright_group_name
 
     armature.dat_shiny = False
     armature.dat_shiny_route_r = _CHANNEL_TO_PROP[shiny_filter.channel_routing[0]]
@@ -174,16 +216,10 @@ def setup_shiny_properties(armature, shiny_filter, group_name):
 
 
 def rebuild_shiny_node_group(armature):
-    """Rebuild the shiny node group from the armature's current property values.
+    """Rebuild both shiny node groups from the armature's current property values.
 
     Called by the property update callbacks in BlenderPlugin.py.
     """
-    group_name = armature.get("dat_shiny_group")
-    if not group_name or group_name not in bpy.data.node_groups:
-        return
-
-    group = bpy.data.node_groups[group_name]
-
     routing = (
         _PROP_TO_CHANNEL[armature.dat_shiny_route_r],
         _PROP_TO_CHANNEL[armature.dat_shiny_route_g],
@@ -197,18 +233,94 @@ def rebuild_shiny_node_group(armature):
         armature.dat_shiny_brightness_a,
     )
 
-    populate_shiny_node_group(group, routing, brightness)
+    route_name = armature.get("dat_shiny_route_group")
+    if route_name and route_name in bpy.data.node_groups:
+        populate_shiny_route_node_group(bpy.data.node_groups[route_name], routing)
+
+    bright_name = armature.get("dat_shiny_bright_group")
+    if bright_name and bright_name in bpy.data.node_groups:
+        populate_shiny_bright_node_group(bpy.data.node_groups[bright_name], brightness)
 
 
-def insert_shiny_filter(material, node_group, armature, logger=None):
-    """Insert the shiny filter node group into a material's node tree.
+# ---------------------------------------------------------------------------
+# Vertex color detection (graph-based, works on any material)
+# ---------------------------------------------------------------------------
 
-    Finds the color source feeding into the main shader and interposes a Mix node
-    controlled by a driver on armature.dat_shiny to blend between normal and shiny.
+def _find_vertex_color_multiply(nodes, links, shader_node, input_name='Base Color'):
+    """Walk backward from a shader input to find a vertex color multiply node.
+
+    Looks for a MixRGB node with blend_type MULTIPLY that has a
+    ShaderNodeAttribute (vertex color) as one of its inputs. This
+    works on any material — no naming assumptions.
+
+    Args:
+        nodes: material node tree nodes.
+        links: material node tree links.
+        shader_node: the target shader node (Principled BSDF or Emission).
+        input_name: name of the shader input to trace from.
+
+    Returns:
+        (mix_node, texture_input_socket) if found — mix_node is the vertex
+        color multiply, texture_input_socket is the socket on mix_node that
+        receives the texture/material color (not the vertex color).
+        (None, None) if no vertex color multiply found.
+    """
+    # Find the link going into the shader input
+    target_input = shader_node.inputs.get(input_name)
+    if target_input is None:
+        return None, None
+
+    current_node = None
+    for link in links:
+        if link.to_node == shader_node and link.to_socket == target_input:
+            current_node = link.from_node
+            break
+
+    if current_node is None:
+        return None, None
+
+    # Walk backward, checking each node
+    visited = set()
+    queue = [current_node]
+    while queue:
+        node = queue.pop(0)
+        if id(node) in visited:
+            continue
+        visited.add(id(node))
+
+        if node.bl_idname == 'ShaderNodeMixRGB' and node.blend_type == 'MULTIPLY':
+            # Check if either Color1 or Color2 input comes from a ShaderNodeAttribute
+            for input_idx in (1, 2):
+                for link in links:
+                    if link.to_node == node and link.to_socket == node.inputs[input_idx]:
+                        if link.from_node.bl_idname == 'ShaderNodeAttribute':
+                            # Found it — the OTHER input is the texture color
+                            texture_idx = 2 if input_idx == 1 else 1
+                            return node, node.inputs[texture_idx]
+
+        # Continue walking backward through all inputs
+        for link in links:
+            if link.to_node == node:
+                queue.append(link.from_node)
+
+    return None, None
+
+
+# ---------------------------------------------------------------------------
+# Insertion into material node tree
+# ---------------------------------------------------------------------------
+
+def insert_shiny_filter(material, route_group, bright_group, armature, logger=None):
+    """Insert shiny filter nodes into a material's node tree.
+
+    Places the routing stage BEFORE any vertex color multiply, and the
+    brightness stage AFTER it. If no vertex color multiply is found,
+    both stages are inserted in sequence at the shader input.
 
     Args:
         material: bpy.types.Material with use_nodes=True.
-        node_group: The ShinyFilter node group (from build_shiny_node_group).
+        route_group: The ShinyRoute node group.
+        bright_group: The ShinyBright node group.
         armature: The armature object with the shiny properties.
         logger: Optional logger for diagnostics.
     """
@@ -218,21 +330,56 @@ def insert_shiny_filter(material, node_group, armature, logger=None):
         return
 
     nodes = material.node_tree.nodes
+    links = material.node_tree.links
 
     # Skip if already applied
-    if 'shiny_filter_mix' in nodes or 'shiny_filter_shader' in nodes:
+    if any(n.name in ('shiny_route_mix', 'shiny_bright_mix') for n in nodes):
         if logger:
             logger.debug("    Skipped '%s': already applied", material.name)
         return
-    links = material.node_tree.links
 
+    # Find the shader's color input
     target_node, target_input, is_emission = _find_color_input(nodes)
     if target_node is None:
         if logger:
-            node_types = [n.type for n in nodes]
-            logger.debug("    Skipped '%s': no color input found, node types: %s", material.name, node_types)
+            logger.debug("    Skipped '%s': no color input found", material.name)
         return
 
+    input_name = 'Color' if is_emission else 'Base Color'
+
+    # Look for vertex color multiply in the chain
+    vtx_mult, texture_socket = _find_vertex_color_multiply(
+        nodes, links, target_node, input_name)
+
+    if vtx_mult is not None:
+        # Insert routing BEFORE the vertex color multiply
+        _insert_stage_before(nodes, links, vtx_mult, texture_socket,
+                             route_group, 'shiny_route_shader', 'shiny_route_mix', armature)
+        # Insert brightness AFTER the vertex color multiply (at the shader input)
+        _insert_stage_at_input(nodes, links, target_node, target_input,
+                               bright_group, 'shiny_bright_shader', 'shiny_bright_mix', armature)
+        if logger:
+            logger.debug("    Applied '%s': routing before vtx color, brightness after", material.name)
+    else:
+        # No vertex colors — insert both stages at the shader input
+        _insert_stage_at_input(nodes, links, target_node, target_input,
+                               route_group, 'shiny_route_shader', 'shiny_route_mix', armature)
+        _insert_stage_at_input(nodes, links, target_node, target_input,
+                               bright_group, 'shiny_bright_shader', 'shiny_bright_mix', armature)
+        if logger:
+            logger.debug("    Applied '%s': routing + brightness (no vtx color)", material.name)
+
+    _auto_layout(nodes, material.node_tree.links)
+
+
+def _insert_stage_at_input(nodes, links, target_node, target_input,
+                            node_group, group_name, mix_name, armature):
+    """Insert a shiny stage between a source and a shader input.
+
+    Intercepts the link going into target_input, routes through the
+    node group with a driver-controlled mix for toggling.
+    """
+    # Find existing link to the target input
     source_link = None
     for link in links:
         if link.to_node == target_node and link.to_socket == target_input:
@@ -250,33 +397,64 @@ def insert_shiny_filter(material, node_group, armature, logger=None):
 
     group_node = nodes.new('ShaderNodeGroup')
     group_node.node_tree = node_group
-    group_node.name = 'shiny_filter_shader'
-
+    group_node.name = group_name
     links.new(source_output, group_node.inputs[0])
-
-    if len(group_node.inputs) > 1:
-        group_node.inputs[1].default_value = 1.0
 
     mix_node = nodes.new('ShaderNodeMixRGB')
     mix_node.blend_type = 'MIX'
-    mix_node.name = 'shiny_filter_mix'
+    mix_node.name = mix_name
     mix_node.inputs[0].default_value = 0.0
 
-    links.new(source_output, mix_node.inputs[1])
-    links.new(group_node.outputs[0], mix_node.inputs[2])
-    links.new(mix_node.outputs[0], target_input)
+    links.new(source_output, mix_node.inputs[1])        # Normal path
+    links.new(group_node.outputs[0], mix_node.inputs[2]) # Shiny path
+    links.new(mix_node.outputs[0], target_input)         # Output to shader
 
     _add_shiny_driver(mix_node.inputs[0], armature)
 
-    _auto_layout(nodes, material.node_tree.links)
 
+def _insert_stage_before(nodes, links, multiply_node, texture_input,
+                          node_group, group_name, mix_name, armature):
+    """Insert a shiny stage before a vertex color multiply node.
+
+    Intercepts the texture color link going into the multiply node's
+    texture input socket, routes through the node group with a mix.
+    """
+    # Find existing link to the texture input
+    source_link = None
+    for link in links:
+        if link.to_node == multiply_node and link.to_socket == texture_input:
+            source_link = link
+            break
+
+    if source_link is None:
+        return  # No source to intercept
+
+    source_output = source_link.from_socket
+    links.remove(source_link)
+
+    group_node = nodes.new('ShaderNodeGroup')
+    group_node.node_tree = node_group
+    group_node.name = group_name
+    links.new(source_output, group_node.inputs[0])
+
+    mix_node = nodes.new('ShaderNodeMixRGB')
+    mix_node.blend_type = 'MIX'
+    mix_node.name = mix_name
+    mix_node.inputs[0].default_value = 0.0
+
+    links.new(source_output, mix_node.inputs[1])          # Normal path
+    links.new(group_node.outputs[0], mix_node.inputs[2])   # Shiny path
+    links.new(mix_node.outputs[0], texture_input)          # Back to multiply
+
+    _add_shiny_driver(mix_node.inputs[0], armature)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def _find_color_input(nodes):
     """Find the main color input on the output shader.
-
-    Checks Principled BSDF first, but only if its Base Color has an incoming
-    link. Unlit materials (e.g. legacy importer) set Base Color to black and
-    route the actual color through an Emission node instead.
 
     Returns (node, input_socket, is_emission) or (None, None, False).
     """
@@ -290,7 +468,6 @@ def _find_color_input(nodes):
         if node.type == 'EMISSION':
             return node, node.inputs['Color'], True
 
-    # Fallback: Principled BSDF with no link (solid color)
     for node in nodes:
         if node.type == 'BSDF_PRINCIPLED':
             return node, node.inputs['Base Color'], False
@@ -370,5 +547,5 @@ def _auto_layout(nodes, links, output_type='OUTPUT_MATERIAL'):
 
 
 def _auto_layout_node_group(nodes, links):
-    """Arrange nodes inside a node group (uses GROUP_OUTPUT as root)."""
+    """Arrange nodes inside a node group."""
     _auto_layout(nodes, links, output_type='GROUP_OUTPUT')

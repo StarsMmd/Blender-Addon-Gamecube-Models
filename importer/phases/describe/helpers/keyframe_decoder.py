@@ -112,17 +112,21 @@ def decode_fobjdesc(fobj, bias=0, scale=1):
                     cur_pos += 1
                     current_frame += wait
 
-    # Build IRKeyframes without explicit bezier handles.
-    # The temp fcurves use Blender's AUTO_CLAMPED handle algorithm which
-    # produces smooth interpolation matching the original importer's output.
-    # (The slope data from the HSD stream is not used for temp curve handles;
-    # the frame-by-frame SRT baking evaluates the auto-handled curves instead.)
+    # Build IRKeyframes with slope data preserved for round-trip fidelity.
+    # The slope data from the HSD stream captures the original tangent values.
+    # The build phase (Phase 5) may use Blender's AUTO_CLAMPED handles instead
+    # of these slopes for visual fidelity, but the slopes are preserved in the
+    # IR so that the compose phase can re-encode them accurately.
     keyframes = []
     for i, (frame, value, interp, _opcode) in enumerate(decoded):
+        slope_in = slopes[i][0] if i < len(slopes) else None
+        slope_out = slopes[i][1] if i < len(slopes) else None
         keyframes.append(IRKeyframe(
             frame=frame,
             value=value,
             interpolation=interp,
+            slope_in=slope_in,
+            slope_out=slope_out,
         ))
 
     return keyframes

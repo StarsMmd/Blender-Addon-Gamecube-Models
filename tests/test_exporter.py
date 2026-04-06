@@ -157,9 +157,9 @@ class TestComposeBones:
         ]
         root, joints = compose_bones(bones)
 
-        assert root.name == "Parent"
+        assert root is joints[0]
         assert root.child is not None
-        assert root.child.name == "Child"
+        assert root.child is joints[1]
         assert root.child.child is None
         assert root.child.next is None
 
@@ -173,9 +173,9 @@ class TestComposeBones:
         ]
         root, joints = compose_bones(bones)
 
-        assert root.child.name == "A"
-        assert root.child.next.name == "B"
-        assert root.child.next.next.name == "C"
+        assert root.child is joints[1]
+        assert root.child.next is joints[2]
+        assert root.child.next.next is joints[3]
         assert root.child.next.next.next is None
 
     def test_deep_hierarchy(self):
@@ -187,8 +187,8 @@ class TestComposeBones:
         ]
         root, joints = compose_bones(bones)
 
-        assert root.child.name == "Mid"
-        assert root.child.child.name == "Leaf"
+        assert root.child is joints[1]
+        assert root.child.child is joints[2]
         assert root.child.child.child is None
 
     def test_flags_preserved(self):
@@ -215,11 +215,10 @@ class TestComposeBones:
 
         # Instance bone is a sibling of Target
         instance = root.child.next
-        assert instance.name == "Instance"
+        assert instance is joints[2]
         assert instance.flags & JOBJ_INSTANCE
         # Instance's child should point to the Target joint
         assert instance.child is joints[1]
-        assert instance.child.name == "Target"
 
     def test_multiple_roots(self):
         """Multiple root bones are linked via .next on the root."""
@@ -229,8 +228,8 @@ class TestComposeBones:
         ]
         root, joints = compose_bones(bones)
 
-        assert root.name == "Root1"
-        assert root.next.name == "Root2"
+        assert root is joints[0]
+        assert root.next is joints[1]
         assert root.next.next is None
 
 

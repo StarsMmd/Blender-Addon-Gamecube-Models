@@ -26,6 +26,7 @@ try:
     )
     from .....shared.IR.enums import SkinType
     from .....shared.helpers.binary import pack, pack_many
+    from .....shared.helpers.math_shim import Matrix, Vector
     from .....shared.helpers.logger import StubLogger
     from .materials import compose_material
 except (ImportError, SystemError):
@@ -47,6 +48,7 @@ except (ImportError, SystemError):
     )
     from shared.IR.enums import SkinType
     from shared.helpers.binary import pack, pack_many
+    from shared.helpers.math_shim import Matrix, Vector
     from shared.helpers.logger import StubLogger
     from exporter.phases.compose.helpers.materials import compose_material
 
@@ -67,8 +69,11 @@ def _alloc_base_pointer():
 def compose_meshes(meshes, joints, bones, logger=StubLogger()):
     """Convert IRMesh list into Mesh node chains attached to Joints.
 
-    Groups meshes by parent_bone_index, creates one Mesh → PObject chain
-    per bone, and sets joint.property to the head Mesh node.
+    Groups meshes by parent_bone_index. Within each bone, meshes that
+    share the same material are grouped under one DObject (Mesh node)
+    with PObjects chained via PObject.next. Different materials get
+    separate DObjects linked via Mesh.next. This matches the HSD
+    convention where a DObject owns one material and one or more PObjects.
 
     Args:
         meshes: list[IRMesh] from the IR.
@@ -95,23 +100,47 @@ def compose_meshes(meshes, joints, bones, logger=StubLogger()):
     bone_name_to_index = {bone.name: i for i, bone in enumerate(bones)}
 
     for bone_idx, ir_meshes in meshes_by_bone.items():
-        mesh_nodes = []
+        # Group IRMeshes by material identity. Meshes with the same
+        # material (by id) share a DObject; each gets its own PObject.
+        # Preserve original order: use the first occurrence of each
+        # material id as the group key order.
+        material_groups = []  # [(material_id, [ir_mesh, ...])]
+        mat_id_to_group = {}
         for ir_mesh in ir_meshes:
-            pobj = _build_pobj(ir_mesh, joints, bones, bone_name_to_index, logger)
-            if pobj is None:
+            mat_id = id(ir_mesh.material)
+            if mat_id not in mat_id_to_group:
+                group = []
+                mat_id_to_group[mat_id] = group
+                material_groups.append((ir_mesh.material, group))
+            mat_id_to_group[mat_id].append(ir_mesh)
+
+        mesh_nodes = []
+        for ir_material, group_meshes in material_groups:
+            # Build PObjects for each mesh in this material group
+            pobjs = []
+            for ir_mesh in group_meshes:
+                pobj = _build_pobj(ir_mesh, joints, bones, bone_name_to_index, logger)
+                if pobj is not None:
+                    pobjs.append(pobj)
+
+            if not pobjs:
                 continue
+
+            # Chain PObjects via .next under one DObject
+            for i in range(len(pobjs) - 1):
+                pobjs[i].next = pobjs[i + 1]
 
             mesh_node = Mesh(address=None, blender_obj=None)
             mesh_node.name = None
             mesh_node.next = None
-            mesh_node.mobject = compose_material(ir_mesh.material, logger=logger)
-            mesh_node.pobject = pobj
+            mesh_node.mobject = compose_material(ir_material, logger=logger)
+            mesh_node.pobject = pobjs[0]
             mesh_nodes.append(mesh_node)
 
         if not mesh_nodes:
             continue
 
-        # Link mesh nodes into a linked list via .next
+        # Link DObject nodes into a linked list via .next
         for i in range(len(mesh_nodes) - 1):
             mesh_nodes[i].next = mesh_nodes[i + 1]
 
@@ -156,7 +185,7 @@ def _build_pobj(ir_mesh, joints, bones, bone_name_to_index, logger):
         pnmtx_desc.attribute = GX_VA_PNMTXIDX
         pnmtx_desc.attribute_type = GX_DIRECT
         pnmtx_desc.component_count = 0
-        pnmtx_desc.component_type = 0
+        pnmtx_desc.component_type = GX_F32
         pnmtx_desc.component_frac = 0
         pnmtx_desc.stride = 0
         pnmtx_desc.base_pointer = 0
@@ -164,8 +193,30 @@ def _build_pobj(ir_mesh, joints, bones, bone_name_to_index, logger):
         vertex_descs.append(pnmtx_desc)
         vertex_buffers.append(('pnmtxidx', envelope_map))
 
-    # Position — always present
-    pos_data, pos_buffer = _encode_float3_buffer(ir_mesh.vertices)
+    # Position — always present.
+    # The IR stores vertices in world space. The DAT format stores them
+    # relative to the parent bone's transform:
+    # - WEIGHTED (envelope): reverse the deformation (bone_world @ IBM @ coord)
+    # - SINGLE_BONE: transform from world to parent bone's local space
+    export_vertices = ir_mesh.vertices
+    if is_envelope and bones:
+        export_vertices = _undeform_vertices(
+            ir_mesh.vertices, bw.assignments, bones, bone_name_to_index,
+            ir_mesh.parent_bone_index, logger)
+    elif bw and bw.type in (SkinType.SINGLE_BONE, SkinType.RIGID) and bones:
+        # SINGLE_BONE and RIGID: transform from world space to parent bone's
+        # local space. The game applies the parent Joint's world transform
+        # at runtime to position the mesh.
+        bone_idx = ir_mesh.parent_bone_index
+        if bw.type == SkinType.SINGLE_BONE and bw.bone_name:
+            bone_idx = bone_name_to_index.get(bw.bone_name, bone_idx)
+        if bone_idx < len(bones) and bones[bone_idx].world_matrix:
+            world_inv = Matrix(bones[bone_idx].world_matrix).inverted()
+            export_vertices = [
+                tuple(world_inv @ Vector(v)) for v in ir_mesh.vertices
+            ]
+
+    pos_data, pos_buffer = _encode_float3_buffer(export_vertices)
     pos_desc = _make_vertex_desc(GX_VA_POS, GX_POS_XYZ, GX_F32, stride=12)
     pos_desc.raw_vertex_data = pos_buffer
     vertex_descs.append(pos_desc)
@@ -191,10 +242,15 @@ def _build_pobj(ir_mesh, joints, bones, bone_name_to_index, logger):
         vertex_descs.append(uv_desc)
         vertex_buffers.append(('uv', uv_verts, uv_indices))
 
-    # Color layers
+    # Color layers — only include if colors actually vary per vertex.
+    # Uniform color layers (all identical values) are material-level defaults
+    # that should not be encoded as vertex attributes.
     for color_layer in ir_mesh.color_layers:
         # Skip alpha-only layers (alpha is part of RGBA in the color layer)
         if 'alpha_' in color_layer.name:
+            continue
+        # Skip uniform color layers (no per-vertex variation)
+        if color_layer.colors and all(c == color_layer.colors[0] for c in color_layer.colors):
             continue
         clr_attr = GX_VA_CLR0 if 'color_0' in color_layer.name else GX_VA_CLR1
         clr_verts, clr_indices, clr_buffer = _encode_indexed_rgba(color_layer.colors)
@@ -226,22 +282,26 @@ def _build_pobj(ir_mesh, joints, bones, bone_name_to_index, logger):
     pobj.face_lists = []
     pobj.normals = []
 
-    # Cull flags
+    # Cull flags — POBJ_CULLBACK is the default in HSD (backface culling on)
+    pobj.flags |= POBJ_CULLBACK
     if ir_mesh.cull_front:
         pobj.flags |= POBJ_CULLFRONT
-    if ir_mesh.cull_back:
-        pobj.flags |= POBJ_CULLBACK
+    if not ir_mesh.cull_back:
+        pobj.flags &= ~POBJ_CULLBACK
 
     # Skinning
     if is_envelope:
         pobj.property = _build_envelope_lists(
             envelope_map, joints, bone_name_to_index)
-        pobj.flags |= POBJ_ENVELOPE
+        pobj.flags |= POBJ_ENVELOPE | 0x1  # bit 0 always set alongside ENVELOPE
     elif bw and bw.type == SkinType.SINGLE_BONE and bw.bone_name:
         bone_idx = bone_name_to_index.get(bw.bone_name)
         if bone_idx is not None and bone_idx < len(joints):
+            # Set SKIN property — the Joint reference tells the game which
+            # bone deforms this mesh. For self-referencing (bone == parent),
+            # the mesh vertices are already positioned by the Joint hierarchy.
             pobj.property = joints[bone_idx]
-            pobj.flags |= POBJ_SKIN
+            # POBJ_SKIN is 0x0 (default type field value), no flag to set
         else:
             pobj.property = None
     else:
@@ -262,6 +322,116 @@ def _build_pobj(ir_mesh, joints, bones, bone_name_to_index, logger):
 # ---------------------------------------------------------------------------
 # Envelope (WEIGHTED skinning) helpers
 # ---------------------------------------------------------------------------
+
+def _undeform_vertices(vertices, assignments, bones, bone_name_to_index,
+                       parent_bone_index, logger):
+    """Reverse the envelope deformation applied by the describe phase.
+
+    The describe phase transforms vertices via:
+        world_pos = (bone_world @ bone_IBM [@ coord]) @ bind_pos
+    This reverses it by computing the same deformation matrices and
+    inverting them, matching describe/meshes.py's _extract_envelope_weights.
+    """
+    try:
+        from .....shared.Constants.hsd import JOBJ_SKELETON_ROOT
+    except (ImportError, SystemError):
+        from shared.Constants.hsd import JOBJ_SKELETON_ROOT
+
+    # Build per-vertex envelope index mapping
+    vertex_to_env = {}
+    env_combos = []
+    combo_to_idx = {}
+    for vertex_idx, weight_list in assignments:
+        key = tuple(sorted((name, round(w, 6)) for name, w in weight_list))
+        if key not in combo_to_idx:
+            combo_to_idx[key] = len(env_combos)
+            env_combos.append(weight_list)
+        vertex_to_env[vertex_idx] = combo_to_idx[key]
+
+    # Compute envelope coordinate system (mirrors describe phase)
+    coord = _envelope_coord_system(parent_bone_index, bones, JOBJ_SKELETON_ROOT)
+
+    # Compute inverse deformation matrix per envelope
+    inv_deform = []
+    for weight_list in env_combos:
+        zero = [[0] * 4 for _ in range(4)]
+        matrix = Matrix(zero)
+
+        for bone_name, weight in weight_list:
+            bone_idx = bone_name_to_index.get(bone_name, 0)
+            bone = bones[bone_idx]
+            bone_world = Matrix(bone.world_matrix)
+            bone_ibm = _get_invbind_matrix(bone_idx, bones)
+            contrib = bone_world @ bone_ibm
+            for i in range(4):
+                for j in range(4):
+                    matrix[i][j] += weight * contrib[i][j]
+
+        if coord:
+            matrix = matrix @ coord
+
+        try:
+            inv_deform.append(matrix.inverted())
+        except (ValueError, ZeroDivisionError):
+            inv_deform.append(Matrix([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]]))
+
+    # Apply inverse deformation to each vertex
+    result = list(vertices)
+    for vertex_idx, env_idx in vertex_to_env.items():
+        if vertex_idx < len(result) and env_idx < len(inv_deform):
+            old_pos = result[vertex_idx]
+            new_pos = inv_deform[env_idx] @ Vector(old_pos)
+            result[vertex_idx] = (new_pos[0], new_pos[1], new_pos[2])
+
+    return result
+
+
+def _get_invbind_matrix(bone_index, bones):
+    """Walk up the bone hierarchy to find the nearest inverse bind matrix."""
+    idx = bone_index
+    while idx is not None:
+        bone = bones[idx]
+        if bone.inverse_bind_matrix:
+            return Matrix(bone.inverse_bind_matrix)
+        idx = bone.parent_index
+    return Matrix([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]])
+
+
+def _find_skeleton_bone(bone_index, bones, JOBJ_SKELETON_ROOT):
+    """Find the skeleton root bone for a given bone."""
+    idx = bone_index
+    while idx is not None:
+        if bones[idx].flags & JOBJ_SKELETON_ROOT:
+            return idx
+        idx = bones[idx].parent_index
+    return None
+
+
+def _envelope_coord_system(bone_index, bones, JOBJ_SKELETON_ROOT):
+    """Compute envelope coordinate system matrix for a bone.
+
+    Mirrors importer/phases/describe/helpers/meshes.py:_envelope_coord_system.
+    """
+    bone = bones[bone_index]
+    if bone.flags & JOBJ_SKELETON_ROOT:
+        return None
+
+    skel_idx = _find_skeleton_bone(bone_index, bones, JOBJ_SKELETON_ROOT)
+    if skel_idx is None:
+        return None
+
+    inv_bind = _get_invbind_matrix(bone_index, bones)
+    bone_world = Matrix(bone.world_matrix)
+
+    if skel_idx == bone_index:
+        return inv_bind.inverted()
+    elif bones[skel_idx].flags & JOBJ_SKELETON_ROOT:
+        skel_world = Matrix(bones[skel_idx].world_matrix)
+        return skel_world.inverted() @ bone_world
+    else:
+        skel_world = Matrix(bones[skel_idx].world_matrix)
+        return (skel_world @ inv_bind).inverted() @ bone_world
+
 
 def _build_envelope_map(assignments, bone_name_to_index):
     """Build a mapping from vertex indices to envelope indices.

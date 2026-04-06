@@ -140,7 +140,12 @@ class BinaryWriter:
                         self.file.write(struct.pack('>f', row[j]))
             else:
                 format = get_primitive_type_format(type)
-                self.file.write(struct.pack(format, data))
+                try:
+                    self.file.write(struct.pack(format, data))
+                except struct.error as e:
+                    raise ValueError(
+                        "Failed to write '{}' value: {} (got {} {})".format(
+                            type, e, data.__class__.__name__, repr(data)[:60])) from e
         else:
             raise ValueError('Unknown primitive type')
 

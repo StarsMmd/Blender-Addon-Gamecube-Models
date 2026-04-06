@@ -44,3 +44,58 @@ After running, use the **Shiny Variant** panel in Object Properties to tweak par
 - "Select an armature object" — no armature is selected
 - "Already has a shiny filter" — the armature already has shiny data (edit existing parameters instead)
 - "DAT plugin addon must be enabled" — the addon isn't active, so shiny properties aren't registered
+
+---
+
+## set_texture_formats.py
+
+**Purpose:** Set the GX texture format on all textures of the selected armature. The exporter uses this property to determine which format to encode each texture in.
+
+**Usage:**
+1. Select an armature in the viewport
+2. Open the Scripting workspace
+3. Open `scripts/set_texture_formats.py`
+4. Click **Run Script**
+
+**What it does:**
+- Finds all textures on the armature's child mesh materials
+- Analyzes each texture's pixel content (grayscale, alpha, color count)
+- Sets the `dat_gx_format` property to the recommended format
+- Prints a summary showing each texture's dimensions, analysis, and selected format
+
+**Formats:**
+- **CMPR** — S3TC/DXT1 compressed (default for most textures)
+- **I8** — 8-bit grayscale (for grayscale textures with alpha)
+- **RGBA8** — full quality 32-bit RGBA
+- **C4/C8** — palette-indexed (for textures with few unique colors)
+- Other formats available via manual override in Blender's Image properties
+
+The format can also be set manually per-texture by selecting the image in the Image Editor and changing the `dat_gx_format` dropdown in its properties.
+
+---
+
+## add_ambient_lighting.py
+
+**Purpose:** Add ambient lighting nodes to all materials on the selected armature. The exporter reads the ambient color from these nodes when writing the DAT file.
+
+**Usage:**
+1. Select an armature in the viewport
+2. Open the Scripting workspace
+3. Open `scripts/add_ambient_lighting.py`
+4. Click **Run Script**
+
+**What it does:**
+- For each material on the armature's child meshes:
+  - Adds a `dat_ambient_emission` Emission node (default: mid-gray at 0.1 strength)
+  - Adds a `dat_ambient_add` Add Shader node to mix the ambient with the main shader
+  - Skips materials that already have ambient nodes
+- Materials will appear slightly self-illuminated, approximating the game's per-material ambient lighting
+
+**Adjusting ambient:**
+- Select the material in the Shader Editor
+- Find the `dat_ambient_emission` node
+- Change the **Color** to set the ambient color
+- Change the **Strength** to control how visible the ambient contribution is
+
+**Errors:**
+- "Select an armature object" — no armature is selected

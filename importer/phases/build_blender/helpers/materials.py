@@ -128,7 +128,22 @@ def build_material(ir_material, image_cache=None, name=''):
         transparent_shader, alt_blend_mode, mat
     )
 
-    links.new(shader.outputs[0], output.inputs[0])
+    # --- Ambient approximation ---
+    # Add a low-strength Emission node with the ambient color, mixed via
+    # Add Shader. This makes the material slightly self-illuminated,
+    # approximating HSD's per-material ambient contribution.
+    ambient_emission = nodes.new('ShaderNodeEmission')
+    ambient_emission.name = 'dat_ambient_emission'
+    ambient_color_linear = _linearize_rgb(ir_material.ambient_color)
+    ambient_emission.inputs['Color'].default_value = ambient_color_linear
+    ambient_emission.inputs['Strength'].default_value = 0.1
+
+    ambient_add = nodes.new('ShaderNodeAddShader')
+    ambient_add.name = 'dat_ambient_add'
+    links.new(shader.outputs[0], ambient_add.inputs[0])
+    links.new(ambient_emission.outputs[0], ambient_add.inputs[1])
+    links.new(ambient_add.outputs[0], output.inputs[0])
+
     _auto_layout(nodes, links)
     return mat
 
@@ -270,6 +285,10 @@ def _get_or_create_bpy_image(ir_image, image_cache):
 
     bpy_image.alpha_mode = 'CHANNEL_PACKED'
     bpy_image.pack()
+
+    # Preserve original GX texture format for round-trip export
+    if ir_image.gx_format_override and hasattr(bpy_image, 'dat_gx_format'):
+        bpy_image.dat_gx_format = ir_image.gx_format_override.value
 
     image_cache[cache_key] = bpy_image
     return bpy_image
@@ -641,8 +660,19 @@ def _build_output_shader(ir_mat, nodes, links, last_color, last_alpha, bump_map,
     else:
         shader.inputs[spec_name].default_value = 0
 
+    # Compute Specular Tint from specular_color and diffuse_color.
+    # Blender computes specular as mix(white, base_color, tint), so:
+    #   tint = (specular_color - 1) / (diffuse_color - 1)
     if bpy.app.version >= BlenderVersion(4, 0, 0):
-        shader.inputs["Specular Tint"].default_value = (0.5, 0.5, 0.5, 1.0)
+        tint = [0.0, 0.0, 0.0, 1.0]
+        for c in range(3):
+            diff = srgb_to_linear(ir_mat.diffuse_color[c])
+            spec = srgb_to_linear(ir_mat.specular_color[c])
+            if abs(diff - 1.0) > 0.01:
+                tint[c] = max(0.0, min(1.0, (spec - 1.0) / (diff - 1.0)))
+            else:
+                tint[c] = 0.0  # White diffuse → default white specular
+        shader.inputs["Specular Tint"].default_value = tint
     else:
         shader.inputs["Specular Tint"].default_value = 0.5
     shader.inputs['Roughness'].default_value = 0.5

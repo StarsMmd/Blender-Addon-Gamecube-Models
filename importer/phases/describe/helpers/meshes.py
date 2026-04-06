@@ -170,6 +170,15 @@ def describe_meshes(root_joint, bones, joint_to_bone_index, image_cache=None, lo
             verts_out, normals, face_lists_copy, logger
         )
 
+        # For non-envelope meshes (RIGID, SINGLE_BONE), vertices are in the
+        # parent bone's local space. Transform to world space so the IR
+        # consistently stores world-space vertices for all skin types.
+        # Envelope vertices are already in world space (deformed above).
+        if bone_weights and bone_weights.type in (SkinType.RIGID, SkinType.SINGLE_BONE):
+            parent_world = Matrix(bones[bone_index].world_matrix)
+            for vi in range(len(verts_out)):
+                verts_out[vi] = tuple(parent_world @ Vector(verts_out[vi]))
+
         name = pobj.name if pobj.name else str(count)
 
         return IRMesh(
@@ -399,7 +408,11 @@ def _extract_envelope_weights(pobj, joint, bone_index, bones, joint_to_bone_inde
     # Compute envelope coord system for the owning bone
     coord = _envelope_coord_system(bone_index, bones)
 
-    # Compute per-envelope deformation matrices (matching legacy Mesh.apply_bone_weights)
+    # Compute per-envelope deformation matrices.
+    # Formula: deform = (bone_world @ bone_IBM) [@ coord]
+    # The IBM always participates — it transforms vertices from bind pose
+    # to bone-local space, then bone_world brings them to world space.
+    # At rest pose with IBM = world.inverted(), this produces identity.
     deform_matrices = []
     for envelope in envelope_list:
         entries = [(entry.weight, entry.joint) for entry in envelope.envelopes]
@@ -412,10 +425,7 @@ def _extract_envelope_weights(pobj, joint, bone_index, bones, joint_to_bone_inde
             entry_bone_idx = joint_to_bone_index.get(entry_joint.address, 0)
             entry_world = Matrix(bones[entry_bone_idx].world_matrix)
             entry_invbind = _get_invbind_matrix(entry_bone_idx, bones)
-            if coord:
-                matrix = entry_world @ entry_invbind
-            else:
-                matrix = entry_world
+            matrix = entry_world @ entry_invbind
         else:
             # Multi-weight envelope
             for weight, entry_joint in entries:

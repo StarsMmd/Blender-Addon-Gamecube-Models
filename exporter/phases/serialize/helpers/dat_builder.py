@@ -7,6 +7,23 @@ except (ImportError, SystemError):
     from shared.Constants import *
     from shared.helpers.file_io import *
 
+def _coerce_pointer(value, node, field_name):
+	"""Coerce a field value to a uint pointer address for serialization.
+
+	Handles None (→ 0), Node (→ address), empty list (→ 0, null pointer),
+	and int (pass through). Raises ValueError with context for anything else.
+	"""
+	if value is None or (isinstance(value, list) and len(value) == 0):
+		return 0
+	if isinstance(value, Node):
+		return value.address if value.address is not None else 0
+	if isinstance(value, int):
+		return value
+	raise ValueError(
+		"Cannot serialize {}.{}: expected Node, None, or int for pointer field, "
+		"got {} ({})".format(type(node).__name__, field_name, type(value).__name__, repr(value)[:60]))
+
+
 # Serializes a node tree to DAT binary format.
 # The build process has 4 internal steps:
 # 1) Collect nodes via DFS post-order traversal into an ordered list (leaf-first).
@@ -90,6 +107,17 @@ class DATBuilder(BinaryWriter):
 	def _currentRelativeAddress(self, relative_to_header=True):
 		return super().currentAddress() - (self.DAT_header_length if relative_to_header else 0)
 
+	def align_buffer(self):
+		"""Pad to 32-byte alignment before writing a raw data buffer.
+
+		Matches HSDLib's IsBuffer alignment: buffers (vertex data, textures,
+		palettes, display lists) must be 32-byte aligned for GX hardware.
+		Called by node writePrimitivePointers/writePrivateData before writing
+		any raw data blob.
+		"""
+		while self._currentRelativeAddress() % 32 != 0:
+			self.write(0, 'uchar')
+
 	def build(self):
 		# --- Phase 1: Write shared raw data ---
 		# Vertex buffers (deduplicated), image pixels, palette data.
@@ -163,9 +191,9 @@ class DATBuilder(BinaryWriter):
 			self.write(name, 'string')
 
 		# Write Archive Header
-		while (self._currentRelativeAddress()) % 16 != 0:
-			_ = self.write(0, 'uchar')
-		file_size = self._currentRelativeAddress()
+		# file_size = total file size including the 0x20 header, ending right
+		# after the last string null terminator (no trailing padding).
+		file_size = self._currentRelativeAddress() + self.DAT_header_length
 		relocations_count = len(self.relocations)
 		self.write(file_size, 'uint', 0, False)
 		self.write(data_section_length, 'uint', 4, False)
@@ -303,27 +331,18 @@ class DATBuilder(BinaryWriter):
 				if isPointerType(inner):
 					field_type = 'uint'
 					is_pointer_field = True
-					if field_value is None:
-						field_value = 0
-					elif isinstance(field_value, Node):
-						field_value = field_value.address if field_value.address is not None else 0
+					field_value = _coerce_pointer(field_value, node, field_name)
 				elif isNodeClassType(inner):
 					# Inline struct (@-prefixed) — write its fields directly
 					is_inline_struct = True
 			elif isPointerType(field_type):
 				field_type = 'uint'
 				is_pointer_field = True
-				if field_value is None:
-					field_value = 0
-				elif isinstance(field_value, Node):
-					field_value = field_value.address if field_value.address is not None else 0
+				field_value = _coerce_pointer(field_value, node, field_name)
 			elif isNodeClassType(field_type):
 				field_type = 'uint'
 				is_pointer_field = True
-				if field_value is None:
-					field_value = 0
-				elif isinstance(field_value, Node):
-					field_value = field_value.address if field_value.address is not None else 0
+				field_value = _coerce_pointer(field_value, node, field_name)
 
 			if is_inline_struct:
 				# Write inline struct by delegating to its writeBinary
@@ -351,7 +370,7 @@ class DATBuilder(BinaryWriter):
 						current_offset += sub_alignment
 						if isinstance(element, Node):
 							addr = element.address if element.address is not None else 0
-							if relative_to_header and addr != 0:
+							if relative_to_header and (addr != 0 or element.address == 0):
 								self.relocations.append(write_address + current_offset)
 							super().write('uint', addr)
 						else:
@@ -369,12 +388,20 @@ class DATBuilder(BinaryWriter):
 					self.file.write(b'\x00')
 				current_offset += alignment
 
-				# Record relocation for non-zero pointer fields
-				if is_pointer_field and relative_to_header and field_value != 0:
+				# Record relocation for pointer fields. Normally skip zero (null
+				# pointer), but fields in _raw_pointer_fields are real data pointers
+				# that happen to point to offset 0 (start of data section).
+				force_reloc = hasattr(node, '_raw_pointer_fields') and field_name in node._raw_pointer_fields
+				if is_pointer_field and relative_to_header and (field_value != 0 or force_reloc):
 					self.relocations.append(write_address + current_offset)
 
 				# Write at current position (sequential within the node's allocated space)
-				super().write(field_type, field_value)
+				try:
+					super().write(field_type, field_value)
+				except (ValueError, Exception) as e:
+					raise ValueError(
+						"Serializing {}.{} (type '{}'): {}".format(
+							node.__class__.__name__, field_name, field[1], e)) from e
 				current_offset += get_type_length(field_type)
 
 		return write_address

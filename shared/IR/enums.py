@@ -164,3 +164,19 @@ class ShinyChannel(Enum):
     GREEN = 1
     BLUE = 2
     ALPHA = 3
+
+
+class GXTextureFormat(Enum):
+    """GX texture format for export encoding."""
+    AUTO = "AUTO"
+    I4 = "I4"
+    I8 = "I8"
+    IA4 = "IA4"
+    IA8 = "IA8"
+    RGB565 = "RGB565"
+    RGB5A3 = "RGB5A3"
+    RGBA8 = "RGBA8"
+    CMPR = "CMPR"
+    C4 = "C4"
+    C8 = "C8"
+    C14X2 = "C14X2"

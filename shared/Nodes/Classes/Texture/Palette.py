@@ -40,6 +40,7 @@ class Palette(Node):
             self._raw_pointer_fields = set()
         if hasattr(self, 'raw_data') and self.raw_data:
             builder.seek(0, 'end')
+            builder.align_buffer()
             self.data = builder._currentRelativeAddress()
             for byte in self.raw_data:
                 builder.write(byte, 'uchar')
