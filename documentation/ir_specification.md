@@ -31,7 +31,7 @@ The IR uses standard, widely-adopted conventions so that any build phase can con
 | **Image pixels** | Raw u8 RGBA, row-major, bottom-to-top | No gamma or color space conversion — stored as decoded from the source format |
 | **Bone transforms** | Local-space SRT | `position`, `rotation`, `scale` are relative to parent bone |
 | **Bone matrices** | World-space | `world_matrix`, `normalized_world_matrix` etc. are absolute transforms |
-| **Mesh vertices** | World-space positions | Envelope-deformed vertices are in world space after skinning |
+| **Mesh vertices** | World-space positions | All vertices are in world space regardless of skin type. Phase 4 transforms RIGID/SINGLE_BONE vertices from bone-local to world space (`parent_world @ vertex`), and ENVELOPE vertices via deformation (`bone_world @ IBM @ vertex`). The compose phase reverses these transforms per skin type |
 | **Animation values** | Raw per-channel SRT | Keyframe values are raw rotation/translation/scale from the source. Phase 5 composes them via plain `T @ R @ S`. Format-specific corrections (e.g. aligned scale inheritance) are pre-baked into `rest_local_matrix` by Phase 4 |
 | **Angles** | Radians | All rotation values throughout the IR |
 | **Units** | Unitless (source scale) | No unit conversion is applied; 1 unit = 1 source unit |
