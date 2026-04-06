@@ -102,7 +102,7 @@ def _describe_mesh_object(mesh_obj, bone_name_to_index, bones, logger):
 
     # Bone weights and parent bone index
     bone_weights = _extract_bone_weights(mesh_obj, bone_name_to_index)
-    parent_bone_index = _determine_parent_bone(bone_weights, bone_name_to_index, bones)
+    parent_bone_index = _determine_parent_bone(mesh_obj, bone_weights, bone_name_to_index, bones)
 
     # Visibility
     is_hidden = mesh_obj.hide_render
@@ -251,18 +251,17 @@ def _extract_bone_weights(mesh_obj, bone_name_to_index):
     )
 
 
-def _determine_parent_bone(bone_weights, bone_name_to_index, bones):
+def _determine_parent_bone(mesh_obj, bone_weights, bone_name_to_index, bones):
     """Determine which bone index a mesh should be attached to.
 
-    For SINGLE_BONE: uses the named bone directly.
-    For WEIGHTED: attaches to the root bone (index 0). HSD's envelope
-    deformation formula depends on the parent bone's flags via
-    _envelope_coord_system(). With the root bone (SKELETON_ROOT),
-    coord=None and deformation simplifies to bone_world @ IBM @ vertex,
-    which equals identity at rest pose when IBM = world.inverted().
-    Falls back to 0 (root) if no weights exist.
+    Uses Blender's bone parenting if set (parent_type='BONE'), which is
+    the standard way to express mesh→bone ownership. Falls back to
+    heuristics for meshes without explicit bone parenting:
+    - SINGLE_BONE: uses the named bone
+    - WEIGHTED: nearest common ancestor of all weighted bones
 
     Args:
+        mesh_obj: Blender mesh object.
         bone_weights: IRBoneWeights or None.
         bone_name_to_index: dict mapping bone name → index.
         bones: list[IRBone] for parent chain traversal.
@@ -270,10 +269,47 @@ def _determine_parent_bone(bone_weights, bone_name_to_index, bones):
     Returns:
         int — bone index.
     """
+    # Bone parenting — the standard Blender way to express mesh→bone ownership
+    if mesh_obj.parent_type == 'BONE' and mesh_obj.parent_bone:
+        idx = bone_name_to_index.get(mesh_obj.parent_bone)
+        if idx is not None:
+            return idx
+
     if bone_weights is None:
         return 0
 
     if bone_weights.type == SkinType.SINGLE_BONE and bone_weights.bone_name:
         return bone_name_to_index.get(bone_weights.bone_name, 0)
+
+    if bone_weights.type == SkinType.WEIGHTED and bone_weights.assignments:
+        # Collect all bones referenced in weight assignments
+        referenced = set()
+        for _, weight_list in bone_weights.assignments:
+            for bone_name, _ in weight_list:
+                idx = bone_name_to_index.get(bone_name)
+                if idx is not None:
+                    referenced.add(idx)
+
+        if referenced:
+            # Find nearest common ancestor
+            def ancestors(idx):
+                path = []
+                while idx is not None:
+                    path.append(idx)
+                    idx = bones[idx].parent_index
+                return path
+
+            ancestor_lists = [ancestors(bi) for bi in referenced]
+            common = set(ancestor_lists[0])
+            for al in ancestor_lists[1:]:
+                common &= set(al)
+
+            if common:
+                # Nearest = deepest in the tree (first match walking
+                # up from any weighted bone)
+                first_path = ancestor_lists[0]
+                for idx in first_path:
+                    if idx in common:
+                        return idx
 
     return 0

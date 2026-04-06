@@ -106,8 +106,20 @@ def _build_mesh(ir_mesh, ir_model, armature, image_cache, logger, mesh_idx, mode
         mesh_object.hide_render = True
         mesh_object.hide_set(True)
 
-    # Parent to armature
+    # Parent to the owning bone in the armature.
+    # Blender BONE parenting uses the bone's tail as the parent origin.
+    # Set matrix_parent_inverse to cancel this out so vertex positions
+    # remain in armature-local space (matching the IR's world-space coords).
     mesh_object.parent = armature
+    if ir_mesh.parent_bone_index < len(ir_model.bones):
+        bone_name = ir_model.bones[ir_mesh.parent_bone_index].name
+        if bone_name in armature.data.bones:
+            bone = armature.data.bones[bone_name]
+            mesh_object.parent_type = 'BONE'
+            mesh_object.parent_bone = bone_name
+            mesh_object.matrix_parent_inverse = (
+                armature.matrix_world @ Matrix.Translation(bone.tail_local)
+            ).inverted()
 
     # Build material from IR (reuse cached material if available)
     if cached_material is not None:
