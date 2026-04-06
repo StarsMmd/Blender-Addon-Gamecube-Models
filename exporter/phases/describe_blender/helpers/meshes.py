@@ -234,12 +234,26 @@ def _extract_bone_weights(mesh_obj, bone_name_to_index):
         for bone_name, _ in weight_list:
             referenced_bones.add(bone_name)
 
-    # All vertices reference exactly one bone (same bone) → SINGLE_BONE
+    # All vertices reference exactly one bone (same bone).
+    # Use SINGLE_BONE only if the mesh is parented to that same bone
+    # (or has no bone parenting). If it's parented to a DIFFERENT bone,
+    # this indicates envelope skinning where the mesh lives on a container
+    # bone but is deformed by another — use WEIGHTED to trigger proper
+    # coordinate space handling in compose.
     if all_single and len(referenced_bones) == 1:
         bone_name = next(iter(referenced_bones))
+        parent_bone = None
+        if mesh_obj.parent_type == 'BONE' and mesh_obj.parent_bone:
+            parent_bone = mesh_obj.parent_bone
+        if parent_bone is None or parent_bone == bone_name:
+            return IRBoneWeights(
+                type=SkinType.SINGLE_BONE,
+                bone_name=bone_name,
+            )
+        # Parent bone differs from weight bone → envelope skinning
         return IRBoneWeights(
-            type=SkinType.SINGLE_BONE,
-            bone_name=bone_name,
+            type=SkinType.WEIGHTED,
+            assignments=assignments,
         )
 
     # Multiple bones referenced — use WEIGHTED to preserve per-vertex
