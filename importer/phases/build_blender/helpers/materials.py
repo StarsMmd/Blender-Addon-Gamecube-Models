@@ -129,14 +129,16 @@ def build_material(ir_material, image_cache=None, name=''):
     )
 
     # --- Ambient approximation ---
-    # Add a low-strength Emission node with the ambient color, mixed via
-    # Add Shader. This makes the material slightly self-illuminated,
-    # approximating HSD's per-material ambient contribution.
+    # Store ambient color in a hidden Emission node for round-trip export.
+    # The node is disconnected by default (strength=0) because HSD ambient
+    # lighting is handled by scene-level LOBJ_AMBIENT lights, not per-material
+    # emission. Adding emission makes textures too bright (especially maps).
+    # The exporter reads back from this node by name.
     ambient_emission = nodes.new('ShaderNodeEmission')
     ambient_emission.name = 'dat_ambient_emission'
     ambient_color_linear = _linearize_rgb(ir_material.ambient_color)
     ambient_emission.inputs['Color'].default_value = ambient_color_linear
-    ambient_emission.inputs['Strength'].default_value = 0.1
+    ambient_emission.inputs['Strength'].default_value = 0.0
 
     ambient_add = nodes.new('ShaderNodeAddShader')
     ambient_add.name = 'dat_ambient_add'

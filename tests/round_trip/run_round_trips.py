@@ -105,7 +105,7 @@ def build_in_blender(ir_scene, options=None):
 
 
 def read_back_from_blender(build_results):
-    """Run export phase 1 (describe_blender). Returns (IRScene, shiny_params).
+    """Run export phase 1 (describe_blender). Returns (IRScene, shiny_params, pkx_header).
 
     Describes all armatures in the scene (no selection needed).
     """
@@ -253,7 +253,7 @@ def compute_ibi_score(filepath):
     build_results = build_in_blender(ir_original, options={"filepath": filepath})
 
     # Read back from Blender (export phase 1)
-    ir_roundtripped, _ = read_back_from_blender(build_results)
+    ir_roundtripped, _, _ = read_back_from_blender(build_results)
 
     # Compare IR scenes by category
     categories, details = _compare_ir_by_category(ir_original, ir_roundtripped)
@@ -753,7 +753,8 @@ def find_model_files(path):
     if os.path.isdir(path):
         files = []
         for f in sorted(os.listdir(path)):
-            if os.path.splitext(f)[1].lower() in SUPPORTED_EXTENSIONS:
+            stem, ext = os.path.splitext(f)
+            if ext.lower() in SUPPORTED_EXTENSIONS and not stem.endswith('_output'):
                 files.append(os.path.join(path, f))
         return files
     return []

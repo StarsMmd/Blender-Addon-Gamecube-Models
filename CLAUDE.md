@@ -177,6 +177,7 @@ Nodes are cached by file offset (`nodes_cache_by_offset`). Nodes with `is_cachab
 | Bone constraints (IK, copy loc/rot, track-to, limits) | ✅ Working |
 | Bone instances (JOBJ_INSTANCE) | ✅ Working |
 | Shape animation import | ❌ Stubs only (not implemented in legacy either) |
+| Particle import (GPT1) | ⚠️ Parser + IR representation working, no Blender visualization yet |
 | Camera / Fog import | ❌ Stubs only |
 | Exporter pipeline | ⚠️ Bones + meshes (RIGID/SINGLE_BONE/ENVELOPE) + materials + textures (all GX formats) + bound box + animations + material animations + lights + constraints working |
 | Exporter binary round-trip (DATBuilder) | ✅ Functional (0 value mismatches) |
@@ -185,7 +186,7 @@ Nodes are cached by file offset (`nodes_cache_by_offset`). Nodes with `is_cachab
 | IR pipeline | ✅ Default path (legacy available via toggle) |
 | FSYS archive import | ✅ Working (multi-model extraction + LZSS decompression) |
 | Shiny variant filter | ✅ Working (PKX color extraction, live-editable shader node group, per-parameter UI) |
-| Unit tests | ✅ 483 passing (27 texture encoder, 13 DAT serialization/alignment/relocation/vertex-space) |
+| Unit tests | ✅ 540 passing (27 texture encoder, 14 DAT serialization/alignment/relocation/vertex-space, 24 PKX header, 24 GPT1 particle) |
 | Shader node auto-layout | ✅ Working (topological sort from output→inputs, left-to-right) |
 | Scale inheritance (animation baking) | ⚠️ Partially resolved — hybrid approach, see below |
 
@@ -230,7 +231,8 @@ Nodes are cached by file offset (`nodes_cache_by_offset`). Nodes with `is_cachab
 - Test data: Python helper functions that build valid node binaries in memory
 - All tests use `io.BytesIO` — no temp files
 - Tests cover: node parsing round-trip, IR type instantiation, helper functions, phase stubs
-- Round-trip test runner: `python3 tests/round_trip/run_round_trips.py <model_file_or_dir>`
+- Round-trip test runner: `python3.11 tests/round_trip/run_round_trips.py <model_file_or_dir>`
+- **Use `python3.11`** for round-trip tests (has `bpy==4.5.7`). The default `python3` (3.10) has an old `bpy==3.4.0` that lacks required APIs like `action.slots`.
 
 ### Round-Trip Test Types
 
@@ -307,14 +309,14 @@ This separation ensures channel routing only affects texture/material colors, no
 
 The exporter **must skip these nodes** when reading back materials — they are display-only and not part of the original model data. Identify them by the node names above.
 
-The shiny parameters are stored as registered `bpy.props` properties on the armature (`dat_shiny_route_r`, `dat_shiny_brightness_r`, etc.). When exporting to PKX, the exporter can read these properties from the armature to write updated shiny metadata back into the PKX header.
+The shiny parameters are stored as registered `bpy.props` properties on the armature (`dat_pkx_shiny_route_r`, `dat_pkx_shiny_brightness_r`, etc.). When exporting to PKX, the exporter can read these properties from the armature to write updated shiny metadata back into the PKX header.
 
 ---
 
 ## Coding Conventions
 
 - **Logger parameter:** Functions default to `StubLogger()`, never `None`. Always use `logger.info()`/`logger.debug()` instead of `print()` — logger output is written to log files on disk that persist after import and can be read directly for investigation. `print()` only goes to the Blender console which is transient.
-- **Imports:** Phase files use try/except for Blender (relative) vs pytest (absolute) imports.
+- **Imports:** Phase files **must** use try/except for Blender (relative) vs pytest (absolute) imports. Blender cannot resolve bare `from shared.` imports — only relative imports like `from .....shared.` work inside the addon package. Always put the relative import first in the `try` block, with the absolute fallback in `except (ImportError, SystemError)`. This applies to **every** import from `shared/`, including imports inside nested functions.
 - **Binary reads/writes:** Use `shared/helpers/binary.py` helpers with descriptive type names (`read('uint', data, offset)`, `pack('float', value)`, `pack_many('uchar', r, g, b, a)`) instead of raw `struct.pack`/`struct.unpack` with format codes. For keyframe data that uses native byte order, use `read_native`/`pack_native`.
 - **Errors:** Use `ValueError("descriptive message")` instead of custom exception classes. Only `ModelBuildError` (in build phase) carries structured data.
 - **No bpy in shared/:** All Blender-specific code lives in `importer/phases/build_blender/`.
@@ -333,5 +335,7 @@ The shiny parameters are stored as registered `bpy.props` properties on the arma
 - [x] Code audit: identify opportunities to reduce algorithmic complexity — see [complexity optimization plan](documentation/complexity_optimization_plan.md)
 - [ ] Implement remaining complexity optimizations (items 1-3 in the plan above)
 - [x] Shiny filter: split into separate routing and brightness shaders. The routing shader (channel swizzle) only applies to texture colors, not vertex colors. The brightness shader applies to the final result after vertex color multiplication.
-- [x] Ambient lighting: approximated with per-material Emission node (`dat_ambient_emission`), read back on export. Scene-level `LOBJ_AMBIENT` lights still ignored.
+- [x] Ambient lighting: stored in per-material Emission node (`dat_ambient_emission`, strength=0 by default), read back on export. Not visually active because HSD ambient is scene-level lighting. Scene-level `LOBJ_AMBIENT` lights still ignored.
 - [x] Bone inverse_bind_matrix: computed as `srt_world.inverted()` — the inverse of the SRT-accumulated world matrix (no coordinate rotation). Only set on skinning target bones, cleared on others. See "Envelope Skinning" section in [export pipeline plan](documentation/export_pipeline_plan.md).
+- [ ] GPT1 particle export (compose + serialize phases) — validate import first
+- [ ] Blender particle visualization from IRParticleSystem
