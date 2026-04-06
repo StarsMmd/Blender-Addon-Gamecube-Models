@@ -194,15 +194,27 @@ def _build_pobj(ir_mesh, joints, bones, bone_name_to_index, logger):
         vertex_buffers.append(('pnmtxidx', envelope_map))
 
     # Position — always present.
-    # For envelope-skinned meshes, reverse the deformation applied by the
-    # describe phase. The IR stores vertices in world space (deformed by
-    # bone_world @ bone_IBM), but the DAT format stores them in bind-pose
-    # space. Multiply by the inverse deformation matrix per-envelope.
+    # The IR stores vertices in world space. The DAT format stores them
+    # relative to the parent bone's transform:
+    # - WEIGHTED (envelope): reverse the deformation (bone_world @ IBM @ coord)
+    # - SINGLE_BONE: transform from world to parent bone's local space
     export_vertices = ir_mesh.vertices
     if is_envelope and bones:
         export_vertices = _undeform_vertices(
             ir_mesh.vertices, bw.assignments, bones, bone_name_to_index,
             ir_mesh.parent_bone_index, logger)
+    elif bw and bw.type in (SkinType.SINGLE_BONE, SkinType.RIGID) and bones:
+        # SINGLE_BONE and RIGID: transform from world space to parent bone's
+        # local space. The game applies the parent Joint's world transform
+        # at runtime to position the mesh.
+        bone_idx = ir_mesh.parent_bone_index
+        if bw.type == SkinType.SINGLE_BONE and bw.bone_name:
+            bone_idx = bone_name_to_index.get(bw.bone_name, bone_idx)
+        if bone_idx < len(bones) and bones[bone_idx].world_matrix:
+            world_inv = Matrix(bones[bone_idx].world_matrix).inverted()
+            export_vertices = [
+                tuple(world_inv @ Vector(v)) for v in ir_mesh.vertices
+            ]
 
     pos_data, pos_buffer = _encode_float3_buffer(export_vertices)
     pos_desc = _make_vertex_desc(GX_VA_POS, GX_POS_XYZ, GX_F32, stride=12)

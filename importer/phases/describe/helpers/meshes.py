@@ -170,6 +170,15 @@ def describe_meshes(root_joint, bones, joint_to_bone_index, image_cache=None, lo
             verts_out, normals, face_lists_copy, logger
         )
 
+        # For non-envelope meshes (RIGID, SINGLE_BONE), vertices are in the
+        # parent bone's local space. Transform to world space so the IR
+        # consistently stores world-space vertices for all skin types.
+        # Envelope vertices are already in world space (deformed above).
+        if bone_weights and bone_weights.type in (SkinType.RIGID, SkinType.SINGLE_BONE):
+            parent_world = Matrix(bones[bone_index].world_matrix)
+            for vi in range(len(verts_out)):
+                verts_out[vi] = tuple(parent_world @ Vector(verts_out[vi]))
+
         name = pobj.name if pobj.name else str(count)
 
         return IRMesh(
