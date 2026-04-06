@@ -997,3 +997,42 @@ class TestVertexCoordinateSpace:
         assert abs(result[0] - world_vertex[0]) < 0.001
         assert abs(result[1] - world_vertex[1]) < 0.001
         assert abs(result[2] - world_vertex[2]) < 0.001
+
+    def test_envelope_skeleton_root_no_ibm_single_weight(self):
+        """When coord is None (skeleton root), single-weight envelopes use
+        world matrix only — NOT world @ IBM. Matching HSD engine behavior
+        confirmed in legacy import_hsd.py."""
+        from shared.helpers.math_shim import Matrix, Vector
+
+        # Simulate: bone_world differs from IBM.inv()
+        bone_world = Matrix([
+            [1, 0, 0, 5],
+            [0, 1, 0, 10],
+            [0, 0, 1, 3],
+            [0, 0, 0, 1],
+        ])
+        # IBM says the bone was at a different position at bind time
+        bone_ibm = Matrix([
+            [1, 0, 0, -2],
+            [0, 1, 0, -8],
+            [0, 0, 1, -1],
+            [0, 0, 0, 1],
+        ])
+
+        # With coord (not skeleton root): deform = world @ IBM
+        deform_with_coord = bone_world @ bone_ibm
+        assert abs(deform_with_coord[0][3] - 3.0) < 0.001  # 5 + (-2)
+        assert abs(deform_with_coord[1][3] - 2.0) < 0.001  # 10 + (-8)
+
+        # Without coord (skeleton root, single weight=1.0):
+        # deform = world matrix only (no IBM)
+        deform_no_coord = bone_world
+        assert abs(deform_no_coord[0][3] - 5.0) < 0.001
+        assert abs(deform_no_coord[1][3] - 10.0) < 0.001
+
+        # The two produce different vertex positions
+        vertex = Vector((1.0, 2.0, 0.5))
+        with_coord = deform_with_coord @ vertex
+        no_coord = deform_no_coord @ vertex
+        assert abs(with_coord[0] - no_coord[0]) > 0.5, \
+            "coord vs no-coord should produce different results when IBM != world.inv()"

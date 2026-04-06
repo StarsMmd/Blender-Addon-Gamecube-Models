@@ -178,11 +178,11 @@ def _apply_bone_weights(ir_mesh, ir_model, mesh_object, armature, logger, mesh_i
         logger.debug("  mesh[%d] weights: SINGLE_BONE '%s'", mesh_idx, bw.bone_name)
 
     elif bw.type == SkinType.RIGID and bw.bone_name:
-        # Rigid: attach all vertices to parent bone
-        bone_idx = ir_mesh.parent_bone_index
-        if bone_idx < len(ir_model.bones):
-            bone_data = ir_model.bones[bone_idx]
-            mesh_object.matrix_local = Matrix(bone_data.world_matrix)
+        # Rigid: attach all vertices to parent bone.
+        # IR stores all vertices in world space (describe phase transforms
+        # bone-local → world). Do NOT set matrix_local here — the vertices
+        # are already positioned correctly in world space, and setting
+        # matrix_local to the bone's world matrix would double-transform them.
         group = mesh_object.vertex_groups.new(name=bw.bone_name)
         all_verts = [v.index for v in mesh_object.data.vertices]
         group.add(all_verts, 1.0, 'REPLACE')

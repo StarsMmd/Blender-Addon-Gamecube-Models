@@ -341,6 +341,23 @@ def _get_invbind_matrix(bone_index, bones):
     return Matrix.Identity(4)
 
 
+def _get_bind_world_matrix(bone_index, bones):
+    """Get the bone's world matrix at bind time for envelope deformation.
+
+    For bones with an IBM, use IBM.inv() as the authoritative bind-time world
+    matrix. This ensures deform = world @ IBM = identity at rest pose, regardless
+    of whether our SRT-computed world_matrix exactly matches the IBM. The IBM
+    may encode IK-solved positions, parent scale effects, or other runtime
+    adjustments not captured by pure SRT composition.
+
+    For bones without an IBM, fall back to the SRT-computed world_matrix.
+    """
+    bone = bones[bone_index]
+    if bone.inverse_bind_matrix:
+        return Matrix(bone.inverse_bind_matrix).inverted()
+    return Matrix(bone.world_matrix)
+
+
 def _envelope_coord_system(bone_index, bones):
     """Compute envelope coordinate system matrix for a bone.
 
@@ -410,9 +427,14 @@ def _extract_envelope_weights(pobj, joint, bone_index, bones, joint_to_bone_inde
 
     # Compute per-envelope deformation matrices.
     # Formula: deform = (bone_world @ bone_IBM) [@ coord]
-    # The IBM always participates — it transforms vertices from bind pose
-    # to bone-local space, then bone_world brings them to world space.
-    # At rest pose with IBM = world.inverted(), this produces identity.
+    #
+    # The SRT-computed world_matrix may differ from IBM.inv() for some
+    # bones (IK targets, certain parent scale chains). However, the edit
+    # bone positions in Blender are ALSO derived from the SRT world matrix.
+    # Using IBM.inv() here would make deformation identity at rest but
+    # create a mismatch with the edit bones, causing garbled geometry under
+    # the armature modifier. By using the SRT world matrix consistently,
+    # the deformation error matches the edit bone error and they cancel out.
     deform_matrices = []
     for envelope in envelope_list:
         entries = [(entry.weight, entry.joint) for entry in envelope.envelopes]
@@ -424,8 +446,14 @@ def _extract_envelope_weights(pobj, joint, bone_index, bones, joint_to_bone_inde
             entry_joint = entries[0][1]
             entry_bone_idx = joint_to_bone_index.get(entry_joint.address, 0)
             entry_world = Matrix(bones[entry_bone_idx].world_matrix)
-            entry_invbind = _get_invbind_matrix(entry_bone_idx, bones)
-            matrix = entry_world @ entry_invbind
+            if coord:
+                entry_invbind = _get_invbind_matrix(entry_bone_idx, bones)
+                matrix = entry_world @ entry_invbind
+            else:
+                # When coord is None (skeleton root owns the mesh), the HSD
+                # engine uses just the world matrix without IBM for single-weight
+                # envelopes. This matches the legacy import_hsd.py behavior.
+                matrix = entry_world
         else:
             # Multi-weight envelope
             for weight, entry_joint in entries:
