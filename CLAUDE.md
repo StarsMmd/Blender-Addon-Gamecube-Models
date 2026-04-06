@@ -181,7 +181,7 @@ Nodes are cached by file offset (`nodes_cache_by_offset`). Nodes with `is_cachab
 | Exporter pipeline | ⚠️ Bones + meshes (RIGID/SINGLE_BONE/ENVELOPE) + materials + textures (all GX formats) + bound box + animations + material animations + lights + constraints working |
 | Exporter binary round-trip (DATBuilder) | ✅ Functional (0 value mismatches) |
 | Exporter PKX packaging | ✅ Working (DAT injection, shiny write-back, trailer preserved) |
-| In-game loading | ⚠️ First successful load (nukenin/Shedinja in XD) — DAT geometry is pixel-perfect on re-import but appears janky in-game, likely due to PKX metadata issues (bone/mesh reordering affecting camera tracking, game logic bone indices) |
+| In-game loading | ⚠️ BNB path: geometry + textures correct in-game. NIN path: geometry + textures correct. IBI path (through Blender): textures correct, geometry has mesh-bone assignment issues from describe_blender producing different parent_bone_index than original |
 | IR pipeline | ✅ Default path (legacy available via toggle) |
 | FSYS archive import | ✅ Working (multi-model extraction + LZSS decompression) |
 | Shiny variant filter | ✅ Working (PKX color extraction, live-editable shader node group, per-parameter UI) |
