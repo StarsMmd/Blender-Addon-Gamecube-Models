@@ -1,8 +1,10 @@
 # Exporter Usage
 
-> **Status:** Work in progress — skeleton, mesh (including envelope skinning), material, and texture export functional. Animations, constraints, and lights not yet implemented.
+> **Status:** Work in progress — skeleton, mesh (including envelope skinning), material, texture, animation, constraint, and light export functional. In-game loading verified (BNB and NIN paths produce correct results; IBI path has known mesh-bone assignment issues).
 
 The exporter writes a Blender scene to a `.dat` or `.pkx` binary that can be used in Pokemon Colosseum or Pokemon XD: Gale of Darkness. The output is not directly compatible with other games that use `.dat` models (e.g. Super Smash Bros. Melee).
+
+**Important:** The exporter exports the **entire Blender scene**, not just selected objects. All armatures, their parented meshes, and all lights in the scene are included in the output. Make sure to delete any unwanted objects before exporting (see Scene Preparation below).
 
 ---
 
@@ -19,10 +21,10 @@ The exporter writes a Blender scene to a `.dat` or `.pkx` binary that can be use
 | Materials (colors, properties) | ✅ Working |
 | Textures (all GX formats) | ✅ Working (preserves original format on re-export) |
 | Bone Animations | ✅ Working |
-| Material Animations (color/alpha) | Not yet implemented |
-| Material Animations (texture UV) | Not yet implemented |
+| Material Animations (color/alpha) | ✅ Working |
+| Material Animations (texture UV) | ✅ Working |
 | Lights (SUN, POINT, SPOT) | ✅ Working |
-| Bone Constraints | Not yet implemented |
+| Bone Constraints | ✅ Working (IK, Copy Location/Rotation, Track To, Limits) |
 | Shape Animations | Not yet implemented |
 | Bound Box | ✅ Working (static AABB per animation slot) |
 
@@ -30,15 +32,15 @@ The exporter writes a Blender scene to a `.dat` or `.pkx` binary that can be use
 
 ## How to Prepare a Model for Export
 
-> This section is a work in progress.
+### Scene Preparation
 
-### Armature Selection
+The exporter exports the **entire scene**. Before exporting, delete any objects that should not be part of the model. Blender's default scene includes objects that will cause issues if left in:
 
-The exporter exports **the currently selected armature(s)** in the scene. Each selected armature becomes one model in the output file.
+- **Default Cube** — delete it (`X` key)
+- **Default Light** — delete it (the exporter will include it as a game light, which may not be desired)
+- **Default Camera** — not exported (cameras are not yet supported), but clean up for clarity
 
-- Select the armature(s) you want to export before running the exporter
-- Meshes parented to a selected armature are automatically included
-- Meshes not parented to any selected armature are ignored
+Only armatures and their parented meshes should remain in the scene, plus any lights you intentionally want in the game model.
 
 ### Bone Visibility
 
