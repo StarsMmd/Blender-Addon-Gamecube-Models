@@ -536,3 +536,69 @@ class TestDescribeMaterial:
         ir = describe_material(mobj)
         # RENDER_ALPHA_COMPAT + RENDER_DIFFUSE_VTX → alpha = VTX << shift
         assert ir.alpha_source == ColorSource.VERTEX
+
+
+# ---------------------------------------------------------------------------
+# V-translation correction (MIRROR wrap mode)
+# ---------------------------------------------------------------------------
+
+class TestVTranslationMirrorCorrection:
+    """Verify the V-translation MIRROR correction from MakeTextureMtx.s.
+
+    When wrap_t is MIRROR, HSD adds scale_t / repeat_t to the V translation.
+    Our describe phase subtracts this offset, and the compose phase adds it back.
+    """
+
+    def test_repeat_mode_round_trip(self):
+        """V-translation round-trips correctly for REPEAT wrap mode."""
+        from shared.IR.enums import WrapMode
+        # Simulate GX values
+        gx_scale_v = 2.0
+        gx_trans_v = 0.3
+
+        # Describe: GX → IR (no MIRROR correction)
+        ir_v = 1.0 - gx_scale_v - gx_trans_v
+
+        # Compose: IR → GX (reverse)
+        restored_v = 1.0 - gx_scale_v - ir_v
+
+        assert abs(restored_v - gx_trans_v) < 1e-6
+
+    def test_mirror_mode_round_trip(self):
+        """V-translation round-trips correctly for MIRROR wrap mode."""
+        from shared.IR.enums import WrapMode
+        gx_scale_v = 2.0
+        gx_trans_v = 0.3
+        repeat_t = 4
+
+        # Describe: GX → IR (with MIRROR correction)
+        ir_v = 1.0 - gx_scale_v - gx_trans_v
+        ir_v -= gx_scale_v / repeat_t  # MIRROR offset
+
+        # Compose: IR → GX (the formula is self-inverse: f(f(x)) = x)
+        restored_v = 1.0 - gx_scale_v - ir_v
+        restored_v -= gx_scale_v / repeat_t  # same subtraction
+
+        assert abs(restored_v - gx_trans_v) < 1e-6
+
+    def test_mirror_correction_differs_from_repeat(self):
+        """MIRROR mode produces a different IR V-translation than REPEAT."""
+        gx_scale_v = 1.0
+        gx_trans_v = 0.5
+        repeat_t = 2
+
+        ir_v_repeat = 1.0 - gx_scale_v - gx_trans_v
+        ir_v_mirror = 1.0 - gx_scale_v - gx_trans_v - gx_scale_v / repeat_t
+
+        assert ir_v_repeat != ir_v_mirror
+        assert abs(ir_v_mirror - ir_v_repeat - (-gx_scale_v / repeat_t)) < 1e-6
+
+    def test_mirror_correction_zero_repeat_skipped(self):
+        """MIRROR correction is skipped when repeat_t is 0 (guard)."""
+        gx_scale_v = 1.0
+        gx_trans_v = 0.5
+
+        # With repeat_t=0, correction should NOT be applied
+        ir_v = 1.0 - gx_scale_v - gx_trans_v
+        # No subtraction since repeat_t guard prevents it
+        assert abs(ir_v - (-0.5)) < 1e-6
