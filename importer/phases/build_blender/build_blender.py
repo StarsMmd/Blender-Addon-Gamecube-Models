@@ -4,6 +4,7 @@ from .helpers.meshes import build_meshes
 from .helpers.animations import build_bone_animations, reset_pose
 from .helpers.constraints import build_constraints
 from .helpers.lights import build_lights
+from .helpers.particles import build_particles
 
 try:
     from ....shared.helpers.logger import StubLogger
@@ -48,6 +49,9 @@ def build_blender_scene(ir_scene, context, options, logger=StubLogger()):
                 ir_model, armature, options, logger=logger, material_lookup=material_lookup)
 
         build_constraints(ir_model, armature, logger)
+
+        if ir_model.particles:
+            build_particles(ir_model.particles, armature, context, logger=logger)
 
         build_results.append({
             'armature': armature,

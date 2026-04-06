@@ -1,0 +1,434 @@
+# File Format Specifications
+
+Binary format references for GameCube SysDolphin files used by Pokémon Colosseum and XD: Gale of Darkness. All multi-byte values are **big-endian** (GameCube native byte order).
+
+---
+
+## GX Texture Formats
+
+The GameCube GPU (GX) stores textures in tiled/blocked layouts. Each format divides the image into rectangular blocks, each stored contiguously in memory.
+
+### Format Table
+
+| ID | Name | BPP | Block (W×H) | Block Bytes | Palette | Description |
+|----|------|-----|-------------|-------------|---------|-------------|
+| 0x0 | I4 | 4 | 8×8 | 32 | No | 4-bit grayscale intensity |
+| 0x1 | I8 | 8 | 8×4 | 32 | No | 8-bit grayscale intensity |
+| 0x2 | IA4 | 8 | 8×4 | 32 | No | 4-bit intensity + 4-bit alpha |
+| 0x3 | IA8 | 16 | 4×4 | 32 | No | 8-bit intensity + 8-bit alpha |
+| 0x4 | RGB565 | 16 | 4×4 | 32 | No | 5-bit R, 6-bit G, 5-bit B |
+| 0x5 | RGB5A3 | 16 | 4×4 | 32 | No | Mode bit: 1=RGB555, 0=ARGB3444 |
+| 0x6 | RGBA8 | 32 | 4×4 | 64 | No | 8-bit per channel, stored as AR+GB interleaved blocks |
+| 0x8 | C4 | 4 | 8×8 | 32 | Yes (16 entries) | 4-bit palette index |
+| 0x9 | C8 | 8 | 8×4 | 32 | Yes (256 entries) | 8-bit palette index |
+| 0xA | C14X2 | 16 | 4×4 | 32 | Yes (16384 entries) | 14-bit palette index + 2 unused bits |
+| 0xE | CMPR | 4 | 8×8 | 32 | No | S3TC/DXT1 compression (4 sub-blocks of 4×4) |
+
+### Block Layout
+
+Images are divided into blocks of the specified W×H dimensions. Blocks are stored left-to-right, top-to-bottom. The image width and height are rounded up to block boundaries. Total blocks = `ceil(width/block_W) × ceil(height/block_H)`.
+
+### RGBA8 Special Layout
+
+RGBA8 blocks store alpha+red bytes first, then green+blue bytes:
+```
+[Block N: AR[0..15], GB[0..15]] — 64 bytes per 4×4 block
+```
+
+### RGB5A3 Mode Bit
+
+```
+Bit 15 = 1: RGB555   — bits [14:10]=R, [9:5]=G, [4:0]=B, A=255
+Bit 15 = 0: ARGB3444 — bits [14:12]=A, [11:8]=R, [7:4]=G, [3:0]=B
+```
+
+### CMPR (S3TC/DXT1)
+
+Each 8×8 block contains four 4×4 DXT1 sub-blocks (8 bytes each = 32 bytes total). Each sub-block has two RGB565 color endpoints and a 32-bit index table (2 bits per pixel). The 4-color palette is: c0, c1, (2c0+c1)/3, (c0+2c1)/3 when c0 > c1; or c0, c1, (c0+c1)/2, transparent when c0 ≤ c1.
+
+### Palette Formats
+
+Palettes for C4/C8/C14X2 use one of: IA8 (0x0), RGB565 (0x1), or RGB5A3 (0x2).
+
+---
+
+## PKX Model Container
+
+PKX files wrap a DAT model binary with metadata for the game's battle system. Two variants exist: XD and Colosseum.
+
+### Format Detection
+
+Compare the uint32 values at offsets 0x00 and 0x40:
+- **Different** → XD format
+- **Same** → Colosseum format
+
+### XD Format
+
+**File layout:**
+```
+[Preamble: 0x00-0x83 (132 bytes)]
+[Animation Metadata: 17 × 0xD0 bytes at offset 0x84]
+[Padding: to 0x20 boundary]
+[GPT1 particle data: if gpt1_length > 0, padded to 0x20]
+[DAT model binary]
+[Trailer: remaining bytes]
+```
+
+**Header size is dynamic:**
+```
+header_size = align32(0x84 + anim_count × 0xD0) + align32(gpt1_length)
+```
+For standard files (17 entries, no GPT1): `align32(0xE54) = 0xE60`
+
+#### XD Preamble (0x00-0x83)
+
+| Offset | Size | Type | Field |
+|--------|------|------|-------|
+| 0x00 | 4 | u32 | dat_file_size |
+| 0x04 | 4 | u32 | *(reserved, always 0)* |
+| 0x08 | 4 | u32 | gpt1_length |
+| 0x0C | 4 | u32 | *(reserved, always 0)* |
+| 0x10 | 4 | u32 | anim_section_count (always 17) |
+| 0x14 | 4 | s32 | particle_orientation (-2 to +2) |
+| 0x18 | 2 | u16 | species_id (Pokédex #, 0=trainer) |
+| 0x1A | 2 | u16 | type_id (always 0x000C) |
+| 0x1C | 19 | bytes | part_anim_data[0] — sleep-on |
+| 0x2F | 19 | bytes | part_anim_data[1] — sleep-off |
+| 0x42 | 19 | bytes | part_anim_data[2] — extra |
+| 0x55 | 19 | bytes | part_anim_data[3] — usually inactive |
+| 0x68 | 1 | u8 | flags |
+| 0x69 | 1 | u8 | unknown |
+| 0x6A | 2 | u16 | distortion_param |
+| 0x6C | 1 | u8 | distortion_type |
+| 0x6D | 1 | u8 | *(reserved)* |
+| 0x6E | 2 | u16 | head_bone_index |
+| 0x70 | 16 | 4×u32 | shiny_route RGBA (values 0-3) |
+| 0x80 | 4 | 4×u8 | shiny_brightness RGBA (0x7F=neutral) |
+
+**Flags byte (0x68):** bit 0=flying, bit 2=skip fractional frames, bit 6=remove root joint anim
+
+**PartAnimData (19 bytes):** byte 0=has_data (0/1/2), byte 1=sub_param, bytes 2-17=bone_config (0xFF when unused), byte 18=anim_index_ref
+
+#### Animation Metadata Entry (0xD0 bytes)
+
+17 entries for both Pokémon and trainer models. Pokémon slots: [0]Idle, [1]Status1, [2-5]Physical1-4, [6]Status2, [7]Physical5, [8]Damage, [9]Damage2, [10]Faint, [11-16]Idle2/Special/Idle3-5/TakeFlight.
+
+| Offset | Size | Type | Field | XD | Colosseum |
+|--------|------|------|-------|----|----|
+| 0x00 | 4 | u32 | anim_type | 2=loop, 3=hit, 4=action, 5=compound | Same |
+| 0x04 | 4 | u32 | sub_anim_count (1-3) | Same | Same |
+| 0x08 | 4 | u32 | damage_flags | Same | Same |
+| 0x0C | 4 | u32 | *(reserved, 0)* | | |
+| 0x10 | 4 | f32/u32 | timing_1 | float seconds | int frame count (60fps) |
+| 0x14 | 4 | f32/u32 | timing_2 | float seconds | int frame count |
+| 0x18 | 4 | f32/u32 | timing_3 | float seconds | int frame count |
+| 0x1C | 4 | f32/u32 | timing_4 | float (compound only) | int frame count |
+| 0x20-0x4B | 44 | | *(reserved, zeros)* | | |
+| 0x4C | 64 | s32[16] | null_joint_bones | Bone indices, -1=unused | Same |
+| 0x8C | 8×N | pairs | sub_anims | [motion_type, anim_idx] | [0, anim_idx] |
+| 0xCC | 4 | u32 | terminator | 3 | 1 |
+
+**null_joint_bones[N]:** 0=root, 1=head, 2=center/jaw, 3-15=body parts. Used for particle attachment, camera targeting, head tracking.
+
+**Timing conversion:** Colosseum frames = round(XD seconds × 60)
+
+### Colosseum Format
+
+**File layout:**
+```
+[Header: 0x40 bytes]
+[DAT: padded to 0x20 boundary]
+[GPT1: padded to 0x20 boundary, if present]
+[Animation Metadata: N × 0xD0 bytes]
+[Shiny: 20 bytes at end of file]
+```
+
+#### Colosseum Header (0x40 bytes)
+
+| Offset | Size | Type | Field |
+|--------|------|------|-------|
+| 0x00 | 4 | u32 | dat_file_size |
+| 0x04 | 4 | u32 | gpt1_length |
+| 0x08 | 4 | u32 | anim_section_count (16 or 17) |
+| 0x0C | 4 | s32 | particle_orientation |
+| 0x10 | 4 | u32 | unknown (always 5) |
+| 0x14 | 4 | s32 | unknown |
+| 0x18 | 4 | s32 | part_anim_ref_1 (-1=none) |
+| 0x1C | 4 | s32 | part_anim_ref_2 (-1=none) |
+| 0x20 | 4 | s32 | part_anim_ref_3 (-1=none) |
+| 0x24-0x3F | | | *(zeros)* |
+
+#### Colosseum Shiny Data (last 20 bytes of file)
+
+```
+[4 × u32: channel routing R,G,B,A (values 0-3)]
+[1 × u32: ARGB brightness color]
+```
+
+---
+
+## GPT1 Particle Container
+
+GPT1 files contain particle effect definitions, textures, and bytecode command sequences that drive the particle system at runtime.
+
+### Overall Layout
+
+```
+[Header: 32 bytes]
+[PTL Section: generator definitions + command bytecode]
+[TXG Section: texture group metadata]
+[TEX Data: raw GX texture pixels]
+[REF Section: generator ID lookup table]
+```
+
+All internal offsets are relative to the GPT1 file start.
+
+### Header (32 bytes)
+
+| Offset | Size | Type | Field |
+|--------|------|------|-------|
+| 0x00 | 4 | u32 | signature — `0x47505431` ("GPT1") for V1, `0x01F056DA` for V2 |
+| 0x04 | 4 | u32 | ptl_offset — offset to PTL section (typically 0x20) |
+| 0x08 | 4 | u32 | txg_offset — offset to TXG section |
+| 0x0C | 4 | u32 | tex_length — total size of texture pixel data |
+| 0x10 | 4 | u32 | ref_offset — offset to REF section |
+| 0x14 | 12 | pad | *(zeros)* |
+
+On load, the game relocates ptl_offset, txg_offset, and ref_offset by adding the GPT1 base address.
+
+### PTL Section (Particle Template List)
+
+```
+[Header: version(2) + unknown(2) + skip_sections(4) + nb_generators(4)]
+[Generator pointers: nb_generators × u32 (offsets from PTL start)]
+[Padding to 8-byte alignment, filled with 0xFFFFFFFF]
+[Generator definitions]
+```
+
+| Offset | Size | Type | Field |
+|--------|------|------|-------|
+| 0x00 | 2 | u16 | version (0x43 for V1 standard) |
+| 0x02 | 2 | u16 | unknown |
+| 0x04 | 4 | u32 | skip_sections (0 for most XD, 150-400 for some models) |
+| 0x08 | 4 | u32 | nb_generators (3-28 in observed models) |
+| 0x0C+ | 4×N | u32[] | generator offsets (relative to PTL start) |
+
+**Version behavior:**
+- Version 0: Old format — generator pointers at +0x08, `var04` = nb_generators
+- Version 0x40-0x43: New format — extra `var08` field, pointers at +0x0C, NULL pointers allowed
+
+### Generator Definition (0x3C header + variable-length bytecode)
+
+| Offset | Size | Type | Field | Description |
+|--------|------|------|-------|-------------|
+| 0x00 | 2 | u16 | type | Generator type/flags (0 or 5 observed) |
+| 0x02 | 2 | u16 | unknown_02 | Usually 0 |
+| 0x04 | 2 | u16 | lifetime | Frame count (120 in all observed) |
+| 0x06 | 2 | u16 | max_particles | Maximum concurrent particles (36-81) |
+| 0x08 | 4 | u32 | flags | Generator flags (e.g. 0x01400001) |
+| 0x0C | 4 | f32 | param_00 | Float parameter |
+| 0x10 | 4 | f32 | param_01 | Float parameter |
+| 0x14 | 4 | f32 | param_02 | Float parameter |
+| 0x18 | 4 | f32 | param_03 | Float parameter |
+| 0x1C | 4 | f32 | param_04 | Float parameter |
+| 0x20 | 4 | f32 | param_05 | Float parameter |
+| 0x24 | 4 | f32 | param_06 | Float parameter |
+| 0x28 | 4 | f32 | param_07 | Float parameter |
+| 0x2C | 4 | f32 | param_08 | Float parameter |
+| 0x30 | 4 | f32 | param_09 | Float parameter |
+| 0x34 | 4 | f32 | param_10 | Float parameter |
+| 0x38 | 4 | f32 | param_11 | Float parameter |
+| 0x3C+ | var | u8[] | command_sequence | Particle command bytecode |
+
+The command sequence extends until the next generator's start offset or the TXG section boundary.
+
+### TXG Section (Texture Group)
+
+```
+[u32: nb_containers]
+[u32 × nb_containers: container offsets from TXG start]
+[Padding to 32-byte alignment, 0xFFFFFFFF fill]
+[TextureContainer × nb_containers]
+```
+
+#### TextureContainer
+
+| Offset | Size | Type | Field |
+|--------|------|------|-------|
+| 0x00 | 4 | u32 | nb_textures |
+| 0x04 | 4 | u32 | format (GX texture format ID) |
+| 0x08 | 4 | u32 | data_offset (into TEX region, from GPT1 base) |
+| 0x0C | 4 | u32 | width |
+| 0x10 | 4 | u32 | height |
+| 0x14 | 4 | u32 | nb_mipmaps |
+| 0x18+ | 4×N | u32[] | texture offsets from TXG start |
+
+### TEX Data
+
+Raw GX-format texture pixels, referenced by TextureContainer.data_offset. Uses the same tiled block formats described in the GX Texture Formats section above.
+
+### REF Section (Reference ID Table)
+
+Array of `nb_generators` × u32 values. Each entry is a generator/particle ID used by spawn-from-ref commands (opcodes 0xAA, 0xF0, 0xF1, 0xF2).
+
+### Particle Command Bytecode
+
+Single-byte opcodes followed by variable-length arguments. Executed by `psInterpretParticle0` at runtime.
+
+**Helper functions:**
+- `getFloat()` — read big-endian f32 (4 bytes) from command stream
+- `getTime()` — variable-length time value: reads 1 byte; if bit 7 is set, reads a second byte and combines into a 15-bit value: `(byte0 & 0x7F) << 8 | byte1`. Range: 0-127 (1 byte) or 0-32767 (2 bytes). Same extension scheme as the LIFETIME opcode.
+- `HSD_Randf()` — random float in [0, 1)
+
+#### Opcode Table
+
+##### 0x00-0x7F: Lifetime + Texture Select
+
+```
+Bits: 0TExxxx
+  Bits 0-4: Frame countdown value
+  Bit 5 (E): Extended — countdown = (low5 << 8) | next_byte (same scheme as getTime)
+  Bit 6 (T): Load texture — poseNum = next_byte; enable DispTexture if valid
+
+The frame countdown pauses bytecode execution for N frames before continuing.
+This is NOT the particle's total lifetime — it's a yield/delay within the
+command sequence. The particle lives until EXIT (0xFE/0xFF) is reached.
+```
+
+##### 0x80-0x87: Set Position (bits 0-2 = X,Y,Z axis flags)
+Each flagged axis reads a `getFloat()`. Result transformed by local rotation.
+
+##### 0x88-0x8F: Move (add to position, same axis flags)
+
+##### 0x90-0x97: Set Velocity (same axis flags)
+
+##### 0x98-0x9F: Accelerate (add to velocity, same axis flags)
+
+##### 0xA0-0xBF: Miscellaneous
+
+| Opcode | Mnemonic | Arguments | Description |
+|--------|----------|-----------|-------------|
+| 0xA0 | SCALE | getTime, getFloat | Interpolate size over time |
+| 0xA1 | TEX_OFF | — | Disable texture display |
+| 0xA2 | GRAVITY | getFloat | Set gravity (0 disables) |
+| 0xA3 | FRICTION | getFloat | Set friction (1.0 disables) |
+| 0xA4 | SPAWN_PARTICLE | u16 id | Create particle at current position |
+| 0xA5 | SPAWN_GENERATOR | u16 id | Create generator at current position |
+| 0xA6 | RAND_KILL_TIMER | u16 base, u16 range | Kill timer = base + range × rand() |
+| 0xA7 | RAND_KILL_CHANCE | u8 chance | Kill if chance < 100 × rand() |
+| 0xA8 | RAND_OFFSET | 3× getFloat | Random position offset per axis |
+| 0xA9 | MODIFY_DIR | getFloat | Modify direction |
+| 0xAA | SPAWN_RAND_REF | u16 base, u16 count | Spawn from refs[base + count × rand()] |
+| 0xAB | SCALE_VEL | getFloat | Multiply all velocity components |
+| 0xAC | SCALE_RAND | getTime, getFloat | Size target += float × rand() |
+| 0xAD | PRIMENV_ON | — | Enable PrimEnv color mode |
+| 0xAE | MIRROR_OFF | — | Disable mirror S and T |
+| 0xAF | MIRROR_S | — | Enable mirror S only |
+| 0xB0 | MIRROR_T | — | Enable mirror T only |
+| 0xB1 | MIRROR_ST | — | Enable mirror both S and T |
+| 0xB2 | APPLY_APPSRT | — | Apply AppSRT transform to position |
+| 0xB3 | ALPHA_CMP | getTime, u8 mode, u8 p1, u8 p2 | Alpha compare interpolation |
+| 0xB4 | TEXINTERP_NEAR | — | Nearest-neighbor texture filtering |
+| 0xB5 | TEXINTERP_LINEAR | — | Linear texture filtering |
+| 0xB6 | ROTATE_RAND | getTime, getFloat | Rotation target += float |
+| 0xB7 | VEL_TO_JOINT | u8 joint | Set velocity toward joint |
+| 0xB8 | FORCES_JOINT | getFloat, getFloat, u8 | Gravity+friction from joint, kill on collision |
+| 0xB9 | SPAWN_PARTICLE_VEL | u16 id | Create particle with current velocity |
+| 0xBA | RAND_PRIMCOL | 4× u8 | Random primary color adjustment |
+| 0xBB | RAND_ENVCOL | 4× u8 | Random environment color adjustment |
+| 0xBC | SET_TEXTURE_IDX | u8 base, u8 range | poseNum = base + range × rand() |
+| 0xBD | SET_SPEED | getFloat base, getFloat range | Normalize velocity to speed |
+| 0xBE | SCALE_VEL_AXIS | 3× getFloat | Per-axis velocity scale |
+| 0xBF | SET_JOINT | u8 id | Attach to bone joint |
+
+##### 0xC0-0xCF: Set Primary Color Target (bits 0-3 = R,G,B,A flags)
+
+Resolves current color interpolation, then: `time = getTime()`, for each flagged channel: `target = next_byte`. Starts interpolation if time > 0, else snaps.
+
+##### 0xD0-0xDF: Set Environment Color Target (same pattern)
+
+##### 0xE0-0xFF: Extended Commands
+
+| Opcode | Mnemonic | Arguments | Description |
+|--------|----------|-----------|-------------|
+| 0xE0 | RAND_COLORS | 4× u8 | Set both primCol + envCol randomly |
+| 0xE1 | SET_CALLBACK | u8 | Set particle update callback |
+| 0xE2 | TEXEDGE_ON | — | Enable texture edge |
+| 0xE3 | SET_PALETTE | u8 | Set palette number |
+| 0xE4 | FLIP_S | u8 (0=off,1=on,2=toggle,3=random) | Control S-axis flip |
+| 0xE5 | FLIP_T | u8 | Control T-axis flip |
+| 0xE6 | DIRVEC_ON | — | Enable direction vector mode |
+| 0xE7 | DIRVEC_OFF | — | Disable direction vector mode |
+| 0xE8 | SET_TRAIL | getFloat | Set trail length (negative disables) |
+| 0xE9 | RAND_PRIMENV | u8 flags, u8 count, var args | Complex random color adjustment |
+| 0xEA | MAT_COLOR | getTime, u8 flags, var u8 | Material color interpolation |
+| 0xEB | AMB_COLOR | getTime, u8 flags, var u8 | Ambient color interpolation |
+| 0xEC | CUSTOM_FLOAT | u8 idx, getFloat | Write to custom parameter array |
+| 0xED | RAND_ROTATE | getFloat, getFloat, u8 | Random rotation with range |
+| 0xEF | SPAWN_GEN_FLAGS | u16 id, u8 flags | Create generator with extra flags |
+| 0xF0 | SPAWN_GEN_REF_FLAGS | u16 ref, u8 flags | Create generator from REF with flags |
+| 0xF1 | SPAWN_PARTICLE_REF | u16 ref | Create particle from REF at position |
+| 0xF2 | SPAWN_PARTICLE_REF_VEL | u16 ref | Create particle from REF with velocity |
+| 0xF3 | ROTATE_ACCEL | u8 dir, getFloat rate, getFloat accel, getTime | Rotation with acceleration |
+| 0xF4 | GEN_DIR_BASE | 4× getFloat | Set generator direction base |
+| 0xF5 | GEN_FLAG_2000 | — | Set generator joint tracking flag |
+| 0xF6 | GEN_FLAG_1000 | — | Set generator joint tracking flag |
+| 0xF7 | NO_ZCOMP | — | Disable Z comparison |
+| 0xFA | LOOP_START | u8 count | Begin loop, save position |
+| 0xFB | LOOP_END | — | Decrement counter, jump if nonzero |
+| 0xFC | SAVE_JUMP | — | Save current position |
+| 0xFD | JUMP | — | Jump to saved position |
+| 0xFE | EXIT | — | Kill particle |
+| 0xFF | EXIT | — | Kill particle |
+
+### Particle Flags Bitfield (runtime `kind` / `var04`)
+
+| Bit(s) | Mask | Name | Description |
+|--------|------|------|-------------|
+| 0 | 0x00000001 | APPLYGRAVITY | Apply gravity each frame |
+| 1 | 0x00000002 | APPLYFRICTION | Apply friction each frame |
+| 2 | 0x00000004 | Tornado | Tornado motion mode |
+| 3 | 0x00000008 | TexEdge | Texture edge rendering |
+| 4 | 0x00000010 | ComTLUT | Common TLUT palette |
+| 5 | 0x00000020 | MirrorS | Mirror texture S axis |
+| 6 | 0x00000040 | MirrorT | Mirror texture T axis |
+| 7 | 0x00000080 | PrimEnv | Use primary + environment color registers |
+| 9 | 0x00000200 | TexInterpNear | Nearest-neighbor texture filtering |
+| 10 | 0x00000400 | DispTexture | Display texture on particle |
+| 11 | 0x00000800 | SkipInterp | Skip interpretation |
+| 12-14 | 0x7000 | JointID | Bone attachment ID (3 bits) |
+| 15 | 0x00008000 | UpdateJoint | Update joint position each frame |
+| 18 | 0x00040000 | TexFlipS | Flip texture S axis |
+| 19 | 0x00080000 | TexFlipT | Flip texture T axis |
+| 20 | 0x00100000 | Trail | Enable trail rendering |
+| 21 | 0x00200000 | DirVec | Direction vector mode |
+| 22-23 | 0x00C00000 | BlendMode | Blend mode (2 bits) |
+| 24 | 0x01000000 | DispFog | Display fog |
+| 28 | 0x10000000 | NoZComp | Disable Z comparison |
+| 30 | 0x40000000 | DisPoint | Disable point rendering |
+| 31 | 0x80000000 | DispLighting | Enable lighting calculations |
+
+### V2 Format (0x01F056DA)
+
+A different container format used by some XD files. Uses 16 subsections of 0x3C bytes each, loaded via `peBankLoadFile`. Not yet fully documented.
+
+---
+
+## DAT Model Binary
+
+The DAT format is the core SysDolphin model container used across GameCube games. Documented separately in the codebase's node system and IR specification. Key structural elements:
+
+### DAT Header (32 bytes)
+
+| Offset | Size | Type | Field |
+|--------|------|------|-------|
+| 0x00 | 4 | u32 | file_size (total, including header) |
+| 0x04 | 4 | u32 | data_block_size |
+| 0x08 | 4 | u32 | relocation_count |
+| 0x0C | 4 | u32 | root_count |
+| 0x10 | 4 | u32 | reference_count |
+| 0x14 | 12 | pad | *(zeros)* |
+
+After the header: data block, relocation table (root_count × u32 offsets), root entries (root_count × {node_offset, string_offset}), reference entries (ref_count × {node_offset, string_offset}), string table.
+
+See `documentation/ir_specification.md` for the full node hierarchy.

@@ -20,3 +20,4 @@ from .constraints import (
 from .lights import IRLight
 from .camera import IRCamera
 from .fog import IRFog
+from .particles import IRParticleSystem, IRParticleGenerator, IRParticleTexture
