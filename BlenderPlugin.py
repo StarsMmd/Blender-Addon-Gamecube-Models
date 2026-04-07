@@ -149,6 +149,8 @@ class ExportHSD(bpy.types.Operator, ExportHelper):
                             description='Write export logs to a temp file for debugging.')
     strip_names: BoolProperty(default=False, name='Strip Node Names',
                              description='Remove bone/node names from the output. Enable for compatibility with models that have empty name fields.')
+    include_bound_box: BoolProperty(default=True, name='Include Bound Box',
+                                   description='Include the bound_box root section in the DAT. PKX models use this for collision/culling. Disable for standalone .dat files that don\'t need it.')
 
     @classmethod
     def poll(cls, context):
@@ -166,6 +168,7 @@ class ExportHSD(bpy.types.Operator, ExportHelper):
 
         options = {
             'strip_names': self.strip_names,
+            'include_bound_box': self.include_bound_box,
         }
 
         try:

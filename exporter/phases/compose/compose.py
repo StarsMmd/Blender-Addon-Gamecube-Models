@@ -97,10 +97,13 @@ def compose_scene(ir_scene, options=None, logger=StubLogger()):
         section_names.append('scene_data')
 
         # Bound box — per-frame AABBs across all animation sets
-        bb = _compose_bound_box(model, logger)
-        if bb:
-            root_nodes.append(bb)
-            section_names.append('bound_box')
+        if options.get('include_bound_box', True):
+            bb = _compose_bound_box(model, logger)
+            if bb:
+                root_nodes.append(bb)
+                section_names.append('bound_box')
+        else:
+            logger.info("  Bound box: skipped (disabled in export options)")
 
     logger.info("=== Export Phase 2 complete: %d scene(s) ===", len(root_nodes))
 
