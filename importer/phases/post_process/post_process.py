@@ -132,6 +132,10 @@ def _select_first_action(armature, actions, mat_slot_indices):
 def _apply_shiny(armature, shiny_params, logger):
     """Build the shiny filter node group and inject it into all materials.
 
+    Stores routing/brightness as PKX custom properties, then builds shader
+    node groups and inserts them into every material globally (matching
+    the game's GSmodelEnableColorSwap + GSmodelEnableModulation behavior).
+
     Args:
         armature: The Blender armature object.
         shiny_params: ShinyParams with route_r/g/b/a (int 0-3) and brightness_r/g/b/a (float).
@@ -148,34 +152,21 @@ def _apply_shiny(armature, shiny_params, logger):
             setup_shiny_properties, insert_shiny_filter,
         )
 
-    try:
-        from ....shared.IR.shiny import IRShinyFilter
-        from ....shared.IR.enums import ShinyChannel
-    except (ImportError, SystemError):
-        from shared.IR.shiny import IRShinyFilter
-        from shared.IR.enums import ShinyChannel
+    route = [shiny_params.route_r, shiny_params.route_g,
+             shiny_params.route_b, shiny_params.route_a]
+    brightness = [shiny_params.brightness_r, shiny_params.brightness_g,
+                  shiny_params.brightness_b]  # Alpha forced to max by the game
 
-    channel_map = {0: ShinyChannel.RED, 1: ShinyChannel.GREEN, 2: ShinyChannel.BLUE, 3: ShinyChannel.ALPHA}
-    routing = (
-        channel_map.get(shiny_params.route_r, ShinyChannel.RED),
-        channel_map.get(shiny_params.route_g, ShinyChannel.GREEN),
-        channel_map.get(shiny_params.route_b, ShinyChannel.BLUE),
-        channel_map.get(shiny_params.route_a, ShinyChannel.ALPHA),
-    )
-    brightness = (
-        shiny_params.brightness_r,
-        shiny_params.brightness_g,
-        shiny_params.brightness_b,
-        shiny_params.brightness_a,
-    )
-    ir_filter = IRShinyFilter(channel_routing=routing, brightness=brightness)
+    # Store as PKX custom properties (single source of truth)
+    armature["dat_pkx_shiny_route"] = route
+    armature["dat_pkx_shiny_brightness"] = brightness
 
     model_name = armature.name.replace('Armature_', '')
     route_name = "ShinyRoute_%s" % model_name
     bright_name = "ShinyBright_%s" % model_name
-    route_group = build_shiny_route_node_group(ir_filter, route_name)
-    bright_group = build_shiny_bright_node_group(ir_filter, bright_name)
-    setup_shiny_properties(armature, ir_filter, route_name, bright_name)
+    route_group = build_shiny_route_node_group(route, route_name)
+    bright_group = build_shiny_bright_node_group(brightness, bright_name)
+    setup_shiny_properties(armature, route, brightness, route_name, bright_name)
     logger.info("  Built shiny filter node groups: %s, %s", route_name, bright_name)
 
     count = 0
@@ -208,23 +199,41 @@ def _store_pkx_metadata(armature, pkx_header, logger):
 
     h = pkx_header
 
+    try:
+        from ....shared.helpers.pkx import _to_brightness
+    except (ImportError, SystemError):
+        from shared.helpers.pkx import _to_brightness
+
     # Preamble
     armature["dat_pkx_format"] = "XD" if h.is_xd else "COLOSSEUM"
     armature["dat_pkx_species_id"] = h.species_id
     armature["dat_pkx_particle_orientation"] = h.particle_orientation
-    armature["dat_pkx_flags"] = h.flags
     armature["dat_pkx_distortion_param"] = h.distortion_param
     armature["dat_pkx_distortion_type"] = h.distortion_type
     armature["dat_pkx_model_type"] = "TRAINER" if h.species_id == 0 and h.particle_orientation == 0 else "POKEMON"
+
+    # Split flags into individual booleans
+    armature["dat_pkx_flag_flying"] = bool(h.flags & 0x01)
+    armature["dat_pkx_flag_skip_frac_frames"] = bool(h.flags & 0x04)
+    armature["dat_pkx_flag_no_root_anim"] = bool(h.flags & 0x40)
+    armature["dat_pkx_flag_bit7"] = bool(h.flags & 0x80)
 
     # Resolve head bone index to name
     bones = armature.data.bones
     bone_list = list(bones)
     armature["dat_pkx_head_bone"] = _bone_name_for_index(bone_list, h.head_bone_index)
 
-    # Shiny routing + brightness (raw values for PKX header reconstruction)
+    # Shiny routing (int 0-3 per channel) + brightness (float -1 to 1, RGB only)
     armature["dat_pkx_shiny_route"] = list(h.shiny_route)
-    armature["dat_pkx_shiny_brightness"] = list(h.shiny_brightness)
+    brightness_floats = [
+        round(_to_brightness(h.shiny_brightness[0]), 3),
+        round(_to_brightness(h.shiny_brightness[1]), 3),
+        round(_to_brightness(h.shiny_brightness[2]), 3),
+    ]
+    armature["dat_pkx_shiny_brightness"] = brightness_floats
+
+    # Add property descriptions (hints)
+    _add_property_descriptions(armature)
 
     # Part animation data (XD only)
     if h.is_xd:
@@ -251,17 +260,17 @@ def _store_pkx_metadata(armature, pkx_header, logger):
         prefix = "dat_pkx_anim_%02d" % i
         armature[prefix + "_type"] = entry.anim_type
         armature[prefix + "_sub_count"] = entry.sub_anim_count
-        armature[prefix + "_damage_flags"] = entry.damage_flags
+        armature[prefix + "_damage_flags"] = _clamp_int32(entry.damage_flags)
         armature[prefix + "_timing_1"] = entry.timing[0]
         armature[prefix + "_timing_2"] = entry.timing[1]
         armature[prefix + "_timing_3"] = entry.timing[2]
         armature[prefix + "_timing_4"] = entry.timing[3]
-        armature[prefix + "_terminator"] = entry.terminator
+        armature[prefix + "_terminator"] = _clamp_int32(entry.terminator)
 
         # Sub-animations
         for s in range(min(len(entry.sub_anims), 3)):
-            armature[prefix + "_sub_%d_motion" % s] = entry.sub_anims[s].motion_type
-            armature[prefix + "_sub_%d_anim" % s] = entry.sub_anims[s].anim_index
+            armature[prefix + "_sub_%d_motion" % s] = _clamp_int32(entry.sub_anims[s].motion_type)
+            armature[prefix + "_sub_%d_anim" % s] = _clamp_int32(entry.sub_anims[s].anim_index)
 
         # Per-entry null joint bone overrides (only if different from model-level)
         if first_active and entry.null_joint_bones != first_active.null_joint_bones:
@@ -272,6 +281,45 @@ def _store_pkx_metadata(armature, pkx_header, logger):
 
     logger.info("  Stored PKX metadata on %s: format=%s, species=%d, %d anim entries",
                 armature.name, armature["dat_pkx_format"], h.species_id, len(h.anim_entries))
+
+
+def _add_property_descriptions(armature):
+    """Add tooltip descriptions to all PKX custom properties."""
+    descriptions = {
+        "dat_pkx_format": "PKX container format: XD or COLOSSEUM. Determines header layout and timing format.",
+        "dat_pkx_species_id": "Pokédex species number. Set to 0 for trainer or generic models.",
+        "dat_pkx_model_type": "Animation slot naming: POKEMON uses battle move slots, TRAINER uses pose slots.",
+        "dat_pkx_head_bone": "Bone used for head tracking in battle. The game rotates this bone to follow the opponent.",
+        "dat_pkx_particle_orientation": "Rotation angle (-2 to 2) for sleep and ice particle effects attached to this model.",
+        "dat_pkx_distortion_param": "Visual distortion effect intensity. 0 = no distortion.",
+        "dat_pkx_distortion_type": "Visual distortion effect type. 0 = none.",
+        "dat_pkx_flag_flying": "Flying mode — enables the Take Flight animation and allows the model to hover.",
+        "dat_pkx_flag_skip_frac_frames": "Skip fractional frames — use integer frame stepping for animations.",
+        "dat_pkx_flag_no_root_anim": "Remove root joint animation — locks the model's base position in place.",
+        "dat_pkx_flag_bit7": "Unknown flag bit 7 (only observed on Espeon).",
+        "dat_pkx_shiny_route": "Shiny channel routing [R,G,B,A]. Each value 0-3 selects which source channel (0=Red, 1=Green, 2=Blue, 3=Alpha) feeds that output. Default [0,1,2,3] = no swap.",
+        "dat_pkx_shiny_brightness": "Shiny brightness [R,G,B]. Range -1.0 (black) to 1.0 (2× bright), 0.0 = unchanged. Alpha brightness is always forced to maximum by the game.",
+        "dat_pkx_anim_count": "Number of animation metadata entries (typically 17 for XD).",
+    }
+
+    for prop_name, desc in descriptions.items():
+        if prop_name in armature:
+            try:
+                ui = armature.id_properties_ui(prop_name)
+                ui.update(description=desc)
+            except (TypeError, AttributeError):
+                pass  # Some property types don't support id_properties_ui
+
+
+def _clamp_int32(value):
+    """Clamp a uint32 to signed int32 range for Blender custom properties.
+
+    Values like 0xCDCDCDCD (debug heap fill) exceed Python's C int limit.
+    Treat them as 0 since they represent uninitialized data.
+    """
+    if value > 0x7FFFFFFF:
+        return 0
+    return int(value)
 
 
 def _bone_name_for_index(bone_list, index):

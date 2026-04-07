@@ -41,7 +41,7 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
                             description='Use the old import pipeline instead of the new Intermediate Representation pipeline.')
 
     filename_ext = ".dat"
-    filter_glob: StringProperty(default="*.fdat;*.dat;*.rdat;*.pkx;*.fsys", options={'HIDDEN'})
+    filter_glob: StringProperty(default="*.fdat;*.dat;*.rdat;*.pkx;*.fsys;*.wzx", options={'HIDDEN'})
 
     def execute(self, context):
         if self.files and self.directory:
@@ -224,10 +224,61 @@ def menu_func_export(self, context):
     self.layout.operator(ExportHSD.bl_idname, text="Gamecube DAT Model (.dat)")
 
 
-class DAT_PT_ShinyPanel(bpy.types.Panel):
-    """Panel for the shiny color variant parameters."""
-    bl_label = "Shiny Variant"
-    bl_idname = "OBJECT_PT_dat_pkx_shiny"
+_SHINY_CHANNEL_ITEMS = [
+    ('0', 'Red', 'Red channel (0)'),
+    ('1', 'Green', 'Green channel (1)'),
+    ('2', 'Blue', 'Blue channel (2)'),
+    ('3', 'Alpha', 'Alpha channel (3)'),
+]
+
+
+def _on_shiny_toggle_update(obj, context):
+    """Rebuild shiny node groups and refresh viewport when toggle changes."""
+    if obj.dat_pkx_shiny:
+        _sync_shiny_props_to_custom(obj)
+        from .importer.phases.post_process.shiny_filter import rebuild_shiny_node_group
+        rebuild_shiny_node_group(obj)
+    _refresh_shiny_viewport(obj, context)
+
+
+def _on_shiny_param_update(obj, context):
+    """Write registered props back to PKX custom properties and rebuild if shiny is on."""
+    _sync_shiny_props_to_custom(obj)
+    if obj.dat_pkx_shiny:
+        from .importer.phases.post_process.shiny_filter import rebuild_shiny_node_group
+        rebuild_shiny_node_group(obj)
+    _refresh_shiny_viewport(obj, context)
+
+
+def _sync_shiny_props_to_custom(obj):
+    """Write registered shiny properties back to dat_pkx_ custom properties."""
+    obj["dat_pkx_shiny_route"] = [
+        int(obj.dat_pkx_shiny_route_r),
+        int(obj.dat_pkx_shiny_route_g),
+        int(obj.dat_pkx_shiny_route_b),
+        int(obj.dat_pkx_shiny_route_a),
+    ]
+    obj["dat_pkx_shiny_brightness"] = [
+        obj.dat_pkx_shiny_brightness_r,
+        obj.dat_pkx_shiny_brightness_g,
+        obj.dat_pkx_shiny_brightness_b,
+    ]
+
+
+def _refresh_shiny_viewport(obj, context):
+    """Tag objects and materials for viewport refresh."""
+    obj.update_tag()
+    for child in obj.children:
+        if child.type == 'MESH' and child.active_material:
+            child.active_material.node_tree.update_tag()
+    if context and context.area:
+        context.area.tag_redraw()
+
+
+class DAT_PT_PKXPanel(bpy.types.Panel):
+    """PKX model metadata panel."""
+    bl_label = "PKX Metadata"
+    bl_idname = "OBJECT_PT_dat_pkx"
     bl_space_type = 'PROPERTIES'
     bl_region_type = 'WINDOW'
     bl_context = "object"
@@ -235,100 +286,127 @@ class DAT_PT_ShinyPanel(bpy.types.Panel):
     @classmethod
     def poll(cls, context):
         obj = context.active_object
-        return obj is not None and obj.type == 'ARMATURE' and obj.get("dat_pkx_has_shiny", False)
+        return (obj is not None and obj.type == 'ARMATURE' and
+                obj.get("dat_pkx_format") is not None)
 
     def draw(self, context):
         obj = context.active_object
         layout = self.layout
 
-        layout.prop(obj, "dat_pkx_shiny", text="Enable")
+        # --- Shiny Variant ---
+        box = layout.box()
+        box.label(text="Shiny Variant", icon='COLOR')
+        if obj.get("dat_pkx_has_shiny"):
+            box.prop(obj, "dat_pkx_shiny", text="Enable Shiny Preview")
 
-        col = layout.column()
-        col.active = obj.dat_pkx_shiny
+            col = box.column(align=True)
+            col.label(text="Channel Routing:")
+            row = col.row(align=True)
+            row.prop(obj, "dat_pkx_shiny_route_r", text="R")
+            row.prop(obj, "dat_pkx_shiny_route_g", text="G")
+            row = col.row(align=True)
+            row.prop(obj, "dat_pkx_shiny_route_b", text="B")
+            row.prop(obj, "dat_pkx_shiny_route_a", text="A")
 
-        col.label(text="Channel Routing:")
-        row = col.row(align=True)
-        row.prop(obj, "dat_pkx_shiny_route_r", text="R")
-        row.prop(obj, "dat_pkx_shiny_route_g", text="G")
-        row = col.row(align=True)
-        row.prop(obj, "dat_pkx_shiny_route_b", text="B")
-        row.prop(obj, "dat_pkx_shiny_route_a", text="A")
+            col = box.column(align=True)
+            col.label(text="Brightness:")
+            col.prop(obj, "dat_pkx_shiny_brightness_r", text="Red")
+            col.prop(obj, "dat_pkx_shiny_brightness_g", text="Green")
+            col.prop(obj, "dat_pkx_shiny_brightness_b", text="Blue")
+        else:
+            box.label(text="No shiny data for this model")
 
-        col.label(text="Brightness:")
-        col.prop(obj, "dat_pkx_shiny_brightness_r", text="R")
-        col.prop(obj, "dat_pkx_shiny_brightness_g", text="G")
-        col.prop(obj, "dat_pkx_shiny_brightness_b", text="B")
-        col.prop(obj, "dat_pkx_shiny_brightness_a", text="A")
+        # --- General ---
+        box = layout.box()
+        box.label(text="General", icon='INFO')
+        _prop_row(box, "Format", obj.get("dat_pkx_format", "—"))
+        _prop_row(box, "Species ID", obj.get("dat_pkx_species_id", "—"))
+        _prop_row(box, "Model Type", obj.get("dat_pkx_model_type", "—"))
+        head_bone = obj.get("dat_pkx_head_bone", "")
+        _prop_row(box, "Head Bone", head_bone if head_bone else "(none)")
+        _prop_row(box, "Particle Orientation", obj.get("dat_pkx_particle_orientation", 0))
+
+        # --- Flags ---
+        box = layout.box()
+        box.label(text="Flags", icon='PREFERENCES')
+        col = box.column(align=True)
+        for flag_key, flag_label in [
+            ("dat_pkx_flag_flying", "Flying Mode"),
+            ("dat_pkx_flag_skip_frac_frames", "Skip Fractional Frames"),
+            ("dat_pkx_flag_no_root_anim", "No Root Joint Animation"),
+            ("dat_pkx_flag_bit7", "Unknown (bit 7)"),
+        ]:
+            val = obj.get(flag_key, False)
+            icon = 'CHECKBOX_HLT' if val else 'CHECKBOX_DEHLT'
+            col.label(text=flag_label, icon=icon)
+
+        # --- Distortion ---
+        dist_param = obj.get("dat_pkx_distortion_param", 0)
+        dist_type = obj.get("dat_pkx_distortion_type", 0)
+        if dist_param or dist_type:
+            box = layout.box()
+            box.label(text="Distortion", icon='MOD_WAVE')
+            _prop_row(box, "Type", dist_type)
+            _prop_row(box, "Parameter", dist_param)
+
+        # --- Particles ---
+        ptl_count = obj.get("dat_particle_count", 0)
+        if ptl_count:
+            box = layout.box()
+            box.label(text="Particles", icon='PARTICLES')
+            _prop_row(box, "Generators", ptl_count)
+            _prop_row(box, "Textures", obj.get("dat_particle_texture_count", 0))
+
+        # --- Animations ---
+        anim_count = obj.get("dat_pkx_anim_count", 0)
+        if anim_count:
+            box = layout.box()
+            box.label(text="Animations", icon='ACTION')
+            _prop_row(box, "Slots", anim_count)
 
 
-classes = (ImportHSD, ExportHSD, DAT_PT_ShinyPanel)
+def _prop_row(layout, label, value):
+    """Draw a label: value row in the panel."""
+    row = layout.row()
+    row.label(text="%s:" % label)
+    row.label(text=str(value))
 
 
-_SHINY_CHANNEL_ITEMS = [
-    ('RED', 'Red', 'Red channel'),
-    ('GREEN', 'Green', 'Green channel'),
-    ('BLUE', 'Blue', 'Blue channel'),
-    ('ALPHA', 'Alpha', 'Alpha channel'),
-]
+classes = (ImportHSD, ExportHSD, DAT_PT_PKXPanel)
 
 
-def _on_shiny_toggle_update(obj, context):
-    """Force viewport refresh when the Shiny toggle changes."""
-    obj.update_tag()
-    for child in obj.children:
-        if child.type == 'MESH' and child.active_material:
-            child.active_material.node_tree.update_tag()
-    if context and context.area:
-        context.area.tag_redraw()
-
-
-def _on_shiny_param_update(obj, context):
-    """Rebuild the shiny node group and refresh the viewport when a parameter changes."""
-    from .importer.phases.post_process.shiny_filter import rebuild_shiny_node_group
-    rebuild_shiny_node_group(obj)
-    obj.update_tag()
-    for child in obj.children:
-        if child.type == 'MESH' and child.active_material:
-            child.active_material.node_tree.update_tag()
-    if context and context.area:
-        context.area.tag_redraw()
-
-
-_shiny_props = [
+_dat_props = [
     ('dat_pkx_shiny', BoolProperty(
-        name="Shiny", description="Toggle shiny color variant",
+        name="Shiny Preview",
+        description="Toggle shiny color variant preview. When enabled, the shiny channel routing and brightness are applied to all materials",
         default=False, update=_on_shiny_toggle_update,
     )),
     ('dat_pkx_shiny_route_r', EnumProperty(
-        name="Route R", description="Source channel for red output",
-        items=_SHINY_CHANNEL_ITEMS, default='RED', update=_on_shiny_param_update,
+        name="Route R", description="Which source color channel feeds the Red output",
+        items=_SHINY_CHANNEL_ITEMS, default='0', update=_on_shiny_param_update,
     )),
     ('dat_pkx_shiny_route_g', EnumProperty(
-        name="Route G", description="Source channel for green output",
-        items=_SHINY_CHANNEL_ITEMS, default='GREEN', update=_on_shiny_param_update,
+        name="Route G", description="Which source color channel feeds the Green output",
+        items=_SHINY_CHANNEL_ITEMS, default='1', update=_on_shiny_param_update,
     )),
     ('dat_pkx_shiny_route_b', EnumProperty(
-        name="Route B", description="Source channel for blue output",
-        items=_SHINY_CHANNEL_ITEMS, default='BLUE', update=_on_shiny_param_update,
+        name="Route B", description="Which source color channel feeds the Blue output",
+        items=_SHINY_CHANNEL_ITEMS, default='2', update=_on_shiny_param_update,
     )),
     ('dat_pkx_shiny_route_a', EnumProperty(
-        name="Route A", description="Source channel for alpha output",
-        items=_SHINY_CHANNEL_ITEMS, default='ALPHA', update=_on_shiny_param_update,
+        name="Route A", description="Which source color channel feeds the Alpha output",
+        items=_SHINY_CHANNEL_ITEMS, default='3', update=_on_shiny_param_update,
     )),
     ('dat_pkx_shiny_brightness_r', FloatProperty(
-        name="Brightness R", description="Red channel brightness (-1 = black, 0 = unchanged, 1 = 2x bright)",
+        name="Brightness R", description="Red brightness: -1 = black, 0 = unchanged, 1 = 2× bright",
         default=0.0, min=-1.0, max=1.0, step=1, precision=3, update=_on_shiny_param_update,
     )),
     ('dat_pkx_shiny_brightness_g', FloatProperty(
-        name="Brightness G", description="Green channel brightness (-1 = black, 0 = unchanged, 1 = 2x bright)",
+        name="Brightness G", description="Green brightness: -1 = black, 0 = unchanged, 1 = 2× bright",
         default=0.0, min=-1.0, max=1.0, step=1, precision=3, update=_on_shiny_param_update,
     )),
     ('dat_pkx_shiny_brightness_b', FloatProperty(
-        name="Brightness B", description="Blue channel brightness (-1 = black, 0 = unchanged, 1 = 2x bright)",
-        default=0.0, min=-1.0, max=1.0, step=1, precision=3, update=_on_shiny_param_update,
-    )),
-    ('dat_pkx_shiny_brightness_a', FloatProperty(
-        name="Brightness A", description="Alpha channel brightness (-1 = black, 0 = unchanged, 1 = 2x bright)",
+        name="Brightness B", description="Blue brightness: -1 = black, 0 = unchanged, 1 = 2× bright. Alpha brightness is forced to maximum by the game",
         default=0.0, min=-1.0, max=1.0, step=1, precision=3, update=_on_shiny_param_update,
     )),
 ]
@@ -350,7 +428,7 @@ _GX_FORMAT_ITEMS = [
 
 
 def register():
-    for prop_name, prop in _shiny_props:
+    for prop_name, prop in _dat_props:
         setattr(bpy.types.Object, prop_name, prop)
     bpy.types.Image.dat_gx_format = EnumProperty(
         name="GX Texture Format",
@@ -369,7 +447,7 @@ def unregister():
         bpy.utils.unregister_class(cls)
     bpy.types.TOPBAR_MT_file_import.remove(menu_func_import)
     bpy.types.TOPBAR_MT_file_export.remove(menu_func_export)
-    for prop_name, _ in _shiny_props:
+    for prop_name, _ in _dat_props:
         if hasattr(bpy.types.Object, prop_name):
             delattr(bpy.types.Object, prop_name)
     if hasattr(bpy.types.Image, 'dat_gx_format'):

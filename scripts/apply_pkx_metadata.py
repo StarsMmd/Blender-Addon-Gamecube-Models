@@ -88,9 +88,15 @@ def apply_pkx_metadata(armature, format='XD', model_type='POKEMON', species_id=0
     armature["dat_pkx_head_bone"] = head_bone_name
     head_index = _find_bone_index(armature, head_bone_name)
 
-    # Shiny (identity = no filter)
+    # Shiny (identity routing, neutral brightness = no visible change)
     armature["dat_pkx_shiny_route"] = [0, 1, 2, 3]
-    armature["dat_pkx_shiny_brightness"] = [0x7F, 0x7F, 0x7F, 0x7F]
+    armature["dat_pkx_shiny_brightness"] = [0.0, 0.0, 0.0]  # RGB floats [-1, 1]
+
+    # Flags (all off by default)
+    armature["dat_pkx_flag_flying"] = False
+    armature["dat_pkx_flag_skip_frac_frames"] = False
+    armature["dat_pkx_flag_no_root_anim"] = False
+    armature["dat_pkx_flag_bit7"] = False
 
     # Part animation data (inactive defaults)
     if is_xd:

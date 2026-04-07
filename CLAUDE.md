@@ -6,7 +6,7 @@ A Blender addon that imports and exports `.dat` 3D model files used in GameCube 
 
 **Target Blender version:** 4.5
 
-**Supported file extensions:** `.dat`, `.fdat`, `.rdat`, `.pkx`, `.fsys`
+**Supported file extensions:** `.dat`, `.fdat`, `.rdat`, `.pkx`, `.fsys`, `.wzx`
 
 **Reference implementation:** [Ploaj/HSDLib](https://github.com/Ploaj/HSDLib) — a C# Super Smash Bros. Melee model viewer/editor for the same SysDolphin format. **Caveat:** HSDLib targets Melee; this plugin targets Pokémon Colosseum/XD — struct fields, flag semantics, and node types may not match exactly.
 
@@ -69,7 +69,7 @@ Phase 4 (package)            DAT bytes → final output (.dat or .pkx)
 importer/
   importer.py                    # Importer.run() — pipeline entry point
   phases/
-    extract/extract.py           # Phase 1: container detection + header stripping (uses PKXContainer)
+    extract/extract.py           # Phase 1: container detection + header stripping (uses PKXContainer, WZX extractor)
       helpers/fsys.py            # FSYS archive parser (header, metadata, LZSS decompression)
       helpers/lzss.py            # LZSS decompression algorithm
     route/route.py               # Phase 2: section name → node type mapping
@@ -97,6 +97,7 @@ shared/
     logger.py                    # Logger / StubLogger
     math_shim.py                 # Matrix/Vector/Euler (mathutils or pure-Python fallback)
     pkx.py                       # PKXContainer — read/write PKX headers, DAT payloads, shiny params
+    wzx.py                       # WZX effect container — extract DATs and GPT1 particles from WazaSequence files
     shiny_params.py              # ShinyParams dataclass (channel routing + brightness)
     srgb.py                      # sRGB ↔ linear conversion
   ClassLookup/                   # Node type name → class resolution
@@ -186,7 +187,7 @@ Nodes are cached by file offset (`nodes_cache_by_offset`). Nodes with `is_cachab
 | IR pipeline | ✅ Default path (legacy available via toggle) |
 | FSYS archive import | ✅ Working (multi-model extraction + LZSS decompression) |
 | Shiny variant filter | ✅ Working (PKX color extraction, live-editable shader node group, per-parameter UI) |
-| Unit tests | ✅ 540 passing (27 texture encoder, 14 DAT serialization/alignment/relocation/vertex-space, 24 PKX header, 24 GPT1 particle) |
+| Unit tests | ✅ 555 passing (27 texture encoder, 14 DAT serialization/alignment/relocation/vertex-space, 24 PKX header, 24 GPT1 particle, 14 WZX extraction) |
 | Shader node auto-layout | ✅ Working (topological sort from output→inputs, left-to-right) |
 | Scale inheritance (animation baking) | ⚠️ Partially resolved — hybrid approach, see below |
 
@@ -293,23 +294,20 @@ Do not linearize colors in the IR, parsing, or describe phases.
 
 ## Shiny Filter Shader Nodes
 
-The shiny filter is applied entirely in Phase 6 (post-processing), independent of the parsing/IR/build phases. Raw shiny parameters are extracted from PKX headers in Phase 1 and passed directly to Phase 6. There is no shiny data in the IR.
+The shiny filter is applied entirely in Phase 6 (post-processing). Raw shiny parameters are extracted from PKX headers in Phase 1 and stored as `dat_pkx_shiny_route` (list of 4 ints) and `dat_pkx_shiny_brightness` (list of 3 floats) on the armature. There is no shiny data in the IR.
 
-The filter inserts four named nodes into each material's node tree, split into two stages:
+The filter inserts four named nodes into each material's node tree at the shader input:
 
-**Routing stage** (placed BEFORE vertex color multiply):
-- **`shiny_route_shader`** — ShaderNodeGroup referencing `ShinyRoute_{model_name}` (channel swizzle + Gamma linearization)
+- **`shiny_route_shader`** — ShaderNodeGroup referencing `ShinyRoute_{model_name}` (RGB channel swizzle via Separate→Combine, matching `GXSetTevSwapModeTable`)
 - **`shiny_route_mix`** — MixRGB blending between normal and routed output
-
-**Brightness stage** (placed AFTER vertex color multiply):
-- **`shiny_bright_shader`** — ShaderNodeGroup referencing `ShinyBright_{model_name}` (per-channel brightness scaling)
+- **`shiny_bright_shader`** — ShaderNodeGroup referencing `ShinyBright_{model_name}` (per-channel RGB brightness scaling, multiply factor = brightness + 1.0 → [0.0, 2.0], matching TEV modulation with 2x scale)
 - **`shiny_bright_mix`** — MixRGB blending between normal and brightness-adjusted output
 
-This separation ensures channel routing only affects texture/material colors, not vertex colors. The vertex color multiply node is found by graph analysis (MixRGB MULTIPLY with ShaderNodeAttribute input), not by name.
+Both stages are inserted at the Principled BSDF Base Color input (after all texture + vertex color processing), applied globally to ALL materials. This matches the game where `GSmodelEnableColorSwap` and `GSmodelEnableModulation` iterate all materials. Only RGB channels are routed — alpha route is always identity (3) and has no visual effect since the game forces brightness alpha to 0xFF.
 
 The exporter **must skip these nodes** when reading back materials — they are display-only and not part of the original model data. Identify them by the node names above.
 
-The shiny parameters are stored as registered `bpy.props` properties on the armature (`dat_pkx_shiny_route_r`, `dat_pkx_shiny_brightness_r`, etc.). When exporting to PKX, the exporter can read these properties from the armature to write updated shiny metadata back into the PKX header.
+The shiny parameters are stored as custom properties on the armature (`dat_pkx_shiny_route`, `dat_pkx_shiny_brightness`). The `dat_pkx_shiny` toggle (registered `BoolProperty`) controls viewport preview via drivers on the MixRGB nodes. When toggled on, the node groups are rebuilt from the current custom property values, enabling live editing.
 
 ---
 

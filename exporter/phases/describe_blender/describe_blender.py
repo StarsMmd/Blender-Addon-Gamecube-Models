@@ -231,61 +231,40 @@ def _refine_bone_flags(bones, meshes, logger):
 
 
 def _extract_shiny_params(armatures, logger):
-    """Find and extract shiny filter custom properties from armatures.
+    """Extract shiny parameters from armature PKX custom properties.
 
-    Checks for dat_pkx_shiny_route/brightness (new format) or
-    dat_pkx_shiny_route_r etc. Returns the first set found.
-
-    Args:
-        armatures: list of Blender armature objects.
-        logger: Logger instance.
-
-    Returns:
-        ShinyParams, or None.
+    Reads dat_pkx_shiny_route (list of 4 ints) and dat_pkx_shiny_brightness
+    (list of 3 floats [-1, 1]). Returns ShinyParams or None.
     """
     try:
         from ....shared.helpers.shiny_params import ShinyParams
-        from ....shared.helpers.pkx import _to_brightness
     except (ImportError, SystemError):
         from shared.helpers.shiny_params import ShinyParams
-        from shared.helpers.pkx import _to_brightness
 
     for arm in armatures:
-        # New format: dat_pkx_shiny_route (list of 4 ints)
         route = arm.get("dat_pkx_shiny_route")
         brightness = arm.get("dat_pkx_shiny_brightness")
-        if route is not None and brightness is not None:
-            route = list(route)
-            brightness = list(brightness)
-            # Check if identity/neutral
-            if route == [0, 1, 2, 3] and all(abs(b - 0x7F) <= 1 for b in brightness):
-                continue
-            logger.info("  Found PKX shiny params on %s", arm.name)
-            return ShinyParams(
-                route_r=route[0], route_g=route[1],
-                route_b=route[2], route_a=route[3],
-                brightness_r=_to_brightness(brightness[0]),
-                brightness_g=_to_brightness(brightness[1]),
-                brightness_b=_to_brightness(brightness[2]),
-                brightness_a=_to_brightness(brightness[3]),
-            )
+        if route is None or brightness is None:
+            continue
 
-        # Registered property format: dat_pkx_shiny_route_r etc.
-        if arm.get("dat_pkx_has_shiny"):
-            _PROP_TO_CHANNEL = {'RED': 0, 'GREEN': 1, 'BLUE': 2, 'ALPHA': 3}
-            try:
-                return ShinyParams(
-                    route_r=_PROP_TO_CHANNEL.get(arm.dat_pkx_shiny_route_r, 0),
-                    route_g=_PROP_TO_CHANNEL.get(arm.dat_pkx_shiny_route_g, 1),
-                    route_b=_PROP_TO_CHANNEL.get(arm.dat_pkx_shiny_route_b, 2),
-                    route_a=_PROP_TO_CHANNEL.get(arm.dat_pkx_shiny_route_a, 3),
-                    brightness_r=arm.dat_pkx_shiny_brightness_r,
-                    brightness_g=arm.dat_pkx_shiny_brightness_g,
-                    brightness_b=arm.dat_pkx_shiny_brightness_b,
-                    brightness_a=arm.dat_pkx_shiny_brightness_a,
-                )
-            except AttributeError:
-                pass
+        route = list(route)
+        brightness = list(brightness)
+
+        # Check if identity/neutral
+        is_identity = (route == [0, 1, 2, 3])
+        is_neutral = all(abs(b) < 0.01 for b in brightness[:3])
+        if is_identity and is_neutral:
+            continue
+
+        logger.info("  Found PKX shiny params on %s", arm.name)
+        return ShinyParams(
+            route_r=route[0], route_g=route[1],
+            route_b=route[2], route_a=route[3] if len(route) > 3 else 3,
+            brightness_r=brightness[0],
+            brightness_g=brightness[1],
+            brightness_b=brightness[2] if len(brightness) > 2 else 0.0,
+            brightness_a=0.0,  # Alpha forced to max by the game
+        )
 
     return None
 

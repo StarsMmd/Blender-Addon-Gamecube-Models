@@ -2,27 +2,19 @@
 
 Run this from Blender's Scripting panel (Text Editor > Run Script) with an
 armature selected. It creates ShinyRoute and ShinyBright node groups with
-no-op (identity) parameters and inserts them into every material on the
+identity/neutral parameters and inserts them into every material on the
 armature's child meshes.
 
-The routing stage is placed BEFORE any vertex color multiply node, and the
-brightness stage is placed AFTER it. This ensures channel routing only
-affects texture/material colors, not vertex colors.
+Edit dat_pkx_shiny_route and dat_pkx_shiny_brightness in the Custom Properties
+panel to change the shiny appearance. Toggle dat_pkx_shiny in the PKX Metadata
+panel to preview the effect.
 
-The Shiny Variant panel in Object Properties will appear on the armature,
-allowing live editing of all 8 shiny parameters (4 channel routing + 4 brightness).
-
-Requires the DAT plugin addon to be enabled (for the registered shiny properties).
-
-Supported material setups:
-  - Principled BSDF or Emission shader
-  - Vertex colors applied via MixRGB Multiply with ShaderNodeAttribute input
+Requires the DAT plugin addon to be enabled.
 """
 import bpy
 import sys
 import os
 
-# Add the addon directory to path so we can import from the plugin
 addon_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if addon_dir not in sys.path:
     sys.path.insert(0, addon_dir)
@@ -31,8 +23,6 @@ from importer.phases.post_process.shiny_filter import (
     build_shiny_route_node_group, build_shiny_bright_node_group,
     setup_shiny_properties, insert_shiny_filter,
 )
-from shared.IR.shiny import IRShinyFilter
-from shared.IR.enums import ShinyChannel
 
 
 def main():
@@ -43,7 +33,8 @@ def main():
 
     if armature.get("dat_pkx_has_shiny"):
         raise ValueError("This armature already has a shiny filter. "
-                         "Edit the parameters in the Shiny Variant panel instead.")
+                         "Edit dat_pkx_shiny_route and dat_pkx_shiny_brightness "
+                         "in Custom Properties instead.")
 
     if not hasattr(armature, 'dat_pkx_shiny'):
         raise ValueError("The DAT plugin addon must be enabled for shiny properties to work. "
@@ -51,17 +42,19 @@ def main():
 
     model_name = armature.name
 
-    # No-op parameters: identity routing, zero brightness
-    ir_filter = IRShinyFilter(
-        channel_routing=(ShinyChannel.RED, ShinyChannel.GREEN, ShinyChannel.BLUE, ShinyChannel.ALPHA),
-        brightness=(0.0, 0.0, 0.0, 0.0),
-    )
+    # Identity routing, neutral brightness
+    route = [0, 1, 2, 3]
+    brightness = [0.0, 0.0, 0.0]
+
+    # Store as PKX custom properties
+    armature["dat_pkx_shiny_route"] = route
+    armature["dat_pkx_shiny_brightness"] = brightness
 
     route_name = "ShinyRoute_%s" % model_name
     bright_name = "ShinyBright_%s" % model_name
-    route_group = build_shiny_route_node_group(ir_filter, route_name)
-    bright_group = build_shiny_bright_node_group(ir_filter, bright_name)
-    setup_shiny_properties(armature, ir_filter, route_name, bright_name)
+    route_group = build_shiny_route_node_group(route, route_name)
+    bright_group = build_shiny_bright_node_group(brightness, bright_name)
+    setup_shiny_properties(armature, route, brightness, route_name, bright_name)
 
     count = 0
     for child in armature.children:
@@ -73,7 +66,8 @@ def main():
                 count += 1
 
     print("Added shiny filter to %d material(s) on '%s'." % (count, model_name))
-    print("Use the Shiny Variant panel in Object Properties to adjust parameters.")
+    print("Edit dat_pkx_shiny_route / dat_pkx_shiny_brightness in Custom Properties.")
+    print("Toggle dat_pkx_shiny in the PKX Metadata panel to preview.")
 
 
 main()
