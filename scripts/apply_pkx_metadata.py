@@ -9,12 +9,13 @@ The script:
   2. Auto-detects the head bone by name heuristic
   3. Creates 17 animation metadata entries (entry 0 = idle loop, rest = unused)
   4. Sets default null joint bone assignments
-  5. Sets identity shiny routing (no shiny filter)
+  5. Sets identity shiny routing with neutral brightness (no visible change)
+  6. Sets inactive sub-animation defaults
 
 After running, the model can be exported as .pkx from the DAT exporter.
-Edit the dat_pkx_* custom properties in the Object Properties panel to customize.
+The PKX Metadata panel will appear in Object Properties for the armature.
 
-Requires the DAT plugin addon to be enabled.
+Requires the DAT plugin addon to be enabled (for registered shiny properties).
 """
 import bpy
 import sys
@@ -25,84 +26,63 @@ addon_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if addon_dir not in sys.path:
     sys.path.insert(0, addon_dir)
 
-from shared.helpers.pkx_header import (
-    PKXHeader, AnimMetadataEntry, SubAnim, PartAnimData,
-    XD_POKEMON_ANIM_NAMES, XD_TRAINER_ANIM_NAMES, NULL_JOINT_NAMES,
-)
-
 
 def _find_head_bone(armature):
-    """Auto-detect the head bone by name heuristic.
-
-    Checks for bones containing 'head' (case-insensitive), then falls back
-    to the first child of the root bone.
-    """
-    bones = armature.data.bones
-    # Check for name containing 'head'
-    for bone in bones:
+    """Auto-detect the head bone by name heuristic."""
+    for bone in armature.data.bones:
         if 'head' in bone.name.lower():
             return bone.name
-
-    # Fallback: first child of root bone
-    root_bones = [b for b in bones if b.parent is None]
+    root_bones = [b for b in armature.data.bones if b.parent is None]
     if root_bones:
         root = root_bones[0]
         if root.children:
             return root.children[0].name
         return root.name
-
     return ""
 
 
-def _find_bone_index(armature, bone_name):
-    """Get the index of a bone by name, or -1 if not found."""
-    bones = list(armature.data.bones)
-    for i, bone in enumerate(bones):
-        if bone.name == bone_name:
-            return i
-    return -1
-
-
 def apply_pkx_metadata(armature, format='XD', model_type='POKEMON', species_id=0):
-    """Apply default PKX metadata to an armature.
-
-    Args:
-        armature: Blender armature object.
-        format: 'XD' or 'COLOSSEUM'.
-        model_type: 'POKEMON' or 'TRAINER'.
-        species_id: Pokédex number (0 for trainer/generic).
-    """
+    """Apply default PKX metadata to an armature."""
     is_xd = (format == 'XD')
 
-    # Preamble
+    # --- General ---
     armature["dat_pkx_format"] = format
     armature["dat_pkx_species_id"] = species_id
+    armature["dat_pkx_model_type"] = model_type
     armature["dat_pkx_particle_orientation"] = 0
-    armature["dat_pkx_flags"] = 0
     armature["dat_pkx_distortion_param"] = 0
     armature["dat_pkx_distortion_type"] = 0
-    armature["dat_pkx_model_type"] = model_type
 
     # Head bone
     head_bone_name = _find_head_bone(armature)
     armature["dat_pkx_head_bone"] = head_bone_name
-    head_index = _find_bone_index(armature, head_bone_name)
 
-    # Flags (all off by default)
+    # --- Flags (all off) ---
     armature["dat_pkx_flag_flying"] = False
     armature["dat_pkx_flag_skip_frac_frames"] = False
     armature["dat_pkx_flag_no_root_anim"] = False
     armature["dat_pkx_flag_bit7"] = False
 
-    # Sub-animations (inactive defaults)
+    # --- Shiny (identity routing, neutral brightness) ---
+    armature["dat_pkx_has_shiny"] = True  # enables the panel section
+    armature.dat_pkx_shiny = False  # preview off by default
+    armature.dat_pkx_shiny_route_r = '0'   # Red → Red
+    armature.dat_pkx_shiny_route_g = '1'   # Green → Green
+    armature.dat_pkx_shiny_route_b = '2'   # Blue → Blue
+    armature.dat_pkx_shiny_route_a = '3'   # Alpha → Alpha
+    armature.dat_pkx_shiny_brightness_r = 0.0
+    armature.dat_pkx_shiny_brightness_g = 0.0
+    armature.dat_pkx_shiny_brightness_b = 0.0
+
+    # --- Sub-animations (all inactive) ---
     sub_triggers = ["sleep_on", "sleep_off", "extra", "unused"]
     for i in range(4):
         prefix = "dat_pkx_sub_anim_%d" % i
         armature[prefix + "_type"] = "none"
-        armature[prefix + "_trigger"] = sub_triggers[i] if i < len(sub_triggers) else "unused"
+        armature[prefix + "_trigger"] = sub_triggers[i]
         armature[prefix + "_anim_ref"] = 0
 
-    # Null joint bones (descriptive names)
+    # --- Null joint bones ---
     bones = list(armature.data.bones)
     root_name = bones[0].name if bones else ""
     armature["dat_pkx_joint_root"] = root_name
@@ -113,50 +93,34 @@ def apply_pkx_metadata(armature, format='XD', model_type='POKEMON', species_id=0
                 "attach_a", "attach_b", "attach_c", "attach_d"]:
         armature["dat_pkx_joint_%s" % key] = ""
 
-    # Build default null_joint_bones array for entries
-    null_bones = [0, head_index if head_index >= 0 else 0] + [-1] * 14
-
-    # Animation entries (17 slots)
+    # --- Animation entries (17 slots) ---
     anim_count = 17
     armature["dat_pkx_anim_count"] = anim_count
 
     for i in range(anim_count):
         prefix = "dat_pkx_anim_%02d" % i
         if i == 0:
-            # Idle — loop
             armature[prefix + "_type"] = "loop"
-            armature[prefix + "_sub_count"] = 1
-            armature[prefix + "_damage_flags"] = 0
-            armature[prefix + "_timing_1"] = 0.0
-            armature[prefix + "_timing_2"] = 0.0
-            armature[prefix + "_timing_3"] = 0.0
-            armature[prefix + "_timing_4"] = 0.0
-            armature[prefix + "_terminator"] = 3 if is_xd else 1
             armature[prefix + "_sub_0_motion"] = 2 if is_xd else 0
             armature[prefix + "_sub_0_anim"] = 0
         else:
-            # Unused slot
             armature[prefix + "_type"] = "action"
-            armature[prefix + "_sub_count"] = 1
-            armature[prefix + "_damage_flags"] = 0
-            armature[prefix + "_timing_1"] = 0.0
-            armature[prefix + "_timing_2"] = 0.0
-            armature[prefix + "_timing_3"] = 0.0
-            armature[prefix + "_timing_4"] = 0.0
-            armature[prefix + "_terminator"] = 3 if is_xd else 1
             armature[prefix + "_sub_0_motion"] = 0
             armature[prefix + "_sub_0_anim"] = 0
+        armature[prefix + "_sub_count"] = 1
+        armature[prefix + "_damage_flags"] = 0
+        armature[prefix + "_timing_1"] = 0.0
+        armature[prefix + "_timing_2"] = 0.0
+        armature[prefix + "_timing_3"] = 0.0
+        armature[prefix + "_timing_4"] = 0.0
+        armature[prefix + "_terminator"] = 3 if is_xd else 1
 
     print("PKX metadata applied to '%s':" % armature.name)
     print("  Format: %s, Model type: %s, Species: %d" % (format, model_type, species_id))
-    print("  Head bone: '%s' (index %d)" % (head_bone_name, head_index))
-    print("  Animation entries: %d (slot 0 = idle loop, rest = unused)" % anim_count)
-    print("  Edit dat_pkx_* properties in Object Properties > Custom Properties to customize.")
+    print("  Head bone: '%s'" % head_bone_name)
+    print("  17 animation slots (slot 0 = idle loop, rest = unused actions)")
+    print("  Shiny: identity routing, neutral brightness (edit in PKX Metadata panel)")
 
-
-# ---------------------------------------------------------------------------
-# Main: run on selected armature
-# ---------------------------------------------------------------------------
 
 if __name__ == "__main__" or True:
     obj = bpy.context.active_object
