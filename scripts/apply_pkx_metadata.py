@@ -88,36 +88,30 @@ def apply_pkx_metadata(armature, format='XD', model_type='POKEMON', species_id=0
     armature["dat_pkx_head_bone"] = head_bone_name
     head_index = _find_bone_index(armature, head_bone_name)
 
-    # Shiny (identity routing, neutral brightness = no visible change)
-    armature["dat_pkx_shiny_route"] = [0, 1, 2, 3]
-    armature["dat_pkx_shiny_brightness"] = [0.0, 0.0, 0.0]  # RGB floats [-1, 1]
-
     # Flags (all off by default)
     armature["dat_pkx_flag_flying"] = False
     armature["dat_pkx_flag_skip_frac_frames"] = False
     armature["dat_pkx_flag_no_root_anim"] = False
     armature["dat_pkx_flag_bit7"] = False
 
-    # Part animation data (inactive defaults)
-    if is_xd:
-        for i in range(4):
-            prefix = "dat_pkx_part_%d" % i
-            armature[prefix + "_has_data"] = 0
-            armature[prefix + "_sub_param"] = 0
-            armature[prefix + "_bone_config"] = "ff" * 16
-            armature[prefix + "_anim_ref"] = 0
-    else:
-        for i in range(3):
-            armature["dat_pkx_colo_part_ref_%d" % i] = -1
+    # Sub-animations (inactive defaults)
+    sub_triggers = ["sleep_on", "sleep_off", "extra", "unused"]
+    for i in range(4):
+        prefix = "dat_pkx_sub_anim_%d" % i
+        armature[prefix + "_type"] = "none"
+        armature[prefix + "_trigger"] = sub_triggers[i] if i < len(sub_triggers) else "unused"
+        armature[prefix + "_anim_ref"] = 0
 
-    # Null joint bones
+    # Null joint bones (descriptive names)
     bones = list(armature.data.bones)
     root_name = bones[0].name if bones else ""
-    armature["dat_pkx_null_bone_0"] = root_name       # Root
-    armature["dat_pkx_null_bone_1"] = head_bone_name   # Head
-    armature["dat_pkx_null_bone_2"] = ""               # Center/jaw
-    for j in range(3, 16):
-        armature["dat_pkx_null_bone_%d" % j] = ""
+    armature["dat_pkx_joint_root"] = root_name
+    armature["dat_pkx_joint_head"] = head_bone_name
+    armature["dat_pkx_joint_center"] = ""
+    for key in ["body_3", "neck", "head_top", "limb_a", "limb_b",
+                "secondary_8", "secondary_9", "secondary_10", "secondary_11",
+                "attach_a", "attach_b", "attach_c", "attach_d"]:
+        armature["dat_pkx_joint_%s" % key] = ""
 
     # Build default null_joint_bones array for entries
     null_bones = [0, head_index if head_index >= 0 else 0] + [-1] * 14
@@ -130,7 +124,7 @@ def apply_pkx_metadata(armature, format='XD', model_type='POKEMON', species_id=0
         prefix = "dat_pkx_anim_%02d" % i
         if i == 0:
             # Idle — loop
-            armature[prefix + "_type"] = 2
+            armature[prefix + "_type"] = "loop"
             armature[prefix + "_sub_count"] = 1
             armature[prefix + "_damage_flags"] = 0
             armature[prefix + "_timing_1"] = 0.0
@@ -142,7 +136,7 @@ def apply_pkx_metadata(armature, format='XD', model_type='POKEMON', species_id=0
             armature[prefix + "_sub_0_anim"] = 0
         else:
             # Unused slot
-            armature[prefix + "_type"] = 4
+            armature[prefix + "_type"] = "action"
             armature[prefix + "_sub_count"] = 1
             armature[prefix + "_damage_flags"] = 0
             armature[prefix + "_timing_1"] = 0.0

@@ -235,34 +235,17 @@ _SHINY_CHANNEL_ITEMS = [
 def _on_shiny_toggle_update(obj, context):
     """Rebuild shiny node groups and refresh viewport when toggle changes."""
     if obj.dat_pkx_shiny:
-        _sync_shiny_props_to_custom(obj)
         from .importer.phases.post_process.shiny_filter import rebuild_shiny_node_group
         rebuild_shiny_node_group(obj)
     _refresh_shiny_viewport(obj, context)
 
 
 def _on_shiny_param_update(obj, context):
-    """Write registered props back to PKX custom properties and rebuild if shiny is on."""
-    _sync_shiny_props_to_custom(obj)
+    """Rebuild shiny shader nodes and refresh viewport when a parameter changes."""
     if obj.dat_pkx_shiny:
         from .importer.phases.post_process.shiny_filter import rebuild_shiny_node_group
         rebuild_shiny_node_group(obj)
     _refresh_shiny_viewport(obj, context)
-
-
-def _sync_shiny_props_to_custom(obj):
-    """Write registered shiny properties back to dat_pkx_ custom properties."""
-    obj["dat_pkx_shiny_route"] = [
-        int(obj.dat_pkx_shiny_route_r),
-        int(obj.dat_pkx_shiny_route_g),
-        int(obj.dat_pkx_shiny_route_b),
-        int(obj.dat_pkx_shiny_route_a),
-    ]
-    obj["dat_pkx_shiny_brightness"] = [
-        obj.dat_pkx_shiny_brightness_r,
-        obj.dat_pkx_shiny_brightness_g,
-        obj.dat_pkx_shiny_brightness_b,
-    ]
 
 
 def _refresh_shiny_viewport(obj, context):

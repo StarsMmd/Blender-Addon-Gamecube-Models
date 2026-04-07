@@ -175,8 +175,8 @@ def _populate_bright_group(group, brightness):
 def setup_shiny_properties(armature, route, brightness, route_group_name, bright_group_name):
     """Initialize shiny metadata on the armature.
 
-    Sets both the PKX custom properties and the registered bpy.props
-    (which drive the UI enum dropdowns and sliders).
+    Sets the registered bpy.props (which drive the UI and shader nodes).
+    Node group names are stored internally but not as user-visible custom props.
 
     Args:
         armature: The Blender armature object.
@@ -186,14 +186,11 @@ def setup_shiny_properties(armature, route, brightness, route_group_name, bright
         bright_group_name: Name of the ShinyBright node group.
     """
     armature["dat_pkx_has_shiny"] = True
-    armature["dat_pkx_shiny_route_group"] = route_group_name
-    armature["dat_pkx_shiny_bright_group"] = bright_group_name
+    # Store group names as hidden internal props (prefixed with _)
+    armature["_shiny_route_group"] = route_group_name
+    armature["_shiny_bright_group"] = bright_group_name
 
-    # Store as PKX custom properties
-    armature["dat_pkx_shiny_route"] = list(route)
-    armature["dat_pkx_shiny_brightness"] = list(brightness)
-
-    # Sync to registered properties (enum values are strings)
+    # Set registered properties (these are the source of truth for UI + shaders)
     armature.dat_pkx_shiny = False
     armature.dat_pkx_shiny_route_r = str(route[0])
     armature.dat_pkx_shiny_route_g = str(route[1])
@@ -232,11 +229,11 @@ def rebuild_shiny_node_group(armature):
     while len(brightness) < 3:
         brightness.append(0.0)
 
-    route_name = armature.get("dat_pkx_shiny_route_group")
+    route_name = armature.get("_shiny_route_group")
     if route_name and route_name in bpy.data.node_groups:
         _populate_route_group(bpy.data.node_groups[route_name], route)
 
-    bright_name = armature.get("dat_pkx_shiny_bright_group")
+    bright_name = armature.get("_shiny_bright_group")
     if bright_name and bright_name in bpy.data.node_groups:
         _populate_bright_group(bpy.data.node_groups[bright_name], brightness)
 

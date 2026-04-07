@@ -43,7 +43,7 @@ def post_process(armature_names, shiny_params=None, options=None, logger=StubLog
             mat_slot_indices = result['mat_slot_indices']
 
             logger.info("  Post-processing armature: %s (%d actions)", armature.name, len(actions))
-            _select_first_action(armature, actions, mat_slot_indices)
+            _select_first_action(armature, actions, mat_slot_indices, pkx_header=pkx_header)
 
             if include_shiny and shiny_params is not None:
                 _apply_shiny(armature, shiny_params, logger)
@@ -109,13 +109,33 @@ def _find_material_slot_indices(armature, actions):
     return mat_slot_indices
 
 
-def _select_first_action(armature, actions, mat_slot_indices):
-    """Set the armature's active action to its first animation and sync materials."""
+def _select_first_action(armature, actions, mat_slot_indices, pkx_header=None):
+    """Set the armature's active action to its idle animation and sync materials.
+
+    Uses the PKX header's idle animation index (entry 0) if available,
+    otherwise falls back to the first action with '_Idle' in the name.
+    """
     if not armature.animation_data or not actions:
         return
 
-    first_anim = next((a for a in actions if '_Anim_' in a.name or '_Anim ' in a.name), None)
-    active_action = first_anim or actions[0]
+    active_action = None
+
+    # Try PKX idle index first
+    if pkx_header and pkx_header.anim_entries:
+        idle_entry = pkx_header.anim_entries[0]
+        if idle_entry.sub_anims:
+            idle_idx = idle_entry.sub_anims[0].anim_index
+            if idle_idx < len(actions):
+                active_action = actions[idle_idx]
+
+    # Fallback: find by name
+    if active_action is None:
+        active_action = next((a for a in actions if '_Idle' in a.name), None)
+    if active_action is None:
+        active_action = next((a for a in actions if '_Anim_' in a.name or '_Anim ' in a.name), None)
+    if active_action is None:
+        active_action = actions[0]
+
     armature.animation_data.action = active_action
 
     for mat, slot_idx in mat_slot_indices.items():
@@ -157,10 +177,6 @@ def _apply_shiny(armature, shiny_params, logger):
     brightness = [shiny_params.brightness_r, shiny_params.brightness_g,
                   shiny_params.brightness_b]  # Alpha forced to max by the game
 
-    # Store as PKX custom properties (single source of truth)
-    armature["dat_pkx_shiny_route"] = route
-    armature["dat_pkx_shiny_brightness"] = brightness
-
     model_name = armature.name.replace('Armature_', '')
     route_name = "ShinyRoute_%s" % model_name
     bright_name = "ShinyBright_%s" % model_name
@@ -199,12 +215,19 @@ def _store_pkx_metadata(armature, pkx_header, logger):
 
     h = pkx_header
 
-    try:
-        from ....shared.helpers.pkx import _to_brightness
-    except (ImportError, SystemError):
-        from shared.helpers.pkx import _to_brightness
+    _ANIM_TYPE_NAMES = {2: "loop", 3: "hit_reaction", 4: "action", 5: "compound"}
+    _SUB_ANIM_TRIGGERS = {0: "sleep_on", 1: "sleep_off", 2: "extra", 3: "unused"}
+    _SUB_ANIM_TYPES = {0: "none", 1: "simple", 2: "targeted"}
 
-    # Preamble
+    # Null joint descriptive names (index → property suffix)
+    _JOINT_NAMES = [
+        "root", "head", "center", "body_3", "neck", "head_top",
+        "limb_a", "limb_b", "secondary_8", "secondary_9",
+        "secondary_10", "secondary_11", "attach_a", "attach_b",
+        "attach_c", "attach_d",
+    ]
+
+    # --- Preamble ---
     armature["dat_pkx_format"] = "XD" if h.is_xd else "COLOSSEUM"
     armature["dat_pkx_species_id"] = h.species_id
     armature["dat_pkx_particle_orientation"] = h.particle_orientation
@@ -212,53 +235,50 @@ def _store_pkx_metadata(armature, pkx_header, logger):
     armature["dat_pkx_distortion_type"] = h.distortion_type
     armature["dat_pkx_model_type"] = "TRAINER" if h.species_id == 0 and h.particle_orientation == 0 else "POKEMON"
 
-    # Split flags into individual booleans
+    # Flags as individual booleans
     armature["dat_pkx_flag_flying"] = bool(h.flags & 0x01)
     armature["dat_pkx_flag_skip_frac_frames"] = bool(h.flags & 0x04)
     armature["dat_pkx_flag_no_root_anim"] = bool(h.flags & 0x40)
     armature["dat_pkx_flag_bit7"] = bool(h.flags & 0x80)
 
-    # Resolve head bone index to name
+    # Head bone (resolved to name)
     bones = armature.data.bones
     bone_list = list(bones)
     armature["dat_pkx_head_bone"] = _bone_name_for_index(bone_list, h.head_bone_index)
 
-    # Shiny routing (int 0-3 per channel) + brightness (float -1 to 1, RGB only)
-    armature["dat_pkx_shiny_route"] = list(h.shiny_route)
-    brightness_floats = [
-        round(_to_brightness(h.shiny_brightness[0]), 3),
-        round(_to_brightness(h.shiny_brightness[1]), 3),
-        round(_to_brightness(h.shiny_brightness[2]), 3),
-    ]
-    armature["dat_pkx_shiny_brightness"] = brightness_floats
-
-    # Add property descriptions (hints)
-    _add_property_descriptions(armature)
-
-    # Part animation data (XD only)
+    # --- Sub-animations (was "part_anim_data") ---
     if h.is_xd:
         for i, pad in enumerate(h.part_anim_data):
-            prefix = "dat_pkx_part_%d" % i
-            armature[prefix + "_has_data"] = pad.has_data
-            armature[prefix + "_sub_param"] = pad.sub_param
-            armature[prefix + "_bone_config"] = pad.bone_config.hex()
+            prefix = "dat_pkx_sub_anim_%d" % i
+            armature[prefix + "_type"] = _SUB_ANIM_TYPES.get(pad.has_data, "unknown")
+            armature[prefix + "_trigger"] = _SUB_ANIM_TRIGGERS.get(i, "unknown")
             armature[prefix + "_anim_ref"] = pad.anim_index_ref
+            if pad.has_data == 2:
+                # Targeted: store bone names (filter out 0xFF)
+                bone_indices = [b for b in pad.bone_config if b != 0xFF]
+                bone_names = [_bone_name_for_index(bone_list, idx) for idx in bone_indices]
+                armature[prefix + "_bones"] = ', '.join(bone_names) if bone_names else ""
     else:
         for i in range(3):
-            armature["dat_pkx_colo_part_ref_%d" % i] = h.colo_part_anim_refs[i]
+            prefix = "dat_pkx_sub_anim_%d" % i
+            ref = h.colo_part_anim_refs[i]
+            armature[prefix + "_type"] = "simple" if ref >= 0 else "none"
+            armature[prefix + "_trigger"] = _SUB_ANIM_TRIGGERS.get(i, "unknown")
+            armature[prefix + "_anim_ref"] = ref
 
-    # Null joint bones (model-level, from first active entry)
+    # --- Null joint bones (descriptive names) ---
     first_active = h.anim_entries[0] if h.anim_entries else None
     if first_active:
         for j in range(16):
             bone_idx = first_active.null_joint_bones[j]
-            armature["dat_pkx_null_bone_%d" % j] = _bone_name_for_index(bone_list, bone_idx)
+            key = "dat_pkx_joint_%s" % _JOINT_NAMES[j]
+            armature[key] = _bone_name_for_index(bone_list, bone_idx)
 
-    # Animation metadata entries
+    # --- Animation entries ---
     armature["dat_pkx_anim_count"] = len(h.anim_entries)
     for i, entry in enumerate(h.anim_entries):
         prefix = "dat_pkx_anim_%02d" % i
-        armature[prefix + "_type"] = entry.anim_type
+        armature[prefix + "_type"] = _ANIM_TYPE_NAMES.get(entry.anim_type, str(entry.anim_type))
         armature[prefix + "_sub_count"] = entry.sub_anim_count
         armature[prefix + "_damage_flags"] = _clamp_int32(entry.damage_flags)
         armature[prefix + "_timing_1"] = entry.timing[0]
@@ -267,17 +287,19 @@ def _store_pkx_metadata(armature, pkx_header, logger):
         armature[prefix + "_timing_4"] = entry.timing[3]
         armature[prefix + "_terminator"] = _clamp_int32(entry.terminator)
 
-        # Sub-animations
         for s in range(min(len(entry.sub_anims), 3)):
             armature[prefix + "_sub_%d_motion" % s] = _clamp_int32(entry.sub_anims[s].motion_type)
             armature[prefix + "_sub_%d_anim" % s] = _clamp_int32(entry.sub_anims[s].anim_index)
 
-        # Per-entry null joint bone overrides (only if different from model-level)
+        # Per-entry null joint overrides (only when different from model-level)
         if first_active and entry.null_joint_bones != first_active.null_joint_bones:
             for j in range(16):
                 if entry.null_joint_bones[j] != first_active.null_joint_bones[j]:
                     bone_name = _bone_name_for_index(bone_list, entry.null_joint_bones[j])
-                    armature[prefix + "_bone_%d" % j] = bone_name
+                    armature[prefix + "_joint_%s" % _JOINT_NAMES[j]] = bone_name
+
+    # --- Property descriptions ---
+    _add_property_descriptions(armature)
 
     logger.info("  Stored PKX metadata on %s: format=%s, species=%d, %d anim entries",
                 armature.name, armature["dat_pkx_format"], h.species_id, len(h.anim_entries))

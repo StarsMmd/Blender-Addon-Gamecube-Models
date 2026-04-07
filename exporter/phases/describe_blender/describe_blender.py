@@ -231,10 +231,10 @@ def _refine_bone_flags(bones, meshes, logger):
 
 
 def _extract_shiny_params(armatures, logger):
-    """Extract shiny parameters from armature PKX custom properties.
+    """Extract shiny parameters from armature registered properties.
 
-    Reads dat_pkx_shiny_route (list of 4 ints) and dat_pkx_shiny_brightness
-    (list of 3 floats [-1, 1]). Returns ShinyParams or None.
+    Reads the dat_pkx_shiny_route_r/g/b/a enum props and
+    dat_pkx_shiny_brightness_r/g/b float props.
     """
     try:
         from ....shared.helpers.shiny_params import ShinyParams
@@ -242,27 +242,35 @@ def _extract_shiny_params(armatures, logger):
         from shared.helpers.shiny_params import ShinyParams
 
     for arm in armatures:
-        route = arm.get("dat_pkx_shiny_route")
-        brightness = arm.get("dat_pkx_shiny_brightness")
-        if route is None or brightness is None:
+        if not arm.get("dat_pkx_has_shiny"):
             continue
 
-        route = list(route)
-        brightness = list(brightness)
+        try:
+            route = [
+                int(arm.dat_pkx_shiny_route_r),
+                int(arm.dat_pkx_shiny_route_g),
+                int(arm.dat_pkx_shiny_route_b),
+                int(arm.dat_pkx_shiny_route_a),
+            ]
+            brightness = [
+                arm.dat_pkx_shiny_brightness_r,
+                arm.dat_pkx_shiny_brightness_g,
+                arm.dat_pkx_shiny_brightness_b,
+            ]
+        except AttributeError:
+            continue
 
         # Check if identity/neutral
-        is_identity = (route == [0, 1, 2, 3])
-        is_neutral = all(abs(b) < 0.01 for b in brightness[:3])
-        if is_identity and is_neutral:
+        if route == [0, 1, 2, 3] and all(abs(b) < 0.01 for b in brightness):
             continue
 
         logger.info("  Found PKX shiny params on %s", arm.name)
         return ShinyParams(
             route_r=route[0], route_g=route[1],
-            route_b=route[2], route_a=route[3] if len(route) > 3 else 3,
+            route_b=route[2], route_a=route[3],
             brightness_r=brightness[0],
             brightness_g=brightness[1],
-            brightness_b=brightness[2] if len(brightness) > 2 else 0.0,
+            brightness_b=brightness[2],
             brightness_a=0.0,  # Alpha forced to max by the game
         )
 
@@ -311,23 +319,51 @@ def _extract_pkx_header(armatures, logger):
         head_name = arm.get("dat_pkx_head_bone", "")
         h.head_bone_index = bone_name_to_idx.get(head_name, 0)
 
-        # Shiny
-        route = arm.get("dat_pkx_shiny_route")
-        brightness = arm.get("dat_pkx_shiny_brightness")
-        if route is not None:
-            h.shiny_route = tuple(route)
-        if brightness is not None:
-            h.shiny_brightness = tuple(brightness)
+        # Shiny — read from registered properties
+        try:
+            h.shiny_route = (
+                int(arm.dat_pkx_shiny_route_r),
+                int(arm.dat_pkx_shiny_route_g),
+                int(arm.dat_pkx_shiny_route_b),
+                int(arm.dat_pkx_shiny_route_a),
+            )
+            try:
+                from ....shared.helpers.pkx import _from_brightness
+            except (ImportError, SystemError):
+                from shared.helpers.pkx import _from_brightness
+            h.shiny_brightness = (
+                _from_brightness(arm.dat_pkx_shiny_brightness_r),
+                _from_brightness(arm.dat_pkx_shiny_brightness_g),
+                _from_brightness(arm.dat_pkx_shiny_brightness_b),
+                0xFF,  # Alpha forced to max
+            )
+        except AttributeError:
+            pass  # No shiny registered props
 
-        # Part animation data
+        # Sub-animation data (was "part_anim_data")
+        _SUB_TYPE_MAP = {"none": 0, "simple": 1, "targeted": 2}
         if is_xd:
             h.part_anim_data = []
             for i in range(4):
-                prefix = "dat_pkx_part_%d" % i
+                prefix = "dat_pkx_sub_anim_%d" % i
+                has_data = _SUB_TYPE_MAP.get(arm.get(prefix + "_type", "none"), 0)
+                # Reconstruct bone_config from bone names if targeted
+                bone_config = b'\xff' * 16
+                if has_data == 2:
+                    bones_str = arm.get(prefix + "_bones", "")
+                    if bones_str:
+                        bone_names_list = [n.strip() for n in bones_str.split(',') if n.strip()]
+                        config = bytearray(16)
+                        for bi, bn in enumerate(bone_names_list[:8]):
+                            idx = bone_name_to_idx.get(bn, 0xFF)
+                            config[bi] = idx if idx < 256 else 0xFF
+                        for bi in range(len(bone_names_list), 16):
+                            config[bi] = 0xFF
+                        bone_config = bytes(config)
                 pad = PartAnimData(
-                    has_data=arm.get(prefix + "_has_data", 0),
-                    sub_param=arm.get(prefix + "_sub_param", 0),
-                    bone_config=bytes.fromhex(arm.get(prefix + "_bone_config", "ff" * 16)),
+                    has_data=has_data,
+                    sub_param=len([n for n in bone_config[:8] if n != 0xFF]) if has_data == 2 else 0,
+                    bone_config=bone_config,
                     anim_index_ref=arm.get(prefix + "_anim_ref", 0),
                 )
                 h.part_anim_data.append(pad)
@@ -340,10 +376,16 @@ def _extract_pkx_header(armatures, logger):
             h.colo_unknown_10 = 5
             h.colo_unknown_14 = arm.get("dat_pkx_particle_orientation", -1)
 
-        # Null joint bones (model-level)
+        # Null joint bones (descriptive names)
+        _JOINT_KEYS = [
+            "root", "head", "center", "body_3", "neck", "head_top",
+            "limb_a", "limb_b", "secondary_8", "secondary_9",
+            "secondary_10", "secondary_11", "attach_a", "attach_b",
+            "attach_c", "attach_d",
+        ]
         model_null_bones = []
         for j in range(16):
-            name = arm.get("dat_pkx_null_bone_%d" % j, "")
+            name = arm.get("dat_pkx_joint_%s" % _JOINT_KEYS[j], "")
             model_null_bones.append(bone_name_to_idx.get(name, -1) if name else -1)
 
         # Animation entries
@@ -352,7 +394,9 @@ def _extract_pkx_header(armatures, logger):
         h.anim_entries = []
         for i in range(anim_count):
             prefix = "dat_pkx_anim_%02d" % i
-            anim_type = arm.get(prefix + "_type", 4)
+            anim_type_str = arm.get(prefix + "_type", "action")
+            _ANIM_TYPE_TO_INT = {"loop": 2, "hit_reaction": 3, "action": 4, "compound": 5}
+            anim_type = _ANIM_TYPE_TO_INT.get(anim_type_str, int(anim_type_str) if anim_type_str.isdigit() else 4)
             sub_count = arm.get(prefix + "_sub_count", 1)
 
             subs = []
@@ -367,7 +411,7 @@ def _extract_pkx_header(armatures, logger):
             # Per-entry null joint bones (check for overrides)
             entry_bones = list(model_null_bones)
             for j in range(16):
-                override_name = arm.get(prefix + "_bone_%d" % j)
+                override_name = arm.get(prefix + "_joint_%s" % _JOINT_KEYS[j])
                 if override_name is not None:
                     entry_bones[j] = bone_name_to_idx.get(override_name, -1) if override_name else -1
 
