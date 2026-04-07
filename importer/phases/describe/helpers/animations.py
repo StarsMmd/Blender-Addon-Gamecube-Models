@@ -45,10 +45,21 @@ def describe_bone_animations(model_set, joint_to_bone_index, bones, options, log
     animated_joints = getattr(model_set, 'animated_joints', None) or []
     root_joint = model_set.root_joint
     name_prefix = model_name or root_joint.name or "Model"
+
+    # Build semantic name map from PKX header if available
+    anim_name_map = _build_anim_name_map(options.get("pkx_header"))
+
     anim_sets = []
 
     for i, anim_joint_root in enumerate(animated_joints):
-        name = "%s_Anim_%02d" % (name_prefix, i)
+        semantic = anim_name_map.get(i)
+        if semantic:
+            # Clean up: replace " + " with "+" first, then spaces with "_"
+            clean = semantic.replace(' + ', '+').replace(' ', '_')
+            name = "%s_%s" % (name_prefix, clean)
+        else:
+            name = "%s_Anim_%02d" % (name_prefix, i)
+
         tracks = []
         loop = [False]  # mutable for closure
 
@@ -64,6 +75,107 @@ def describe_bone_animations(model_set, joint_to_bone_index, bones, options, log
         logger.debug("  Animation set '%s': %d bone tracks", name, len(tracks))
 
     return anim_sets
+
+
+def _build_anim_name_map(pkx_header):
+    """Build a map of animation index → semantic name from PKX metadata.
+
+    Uses the animation slot entries and sub-animation references to produce
+    compact, human-readable names for each DAT animation index.
+
+    Returns dict[int, str] or empty dict if no PKX header.
+    """
+    if pkx_header is None:
+        return {}
+
+    try:
+        from .....shared.helpers.pkx_header import XD_POKEMON_ANIM_NAMES, XD_TRAINER_ANIM_NAMES
+    except (ImportError, SystemError):
+        from shared.helpers.pkx_header import XD_POKEMON_ANIM_NAMES, XD_TRAINER_ANIM_NAMES
+
+    is_trainer = (pkx_header.species_id == 0 and pkx_header.particle_orientation == 0)
+    slot_names = XD_TRAINER_ANIM_NAMES if is_trainer else XD_POKEMON_ANIM_NAMES
+
+    # Collect active slot names per animation index (motion_type > 0 only)
+    index_to_slots = {}
+    for slot_idx, entry in enumerate(pkx_header.anim_entries):
+        slot_name = slot_names[slot_idx] if slot_idx < len(slot_names) else 'Slot %d' % slot_idx
+        for sub in entry.sub_anims:
+            if sub.motion_type > 0 and sub.anim_index < 1000:
+                idx = sub.anim_index
+                if idx not in index_to_slots:
+                    index_to_slots[idx] = []
+                if slot_name not in index_to_slots[idx]:
+                    index_to_slots[idx].append(slot_name)
+
+    # Add sub-animation references
+    sub_triggers = {0: 'Sub SleepOnPose', 1: 'Sub SleepOffPose', 2: 'Sub Extra'}
+    for i in range(min(len(pkx_header.part_anim_data), 3)):
+        pad = pkx_header.part_anim_data[i]
+        if pad.has_data > 0 and pad.anim_index_ref > 0:
+            idx = pad.anim_index_ref
+            if idx not in index_to_slots:
+                index_to_slots[idx] = []
+            index_to_slots[idx].append(sub_triggers.get(i, 'Sub %d' % i))
+
+    # Compact names
+    result = {}
+    for idx, names in index_to_slots.items():
+        result[idx] = _compact_anim_name(names)
+
+    return result
+
+
+def _compact_anim_name(slot_names):
+    """Generate a compact animation name from a list of slot names.
+
+    Rules:
+    - Only active slots are included (inactive filtered upstream)
+    - All Physical 1-5 → "Physical". Partial: "Physical 1+3+5"
+    - Both Status → "Status". Single: keep as-is
+    - Damage + Faint sharing → "Faint"
+    - Sub-animations keep their prefix: "Sub SleepOnPose"
+    - Multiple categories joined with " + "
+    """
+    if not slot_names:
+        return 'Unknown'
+
+    # Sub-animations take priority
+    subs = [n for n in slot_names if n.startswith('Sub ')]
+    if subs:
+        return subs[0]
+
+    if len(slot_names) == 1:
+        return slot_names[0]
+
+    physical = sorted([n for n in slot_names if 'Physical' in n])
+    status = sorted([n for n in slot_names if 'Status' in n])
+    damage = sorted([n for n in slot_names if 'Damage' in n])
+    faint = [n for n in slot_names if n == 'Faint']
+
+    parts = []
+
+    if physical:
+        if len(physical) >= 5:
+            parts.append('Physical')
+        else:
+            nums = [n.split()[-1] for n in physical]
+            parts.append('Physical ' + '+'.join(nums))
+
+    if status:
+        if len(status) >= 2:
+            parts.append('Status')
+        else:
+            parts.append(status[0])
+
+    if damage and faint:
+        parts.append('Faint')
+    elif damage:
+        parts.append('Damage' if len(damage) >= 2 else damage[0])
+    elif faint:
+        parts.append('Faint')
+
+    return ' + '.join(parts) if parts else slot_names[0]
 
 
 def _walk_parallel(anim_joint, joint, tracks, loop_flag,

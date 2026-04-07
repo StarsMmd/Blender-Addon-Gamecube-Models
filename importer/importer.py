@@ -54,6 +54,7 @@ class Importer:
                 logger.info("Parsed %d section(s)", len(sections))
 
                 # Phase 4 — Scene Description: node trees → Intermediate Representation
+                options["pkx_header"] = metadata.pkx_header
                 ir_scene = describe_scene(sections, options, logger=logger)
 
                 # Phase 4b — Particle Description: GPT1 binary → IRParticleSystem
