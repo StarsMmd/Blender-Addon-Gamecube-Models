@@ -5,24 +5,19 @@ exporting. It ensures all objects in the scene have the custom properties
 the exporter expects.
 
 The script:
-  1. Sets dat_camera_aspect on any cameras that don't have it yet (default 1.18,
-     the standard Colosseum/XD battle camera aspect ratio)
-  2. If an armature is selected and has no PKX metadata, applies default PKX
-     metadata (format, animations, shiny, null joints) — same as the old
-     apply_pkx_metadata.py script
+  1. Creates a Battle_Camera if none exists
+  2. If an armature is selected and has no PKX metadata, applies defaults
+  3. Auto-selects GX texture formats for textures on the selected armature
+  4. Creates an ambient light if none exists
 
 After running, the scene can be exported via File > Export > Gamecube model (.dat).
 
 Requires the DAT plugin addon to be enabled (for registered shiny properties).
+
+This script is fully standalone — no imports from the plugin codebase.
 """
 import bpy
-import sys
-import os
-
-# Add the addon directory to path so we can import from the plugin
-addon_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if addon_dir not in sys.path:
-    sys.path.insert(0, addon_dir)
+import math
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +76,7 @@ def prepare_camera():
 
 
 # ---------------------------------------------------------------------------
-# PKX metadata (from former apply_pkx_metadata.py)
+# PKX metadata
 # ---------------------------------------------------------------------------
 
 def _find_head_bone(armature):
@@ -177,8 +172,106 @@ def apply_pkx_metadata(armature, format='XD', model_type='POKEMON', species_id=0
 
 
 # ---------------------------------------------------------------------------
+# Texture formats
+# ---------------------------------------------------------------------------
+
+def _analyze_texture(img):
+    """Analyze an image's pixels and return a suitable GX format name.
+
+    Checks for grayscale, alpha usage, and color count to pick the most
+    efficient format. Returns a format string like 'CMPR', 'I8', etc.
+    """
+    w, h = img.size[0], img.size[1]
+    if w == 0 or h == 0:
+        return None
+
+    pixels = img.pixels[:]
+    num_pixels = w * h
+
+    is_gray = True
+    has_alpha = False
+    unique_colors = set()
+    max_unique = 260  # stop counting after we know it's > 256
+
+    for i in range(num_pixels):
+        base = i * 4
+        r, g, b, a = pixels[base], pixels[base+1], pixels[base+2], pixels[base+3]
+
+        if a < 0.998:
+            has_alpha = True
+
+        if is_gray and (abs(r - g) > 0.004 or abs(r - b) > 0.004):
+            is_gray = False
+
+        if len(unique_colors) < max_unique:
+            ri = min(255, int(r * 255 + 0.5))
+            gi = min(255, int(g * 255 + 0.5))
+            bi = min(255, int(b * 255 + 0.5))
+            ai = min(255, int(a * 255 + 0.5))
+            unique_colors.add((ri, gi, bi, ai))
+
+    n_colors = len(unique_colors)
+
+    # Format selection logic (matches shared/texture_encoder.py)
+    if is_gray:
+        if has_alpha:
+            return 'IA8'
+        else:
+            return 'I8'
+    elif n_colors <= 16:
+        return 'C4'
+    elif n_colors <= 256:
+        return 'C8'
+    elif has_alpha:
+        return 'RGB5A3'
+    else:
+        return 'CMPR'
+
+
+def prepare_texture_formats(armature):
+    """Auto-select GX texture formats for textures that don't have one set.
+
+    Returns the number of textures that were assigned a format.
+    """
+    images_seen = set()
+    count = 0
+
+    for child in armature.children:
+        if child.type != 'MESH':
+            continue
+        for slot in child.material_slots:
+            if not slot.material or not slot.material.use_nodes:
+                continue
+            for node in slot.material.node_tree.nodes:
+                if node.bl_idname == 'ShaderNodeTexImage' and node.image:
+                    img = node.image
+                    if img.name in images_seen:
+                        continue
+                    images_seen.add(img.name)
+
+                    # Skip textures that already have a format set
+                    if hasattr(img, 'dat_gx_format') and img.dat_gx_format != 'AUTO':
+                        continue
+
+                    fmt = _analyze_texture(img)
+                    if fmt:
+                        img.dat_gx_format = fmt
+                        count += 1
+                        print("    %s (%dx%d): %s" % (img.name, img.size[0], img.size[1], fmt))
+
+    return count
+
+
+# ---------------------------------------------------------------------------
 # Ambient light
 # ---------------------------------------------------------------------------
+
+def _srgb_to_linear(c):
+    """Convert a single sRGB channel value (0-1) to linear."""
+    if c <= 0.0404482362771082:
+        return c / 12.92
+    return ((c + 0.055) / 1.055) ** 2.4
+
 
 def prepare_ambient_light():
     """Add an ambient light if none exists in the scene.
@@ -194,12 +287,10 @@ def prepare_ambient_light():
         if obj.type == 'LIGHT' and obj.get('dat_light_type') == 'AMBIENT':
             return 0
 
-    from shared.helpers.srgb import srgb_to_linear
-
     # Default: (76, 76, 76) / 255 ≈ 0.298 sRGB — the most common
     # ambient color across all tested Pokémon models.
     srgb_val = 76 / 255.0
-    linear_val = srgb_to_linear(srgb_val)
+    linear_val = _srgb_to_linear(srgb_val)
 
     light_data = bpy.data.lights.new(name='Ambient_Light', type='POINT')
     light_data.energy = 0
@@ -234,7 +325,17 @@ if __name__ == "__main__" or True:
     else:
         print("  No armature selected (PKX metadata step skipped)")
 
-    # 3. Ambient light
+    # 3. Texture formats (on the selected armature's textures)
+    if obj and obj.type == 'ARMATURE':
+        fmt_count = prepare_texture_formats(obj)
+        if fmt_count:
+            print("  Set GX format on %d texture(s)" % fmt_count)
+        else:
+            print("  All textures already have formats set (skipped)")
+    else:
+        print("  No armature selected (texture format step skipped)")
+
+    # 4. Ambient light
     amb_count = prepare_ambient_light()
     if amb_count:
         print("  Added ambient light (no visible change in Blender)")
