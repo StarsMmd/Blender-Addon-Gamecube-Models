@@ -112,6 +112,8 @@ Before exporting a model that was **not** imported through the DAT plugin (i.e. 
 
 The script creates a battle camera, ambient light, and sets texture formats for all objects in the scene. PKX metadata (animation slots, shiny params, body map bones) is only applied to the selected armature and is only needed for `.pkx` exports — for standalone `.dat` files it can be skipped.
 
+**After the first run**, assign your Blender Actions to the animation slots in the **PKX Metadata** panel (Idle, Physical, Special, Damage, Faint, etc.), then **run the script again**. On the second run it will auto-derive timing values (wind-up, hit, duration) from the assigned action durations. You can fine-tune the timing values in the panel afterwards.
+
 ---
 
 ## Scene Preparation
