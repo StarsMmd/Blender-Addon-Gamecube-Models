@@ -105,11 +105,12 @@ What the exporter can and cannot read from your Blender scene.
 
 Before exporting a model that was **not** imported through the DAT plugin (i.e. built from scratch or imported from another format), run **`scripts/prepare_for_export.py`** from Blender's Scripting panel. The script only adds properties that don't already exist.
 
-1. Open the Scripting workspace
-2. Open `scripts/prepare_for_export.py`
-3. Click **Run Script**
+1. Optionally select an armature (needed for PKX metadata — skip this if exporting to `.dat` only)
+2. Open the Scripting workspace
+3. Open `scripts/prepare_for_export.py`
+4. Click **Run Script**
 
-The script operates on all objects in the scene — no selection required.
+The script creates a battle camera, ambient light, and sets texture formats for all objects in the scene. PKX metadata (animation slots, shiny params, body map bones) is only applied to the selected armature and is only needed for `.pkx` exports — for standalone `.dat` files it can be skipped.
 
 ---
 
