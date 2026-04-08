@@ -141,6 +141,7 @@ The plugin uses real-world meters for all positions (matching Blender's default 
 - Coiled or curled poses will appear shorter than the official stretched-out measurement — this is expected
 - Some Pokémon (e.g. those with long tails, wings, or unusual poses) may not fit neatly to a single axis — use your judgment on the overall scale rather than trying to match a specific dimension exactly
 - Models imported from the game are already in meters but may not match official heights exactly (game models are artist-scaled for visual appeal in battle)
+- Blender's Dimensions (N-panel) are based on the model's **local** bounding box, so the axes correspond to the model's original orientation — not the current viewport orientation. Rotating the armature does not update the Dimensions. If the model was imported or created in Y-up orientation, height will show under Y even after rotating to Z-up. Apply the rotation (**Ctrl+A** → **Rotation**) if you need Dimensions to reflect the current orientation
 - For a visual reference, try importing an existing game model of a similar-sized Pokémon and comparing side by side. Reset the scene completely afterwards — any leftover game objects will be included in the export
 
 ---
