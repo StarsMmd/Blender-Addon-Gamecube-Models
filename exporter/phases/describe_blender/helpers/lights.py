@@ -1,7 +1,7 @@
 """Describe Blender light objects as IRLight dataclasses.
 
 Reads light objects from the Blender scene and produces IRLight list.
-Handles SUN, POINT, and SPOT light types.
+Handles AMBIENT, SUN, POINT, and SPOT light types.
 """
 import bpy
 
@@ -40,6 +40,17 @@ def describe_lights(context, logger=StubLogger()):
         if obj.type != 'LIGHT':
             continue
 
+        # Check for ambient light marker
+        if obj.get('dat_light_type') == 'AMBIENT':
+            c = obj.data.color
+            color = (linear_to_srgb(c[0]), linear_to_srgb(c[1]), linear_to_srgb(c[2]))
+            lights.append(IRLight(
+                name=obj.name,
+                type=LightType.AMBIENT,
+                color=color,
+            ))
+            continue
+
         ir_type = _BLENDER_TYPE_TO_IR.get(obj.data.type)
         if ir_type is None:
             logger.debug("  Skipping light '%s': unsupported type '%s'", obj.name, obj.data.type)
@@ -69,6 +80,7 @@ def describe_lights(context, logger=StubLogger()):
             color=color,
             position=position,
             target_position=target_position,
+            brightness=obj.data.energy,
         )
         lights.append(ir_light)
 

@@ -12,3 +12,4 @@ class IRLight:
     color: tuple[float, float, float]
     position: tuple[float, float, float] | None = None
     target_position: tuple[float, float, float] | None = None
+    brightness: float = 1.0

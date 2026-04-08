@@ -34,6 +34,7 @@ class TextureInterpolation(Enum):
 
 class LightType(Enum):
     """Light source type."""
+    AMBIENT = "AMBIENT"
     SUN = "SUN"
     POINT = "POINT"
     SPOT = "SPOT"

@@ -63,7 +63,7 @@ def build_blender_scene(ir_scene, context, options, logger=StubLogger()):
     if ir_scene.lights and options.get("import_lights", False):
         build_lights(ir_scene.lights, logger)
 
-    if ir_scene.cameras:
+    if ir_scene.cameras and options.get("import_cameras", False):
         build_cameras(ir_scene.cameras, logger)
 
     logger.info("=== Phase 5 complete ===")
