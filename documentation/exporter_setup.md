@@ -126,6 +126,8 @@ Delete any objects that should not be part of the model. Blender's default scene
 
 Only armatures and their parented meshes should remain in the scene, plus any lights and cameras you intentionally want in the game model.
 
+**Overworld / standalone `.dat` models:** If exporting for the overworld (not a battle model), delete or hide all lights after running the preparation script. Overworld models don't include their own lighting — it comes from the map scene. Hidden lights and cameras are automatically skipped by the exporter, so hiding is a safe alternative to deleting.
+
 ---
 
 ## Model Scale

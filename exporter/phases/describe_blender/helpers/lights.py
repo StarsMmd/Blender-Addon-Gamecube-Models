@@ -40,6 +40,10 @@ def describe_lights(context, logger=StubLogger()):
         if obj.type != 'LIGHT':
             continue
 
+        if obj.hide_viewport or obj.hide_get():
+            logger.debug("  Skipping light '%s': hidden", obj.name)
+            continue
+
         # Check for ambient light marker
         if obj.get('dat_light_type') == 'AMBIENT':
             c = obj.data.color

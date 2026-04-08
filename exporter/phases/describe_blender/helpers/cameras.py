@@ -46,6 +46,10 @@ def describe_cameras(context, logger=StubLogger()):
         if obj.type != 'CAMERA':
             continue
 
+        if obj.hide_viewport or obj.hide_get():
+            logger.debug("  Skipping camera '%s': hidden", obj.name)
+            continue
+
         ir_projection = _BLENDER_TYPE_TO_IR.get(obj.data.type)
         if ir_projection is None:
             logger.debug("  Skipping camera '%s': unsupported type '%s'", obj.name, obj.data.type)
