@@ -335,8 +335,8 @@ _SUB_ANIM_TRIGGER_ITEMS = [
     ("extra", "Extra"), ("unused", "Unused"),
 ]
 
-# Property key suffixes for null joint bones
-_JOINT_KEYS = [
+# Property key suffixes for body map bones
+_BODY_MAP_KEYS = [
     "root", "head", "center", "body_3", "neck", "head_top",
     "limb_a", "limb_b", "secondary_8", "secondary_9",
     "secondary_10", "secondary_11", "attach_a", "attach_b",
@@ -363,7 +363,7 @@ class DAT_PT_PKXPanel(bpy.types.Panel):
         layout = self.layout
 
         from .shared.helpers.pkx_header import (
-            XD_POKEMON_ANIM_NAMES, XD_TRAINER_ANIM_NAMES, NULL_JOINT_NAMES,
+            XD_POKEMON_ANIM_NAMES, XD_TRAINER_ANIM_NAMES, BODY_MAP_NAMES,
         )
 
         # === General ===
@@ -431,14 +431,14 @@ class DAT_PT_PKXPanel(bpy.types.Panel):
             _prop_row(box, "Generators", ptl_count)
             _prop_row(box, "Textures", obj.get("dat_particle_texture_count", 0))
 
-        # === Null Joint Bones ===
+        # === Body Map ===
         box = layout.box()
-        box.label(text="Null Joint Bones", icon='BONE_DATA')
+        box.label(text="Body Map", icon='BONE_DATA')
         col = box.column(align=True)
-        for j, jk in enumerate(_JOINT_KEYS):
-            key = "dat_pkx_joint_%s" % jk
+        for j, jk in enumerate(_BODY_MAP_KEYS):
+            key = "dat_pkx_body_%s" % jk
             if key in obj:
-                label = NULL_JOINT_NAMES[j] if j < len(NULL_JOINT_NAMES) else jk
+                label = BODY_MAP_NAMES[j] if j < len(BODY_MAP_NAMES) else jk
                 col.prop_search(obj, '["%s"]' % key, obj.data, "bones", text=label)
 
         # === Sub-Animations (Part Anim Data) ===
@@ -513,29 +513,39 @@ class DAT_PT_PKXPanel(bpy.types.Panel):
                     motion_label = {0: "None", 1: "Play Once", 2: "Loop"}.get(motion, str(motion))
                     row.label(text=motion_label)
 
-                # Timing (only if any non-zero)
-                timings = [obj.get(prefix + "_timing_%d" % t, 0.0) for t in range(1, 5)]
-                if any(abs(t) > 0.001 for t in timings):
+                # Timing — only show fields relevant to this animation type
+                anim_type = obj.get(prefix + "_type", "action")
+                if anim_type == "loop":
+                    _timing_labels = {1: "Duration"}
+                elif anim_type == "action":
+                    _timing_labels = {1: "Wind-up", 2: "Hit", 3: "Duration"}
+                elif anim_type == "hit_reaction":
+                    _timing_labels = {1: "Reaction", 2: "Duration"}
+                elif anim_type == "compound":
+                    _timing_labels = {1: "Sub 1 Mid", 2: "Sub 1 End", 3: "Sub 2 Mid", 4: "Sub 2 End"}
+                else:
+                    _timing_labels = {}
+
+                if _timing_labels:
                     col = sub_box.column(align=True)
-                    col.label(text="Timing:")
-                    for t in range(1, 5):
+                    for t, label in _timing_labels.items():
                         tk = prefix + "_timing_%d" % t
                         if tk in obj:
-                            col.prop(obj, '["%s"]' % tk, text="T%d" % t)
+                            col.prop(obj, '["%s"]' % tk, text=label)
 
-                # Null joint overrides
+                # Body map overrides
                 has_overrides = False
                 for j in range(16):
-                    if obj.get(prefix + "_joint_%s" % _JOINT_KEYS[j]) is not None:
+                    if obj.get(prefix + "_body_%s" % _BODY_MAP_KEYS[j]) is not None:
                         has_overrides = True
                         break
                 if has_overrides:
                     col = sub_box.column(align=True)
                     col.label(text="Joint Overrides:")
                     for j in range(16):
-                        jkey = prefix + "_joint_%s" % _JOINT_KEYS[j]
+                        jkey = prefix + "_body_%s" % _BODY_MAP_KEYS[j]
                         if jkey in obj:
-                            label = NULL_JOINT_NAMES[j] if j < len(NULL_JOINT_NAMES) else _JOINT_KEYS[j]
+                            label = BODY_MAP_NAMES[j] if j < len(BODY_MAP_NAMES) else _BODY_MAP_KEYS[j]
                             col.prop_search(obj, '["%s"]' % jkey, obj.data, "bones", text=label)
 
 

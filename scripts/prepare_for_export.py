@@ -133,42 +133,103 @@ def apply_pkx_metadata(armature, format='XD', model_type='POKEMON', species_id=0
         armature[prefix + "_trigger"] = sub_triggers[i]
         armature[prefix + "_anim_ref"] = ""
 
-    # --- Null joint bones ---
+    # --- Body map bones ---
     bones = list(armature.data.bones)
     root_name = bones[0].name if bones else ""
-    armature["dat_pkx_joint_root"] = root_name
-    armature["dat_pkx_joint_head"] = head_bone_name
-    armature["dat_pkx_joint_center"] = ""
+    armature["dat_pkx_body_root"] = root_name
+    armature["dat_pkx_body_head"] = head_bone_name
+    armature["dat_pkx_body_center"] = ""
     for key in ["body_3", "neck", "head_top", "limb_a", "limb_b",
                 "secondary_8", "secondary_9", "secondary_10", "secondary_11",
                 "attach_a", "attach_b", "attach_c", "attach_d"]:
-        armature["dat_pkx_joint_%s" % key] = ""
+        armature["dat_pkx_body_%s" % key] = ""
 
     # --- Animation entries (17 slots) ---
     anim_count = 17
     armature["dat_pkx_anim_count"] = anim_count
 
+    # Slot types: 0=idle(loop), 8=damage(hit), 9=damageB(compound), 10=faint(hit), rest=action
+    _SLOT_TYPES = {0: "loop", 8: "hit_reaction", 9: "compound", 10: "hit_reaction"}
+
     for i in range(anim_count):
         prefix = "dat_pkx_anim_%02d" % i
+        anim_type = _SLOT_TYPES.get(i, "action")
+
         if i == 0:
-            armature[prefix + "_type"] = "loop"
             armature[prefix + "_sub_0_motion"] = 2 if is_xd else 0
-            armature[prefix + "_sub_0_anim"] = ""
         else:
-            armature[prefix + "_type"] = "action"
             armature[prefix + "_sub_0_motion"] = 0
-            armature[prefix + "_sub_0_anim"] = ""
-        armature[prefix + "_sub_count"] = 1
+
+        armature[prefix + "_type"] = anim_type
+        armature[prefix + "_sub_0_anim"] = ""
+        armature[prefix + "_sub_count"] = 2 if anim_type == "compound" else 1
         armature[prefix + "_damage_flags"] = 0
+        armature[prefix + "_terminator"] = 3 if is_xd else 1
+
+        # Timing defaults (will be recalculated by derive_timing below)
         armature[prefix + "_timing_1"] = 0.0
         armature[prefix + "_timing_2"] = 0.0
         armature[prefix + "_timing_3"] = 0.0
         armature[prefix + "_timing_4"] = 0.0
-        armature[prefix + "_terminator"] = 3 if is_xd else 1
 
     print("  PKX metadata applied to '%s':" % armature.name)
     print("    Format: %s, Species: %d, Head bone: '%s'" % (format, species_id, head_bone_name))
     print("    17 animation slots (slot 0 = idle loop)")
+
+
+def _get_action_duration(action_name):
+    """Get an action's duration in seconds (frame count / 60fps). Returns 0 if not found."""
+    action = bpy.data.actions.get(action_name)
+    if not action or not action.fcurves:
+        return 0.0
+    max_frame = max(kp.co[0] for fc in action.fcurves for kp in fc.keyframe_points)
+    return max_frame / 60.0
+
+
+def derive_timing(armature):
+    """Auto-derive animation timing fields from action durations.
+
+    Timing semantics per anim_type:
+      loop:         T1 = duration
+      action:       T1 = wind-up (50%), T2 = hit (50%), T3 = duration
+      hit_reaction: T1 = reaction start (50%), T2 = duration
+      compound:     T1 = sub1 mid, T2 = sub1 end, T3 = sub2 mid, T4 = sub2 end
+
+    Returns the number of entries updated.
+    """
+    anim_count = armature.get("dat_pkx_anim_count", 0)
+    updated = 0
+
+    for i in range(anim_count):
+        prefix = "dat_pkx_anim_%02d" % i
+        anim_type = armature.get(prefix + "_type", "action")
+        action_name = armature.get(prefix + "_sub_0_anim", "")
+        dur = _get_action_duration(action_name) if action_name else 0.0
+
+        if dur <= 0:
+            continue
+
+        if anim_type == "loop":
+            armature[prefix + "_timing_1"] = dur
+        elif anim_type == "action":
+            armature[prefix + "_timing_1"] = dur * 0.5
+            armature[prefix + "_timing_2"] = dur * 0.5
+            armature[prefix + "_timing_3"] = dur
+        elif anim_type == "hit_reaction":
+            armature[prefix + "_timing_1"] = dur * 0.5
+            armature[prefix + "_timing_2"] = dur
+        elif anim_type == "compound":
+            # Two sub-anims: get duration of second if available
+            action2_name = armature.get(prefix + "_sub_1_anim", "")
+            dur2 = _get_action_duration(action2_name) if action2_name else dur
+            armature[prefix + "_timing_1"] = dur * 0.5
+            armature[prefix + "_timing_2"] = dur
+            armature[prefix + "_timing_3"] = dur2 * 0.5
+            armature[prefix + "_timing_4"] = dur2
+
+        updated += 1
+
+    return updated
 
 
 # ---------------------------------------------------------------------------
@@ -325,7 +386,13 @@ if __name__ == "__main__" or True:
     else:
         print("  No armature selected (PKX metadata step skipped)")
 
-    # 3. Texture formats (on the selected armature's textures)
+    # 3. Derive animation timing from action durations
+    if obj and obj.type == 'ARMATURE':
+        timing_count = derive_timing(obj)
+        if timing_count:
+            print("  Derived timing for %d animation slot(s)" % timing_count)
+
+    # 5. Texture formats (on the selected armature's textures)
     if obj and obj.type == 'ARMATURE':
         fmt_count = prepare_texture_formats(obj)
         if fmt_count:
@@ -335,7 +402,7 @@ if __name__ == "__main__" or True:
     else:
         print("  No armature selected (texture format step skipped)")
 
-    # 4. Ambient light
+    # 6. Ambient light
     amb_count = prepare_ambient_light()
     if amb_count:
         print("  Added ambient light (no visible change in Blender)")
