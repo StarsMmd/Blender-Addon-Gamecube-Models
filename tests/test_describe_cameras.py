@@ -332,3 +332,43 @@ class TestDescribeCameraAnimations:
 
         result = describe_camera_animations(cs)
         assert result[0].end_frame == 42.0
+
+
+class TestCoordinateConversion:
+    """Verify Y-up ↔ Z-up coordinate conversion round-trips correctly."""
+
+    def test_yup_to_zup(self):
+        """IR Y-up (x,y,z) → Blender Z-up (x,-z,y)."""
+        # GameCube: x=1 right, y=5 up, z=10 forward
+        x, y, z = 1.0, 5.0, 10.0
+        bx, by, bz = x, -z, y
+        assert bx == 1.0   # right unchanged
+        assert by == -10.0  # forward becomes -Y
+        assert bz == 5.0   # up becomes Z
+
+    def test_zup_to_yup(self):
+        """Blender Z-up (x,y,z) → IR Y-up (x,z,-y)."""
+        # Blender: x=1 right, y=-10 forward, z=5 up
+        bx, by, bz = 1.0, -10.0, 5.0
+        x, y, z = bx, bz, -by
+        assert x == 1.0   # right unchanged
+        assert y == 5.0   # up from Z
+        assert z == 10.0  # forward from -Y
+
+    def test_round_trip_yup_zup_yup(self):
+        """Y-up → Z-up → Y-up produces the original values."""
+        orig = (3.5, 7.2, -1.8)
+        # Y-up → Z-up
+        bx, by, bz = orig[0], -orig[2], orig[1]
+        # Z-up → Y-up
+        rx, ry, rz = bx, bz, -by
+        assert abs(rx - orig[0]) < 1e-10
+        assert abs(ry - orig[1]) < 1e-10
+        assert abs(rz - orig[2]) < 1e-10
+
+    def test_ir_position_stays_yup(self):
+        """Describe phase stores positions in Y-up (scaled but not rotated)."""
+        cam = _make_camera(position=(10.0, 20.0, 30.0))
+        result = describe_camera(cam)
+        # IR should be Y-up with GC_TO_METERS scaling only
+        assert result.position == (10.0 * S, 20.0 * S, 30.0 * S)
