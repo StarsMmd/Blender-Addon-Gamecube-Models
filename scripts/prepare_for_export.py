@@ -57,22 +57,54 @@ def prepare_camera():
 
     # Create Battle_Camera if it doesn't exist
     if bpy.data.objects.get(BATTLE_CAMERA_NAME) is None:
+        # Compute model bounding box to position camera intelligently
+        from mathutils import Vector
+        min_co = [float('inf')] * 3
+        max_co = [float('-inf')] * 3
+        for obj in bpy.data.objects:
+            if obj.type == 'MESH':
+                for corner in obj.bound_box:
+                    world = obj.matrix_world @ Vector(corner)
+                    for i in range(3):
+                        min_co[i] = min(min_co[i], world[i])
+                        max_co[i] = max(max_co[i], world[i])
+
+        if min_co[0] != float('inf'):
+            center_x = (min_co[0] + max_co[0]) / 2
+            center_y = (min_co[1] + max_co[1]) / 2
+            center_z = (min_co[2] + max_co[2]) / 2
+            height = max_co[2] - min_co[2]
+            depth = max_co[1] - min_co[1]
+        else:
+            # No meshes — use sensible defaults
+            center_x, center_y, center_z = 0.0, 0.0, 0.5
+            height = 1.0
+            depth = 1.0
+
+        # Camera in front of the model (negative Y), at center height,
+        # pulled back ~3× the model's height for good framing
+        cam_distance = max(height * 3.0, 2.0)
+        cam_pos = (center_x, center_y - cam_distance, center_z)
+
+        # Target at the model's center
+        target_pos = (center_x, center_y, center_z)
+
         cam_data = bpy.data.cameras.new(BATTLE_CAMERA_NAME)
         cam_data.type = 'PERSP'
         cam_data.lens = 37.5       # ~27° vertical FOV (most common across all PKX models)
-        cam_data.clip_start = 0.01    # 0.1 GC units × 0.10
-        cam_data.clip_end = 3277.0    # 32768 GC units × 0.10
+        cam_data.clip_start = 0.01
+        cam_data.clip_end = 3277.0
 
         cam_obj = bpy.data.objects.new(BATTLE_CAMERA_NAME, cam_data)
-        cam_obj.location = (0.0, 0.8, 5.0)   # ~(0, 8, 50) GC × 0.10
+        cam_obj.location = cam_pos
         cam_obj["dat_camera_aspect"] = 1.18
         bpy.context.scene.collection.objects.link(cam_obj)
 
-        # Create target empty — size proportional to scene model bounding box
+        # Create target empty at model center
         target = bpy.data.objects.new(BATTLE_CAMERA_TARGET, None)
         target.empty_display_type = 'PLAIN_AXES'
         target.empty_display_size = _model_display_size()
-        target.location = (0.0, 0.5, 0.0)    # ~(0, 5, 0) GC × 0.10
+        target.location = target_pos
         bpy.context.scene.collection.objects.link(target)
 
         # Add TRACK_TO constraint
@@ -82,8 +114,10 @@ def prepare_camera():
         track.up_axis = 'UP_Y'
 
         created = 1
-        print("  Created '%s' with target at (0, 5, 0)" % BATTLE_CAMERA_NAME)
-        print("    Lens: 37.5mm (~27° FOV), aspect: 1.18, far: 32768")
+        print("  Created '%s' in front of model, targeting center" % BATTLE_CAMERA_NAME)
+        print("    Position: (%.2f, %.2f, %.2f)" % cam_pos)
+        print("    Target: (%.2f, %.2f, %.2f)" % target_pos)
+        print("    Lens: 37.5mm (~27° FOV), aspect: 1.18")
         print("    Adjust position/FOV to frame your model. Smaller models need wider FOV.")
 
     # Set dat_camera_aspect on any cameras that don't have it
