@@ -340,3 +340,4 @@ The shiny parameters are stored as custom properties on the armature (`dat_pkx_s
 - [ ] GPT1 particle export (compose + serialize phases) — validate import first
 - [ ] Blender particle visualization from IRParticleSystem
 - [x] Envelope matrix index overflow: meshes with >10 unique weight combos are now split into multiple PObjects, each with ≤10 envelopes and its own display list. Greedy best-fit bin-packing minimizes the number of splits.
+- [ ] MIRROR wrap mode round-trip: the importer now implements GX MIRROR via PINGPONG shader math nodes (Blender has no native mirror texture extension). The exporter could detect PINGPONG Math nodes in the texture UV chain to recover MIRROR wrap mode. Currently MIRROR round-trips as CLAMP.

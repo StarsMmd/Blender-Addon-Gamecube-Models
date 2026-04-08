@@ -270,21 +270,109 @@ def _build_texture_sampling(tex_layer, nodes, links, image_cache, tex_idx=0):
     tex_node = nodes.new('ShaderNodeTexImage')
     tex_node.image = _get_or_create_bpy_image(tex_layer.image, image_cache)
 
-    # Wrap / extension
+    # Wrap / extension — Blender has no native MIRROR mode for texture
+    # images (only REPEAT, EXTEND, CLIP). When GX uses MIRROR wrap, we
+    # implement it via shader math: a triangle wave that bounces the UV
+    # coordinate between 0 and 1.  Formula: 1 - abs(mod(u, 2) - 1)
+    mirror_s = tex_layer.wrap_s == WrapMode.MIRROR
+    mirror_t = tex_layer.wrap_t == WrapMode.MIRROR
     has_repeat = tex_layer.wrap_s == WrapMode.REPEAT or tex_layer.wrap_t == WrapMode.REPEAT
-    has_mirror = tex_layer.wrap_s == WrapMode.MIRROR or tex_layer.wrap_t == WrapMode.MIRROR
-    if has_repeat or has_mirror:
+
+    if mirror_s or mirror_t:
+        tex_node.extension = 'EXTEND'
+        # Build mirror math between mapping and texture node
+        uv_in = mapping.outputs[0]
+        if mirror_s and mirror_t:
+            # Mirror both axes — operate on the vector directly
+            uv_in = _build_mirror_nodes(nodes, links, uv_in, tex_idx)
+        else:
+            # Mirror one axis only — separate, mirror, recombine
+            uv_in = _build_mirror_single_axis(
+                nodes, links, uv_in, tex_idx, axis=0 if mirror_s else 1)
+        links.new(uv_in, tex_node.inputs[0])
+    elif has_repeat:
         tex_node.extension = 'REPEAT'
+        links.new(mapping.outputs[0], tex_node.inputs[0])
     else:
         tex_node.extension = 'EXTEND'
+        links.new(mapping.outputs[0], tex_node.inputs[0])
 
     # Interpolation
     if tex_layer.interpolation:
         tex_node.interpolation = tex_layer.interpolation.value
 
-    links.new(mapping.outputs[0], tex_node.inputs[0])
-
     return tex_node.outputs[0], tex_node.outputs[1], uv_output
+
+
+def _build_mirror_nodes(nodes, links, uv_input, tex_idx):
+    """Build shader nodes to mirror UV coordinates on both S and T axes.
+
+    Implements the triangle wave: 1 - abs(mod(u, 2) - 1)
+    This bounces UV values between 0 and 1 at each integer boundary,
+    matching GX's MIRROR wrap mode.
+    """
+    # mod(uv, 2.0)
+    mod_node = nodes.new('ShaderNodeMath')
+    mod_node.name = 'mirror_mod_%d' % tex_idx
+    mod_node.operation = 'PINGPONG'
+    mod_node.inputs[1].default_value = 1.0
+    # PINGPONG with value 1.0 directly computes the triangle wave:
+    # pingpong(u, 1) = 1 - abs(mod(u, 2) - 1) when u >= 0
+    # This works on scalar. We need per-component, so use Separate/Combine.
+
+    sep = nodes.new('ShaderNodeSeparateXYZ')
+    sep.name = 'mirror_sep_%d' % tex_idx
+    links.new(uv_input, sep.inputs[0])
+
+    pp_s = nodes.new('ShaderNodeMath')
+    pp_s.name = 'mirror_pp_s_%d' % tex_idx
+    pp_s.operation = 'PINGPONG'
+    pp_s.inputs[1].default_value = 1.0
+    links.new(sep.outputs[0], pp_s.inputs[0])
+
+    pp_t = nodes.new('ShaderNodeMath')
+    pp_t.name = 'mirror_pp_t_%d' % tex_idx
+    pp_t.operation = 'PINGPONG'
+    pp_t.inputs[1].default_value = 1.0
+    links.new(sep.outputs[1], pp_t.inputs[0])
+
+    comb = nodes.new('ShaderNodeCombineXYZ')
+    comb.name = 'mirror_comb_%d' % tex_idx
+    links.new(pp_s.outputs[0], comb.inputs[0])
+    links.new(pp_t.outputs[0], comb.inputs[1])
+    links.new(sep.outputs[2], comb.inputs[2])
+
+    return comb.outputs[0]
+
+
+def _build_mirror_single_axis(nodes, links, uv_input, tex_idx, axis):
+    """Build shader nodes to mirror UV coordinates on one axis only.
+
+    Args:
+        axis: 0 for S (X), 1 for T (Y).
+    """
+    sep = nodes.new('ShaderNodeSeparateXYZ')
+    sep.name = 'mirror_sep_%d' % tex_idx
+    links.new(uv_input, sep.inputs[0])
+
+    pp = nodes.new('ShaderNodeMath')
+    pp.name = 'mirror_pp_%d_%d' % (tex_idx, axis)
+    pp.operation = 'PINGPONG'
+    pp.inputs[1].default_value = 1.0
+    links.new(sep.outputs[axis], pp.inputs[0])
+
+    comb = nodes.new('ShaderNodeCombineXYZ')
+    comb.name = 'mirror_comb_%d' % tex_idx
+    # Pass through the non-mirrored axis unchanged
+    if axis == 0:
+        links.new(pp.outputs[0], comb.inputs[0])
+        links.new(sep.outputs[1], comb.inputs[1])
+    else:
+        links.new(sep.outputs[0], comb.inputs[0])
+        links.new(pp.outputs[0], comb.inputs[1])
+    links.new(sep.outputs[2], comb.inputs[2])
+
+    return comb.outputs[0]
 
 
 def _get_or_create_bpy_image(ir_image, image_cache):
