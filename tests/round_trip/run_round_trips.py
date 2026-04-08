@@ -367,6 +367,12 @@ def _compare_ir_by_category(ir_a, ir_b):
                     ir_b.lights if ir_b else [],
                     "scene.lights")
 
+    # Cameras
+    _score_category(categories, all_details, 'cameras',
+                    ir_a.cameras if ir_a else [],
+                    ir_b.cameras if ir_b else [],
+                    "scene.cameras")
+
     return categories, all_details
 
 
@@ -865,7 +871,7 @@ def main():
         # Show IBI category breakdown with error/miss rates
         cats = scores.get('ibi_categories', {})
         cat_parts = []
-        for cat_name in ('bones', 'meshes', 'materials', 'animations', 'constraints', 'lights'):
+        for cat_name in ('bones', 'meshes', 'materials', 'animations', 'constraints', 'lights', 'cameras'):
             cat = cats.get(cat_name)
             if cat and cat['total'] > 0:
                 err_pct = cat['errors'] / cat['total'] * 100

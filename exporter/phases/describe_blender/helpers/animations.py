@@ -21,7 +21,7 @@ except (ImportError, SystemError):
     from shared.helpers.logger import StubLogger
 
 
-def describe_bone_animations(armature, bones, logger=StubLogger()):
+def describe_bone_animations(armature, bones, logger=StubLogger(), use_bezier=True):
     """Read Blender Actions and produce IRBoneAnimationSet list.
 
     Finds all actions associated with the armature, samples each
@@ -57,7 +57,7 @@ def describe_bone_animations(armature, bones, logger=StubLogger()):
 
     anim_sets = []
     for action in actions:
-        anim_set = _describe_action(action, bones, bone_data, bone_name_to_index, logger)
+        anim_set = _describe_action(action, bones, bone_data, bone_name_to_index, logger, use_bezier)
         if anim_set is not None:
             anim_sets.append(anim_set)
 
@@ -102,7 +102,7 @@ def _build_bone_data(bones):
     return data
 
 
-def _describe_action(action, bones, bone_data, bone_name_to_index, logger):
+def _describe_action(action, bones, bone_data, bone_name_to_index, logger, use_bezier=True):
     """Convert a single Blender Action to an IRBoneAnimationSet."""
 
     # Group fcurves by bone name
@@ -136,7 +136,7 @@ def _describe_action(action, bones, bone_data, bone_name_to_index, logger):
 
         track = _unbake_bone_track(
             bone_name, bone_idx, channels, bone_data, bones,
-            frame_start, frame_end, end_frame, logger)
+            frame_start, frame_end, end_frame, logger, use_bezier)
         if track is not None:
             tracks.append(track)
 
@@ -157,7 +157,7 @@ def _describe_action(action, bones, bone_data, bone_name_to_index, logger):
 
 
 def _unbake_bone_track(bone_name, bone_idx, channels, bone_data, bones,
-                       frame_start, frame_end, end_frame, logger):
+                       frame_start, frame_end, end_frame, logger, use_bezier=True):
     """Unbake Blender pose-space fcurves to HSD SRT keyframes for one bone."""
     bd = bone_data[bone_idx]
     parent_idx = bd['parent_index']
@@ -199,9 +199,19 @@ def _unbake_bone_track(bone_name, bone_idx, channels, bone_data, bones,
             scl_channels[i].append((relative_frame, s[i]))
 
     # Build IRKeyframe lists per channel with sparsification
-    rotation = [_sparsify(ch) for ch in rot_channels]
-    location = [_sparsify(ch) for ch in loc_channels]
-    scale = [_sparsify(ch) for ch in scl_channels]
+    if use_bezier:
+        all_ch = rot_channels + loc_channels + scl_channels
+        sparsified = []
+        for ch in all_ch:
+            slopes = _compute_slopes(ch)
+            sparsified.append(_sparsify_bezier(ch, slopes))
+        rotation = sparsified[0:3]
+        location = sparsified[3:6]
+        scale = sparsified[6:9]
+    else:
+        rotation = [_sparsify(ch) for ch in rot_channels]
+        location = [_sparsify(ch) for ch in loc_channels]
+        scale = [_sparsify(ch) for ch in scl_channels]
 
     return IRBoneTrack(
         bone_name=bone_name,
@@ -369,3 +379,216 @@ def _sparsify(frame_values):
     ))
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Bezier Sparsification (slope-aware)
+# ---------------------------------------------------------------------------
+
+def _compute_slopes(frame_values):
+    """Compute slope at each sample point via finite differences.
+
+    Uses central differences for interior points, forward/backward
+    differences at the endpoints.
+
+    Args:
+        frame_values: list of (frame, value) tuples.
+
+    Returns:
+        list of float slopes, parallel to frame_values.
+    """
+    n = len(frame_values)
+    if n == 0:
+        return []
+    if n == 1:
+        return [0.0]
+
+    slopes = []
+    for i in range(n):
+        if i == 0:
+            dt = frame_values[1][0] - frame_values[0][0]
+            slopes.append((frame_values[1][1] - frame_values[0][1]) / max(dt, 1))
+        elif i == n - 1:
+            dt = frame_values[i][0] - frame_values[i - 1][0]
+            slopes.append((frame_values[i][1] - frame_values[i - 1][1]) / max(dt, 1))
+        else:
+            dt = frame_values[i + 1][0] - frame_values[i - 1][0]
+            slopes.append((frame_values[i + 1][1] - frame_values[i - 1][1]) / max(dt, 1))
+
+    return slopes
+
+
+def _hermite_eval(p0, s0, p1, s1, dt, t_frac):
+    """Evaluate a cubic hermite spline at parameter t_frac in [0, 1].
+
+    Args:
+        p0: value at start
+        s0: slope at start (slope_out)
+        p1: value at end
+        s1: slope at end (slope_in)
+        dt: frame interval (end_frame - start_frame)
+        t_frac: parameter in [0, 1]
+
+    Returns:
+        Interpolated value.
+    """
+    t = t_frac
+    t2 = t * t
+    t3 = t2 * t
+    h00 = 2 * t3 - 3 * t2 + 1
+    h10 = t3 - 2 * t2 + t
+    h01 = -2 * t3 + 3 * t2
+    h11 = t3 - t2
+    return h00 * p0 + h10 * s0 * dt + h01 * p1 + h11 * s1 * dt
+
+
+def _sparsify_bezier(frame_values, slopes):
+    """Reduce dense (frame, value) samples to sparse BEZIER IRKeyframes.
+
+    Uses hermite interpolation error as the removal criterion: iteratively
+    removes the interior point whose removal causes the smallest hermite
+    reconstruction error, until no more points can be removed within
+    tolerance.
+
+    Args:
+        frame_values: list of (frame, value) tuples (dense, one per frame).
+        slopes: list of float slopes, parallel to frame_values.
+
+    Returns:
+        list[IRKeyframe] with BEZIER interpolation and slope_in/slope_out.
+    """
+    if not frame_values:
+        return []
+
+    # Single point
+    if len(frame_values) == 1:
+        return [IRKeyframe(
+            frame=frame_values[0][0],
+            value=frame_values[0][1],
+            interpolation=Interpolation.CONSTANT,
+        )]
+
+    # Check if all values are the same → single CONSTANT keyframe
+    first_val = frame_values[0][1]
+    if all(abs(v - first_val) < _TOLERANCE for _, v in frame_values):
+        return [IRKeyframe(
+            frame=frame_values[0][0],
+            value=first_val,
+            interpolation=Interpolation.CONSTANT,
+        )]
+
+    # Check if values form a single linear ramp → two LINEAR keyframes
+    if len(frame_values) >= 2:
+        start_frame, start_val = frame_values[0]
+        end_frame, end_val = frame_values[-1]
+        frame_range = end_frame - start_frame
+        if frame_range > 0:
+            is_linear = True
+            for f, v in frame_values[1:-1]:
+                t = (f - start_frame) / frame_range
+                expected = start_val + t * (end_val - start_val)
+                if abs(v - expected) > _TOLERANCE:
+                    is_linear = False
+                    break
+            if is_linear:
+                return [
+                    IRKeyframe(frame=start_frame, value=start_val, interpolation=Interpolation.LINEAR),
+                    IRKeyframe(frame=end_frame, value=end_val, interpolation=Interpolation.LINEAR),
+                ]
+
+    # General case: iterative hermite-based point removal.
+    # Start with all points as candidates, represented by their indices
+    # into the original frame_values/slopes arrays.
+    indices = list(range(len(frame_values)))
+
+    while len(indices) > 2:
+        # Find interior point whose removal causes the smallest max error
+        best_idx_pos = -1  # position in `indices` list
+        best_error = float('inf')
+
+        for pos in range(1, len(indices) - 1):
+            # Candidate for removal: indices[pos]
+            left = indices[pos - 1]
+            right = indices[pos + 1]
+
+            f_left = frame_values[left][0]
+            f_right = frame_values[right][0]
+            v_left = frame_values[left][1]
+            v_right = frame_values[right][1]
+            s_left = slopes[left]
+            s_right = slopes[right]
+            dt = f_right - f_left
+
+            if dt <= 0:
+                continue
+
+            # Compute max hermite error at all original samples between left and right
+            max_err = 0.0
+            for k in range(left, right + 1):
+                f_k = frame_values[k][0]
+                v_k = frame_values[k][1]
+                t_frac = (f_k - f_left) / dt
+                h_val = _hermite_eval(v_left, s_left, v_right, s_right, dt, t_frac)
+                err = abs(v_k - h_val)
+                if err > max_err:
+                    max_err = err
+
+            if max_err < best_error:
+                best_error = max_err
+                best_idx_pos = pos
+
+        # If the best candidate exceeds tolerance, stop removing
+        if best_error >= _TOLERANCE or best_idx_pos < 0:
+            break
+
+        indices.pop(best_idx_pos)
+
+    # Build IRKeyframes from remaining indices
+    result = []
+    for i, idx in enumerate(indices):
+        frame = frame_values[idx][0]
+        value = frame_values[idx][1]
+        slope = slopes[idx]
+
+        # Detect interpolation type for the segment starting at this keyframe
+        if i < len(indices) - 1:
+            next_idx = indices[i + 1]
+            interp = _detect_segment_interpolation(
+                frame_values, idx, next_idx, slope, slopes[next_idx])
+        else:
+            # Last keyframe: use same interpolation as the previous segment
+            interp = result[-1].interpolation if result else Interpolation.BEZIER
+
+        result.append(IRKeyframe(
+            frame=frame,
+            value=value,
+            interpolation=interp,
+            slope_in=slope,
+            slope_out=slope,
+        ))
+
+    return result
+
+
+def _detect_segment_interpolation(frame_values, left_idx, right_idx, slope_left, slope_right):
+    """Detect whether a segment between two keyframes is LINEAR or BEZIER.
+
+    A segment is LINEAR if both slopes match the chord slope (meaning a
+    straight line fits perfectly). Otherwise it's BEZIER.
+    """
+    f_left = frame_values[left_idx][0]
+    f_right = frame_values[right_idx][0]
+    v_left = frame_values[left_idx][1]
+    v_right = frame_values[right_idx][1]
+    dt = f_right - f_left
+
+    if dt <= 0:
+        return Interpolation.CONSTANT
+
+    chord_slope = (v_right - v_left) / dt
+
+    # If both endpoint slopes match the chord slope, the segment is linear
+    if abs(slope_left - chord_slope) < _TOLERANCE and abs(slope_right - chord_slope) < _TOLERANCE:
+        return Interpolation.LINEAR
+
+    return Interpolation.BEZIER

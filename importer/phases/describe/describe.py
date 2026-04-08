@@ -12,6 +12,7 @@ try:
     from ....shared.Nodes.Classes.Material.MaterialAnimationJoint import MaterialAnimationJoint
     from ....shared.Nodes.Classes.Light.Light import Light
     from ....shared.Nodes.Classes.Light.LightSet import LightSet
+    from ....shared.Nodes.Classes.Camera.CameraSet import CameraSet
     from ....shared.helpers.logger import StubLogger
 except (ImportError, SystemError):
     from shared.IR import IRScene
@@ -24,6 +25,7 @@ except (ImportError, SystemError):
     from shared.Nodes.Classes.Material.MaterialAnimationJoint import MaterialAnimationJoint
     from shared.Nodes.Classes.Light.Light import Light
     from shared.Nodes.Classes.Light.LightSet import LightSet
+    from shared.Nodes.Classes.Camera.CameraSet import CameraSet
     from shared.helpers.logger import StubLogger
 
 from .helpers.bones import describe_bones
@@ -31,6 +33,7 @@ from .helpers.meshes import describe_meshes
 from .helpers.animations import describe_bone_animations
 from .helpers.constraints import describe_constraints
 from .helpers.lights import describe_light
+from .helpers.cameras import describe_camera, describe_camera_animations
 from .helpers.material_animations import describe_material_animations
 
 
@@ -55,6 +58,8 @@ def describe_scene(sections, options, logger=StubLogger()):
     # Route sections into model sets and lights (matching legacy ModelBuilder logic)
     model_sets = []
     light_nodes = []
+    camera_nodes = []      # Camera nodes (for static properties)
+    camera_set_nodes = []  # CameraSet nodes (for animations)
     disjoint_root_joint = None
     disjoint_anim_joints = []
     disjoint_mat_anim_joints = []
@@ -82,6 +87,11 @@ def describe_scene(sections, options, logger=StubLogger()):
         elif isinstance(root, Light):
             light_nodes.append(root)
 
+        elif isinstance(root, CameraSet):
+            if root.camera:
+                camera_nodes.append(root.camera)
+                camera_set_nodes.append(root)
+
         elif isinstance(root, SceneData):
             if root.models is not None:
                 model_sets.extend(root.models)
@@ -89,6 +99,9 @@ def describe_scene(sections, options, logger=StubLogger()):
                 for light_set in root.lights:
                     if hasattr(light_set, 'light') and light_set.light:
                         light_nodes.append(light_set.light)
+            if root.camera and root.camera.camera:
+                camera_nodes.append(root.camera.camera)
+                camera_set_nodes.append(root.camera)
 
     # If we accumulated disjoint sections into a model set, create one
     if disjoint_root_joint is not None:
@@ -99,8 +112,8 @@ def describe_scene(sections, options, logger=StubLogger()):
         })()
         model_sets.append(disjoint_set)
 
-    logger.info("Routed %d model set(s), %d light(s) in %.3fs",
-                len(model_sets), len(light_nodes), time.time() - t0)
+    logger.info("Routed %d model set(s), %d light(s), %d camera(s) in %.3fs",
+                len(model_sets), len(light_nodes), len(camera_nodes), time.time() - t0)
 
     # Describe each model
     ir_models = []
@@ -221,5 +234,19 @@ def describe_scene(sections, options, logger=StubLogger()):
     if ir_lights:
         logger.info("Lights: %d", len(ir_lights))
 
-    logger.info("=== Phase 4 complete: %d model(s), %d light(s) ===", len(ir_models), len(ir_lights))
-    return IRScene(models=ir_models, lights=ir_lights)
+    # Describe cameras
+    ir_cameras = []
+    for i, cam_node in enumerate(camera_nodes):
+        ir_cam = describe_camera(cam_node, i)
+        if ir_cam:
+            # Decode camera animations from the corresponding CameraSet
+            if i < len(camera_set_nodes):
+                ir_cam.animations = describe_camera_animations(
+                    camera_set_nodes[i], camera_index=i, logger=logger)
+            ir_cameras.append(ir_cam)
+    if ir_cameras:
+        logger.info("Cameras: %d", len(ir_cameras))
+
+    logger.info("=== Phase 4 complete: %d model(s), %d light(s), %d camera(s) ===",
+                len(ir_models), len(ir_lights), len(ir_cameras))
+    return IRScene(models=ir_models, lights=ir_lights, cameras=ir_cameras)

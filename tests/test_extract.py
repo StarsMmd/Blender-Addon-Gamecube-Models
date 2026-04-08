@@ -221,3 +221,22 @@ def test_fsys_detected_by_extension():
     ])
     entries = extract_dat(archive, 'archive.fsys')
     assert len(entries) == 1
+
+
+# ---------------------------------------------------------------------------
+# WZX inside FSYS tests
+# ---------------------------------------------------------------------------
+
+def test_fsys_wzx_entry_extracted():
+    """A WZX entry inside FSYS is extracted through the WZX handler."""
+    from tests.test_wzx import _build_wzx_header, _build_dat
+    dat = _build_dat(data_size=64)
+    wzx_data = _build_wzx_header(entry_count=1, hsd_size=len(dat)) + dat
+
+    archive = build_fsys_archive([
+        {'file_type': 0x20, 'data': wzx_data, 'compressed': False, 'filename': 'effect'}
+    ])
+    entries = extract_dat(archive, 'archive.fsys')
+    assert len(entries) == 1
+    assert entries[0][0] == dat
+    assert 'effect' in entries[0][1].filename

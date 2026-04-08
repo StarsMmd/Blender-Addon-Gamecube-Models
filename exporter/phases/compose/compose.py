@@ -23,6 +23,7 @@ from .helpers.meshes import compose_meshes
 from .helpers.animations import compose_bone_animations
 from .helpers.material_animations import compose_material_animations
 from .helpers.lights import compose_lights
+from .helpers.cameras import compose_camera
 from .helpers.constraints import compose_constraints
 
 
@@ -89,7 +90,7 @@ def compose_scene(ir_scene, options=None, logger=StubLogger()):
 
         scene_data = SceneData(address=None, blender_obj=None)
         scene_data.models = [model_set]
-        scene_data.camera = None
+        scene_data.camera = compose_camera(ir_scene.cameras[0], logger) if ir_scene.cameras else None
         scene_data.lights = compose_lights(ir_scene.lights, logger=logger)
         scene_data.fog = None
 

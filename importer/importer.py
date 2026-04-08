@@ -44,6 +44,16 @@ class Importer:
             options["filepath"] = metadata.filename
 
             try:
+                # GPT1-only entry (e.g. standalone particle from WZX) — skip DAT phases
+                if not dat_bytes and metadata.gpt1_data:
+                    logger.info("=== Phase 4b: Particle Description (standalone) ===")
+                    particle_system = describe_particles(metadata.gpt1_data, logger=logger)
+                    if particle_system:
+                        logger.info("Described standalone particle system: %d generators",
+                                    len(particle_system.generators) if particle_system.generators else 0)
+                    any_succeeded = True
+                    continue
+
                 # Phase 2 — Section Routing: DAT bytes → section name→type map
                 logger.info("=== Phase 2: Section Routing ===")
                 section_map = route_sections(dat_bytes, logger=logger)
@@ -86,7 +96,10 @@ class Importer:
         logger.close()
 
         if not any_succeeded:
-            first_file, first_error = errors[0]
-            raise ModelBuildError(first_file, first_error) from first_error
+            if errors:
+                first_file, first_error = errors[0]
+                raise ModelBuildError(first_file, first_error) from first_error
+            else:
+                raise ModelBuildError(filename, ValueError("No importable content found in file"))
 
         return {'FINISHED'}

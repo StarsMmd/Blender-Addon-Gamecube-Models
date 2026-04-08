@@ -128,14 +128,15 @@ def _describe_material_track(mat_anim, mesh, bone_name, mesh_idx, logger):
     )
 
     # Decode color/alpha tracks (stored as sRGB [0-1] in IR;
-    # linearization for Blender happens in Phase 5)
+    # linearization for Blender happens in Phase 5).
+    # Raw keyframe values from the FObjDesc are already in 0-1 range
+    # (same encoding as bone animation tracks), not byte-range 0-255.
     if has_aobj:
         fobj = aobj.frame
         while fobj:
             field = _MAT_TRACK_MAP.get(fobj.type)
             if field:
-                scale = 1.0 / 255.0
-                keyframes = decode_fobjdesc(fobj, bias=0, scale=scale)
+                keyframes = decode_fobjdesc(fobj, bias=0, scale=1.0)
                 setattr(track, field, keyframes)
             fobj = fobj.next
 

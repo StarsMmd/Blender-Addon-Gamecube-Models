@@ -4,6 +4,7 @@ from .helpers.meshes import build_meshes
 from .helpers.animations import build_bone_animations, reset_pose
 from .helpers.constraints import build_constraints
 from .helpers.lights import build_lights
+from .helpers.cameras import build_cameras
 from .helpers.particles import build_particles
 
 try:
@@ -61,6 +62,9 @@ def build_blender_scene(ir_scene, context, options, logger=StubLogger()):
 
     if ir_scene.lights and options.get("import_lights", False):
         build_lights(ir_scene.lights, logger)
+
+    if ir_scene.cameras:
+        build_cameras(ir_scene.cameras, logger)
 
     logger.info("=== Phase 5 complete ===")
     return build_results

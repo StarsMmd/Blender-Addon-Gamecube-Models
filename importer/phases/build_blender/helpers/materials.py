@@ -35,13 +35,15 @@ def _linearize_rgb(rgba):
             srgb_to_linear(rgba[2]), rgba[3])
 
 
-def build_material(ir_material, image_cache=None, name=''):
+def build_material(ir_material, image_cache=None, name='', has_color_animation=False):
     """Create a Blender material from IRMaterial.
 
     Args:
         ir_material: IRMaterial dataclass.
         image_cache: dict for caching bpy.data.images by (image_id, palette_id).
         name: Material name.
+        has_color_animation: If True, always create a DiffuseColor node so
+            material animations have a valid target for diffuse color keyframes.
 
     Returns:
         bpy.types.Material.
@@ -59,7 +61,8 @@ def build_material(ir_material, image_cache=None, name=''):
     output = nodes.new('ShaderNodeOutputMaterial')
 
     # --- Base color and alpha ---
-    color_out, alpha_out = _build_base_color_alpha(ir_material, nodes, links)
+    color_out, alpha_out = _build_base_color_alpha(ir_material, nodes, links,
+                                                   has_color_animation=has_color_animation)
 
     last_color = color_out
     last_alpha = alpha_out
@@ -150,8 +153,13 @@ def build_material(ir_material, image_cache=None, name=''):
     return mat
 
 
-def _build_base_color_alpha(ir_mat, nodes, links):
-    """Build base color and alpha nodes from IRMaterial source flags."""
+def _build_base_color_alpha(ir_mat, nodes, links, has_color_animation=False):
+    """Build base color and alpha nodes from IRMaterial source flags.
+
+    When has_color_animation is True, a DiffuseColor RGB node is always
+    created so material animation keyframes have a valid target — even for
+    vertex-only unlit materials that normally wouldn't need one.
+    """
     # IR stores sRGB — linearize for Blender's shader nodes
     dc = _linearize_rgb(ir_mat.diffuse_color)
 
@@ -173,10 +181,20 @@ def _build_base_color_alpha(ir_mat, nodes, links):
 
     else:
         # RENDER_DIFFUSE not set — vertex color is the base
-        if ir_mat.color_source == ColorSource.MATERIAL:
+        if ir_mat.color_source == ColorSource.MATERIAL or has_color_animation:
             color = nodes.new('ShaderNodeRGB')
             color.name = 'DiffuseColor'
             color.outputs[0].default_value[:] = list(dc)
+            if ir_mat.color_source != ColorSource.MATERIAL:
+                # Vertex color exists too — multiply diffuse with vertex color
+                vtx = nodes.new('ShaderNodeAttribute')
+                vtx.attribute_name = 'color_0'
+                mix = nodes.new('ShaderNodeMixRGB')
+                mix.blend_type = 'MULTIPLY'
+                mix.inputs[0].default_value = 1
+                links.new(vtx.outputs[0], mix.inputs[1])
+                links.new(color.outputs[0], mix.inputs[2])
+                color = mix
         else:
             color = nodes.new('ShaderNodeAttribute')
             color.attribute_name = 'color_0'
@@ -577,12 +595,7 @@ def _build_pixel_engine(ir_mat, nodes, links, last_color, last_alpha, mat):
 
     elif effect == OutputBlendEffect.ADDITIVE_ALPHA:
         transparent_shader = True
-        alt_blend_mode = 'ADD'
-        blend = nodes.new('ShaderNodeMixRGB')
-        links.new(last_alpha, blend.inputs[0])
-        blend.inputs[1].default_value = [0, 0, 0, 0xFF]
-        links.new(last_color, blend.inputs[2])
-        last_color = blend.outputs[0]
+        alt_blend_mode = 'ADD_ALPHA'
 
     elif effect == OutputBlendEffect.ADDITIVE_INV_ALPHA:
         transparent_shader = True
@@ -709,13 +722,23 @@ def _build_output_shader(ir_mat, nodes, links, last_color, last_alpha, bump_map,
         links.new(bump_map, bump.inputs[2])
         links.new(bump.outputs[0], shader.inputs['Normal'])
 
-    if alt_blend_mode == 'ADD':
+    if alt_blend_mode in ('ADD', 'ADD_ALPHA'):
         mat.blend_method = 'BLEND'
         e = nodes.new('ShaderNodeEmission')
-        e.inputs[1].default_value = 1.9
         t = nodes.new('ShaderNodeBsdfTransparent')
         add = nodes.new('ShaderNodeAddShader')
         links.new(last_color, e.inputs[0])
+        if alt_blend_mode == 'ADD_ALPHA':
+            # ADDITIVE_ALPHA: output = color × alpha + framebuffer
+            # Modulate emission strength by alpha so near-zero alpha still
+            # contributes visible additive light with the full color hue.
+            strength = nodes.new('ShaderNodeMath')
+            strength.operation = 'MULTIPLY'
+            strength.inputs[1].default_value = 1.9
+            links.new(last_alpha, strength.inputs[0])
+            links.new(strength.outputs[0], e.inputs[1])
+        else:
+            e.inputs[1].default_value = 1.9
         links.new(e.outputs[0], add.inputs[0])
         links.new(t.outputs[0], add.inputs[1])
         shader = add

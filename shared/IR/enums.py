@@ -39,6 +39,12 @@ class LightType(Enum):
     SPOT = "SPOT"
 
 
+class CameraProjection(Enum):
+    """Camera projection mode."""
+    PERSPECTIVE = "PERSPECTIVE"
+    ORTHO = "ORTHO"
+
+
 class SkinType(Enum):
     """Mesh skinning/deformation mode."""
     WEIGHTED = "WEIGHTED"

@@ -26,6 +26,16 @@ def build_meshes(ir_model, armature, context, options, logger=StubLogger()):
     mesh_objects_by_bone = {}  # {bone_index: [mesh_objects]}
     built_material_cache = {}  # {(id(ir_material), cull_front, cull_back): bpy.types.Material}
 
+    # Pre-scan: which meshes have diffuse color animation keyframes?
+    # Material animations target nodes by name, so the material builder must
+    # create a DiffuseColor node when color animation exists — even for
+    # vertex-only unlit materials that normally wouldn't need one.
+    meshes_with_color_anim = set()
+    for anim_set in (ir_model.bone_animations or []):
+        for mat_track in anim_set.material_tracks:
+            if mat_track.diffuse_r or mat_track.diffuse_g or mat_track.diffuse_b:
+                meshes_with_color_anim.add(mat_track.material_mesh_name)
+
     for i, ir_mesh in enumerate(ir_model.meshes):
         # Reuse previously built Blender material if same IR material + cull flags
         cached_mat = None
@@ -33,8 +43,12 @@ def build_meshes(ir_model, armature, context, options, logger=StubLogger()):
             cache_key = (id(ir_mesh.material), ir_mesh.cull_front, ir_mesh.cull_back)
             cached_mat = built_material_cache.get(cache_key)
 
+        bone_name = ir_model.bones[ir_mesh.parent_bone_index].name if ir_mesh.parent_bone_index < len(ir_model.bones) else 'unknown'
+        mesh_key = "mesh_%d_%s" % (i, bone_name)
+        has_color_anim = mesh_key in meshes_with_color_anim
+
         mesh_obj, mat = _build_mesh(ir_mesh, ir_model, armature, image_cache, logger, i, model_name,
-                                    cached_material=cached_mat)
+                                    cached_material=cached_mat, has_color_animation=has_color_anim)
         if mesh_obj:
             bone_idx = ir_mesh.parent_bone_index
             mesh_objects_by_bone.setdefault(bone_idx, []).append(mesh_obj)
@@ -44,10 +58,8 @@ def build_meshes(ir_model, armature, context, options, logger=StubLogger()):
                 if cache_key not in built_material_cache:
                     built_material_cache[cache_key] = mat
 
-            bone_name = ir_model.bones[ir_mesh.parent_bone_index].name if ir_mesh.parent_bone_index < len(ir_model.bones) else 'unknown'
-            key = "mesh_%d_%s" % (i, bone_name)
-            material_lookup[key] = mat
-            logger.debug("  material_lookup['%s'] = '%s'", key, mat.name)
+            material_lookup[mesh_key] = mat
+            logger.debug("  material_lookup['%s'] = '%s'", mesh_key, mat.name)
 
     # Copy meshes for instance bones (JOBJ_INSTANCE)
     instance_count = 0
@@ -67,7 +79,7 @@ def build_meshes(ir_model, armature, context, options, logger=StubLogger()):
     return material_lookup
 
 
-def _build_mesh(ir_mesh, ir_model, armature, image_cache, logger, mesh_idx, model_name="Model", cached_material=None):
+def _build_mesh(ir_mesh, ir_model, armature, image_cache, logger, mesh_idx, model_name="Model", cached_material=None, has_color_animation=False):
     """Create a single Blender mesh object from an IRMesh."""
     # Create mesh data
     mesh_name = '%s_mesh_%s' % (model_name, ir_mesh.name)
@@ -116,7 +128,8 @@ def _build_mesh(ir_mesh, ir_model, armature, image_cache, logger, mesh_idx, mode
     elif ir_mesh.material is not None:
         from .materials import build_material
         mat_name = '%s_mat_%d' % (model_name, mesh_idx)
-        mat = build_material(ir_mesh.material, image_cache=image_cache, name=mat_name)
+        mat = build_material(ir_mesh.material, image_cache=image_cache, name=mat_name,
+                             has_color_animation=has_color_animation)
         logger.debug("  mesh[%d] '%s': material '%s' with %d textures",
                      mesh_idx, ir_mesh.name, mat.name, len(ir_mesh.material.texture_layers))
         # Backface culling — GameCube POBJ cull flags control which face sides are visible.
