@@ -197,6 +197,14 @@ def describe_meshes(root_joint, bones, joint_to_bone_index, image_cache=None, lo
         )
 
     _walk_joints(root_joint)
+
+    # Pad numeric mesh names based on total count
+    if meshes:
+        digits = len(str(len(meshes) - 1))
+        for mesh in meshes:
+            if mesh.name.isdigit():
+                mesh.name = mesh.name.zfill(digits)
+
     return meshes
 
 

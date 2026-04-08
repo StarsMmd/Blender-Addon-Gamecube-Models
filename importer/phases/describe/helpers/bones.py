@@ -43,6 +43,38 @@ def describe_bones(root_joint, options=None, logger=None):
     joint_to_bone_index = {}
     bone_count = [0]  # mutable counter for closure
 
+    # Pre-count total bones to determine digit padding
+    def _count_joints(joint):
+        n = 1
+        if joint.child and not (joint.flags & (1 << 12)):
+            n += _count_joints(joint.child)
+        if joint.next:
+            n += _count_joints(joint.next)
+        return n
+    total_bones = _count_joints(root_joint)
+    bone_digits = len(str(max(total_bones - 1, 0)))
+
+    # Build bone_index → null joint suffix from PKX header
+    _null_joint_suffixes = {}
+    pkx_header = options.get("pkx_header") if options else None
+    if pkx_header and pkx_header.anim_entries:
+        _NJ_LABELS = [
+            "Root", "Head", "Center", "Body3", "Neck", "HeadTop",
+            "LimbA", "LimbB", "Sec8", "Sec9", "Sec10", "Sec11",
+            "AttachA", "AttachB", "AttachC", "AttachD",
+        ]
+        # Count how many null joint fields reference each bone index
+        bone_ref_counts = {}
+        first_entry = pkx_header.anim_entries[0]
+        for j in range(16):
+            idx = first_entry.null_joint_bones[j]
+            if idx >= 0:
+                bone_ref_counts.setdefault(idx, []).append(_NJ_LABELS[j])
+        # Only suffix bones referenced by exactly one field
+        for idx, labels in bone_ref_counts.items():
+            if len(labels) == 1:
+                _null_joint_suffixes[idx] = labels[0]
+
     def _walk(joint, parent_index, parent_data):
         """Recursively describe a Joint and its children/siblings.
 
@@ -52,7 +84,11 @@ def describe_bones(root_joint, options=None, logger=None):
         my_index = len(bones)
         joint_to_bone_index[joint.address] = my_index
 
-        name = 'Bone_' + str(bone_count[0])
+        idx = bone_count[0]
+        name = 'Bone_%s' % str(idx).zfill(bone_digits)
+        suffix = _null_joint_suffixes.get(idx)
+        if suffix:
+            name = '%s_%s' % (name, suffix)
         bone_count[0] += 1
 
         # Warn about special JOBJ flags that we preserve but don't fully handle.

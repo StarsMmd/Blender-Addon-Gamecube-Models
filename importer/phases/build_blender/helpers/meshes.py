@@ -44,7 +44,8 @@ def build_meshes(ir_model, armature, context, options, logger=StubLogger()):
             cached_mat = built_material_cache.get(cache_key)
 
         bone_name = ir_model.bones[ir_mesh.parent_bone_index].name if ir_mesh.parent_bone_index < len(ir_model.bones) else 'unknown'
-        mesh_key = "mesh_%d_%s" % (i, bone_name)
+        mesh_digits = len(str(max(len(ir_model.meshes) - 1, 0)))
+        mesh_key = "mesh_%s_%s" % (str(i).zfill(mesh_digits), bone_name)
         has_color_anim = mesh_key in meshes_with_color_anim
 
         mesh_obj, mat = _build_mesh(ir_mesh, ir_model, armature, image_cache, logger, i, model_name,

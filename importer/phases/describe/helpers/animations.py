@@ -50,6 +50,8 @@ def describe_bone_animations(model_set, joint_to_bone_index, bones, options, log
     anim_name_map = _build_anim_name_map(options.get("pkx_header"))
 
     anim_sets = []
+    total_anims = len(animated_joints)
+    anim_digits = len(str(max(total_anims - 1, 0))) if total_anims > 0 else 1
     name_counts = {}  # track how many times each semantic name has been used
 
     for i, anim_joint_root in enumerate(animated_joints):
@@ -58,15 +60,18 @@ def describe_bone_animations(model_set, joint_to_bone_index, bones, options, log
             # Clean up: replace " + " with "+" first, then spaces with "_"
             clean = semantic.replace(' + ', '+').replace(' ', '_')
         else:
-            clean = "Extra_%d" % i
+            clean = "Extra"
 
-        # Deduplicate: first occurrence is bare, subsequent get " 2", " 3", etc.
+        # Deduplicate: first occurrence is bare, subsequent get "_2", "_3", etc.
         if clean in name_counts:
             name_counts[clean] += 1
-            name = "%s_%s_%d" % (name_prefix, clean, name_counts[clean])
+            clean = "%s_%d" % (clean, name_counts[clean])
         else:
             name_counts[clean] = 1
-            name = "%s_%s" % (name_prefix, clean)
+
+        # Infix padded index after model name to preserve import order alphabetically
+        idx_str = str(i).zfill(anim_digits)
+        name = "%s_%s_%s" % (name_prefix, idx_str, clean)
 
         tracks = []
         loop = [False]  # mutable for closure

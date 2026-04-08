@@ -182,7 +182,7 @@ def describe_scene(sections, options, logger=StubLogger()):
         logger.info("  Constraints: %d (%.3fs)", total_c, time.time() - t4)
 
         t5 = time.time()
-        mat_anims = describe_material_animations(model_set, joint_to_bone_index, bones, options, logger, model_name=model_name)
+        mat_anims = describe_material_animations(model_set, joint_to_bone_index, bones, options, logger, model_name=model_name, total_meshes=len(meshes))
         logger.info("  Material animations: %d sets (%.3fs)", len(mat_anims), time.time() - t5)
 
         # Pair material animations into bone animation sets by index.
