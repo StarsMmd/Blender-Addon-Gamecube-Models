@@ -1,7 +1,8 @@
 """Blender addon operators and registration for the DAT model importer/exporter."""
 import os
 import bpy
-from bpy.props import StringProperty, BoolProperty, FloatProperty, EnumProperty, CollectionProperty
+from bpy.props import (StringProperty, BoolProperty, FloatProperty, EnumProperty,
+                       CollectionProperty, BoolVectorProperty)
 from bpy_extras.io_utils import ImportHelper, ExportHelper
 
 from .legacy import import_hsd as legacy_import_hsd
@@ -41,7 +42,7 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
                             description='Use the old import pipeline instead of the new Intermediate Representation pipeline.')
 
     filename_ext = ".dat"
-    filter_glob: StringProperty(default="*.fdat;*.dat;*.rdat;*.pkx;*.fsys;*.wzx", options={'HIDDEN'})
+    filter_glob: StringProperty(default="*.fdat;*.dat;*.rdat;*.pkx;*.fsys;*.wzx;*.cam", options={'HIDDEN'})
 
     def execute(self, context):
         if self.files and self.directory:
@@ -151,6 +152,8 @@ class ExportHSD(bpy.types.Operator, ExportHelper):
                              description='Remove bone/node names from the output. Enable for compatibility with models that have empty name fields.')
     include_bound_box: BoolProperty(default=True, name='Include Bound Box',
                                    description='Include the bound_box root section in the DAT. PKX models use this for collision/culling. Disable for standalone .dat files that don\'t need it.')
+    sparsify_bezier: BoolProperty(default=True, name='Bezier Sparsification',
+                                  description='Use bezier curves with slopes for animation export. Produces more accurate keyframes. Disable for simpler linear sparsification.')
 
     @classmethod
     def poll(cls, context):
@@ -169,6 +172,7 @@ class ExportHSD(bpy.types.Operator, ExportHelper):
         options = {
             'strip_names': self.strip_names,
             'include_bound_box': self.include_bound_box,
+            'sparsify_bezier': self.sparsify_bezier,
         }
 
         try:
@@ -261,6 +265,85 @@ def _refresh_shiny_viewport(obj, context):
         context.area.tag_redraw()
 
 
+def _has_shiny_data(obj):
+    """True if shiny params differ from identity/neutral (derived, no stored flag)."""
+    try:
+        identity = (int(obj.dat_pkx_shiny_route_r) == 0 and int(obj.dat_pkx_shiny_route_g) == 1
+                    and int(obj.dat_pkx_shiny_route_b) == 2 and int(obj.dat_pkx_shiny_route_a) == 3)
+        neutral = (abs(obj.dat_pkx_shiny_brightness_r) < 0.001
+                   and abs(obj.dat_pkx_shiny_brightness_g) < 0.001
+                   and abs(obj.dat_pkx_shiny_brightness_b) < 0.001)
+        return not (identity and neutral)
+    except AttributeError:
+        return False
+
+
+class DAT_OT_SetEnumProp(bpy.types.Operator):
+    """Set a custom property from an enum dropdown."""
+    bl_idname = "dat.set_enum_prop"
+    bl_label = "Set Property"
+    bl_options = {'UNDO', 'INTERNAL'}
+
+    prop_key: StringProperty()
+    value: StringProperty()
+    as_int: BoolProperty(default=False)
+
+    def execute(self, context):
+        obj = context.active_object
+        if obj and self.prop_key:
+            obj[self.prop_key] = int(self.value) if self.as_int else self.value
+        return {'FINISHED'}
+
+
+def _draw_enum_dropdown(layout, obj, prop_key, items, label="", as_int=False):
+    """Draw a row of toggle buttons for a custom property enum.
+
+    Args:
+        layout: UILayout to draw into.
+        obj: Object with the custom property.
+        prop_key: Custom property key name.
+        items: list of (value, display_label) tuples. Values are always strings.
+        label: Row label (empty = no label).
+        as_int: If True, store the value as int instead of string.
+    """
+    current = str(obj.get(prop_key, ""))
+
+    row = layout.row(align=True)
+    if label:
+        row.label(text=label)
+    sub = row.row(align=True)
+    for val, lbl in items:
+        op = sub.operator("dat.set_enum_prop", text=lbl,
+                          depress=(val == current))
+        op.prop_key = prop_key
+        op.value = val
+        op.as_int = as_int
+
+
+_FORMAT_ITEMS = [("XD", "XD"), ("COLOSSEUM", "Colosseum")]
+_MODEL_TYPE_ITEMS = [("POKEMON", "Pokémon"), ("TRAINER", "Trainer")]
+_PARTICLE_ORIENT_ITEMS = [
+    ("-2", "Back 180°"), ("-1", "Back 90°"), ("0", "Default"),
+    ("1", "Forward 90°"), ("2", "Forward 180°"),
+]
+_ANIM_TYPE_ITEMS = [
+    ("loop", "Loop"), ("hit_reaction", "Hit Reaction"),
+    ("action", "Action"), ("compound", "Compound"),
+]
+_SUB_ANIM_TRIGGER_ITEMS = [
+    ("sleep_on", "Sleep On"), ("sleep_off", "Sleep Off"),
+    ("extra", "Extra"), ("unused", "Unused"),
+]
+
+# Property key suffixes for null joint bones
+_JOINT_KEYS = [
+    "root", "head", "center", "body_3", "neck", "head_top",
+    "limb_a", "limb_b", "secondary_8", "secondary_9",
+    "secondary_10", "secondary_11", "attach_a", "attach_b",
+    "attach_c", "attach_d",
+]
+
+
 class DAT_PT_PKXPanel(bpy.types.Panel):
     """PKX model metadata panel."""
     bl_label = "PKX Metadata"
@@ -279,10 +362,28 @@ class DAT_PT_PKXPanel(bpy.types.Panel):
         obj = context.active_object
         layout = self.layout
 
-        # --- Shiny Variant ---
+        from .shared.helpers.pkx_header import (
+            XD_POKEMON_ANIM_NAMES, XD_TRAINER_ANIM_NAMES, NULL_JOINT_NAMES,
+        )
+
+        # === General ===
         box = layout.box()
-        box.label(text="Shiny Variant", icon='COLOR')
-        if obj.get("dat_pkx_has_shiny"):
+        box.label(text="General", icon='INFO')
+        _draw_enum_dropdown(box, obj, "dat_pkx_format", _FORMAT_ITEMS, label="Format:")
+        if "dat_pkx_species_id" in obj:
+            box.prop(obj, '["dat_pkx_species_id"]', text="Species ID")
+        _draw_enum_dropdown(box, obj, "dat_pkx_model_type", _MODEL_TYPE_ITEMS, label="Model Type:")
+        if "dat_pkx_head_bone" in obj:
+            box.prop_search(obj, '["dat_pkx_head_bone"]', obj.data, "bones", text="Head Bone")
+        if "dat_pkx_particle_orientation" in obj:
+            _draw_enum_dropdown(box, obj, "dat_pkx_particle_orientation",
+                                _PARTICLE_ORIENT_ITEMS, label="Particle Orientation:",
+                                as_int=True)
+
+        # === Shiny Variant ===
+        if _has_shiny_data(obj):
+            box = layout.box()
+            box.label(text="Shiny Variant", icon='COLOR')
             box.prop(obj, "dat_pkx_shiny", text="Enable Shiny Preview")
 
             col = box.column(align=True)
@@ -299,20 +400,8 @@ class DAT_PT_PKXPanel(bpy.types.Panel):
             col.prop(obj, "dat_pkx_shiny_brightness_r", text="Red")
             col.prop(obj, "dat_pkx_shiny_brightness_g", text="Green")
             col.prop(obj, "dat_pkx_shiny_brightness_b", text="Blue")
-        else:
-            box.label(text="No shiny data for this model")
 
-        # --- General ---
-        box = layout.box()
-        box.label(text="General", icon='INFO')
-        _prop_row(box, "Format", obj.get("dat_pkx_format", "—"))
-        _prop_row(box, "Species ID", obj.get("dat_pkx_species_id", "—"))
-        _prop_row(box, "Model Type", obj.get("dat_pkx_model_type", "—"))
-        head_bone = obj.get("dat_pkx_head_bone", "")
-        _prop_row(box, "Head Bone", head_bone if head_bone else "(none)")
-        _prop_row(box, "Particle Orientation", obj.get("dat_pkx_particle_orientation", 0))
-
-        # --- Flags ---
+        # === Flags ===
         box = layout.box()
         box.label(text="Flags", icon='PREFERENCES')
         col = box.column(align=True)
@@ -322,20 +411,19 @@ class DAT_PT_PKXPanel(bpy.types.Panel):
             ("dat_pkx_flag_no_root_anim", "No Root Joint Animation"),
             ("dat_pkx_flag_bit7", "Unknown (bit 7)"),
         ]:
-            val = obj.get(flag_key, False)
-            icon = 'CHECKBOX_HLT' if val else 'CHECKBOX_DEHLT'
-            col.label(text=flag_label, icon=icon)
+            if flag_key in obj:
+                col.prop(obj, '["%s"]' % flag_key, text=flag_label)
 
-        # --- Distortion ---
+        # === Distortion ===
         dist_param = obj.get("dat_pkx_distortion_param", 0)
         dist_type = obj.get("dat_pkx_distortion_type", 0)
         if dist_param or dist_type:
             box = layout.box()
             box.label(text="Distortion", icon='MOD_WAVE')
-            _prop_row(box, "Type", dist_type)
-            _prop_row(box, "Parameter", dist_param)
+            box.prop(obj, '["dat_pkx_distortion_type"]', text="Type")
+            box.prop(obj, '["dat_pkx_distortion_param"]', text="Parameter")
 
-        # --- Particles ---
+        # === Particles ===
         ptl_count = obj.get("dat_particle_count", 0)
         if ptl_count:
             box = layout.box()
@@ -343,12 +431,112 @@ class DAT_PT_PKXPanel(bpy.types.Panel):
             _prop_row(box, "Generators", ptl_count)
             _prop_row(box, "Textures", obj.get("dat_particle_texture_count", 0))
 
-        # --- Animations ---
+        # === Null Joint Bones ===
+        box = layout.box()
+        box.label(text="Null Joint Bones", icon='BONE_DATA')
+        col = box.column(align=True)
+        for j, jk in enumerate(_JOINT_KEYS):
+            key = "dat_pkx_joint_%s" % jk
+            if key in obj:
+                label = NULL_JOINT_NAMES[j] if j < len(NULL_JOINT_NAMES) else jk
+                col.prop_search(obj, '["%s"]' % key, obj.data, "bones", text=label)
+
+        # === Sub-Animations (Part Anim Data) ===
+        if obj.get("dat_pkx_sub_anim_0_type") is not None:
+            box = layout.box()
+            box.label(text="Sub-Animations", icon='ANIM')
+            for i in range(4):
+                prefix = "dat_pkx_sub_anim_%d" % i
+                sa_type = obj.get(prefix + "_type", "none")
+                if sa_type == "none" and not obj.get(prefix + "_anim_ref", ""):
+                    continue
+                sub_box = box.box()
+                trigger = obj.get(prefix + "_trigger", "unknown")
+                sub_box.label(text=trigger.replace('_', ' ').title())
+                _draw_enum_dropdown(sub_box, obj, prefix + "_trigger",
+                                    _SUB_ANIM_TRIGGER_ITEMS, label="Trigger:")
+                _prop_row(sub_box, "Type", sa_type)
+                ref_key = prefix + "_anim_ref"
+                if ref_key in obj:
+                    sub_box.prop_search(obj, '["%s"]' % ref_key, bpy.data, "actions",
+                                        text="Action")
+
+        # === Animation Slots ===
         anim_count = obj.get("dat_pkx_anim_count", 0)
         if anim_count:
             box = layout.box()
-            box.label(text="Animations", icon='ACTION')
-            _prop_row(box, "Slots", anim_count)
+            box.label(text="Animation Slots", icon='ACTION')
+
+            model_type = obj.get("dat_pkx_model_type", "POKEMON")
+            slot_names = XD_TRAINER_ANIM_NAMES if model_type == "TRAINER" else XD_POKEMON_ANIM_NAMES
+
+            for i in range(anim_count):
+                slot_label = slot_names[i] if i < len(slot_names) else "Slot %d" % i
+                prefix = "dat_pkx_anim_%02d" % i
+
+                # Expand/collapse header
+                is_expanded = obj.dat_pkx_anim_expand[i] if i < 17 else False
+                header = box.row(align=True)
+                icon = 'TRIA_DOWN' if is_expanded else 'TRIA_RIGHT'
+                header.prop(obj, "dat_pkx_anim_expand", index=i, icon=icon,
+                            text=slot_label, emboss=False)
+
+                # Show active action name in the header row
+                sub_count = obj.get(prefix + "_sub_count", 1)
+                first_ref = ""
+                for s in range(min(sub_count, 3)):
+                    ref = obj.get(prefix + "_sub_%d_anim" % s, "")
+                    if ref:
+                        first_ref = ref
+                        break
+                if first_ref:
+                    header.label(text=first_ref.split('_', 1)[-1] if '_' in first_ref else first_ref)
+
+                if not is_expanded:
+                    continue
+
+                # Expanded content
+                sub_box = box.box()
+
+                # Type
+                _draw_enum_dropdown(sub_box, obj, prefix + "_type",
+                                    _ANIM_TYPE_ITEMS, label="Type:")
+
+                # Sub-animations
+                for s in range(min(sub_count, 3)):
+                    motion = obj.get(prefix + "_sub_%d_motion" % s, 0)
+                    anim_key = prefix + "_sub_%d_anim" % s
+                    row = sub_box.row(align=True)
+                    row.label(text="Action %d:" % (s + 1) if sub_count > 1 else "Action:")
+                    if anim_key in obj:
+                        row.prop_search(obj, '["%s"]' % anim_key, bpy.data, "actions", text="")
+                    motion_label = {0: "None", 1: "Play Once", 2: "Loop"}.get(motion, str(motion))
+                    row.label(text=motion_label)
+
+                # Timing (only if any non-zero)
+                timings = [obj.get(prefix + "_timing_%d" % t, 0.0) for t in range(1, 5)]
+                if any(abs(t) > 0.001 for t in timings):
+                    col = sub_box.column(align=True)
+                    col.label(text="Timing:")
+                    for t in range(1, 5):
+                        tk = prefix + "_timing_%d" % t
+                        if tk in obj:
+                            col.prop(obj, '["%s"]' % tk, text="T%d" % t)
+
+                # Null joint overrides
+                has_overrides = False
+                for j in range(16):
+                    if obj.get(prefix + "_joint_%s" % _JOINT_KEYS[j]) is not None:
+                        has_overrides = True
+                        break
+                if has_overrides:
+                    col = sub_box.column(align=True)
+                    col.label(text="Joint Overrides:")
+                    for j in range(16):
+                        jkey = prefix + "_joint_%s" % _JOINT_KEYS[j]
+                        if jkey in obj:
+                            label = NULL_JOINT_NAMES[j] if j < len(NULL_JOINT_NAMES) else _JOINT_KEYS[j]
+                            col.prop_search(obj, '["%s"]' % jkey, obj.data, "bones", text=label)
 
 
 def _prop_row(layout, label, value):
@@ -358,7 +546,7 @@ def _prop_row(layout, label, value):
     row.label(text=str(value))
 
 
-classes = (ImportHSD, ExportHSD, DAT_PT_PKXPanel)
+classes = (ImportHSD, ExportHSD, DAT_OT_SetEnumProp, DAT_PT_PKXPanel)
 
 
 _dat_props = [
@@ -394,6 +582,11 @@ _dat_props = [
     ('dat_pkx_shiny_brightness_b', FloatProperty(
         name="Brightness B", description="Blue brightness: -1 = black, 0 = unchanged, 1 = 2× bright. Alpha brightness is forced to maximum by the game",
         default=0.0, min=-1.0, max=1.0, step=1, precision=3, update=_on_shiny_param_update,
+    )),
+    ('dat_pkx_anim_expand', BoolVectorProperty(
+        name="Expand Animation Slots",
+        description="Expand/collapse state for animation slot panels",
+        size=17, default=[False] * 17,
     )),
 ]
 
