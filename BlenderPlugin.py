@@ -381,7 +381,7 @@ class DAT_PT_PKXPanel(bpy.types.Panel):
                                 as_int=True)
 
         # === Shiny Variant ===
-        if _has_shiny_data(obj):
+        if hasattr(obj, 'dat_pkx_shiny'):
             box = layout.box()
             box.label(text="Shiny Variant", icon='COLOR')
             box.prop(obj, "dat_pkx_shiny", text="Enable Shiny Preview")
