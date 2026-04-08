@@ -24,6 +24,7 @@ try:
     from .helpers.meshes import describe_meshes
     from .helpers.animations import describe_bone_animations
     from .helpers.lights import describe_lights
+    from .helpers.cameras import describe_cameras
     from .helpers.constraints import describe_constraints
 except (ImportError, SystemError):
     from shared.IR import IRScene, IRModel
@@ -38,6 +39,7 @@ except (ImportError, SystemError):
     from exporter.phases.describe_blender.helpers.meshes import describe_meshes
     from exporter.phases.describe_blender.helpers.animations import describe_bone_animations
     from exporter.phases.describe_blender.helpers.lights import describe_lights
+    from exporter.phases.describe_blender.helpers.cameras import describe_cameras
     from exporter.phases.describe_blender.helpers.constraints import describe_constraints
 
 
@@ -96,7 +98,8 @@ def describe_blender_scene(context, options=None, logger=StubLogger()):
                 logger.debug("    bone '%s': mesh_indices=%s flags=%#x", b.name, b.mesh_indices, b.flags)
 
         # Describe animations from Blender actions
-        bone_animations = describe_bone_animations(armature, bones, logger=logger)
+        use_bezier = options.get('sparsify_bezier', True)
+        bone_animations = describe_bone_animations(armature, bones, logger=logger, use_bezier=use_bezier)
 
         # Describe constraints from pose bones
         ik_c, cl_c, tt_c, cr_c, lr_c, ll_c = describe_constraints(armature, bones, logger=logger)
@@ -115,19 +118,27 @@ def describe_blender_scene(context, options=None, logger=StubLogger()):
         )
         models.append(model)
 
-    # Describe lights from the Blender scene
+    # Describe lights and cameras from the Blender scene
     ir_lights = describe_lights(context, logger=logger)
+    ir_cameras = describe_cameras(context, logger=logger)
 
-    ir_scene = IRScene(models=models, lights=ir_lights)
+    ir_scene = IRScene(models=models, lights=ir_lights, cameras=ir_cameras)
 
     # Extract shiny filter parameters from the first armature that has them
     shiny_params = _extract_shiny_params(armatures, logger)
 
-    # Extract PKX header metadata if present
-    pkx_header = _extract_pkx_header(armatures, logger)
+    # Build action name → export animation index mapping
+    # (first model's bone_animations determine the DAT animation order)
+    action_name_to_index = {}
+    if models and models[0].bone_animations:
+        for idx, anim_set in enumerate(models[0].bone_animations):
+            action_name_to_index[anim_set.name] = idx
 
-    logger.info("=== Export Phase 1 complete: %d model(s), %d light(s), shiny=%s, pkx=%s ===",
-                len(ir_scene.models), len(ir_scene.lights),
+    # Extract PKX header metadata if present
+    pkx_header = _extract_pkx_header(armatures, action_name_to_index, logger)
+
+    logger.info("=== Export Phase 1 complete: %d model(s), %d light(s), %d camera(s), shiny=%s, pkx=%s ===",
+                len(ir_scene.models), len(ir_scene.lights), len(ir_scene.cameras),
                 shiny_params is not None, pkx_header is not None)
     return ir_scene, shiny_params, pkx_header
 
@@ -242,9 +253,6 @@ def _extract_shiny_params(armatures, logger):
         from shared.helpers.shiny_params import ShinyParams
 
     for arm in armatures:
-        if not arm.get("dat_pkx_has_shiny"):
-            continue
-
         try:
             route = [
                 int(arm.dat_pkx_shiny_route_r),
@@ -277,14 +285,17 @@ def _extract_shiny_params(armatures, logger):
     return None
 
 
-def _extract_pkx_header(armatures, logger):
+def _extract_pkx_header(armatures, action_name_to_index, logger):
     """Extract PKX header metadata from armature custom properties.
 
     Reads dat_pkx_* properties stored during import (or applied by script)
-    and reconstructs a PKXHeader suitable for serialization.
+    and reconstructs a PKXHeader suitable for serialization. Animation
+    references are stored as action names and resolved to DAT indices
+    using the export animation order.
 
     Args:
         armatures: list of Blender armature objects.
+        action_name_to_index: dict mapping action name → export animation index.
         logger: Logger instance.
 
     Returns:
@@ -308,7 +319,17 @@ def _extract_pkx_header(armatures, logger):
         h = PKXHeader(is_xd=is_xd)
         h.species_id = arm.get("dat_pkx_species_id", 0)
         h.particle_orientation = arm.get("dat_pkx_particle_orientation", 0)
-        h.flags = arm.get("dat_pkx_flags", 0)
+        # Reconstruct flags byte from individual booleans
+        flags = 0
+        if arm.get("dat_pkx_flag_flying", False):
+            flags |= 0x01
+        if arm.get("dat_pkx_flag_skip_frac_frames", False):
+            flags |= 0x04
+        if arm.get("dat_pkx_flag_no_root_anim", False):
+            flags |= 0x40
+        if arm.get("dat_pkx_flag_bit7", False):
+            flags |= 0x80
+        h.flags = flags
         h.distortion_param = arm.get("dat_pkx_distortion_param", 0)
         h.distortion_type = arm.get("dat_pkx_distortion_type", 0)
         h.type_id = 0x000C
@@ -364,7 +385,7 @@ def _extract_pkx_header(armatures, logger):
                     has_data=has_data,
                     sub_param=len([n for n in bone_config[:8] if n != 0xFF]) if has_data == 2 else 0,
                     bone_config=bone_config,
-                    anim_index_ref=arm.get(prefix + "_anim_ref", 0),
+                    anim_index_ref=action_name_to_index.get(arm.get(prefix + "_anim_ref", ""), 0) if arm.get(prefix + "_anim_ref", "") else 0,
                 )
                 h.part_anim_data.append(pad)
         else:
@@ -401,9 +422,17 @@ def _extract_pkx_header(armatures, logger):
 
             subs = []
             for s in range(min(sub_count, 3)):
+                anim_name = arm.get(prefix + "_sub_%d_anim" % s, "")
+                # Resolve action name to export index. Empty string = inactive (idx 0).
+                if isinstance(anim_name, str) and anim_name:
+                    anim_idx = action_name_to_index.get(anim_name, 0)
+                elif isinstance(anim_name, int):
+                    anim_idx = anim_name
+                else:
+                    anim_idx = 0
                 subs.append(SubAnim(
                     motion_type=arm.get(prefix + "_sub_%d_motion" % s, 0),
-                    anim_index=arm.get(prefix + "_sub_%d_anim" % s, 0),
+                    anim_index=anim_idx,
                 ))
             if not subs:
                 subs = [SubAnim(0, 0)]

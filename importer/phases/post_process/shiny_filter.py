@@ -23,6 +23,10 @@ try:
 except (ImportError, SystemError):
     from shared.IR.enums import ShinyChannel
 
+# Fixed node group names — independent of armature/model names
+SHINY_ROUTE_GROUP = "DATPlugin_ShinyRoute"
+SHINY_BRIGHT_GROUP = "DATPlugin_ShinyBright"
+
 
 # ---------------------------------------------------------------------------
 # Node group construction
@@ -172,24 +176,18 @@ def _populate_bright_group(group, brightness):
 # Property setup and rebuild
 # ---------------------------------------------------------------------------
 
-def setup_shiny_properties(armature, route, brightness, route_group_name, bright_group_name):
+def setup_shiny_properties(armature, route, brightness):
     """Initialize shiny metadata on the armature.
 
     Sets the registered bpy.props (which drive the UI and shader nodes).
-    Node group names are stored internally but not as user-visible custom props.
+    Shiny data existence is derived from whether route/brightness differ
+    from identity — no stored flag needed.
 
     Args:
         armature: The Blender armature object.
         route: list of 4 ints (0-3) — channel routing.
         brightness: list of 3 floats [-1, 1] — RGB brightness.
-        route_group_name: Name of the ShinyRoute node group.
-        bright_group_name: Name of the ShinyBright node group.
     """
-    armature["dat_pkx_has_shiny"] = True
-    # Store group names as hidden internal props (prefixed with _)
-    armature["_shiny_route_group"] = route_group_name
-    armature["_shiny_bright_group"] = bright_group_name
-
     # Set registered properties (these are the source of truth for UI + shaders)
     armature.dat_pkx_shiny = False
     armature.dat_pkx_shiny_route_r = str(route[0])
@@ -229,13 +227,11 @@ def rebuild_shiny_node_group(armature):
     while len(brightness) < 3:
         brightness.append(0.0)
 
-    route_name = armature.get("_shiny_route_group")
-    if route_name and route_name in bpy.data.node_groups:
-        _populate_route_group(bpy.data.node_groups[route_name], route)
+    if SHINY_ROUTE_GROUP in bpy.data.node_groups:
+        _populate_route_group(bpy.data.node_groups[SHINY_ROUTE_GROUP], route)
 
-    bright_name = armature.get("_shiny_bright_group")
-    if bright_name and bright_name in bpy.data.node_groups:
-        _populate_bright_group(bpy.data.node_groups[bright_name], brightness)
+    if SHINY_BRIGHT_GROUP in bpy.data.node_groups:
+        _populate_bright_group(bpy.data.node_groups[SHINY_BRIGHT_GROUP], brightness)
 
 
 # ---------------------------------------------------------------------------

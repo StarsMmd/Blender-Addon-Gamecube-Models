@@ -49,7 +49,7 @@ def post_process(armature_names, shiny_params=None, options=None, logger=StubLog
                 _apply_shiny(armature, shiny_params, logger)
 
             if pkx_header is not None:
-                _store_pkx_metadata(armature, pkx_header, logger)
+                _store_pkx_metadata(armature, pkx_header, logger, actions=actions)
     else:
         # Legacy path: discover actions by name matching
         logger.info("  Armatures: %s", armature_names)
@@ -66,7 +66,7 @@ def post_process(armature_names, shiny_params=None, options=None, logger=StubLog
                 _apply_shiny(armature, shiny_params, logger)
 
             if pkx_header is not None:
-                _store_pkx_metadata(armature, pkx_header, logger)
+                _store_pkx_metadata(armature, pkx_header, logger, actions=actions)
 
     bpy.context.scene.frame_set(0)
     logger.info("=== Phase 6 complete ===")
@@ -165,11 +165,13 @@ def _apply_shiny(armature, shiny_params, logger):
         from .shiny_filter import (
             build_shiny_route_node_group, build_shiny_bright_node_group,
             setup_shiny_properties, insert_shiny_filter,
+            SHINY_ROUTE_GROUP, SHINY_BRIGHT_GROUP,
         )
     except (ImportError, SystemError):
         from importer.phases.post_process.shiny_filter import (
             build_shiny_route_node_group, build_shiny_bright_node_group,
             setup_shiny_properties, insert_shiny_filter,
+            SHINY_ROUTE_GROUP, SHINY_BRIGHT_GROUP,
         )
 
     route = [shiny_params.route_r, shiny_params.route_g,
@@ -177,13 +179,10 @@ def _apply_shiny(armature, shiny_params, logger):
     brightness = [shiny_params.brightness_r, shiny_params.brightness_g,
                   shiny_params.brightness_b]  # Alpha forced to max by the game
 
-    model_name = armature.name.replace('Armature_', '')
-    route_name = "ShinyRoute_%s" % model_name
-    bright_name = "ShinyBright_%s" % model_name
-    route_group = build_shiny_route_node_group(route, route_name)
-    bright_group = build_shiny_bright_node_group(brightness, bright_name)
-    setup_shiny_properties(armature, route, brightness, route_name, bright_name)
-    logger.info("  Built shiny filter node groups: %s, %s", route_name, bright_name)
+    route_group = build_shiny_route_node_group(route, SHINY_ROUTE_GROUP)
+    bright_group = build_shiny_bright_node_group(brightness, SHINY_BRIGHT_GROUP)
+    setup_shiny_properties(armature, route, brightness)
+    logger.info("  Built shiny filter node groups: %s, %s", SHINY_ROUTE_GROUP, SHINY_BRIGHT_GROUP)
 
     count = 0
     for child in armature.children:
@@ -197,16 +196,18 @@ def _apply_shiny(armature, shiny_params, logger):
         logger.info("  Inserted shiny filter into %d material(s) on %s", count, armature.name)
 
 
-def _store_pkx_metadata(armature, pkx_header, logger):
+def _store_pkx_metadata(armature, pkx_header, logger, actions=None):
     """Store PKX header fields as custom properties on the armature.
 
     Uses dat_pkx_* naming convention. Bone indices are resolved to bone names
-    using the armature's bone list.
+    using the armature's bone list. Animation indices are resolved to action
+    names when the actions list is available.
 
     Args:
         armature: The Blender armature object.
         pkx_header: PKXHeader instance from extract phase.
         logger: Logger instance.
+        actions: list of Blender Actions in DAT animation order (from Phase 5).
     """
     try:
         from ....shared.helpers.pkx_header import NULL_JOINT_NAMES
@@ -214,6 +215,16 @@ def _store_pkx_metadata(armature, pkx_header, logger):
         from shared.helpers.pkx_header import NULL_JOINT_NAMES
 
     h = pkx_header
+
+    # Build DAT animation index → action name mapping
+    _index_to_action = {}
+    if actions:
+        for idx, action in enumerate(actions):
+            _index_to_action[idx] = action.name
+
+    def _action_name_for_index(anim_idx):
+        """Resolve a DAT animation index to an action name, or empty string."""
+        return _index_to_action.get(anim_idx, "")
 
     _ANIM_TYPE_NAMES = {2: "loop", 3: "hit_reaction", 4: "action", 5: "compound"}
     _SUB_ANIM_TRIGGERS = {0: "sleep_on", 1: "sleep_off", 2: "extra", 3: "unused"}
@@ -252,7 +263,7 @@ def _store_pkx_metadata(armature, pkx_header, logger):
             prefix = "dat_pkx_sub_anim_%d" % i
             armature[prefix + "_type"] = _SUB_ANIM_TYPES.get(pad.has_data, "unknown")
             armature[prefix + "_trigger"] = _SUB_ANIM_TRIGGERS.get(i, "unknown")
-            armature[prefix + "_anim_ref"] = pad.anim_index_ref
+            armature[prefix + "_anim_ref"] = _action_name_for_index(pad.anim_index_ref) if pad.has_data > 0 else ""
             if pad.has_data == 2:
                 # Targeted: store bone names (filter out 0xFF)
                 bone_indices = [b for b in pad.bone_config if b != 0xFF]
@@ -264,7 +275,7 @@ def _store_pkx_metadata(armature, pkx_header, logger):
             ref = h.colo_part_anim_refs[i]
             armature[prefix + "_type"] = "simple" if ref >= 0 else "none"
             armature[prefix + "_trigger"] = _SUB_ANIM_TRIGGERS.get(i, "unknown")
-            armature[prefix + "_anim_ref"] = ref
+            armature[prefix + "_anim_ref"] = _action_name_for_index(ref) if ref >= 0 else ""
 
     # --- Null joint bones (descriptive names) ---
     first_active = h.anim_entries[0] if h.anim_entries else None
@@ -288,8 +299,13 @@ def _store_pkx_metadata(armature, pkx_header, logger):
         armature[prefix + "_terminator"] = _clamp_int32(entry.terminator)
 
         for s in range(min(len(entry.sub_anims), 3)):
-            armature[prefix + "_sub_%d_motion" % s] = _clamp_int32(entry.sub_anims[s].motion_type)
-            armature[prefix + "_sub_%d_anim" % s] = _clamp_int32(entry.sub_anims[s].anim_index)
+            sub = entry.sub_anims[s]
+            armature[prefix + "_sub_%d_motion" % s] = _clamp_int32(sub.motion_type)
+            # Only resolve to action name for active sub-anims; inactive keep empty
+            if sub.motion_type > 0:
+                armature[prefix + "_sub_%d_anim" % s] = _action_name_for_index(sub.anim_index)
+            else:
+                armature[prefix + "_sub_%d_anim" % s] = ""
 
         # Per-entry null joint overrides (only when different from model-level)
         if first_active and entry.null_joint_bones != first_active.null_joint_bones:
