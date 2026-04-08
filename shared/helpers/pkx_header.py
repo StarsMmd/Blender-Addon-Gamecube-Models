@@ -509,7 +509,7 @@ COLO_TRAINER_ANIM_NAMES = [
 NULL_JOINT_NAMES = [
     "Root",             # 0 — always bone 0
     "Head",             # 1 — head tracking
-    "Center/Jaw",       # 2 — center null fallback
+    "Center",           # 2 — center null fallback
     "Body Part 3",      # 3
     "Neck",             # 4 — typically head-1
     "Head Top",         # 5 — typically head+1
