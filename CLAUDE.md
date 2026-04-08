@@ -174,7 +174,7 @@ Nodes are cached by file offset (`nodes_cache_by_offset`). Nodes with `is_cachab
 | Skeleton/armature import | ✅ Working |
 | Joint animation import | ✅ Working |
 | Material animation import | ✅ Working (color/alpha + texture UV + NLA) |
-| Light import | ✅ Working (SUN, POINT, SPOT) |
+| Light import | ✅ Working (AMBIENT, SUN, POINT, SPOT) |
 | Bone constraints (IK, copy loc/rot, track-to, limits) | ✅ Working |
 | Bone instances (JOBJ_INSTANCE) | ✅ Working |
 | Shape animation import | ❌ Stubs only (not implemented in legacy either) |
@@ -188,7 +188,7 @@ Nodes are cached by file offset (`nodes_cache_by_offset`). Nodes with `is_cachab
 | IR pipeline | ✅ Default path (legacy available via toggle) |
 | FSYS archive import | ✅ Working (multi-model extraction + LZSS decompression) |
 | Shiny variant filter | ✅ Working (PKX color extraction, live-editable shader node group, per-parameter UI) |
-| Unit tests | ✅ 626 passing (27 texture encoder, 14 DAT serialization/alignment/relocation/vertex-space, 24 PKX header, 24 GPT1 particle, 15 WZX extraction, 2 material animation scale, 14 camera describe, 22 camera animation, 12 camera compose, 20 bezier sparsification) |
+| Unit tests | ✅ 628 passing (27 texture encoder, 14 DAT serialization/alignment/relocation/vertex-space, 24 PKX header, 24 GPT1 particle, 15 WZX extraction, 2 material animation scale, 14 camera describe, 22 camera animation, 12 camera compose, 20 bezier sparsification, 15 light describe) |
 | Shader node auto-layout | ✅ Working (topological sort from output→inputs, left-to-right) |
 | Scale inheritance (animation baking) | ⚠️ Partially resolved — hybrid approach, see below |
 
@@ -335,7 +335,8 @@ The shiny parameters are stored as custom properties on the armature (`dat_pkx_s
 - [x] Code audit: identify opportunities to reduce algorithmic complexity — see [complexity optimization plan](documentation/complexity_optimization_plan.md)
 - [ ] Implement remaining complexity optimizations (items 1-3 in the plan above)
 - [x] Shiny filter: split into separate routing and brightness shaders. The routing shader (channel swizzle) only applies to texture colors, not vertex colors. The brightness shader applies to the final result after vertex color multiplication.
-- [x] Ambient lighting: stored in per-material Emission node (`dat_ambient_emission`, strength=0 by default), read back on export. Not visually active because HSD ambient is scene-level lighting. Scene-level `LOBJ_AMBIENT` lights still ignored.
+- [x] Ambient lighting: per-material stored in Emission node (`dat_ambient_emission`, strength=0 by default). Scene-level `LOBJ_AMBIENT` lights imported as no-op POINT light with `dat_light_type = "AMBIENT"` and `energy = 0`. Sorted first (LightSet[0]) on export.
 - [x] Bone inverse_bind_matrix: computed as `srt_world.inverted()` — the inverse of the SRT-accumulated world matrix (no coordinate rotation). Only set on skinning target bones, cleared on others. See "Envelope Skinning" section in [export pipeline plan](documentation/export_pipeline_plan.md).
 - [ ] GPT1 particle export (compose + serialize phases) — validate import first
 - [ ] Blender particle visualization from IRParticleSystem
+- [ ] Envelope matrix index overflow: GX hardware supports 10 matrix slots per draw call (indices 0–27 in steps of 3). Models with >10 unique weight combos per mesh need their display lists split into multiple draws with matrix reloads. Currently clamped to 255 as a workaround — see `exporter/phases/compose/helpers/meshes.py` line 682.
