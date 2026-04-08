@@ -68,7 +68,7 @@ What the exporter can and cannot read from your Blender scene.
 | Principled BSDF base color | ✅ Exported | Diffuse color |
 | Principled BSDF specular tint | ✅ Exported | Reverse-mapped to absolute specular color |
 | Principled BSDF alpha | ✅ Exported | Material transparency |
-| Image textures | ✅ Exported | All GX formats supported, format set via `dat_gx_format` |
+| Image textures | ✅ Exported | All GX formats supported. Format auto-selected by `prepare_for_export` or set manually via `dat_gx_format` on each image |
 | `dat_ambient_emission` node | ✅ Exported | Per-material ambient color |
 | Shiny filter nodes | ⏭️ Skipped | See [Shiny Filter](#shiny-filter) below |
 | Procedural textures | ❌ Ignored | Bake to image first |
@@ -179,9 +179,7 @@ These are only needed when exporting to `.pkx` format. The preparation script se
 | `dat_pkx_species_id` | `0` | Pokédex number. Set to the species' national dex ID (e.g. 291 for Shedinja). Used by the game to identify the model. |
 | `dat_pkx_model_type` | `"POKEMON"` | Model category. `"POKEMON"` for Pokémon, change for trainer models. |
 | `dat_pkx_head_bone` | _(auto-detected)_ | Name of the head bone. The script looks for bones with "head" in the name, then falls back to the first child of the root. Used for camera targeting and head tracking in battle. |
-| `dat_pkx_joint_root` | _(first bone)_ | Root bone name for null joint mapping. |
-| `dat_pkx_joint_head` | _(same as head_bone)_ | Head bone for null joint mapping. |
-| `dat_pkx_joint_center`, `_body_3` … `_attach_d` | `""` | Named body part bones for particle attachment, camera targeting, and hit detection. Leave empty if unknown — the game falls back gracefully. |
+| `dat_pkx_joint_*` | _(see below)_ | Null joint bone mappings — see [Null Joint Bones](#null-joint-bones) for details. |
 | `dat_pkx_anim_count` | `17` | Number of animation metadata entries. Standard Pokémon models use 17 (idle + 16 action slots). |
 | `dat_pkx_anim_00_type` | `"loop"` | Animation slot 0 type. Set to `"loop"` for idle animation. Other slots default to `"action"`. Valid types: `"loop"`, `"hit_reaction"`, `"action"`, `"compound"`. |
 | `dat_pkx_anim_NN_sub_0_anim` | `""` | Blender Action name for slot N. Maps PKX animation slots to actions by name (resolved to DAT indices at export time). Use the action search dropdown in the PKX Metadata panel to set this. |
@@ -197,6 +195,31 @@ These are only needed when exporting to `.pkx` format. The preparation script se
 | `dat_pkx_particle_orientation` | `0` | Default particle emission orientation. |
 | `dat_pkx_distortion_param` | `0` | Screen distortion effect parameter. |
 | `dat_pkx_distortion_type` | `0` | Screen distortion effect type. |
+
+---
+
+## Null Joint Bones
+
+The game uses 16 named bone slots ("null joints") per model for particle attachment, camera targeting, hit detection, and head tracking. Set these in the **Null Joint Bones** section of the PKX Metadata panel using the bone name dropdowns. Right/left are from the **Pokémon's perspective**, not the viewer's.
+
+| Slot | Property suffix | What to assign |
+|------|----------------|----------------|
+| Root | `_root` | The root bone of the armature (always bone 0) |
+| Head | `_head` | The head bone — used for head tracking in battle (the game rotates this bone to follow the opponent) |
+| Center | `_center` | A bone at the model's center of mass — fallback attachment point for effects |
+| Body 3 | `_body_3` | Generic body attachment point (torso/chest area) |
+| Neck | `_neck` | Neck bone — typically the parent of the head bone |
+| Head Top | `_head_top` | Top of head — typically a child of the head bone. Used for status effect particles (sleep Z's, confusion stars) |
+| Limb Right | `_limb_a` | Right arm/wing/fin endpoint (from the Pokémon's perspective) |
+| Limb Left | `_limb_b` | Left arm/wing/fin endpoint (from the Pokémon's perspective) |
+| Secondary 8-11 | `_secondary_8` … `_11` | Less commonly used attachment points. Leave empty if unknown |
+| Attach A-D | `_attach_a` … `_d` | Particle and effect attachment points (e.g. tail tip, horn, mouth). Used by battle move particle effects |
+
+**Tips:**
+- The preparation script auto-fills Root and Head. Everything else defaults to empty.
+- Leave slots empty if your model doesn't have an obvious bone for that role — the game falls back gracefully.
+- For simple models, filling Root, Head, Center, and Neck is usually sufficient.
+- Imported models from the game already have all slots filled correctly.
 
 ---
 
