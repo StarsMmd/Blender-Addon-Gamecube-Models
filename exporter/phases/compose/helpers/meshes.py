@@ -677,9 +677,10 @@ def _encode_display_list(faces, vertices, vertex_descs, vertex_buffers):
 
                 if desc.attribute == GX_VA_PNMTXIDX:
                     # Envelope index: vertex_idx → env_idx * 3
+                    # GX matrix index is a single byte, so cap at 255
                     _, env_map = vbuf
                     env_idx = env_map['vertex_to_env'].get(pos_index, 0)
-                    buf.append(env_idx * 3)
+                    buf.append(min(255, env_idx * 3))
                 elif desc.attribute == GX_VA_POS:
                     buf.extend(pack('ushort', pos_index))
                 elif isinstance(vbuf, tuple) and len(vbuf) == 3:
