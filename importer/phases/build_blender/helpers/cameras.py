@@ -10,6 +10,22 @@ except (ImportError, SystemError):
     from shared.IR.enums import CameraProjection, Interpolation
     from shared.helpers.logger import StubLogger
 
+
+def _scene_model_size():
+    """Compute the diagonal of the bounding box of all mesh objects in the scene."""
+    min_co = [float('inf')] * 3
+    max_co = [float('-inf')] * 3
+    for obj in bpy.data.objects:
+        if obj.type == 'MESH':
+            for corner in obj.bound_box:
+                world = obj.matrix_world @ Vector(corner)
+                for i in range(3):
+                    min_co[i] = min(min_co[i], world[i])
+                    max_co[i] = max(max_co[i], world[i])
+    if min_co[0] == float('inf'):
+        return 1.0
+    return (Vector(max_co) - Vector(min_co)).length
+
 # Blender interpolation mode strings from IR Interpolation enum
 _INTERP_MAP = {
     Interpolation.CONSTANT: 'CONSTANT',
@@ -54,6 +70,7 @@ def _build_camera(ir_cam, logger=StubLogger()):
     if ir_cam.target_position:
         target_obj = bpy.data.objects.new(ir_cam.name + '_target', None)
         target_obj.empty_display_type = 'PLAIN_AXES'
+        target_obj.empty_display_size = max(0.1, min(3.0, _scene_model_size() * 0.03))
         target_obj.matrix_basis = Matrix.Translation(Vector(ir_cam.target_position))
         bpy.context.scene.collection.objects.link(target_obj)
 

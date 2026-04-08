@@ -4,11 +4,13 @@ Run this from Blender's Scripting panel (Text Editor > Run Script) before
 exporting. It ensures all objects in the scene have the custom properties
 the exporter expects.
 
-The script:
+The script operates on all objects in the scene — no selection required:
   1. Creates a Battle_Camera if none exists
-  2. If an armature is selected and has no PKX metadata, applies defaults
-  3. Auto-selects GX texture formats for textures on the selected armature
-  4. Creates an ambient light if none exists
+  2. Applies default PKX metadata to all armatures that don't have it
+  3. Auto-derives animation timing from action durations
+  4. Auto-selects GX texture formats for all armature textures
+  5. Inserts shiny filter nodes into all materials (identity defaults, toggle off)
+  6. Creates an ambient light if none exists
 
 After running, the scene can be exported via File > Export > Gamecube model (.dat).
 
@@ -26,6 +28,24 @@ import math
 
 BATTLE_CAMERA_NAME = "Battle_Camera"
 BATTLE_CAMERA_TARGET = "Battle_Camera_target"
+
+
+def _model_display_size():
+    """Compute a display size for empties: 3% of the scene's model bounding box diagonal."""
+    from mathutils import Vector
+    min_co = [float('inf')] * 3
+    max_co = [float('-inf')] * 3
+    for obj in bpy.data.objects:
+        if obj.type == 'MESH':
+            for corner in obj.bound_box:
+                world = obj.matrix_world @ Vector(corner)
+                for i in range(3):
+                    min_co[i] = min(min_co[i], world[i])
+                    max_co[i] = max(max_co[i], world[i])
+    if min_co[0] == float('inf'):
+        return 0.5
+    diag = (Vector(max_co) - Vector(min_co)).length
+    return max(0.1, min(3.0, diag * 0.03))
 
 
 def prepare_camera():
@@ -48,10 +68,10 @@ def prepare_camera():
         cam_obj["dat_camera_aspect"] = 1.18
         bpy.context.scene.collection.objects.link(cam_obj)
 
-        # Create target empty
+        # Create target empty — size proportional to scene model bounding box
         target = bpy.data.objects.new(BATTLE_CAMERA_TARGET, None)
         target.empty_display_type = 'PLAIN_AXES'
-        target.empty_display_size = 1.0
+        target.empty_display_size = _model_display_size()
         target.location = (0.0, 5.0, 0.0)
         bpy.context.scene.collection.objects.link(target)
 
@@ -115,7 +135,7 @@ def apply_pkx_metadata(armature, format='XD', model_type='POKEMON', species_id=0
     armature["dat_pkx_flag_no_root_anim"] = False
     armature["dat_pkx_flag_bit7"] = False
 
-    # --- Shiny (identity routing, neutral brightness) ---
+    # Shiny registered properties — set identity defaults
     armature.dat_pkx_shiny = False
     armature.dat_pkx_shiny_route_r = '0'
     armature.dat_pkx_shiny_route_g = '1'
@@ -175,6 +195,7 @@ def apply_pkx_metadata(armature, format='XD', model_type='POKEMON', species_id=0
     print("  PKX metadata applied to '%s':" % armature.name)
     print("    Format: %s, Species: %d, Head bone: '%s'" % (format, species_id, head_bone_name))
     print("    17 animation slots (slot 0 = idle loop)")
+    print("    Shiny params available in PKX Metadata panel (default: identity)")
 
 
 def _get_action_duration(action_name):
@@ -191,7 +212,7 @@ def derive_timing(armature):
 
     Timing semantics per anim_type:
       loop:         T1 = duration
-      action:       T1 = wind-up (50%), T2 = hit (50%), T3 = duration
+      action:       T1 = wind-up (33%), T2 = hit (66%), T3 = duration
       hit_reaction: T1 = reaction start (50%), T2 = duration
       compound:     T1 = sub1 mid, T2 = sub1 end, T3 = sub2 mid, T4 = sub2 end
 
@@ -212,8 +233,8 @@ def derive_timing(armature):
         if anim_type == "loop":
             armature[prefix + "_timing_1"] = dur
         elif anim_type == "action":
-            armature[prefix + "_timing_1"] = dur * 0.5
-            armature[prefix + "_timing_2"] = dur * 0.5
+            armature[prefix + "_timing_1"] = dur / 3.0
+            armature[prefix + "_timing_2"] = dur * 2.0 / 3.0
             armature[prefix + "_timing_3"] = dur
         elif anim_type == "hit_reaction":
             armature[prefix + "_timing_1"] = dur * 0.5
@@ -324,6 +345,219 @@ def prepare_texture_formats(armature):
 
 
 # ---------------------------------------------------------------------------
+# Shiny filter
+# ---------------------------------------------------------------------------
+
+_SHINY_ROUTE_GROUP = "DATPlugin_ShinyRoute"
+_SHINY_BRIGHT_GROUP = "DATPlugin_ShinyBright"
+
+
+def _shiny_auto_layout(nodes, links, output_type='OUTPUT_MATERIAL'):
+    """Arrange shader nodes left-to-right via topological sort from output."""
+    _W, _H = 300, 200
+    output = next((n for n in nodes if n.type == output_type), None)
+    if output is None:
+        return
+    inputs_of = {}
+    for link in links:
+        inputs_of.setdefault(link.to_node, [])
+        if link.from_node not in inputs_of[link.to_node]:
+            inputs_of[link.to_node].append(link.from_node)
+    column_of = {output: 0}
+    queue = [output]
+    while queue:
+        node = queue.pop(0)
+        col = column_of[node]
+        for source in inputs_of.get(node, []):
+            new_col = col + 1
+            if source not in column_of or column_of[source] < new_col:
+                column_of[source] = new_col
+                queue.append(source)
+    max_col = max(column_of.values()) if column_of else 0
+    for node in nodes:
+        if node not in column_of:
+            max_col += 1
+            column_of[node] = max_col
+    columns = {}
+    for node, col in column_of.items():
+        columns.setdefault(col, []).append(node)
+    for col in columns:
+        columns[col].sort(key=lambda n: n.name)
+    max_column = max(columns.keys()) if columns else 0
+    for col, col_nodes in columns.items():
+        x = (max_column - col) * _W
+        for i, node in enumerate(col_nodes):
+            node.location = (x, -i * _H)
+
+
+def _shiny_build_route_group(routing, name):
+    """Create/rebuild the ShinyRoute node group (channel swizzle)."""
+    group = bpy.data.node_groups.get(name)
+    if group is None:
+        group = bpy.data.node_groups.new(name, 'ShaderNodeTree')
+        group.interface.new_socket('Color', in_out='INPUT', socket_type='NodeSocketColor')
+        group.interface.new_socket('Color', in_out='OUTPUT', socket_type='NodeSocketColor')
+    group.nodes.clear()
+    gi = group.nodes.new('NodeGroupInput')
+    go = group.nodes.new('NodeGroupOutput')
+    sep = group.nodes.new('ShaderNodeSeparateColor')
+    sep.mode = 'RGB'
+    group.links.new(gi.outputs[0], sep.inputs[0])
+    srcs = {0: sep.outputs[0], 1: sep.outputs[1], 2: sep.outputs[2]}
+    comb = group.nodes.new('ShaderNodeCombineColor')
+    comb.mode = 'RGB'
+    for i in range(3):
+        if routing[i] in srcs:
+            group.links.new(srcs[routing[i]], comb.inputs[i])
+        else:
+            v = group.nodes.new('ShaderNodeValue')
+            v.outputs[0].default_value = 0.0
+            group.links.new(v.outputs[0], comb.inputs[i])
+    group.links.new(comb.outputs[0], go.inputs[0])
+    _shiny_auto_layout(group.nodes, group.links, output_type='GROUP_OUTPUT')
+    return group
+
+
+def _shiny_build_bright_group(brightness, name):
+    """Create/rebuild the ShinyBright node group (per-channel brightness)."""
+    group = bpy.data.node_groups.get(name)
+    if group is None:
+        group = bpy.data.node_groups.new(name, 'ShaderNodeTree')
+        group.interface.new_socket('Color', in_out='INPUT', socket_type='NodeSocketColor')
+        group.interface.new_socket('Color', in_out='OUTPUT', socket_type='NodeSocketColor')
+    group.nodes.clear()
+    gi = group.nodes.new('NodeGroupInput')
+    go = group.nodes.new('NodeGroupOutput')
+    to_srgb = group.nodes.new('ShaderNodeGamma')
+    to_srgb.inputs[1].default_value = 1.0 / 2.2
+    group.links.new(gi.outputs[0], to_srgb.inputs[0])
+    sep = group.nodes.new('ShaderNodeSeparateColor')
+    sep.mode = 'RGB'
+    group.links.new(to_srgb.outputs[0], sep.inputs[0])
+    scaled = []
+    for i, ch in enumerate(['R', 'G', 'B']):
+        mult = group.nodes.new('ShaderNodeMath')
+        mult.operation = 'MULTIPLY'
+        mult.name = 'Brightness_%s' % ch
+        group.links.new(sep.outputs[i], mult.inputs[0])
+        mult.inputs[1].default_value = brightness[i] + 1.0
+        scaled.append(mult.outputs[0])
+    comb = group.nodes.new('ShaderNodeCombineColor')
+    comb.mode = 'RGB'
+    for i in range(3):
+        group.links.new(scaled[i], comb.inputs[i])
+    to_lin = group.nodes.new('ShaderNodeGamma')
+    to_lin.inputs[1].default_value = 2.2
+    group.links.new(comb.outputs[0], to_lin.inputs[0])
+    group.links.new(to_lin.outputs[0], go.inputs[0])
+    _shiny_auto_layout(group.nodes, group.links, output_type='GROUP_OUTPUT')
+    return group
+
+
+def _shiny_find_color_input(nodes):
+    """Find the main color input on the output shader."""
+    for node in nodes:
+        if node.type == 'BSDF_PRINCIPLED':
+            bc = node.inputs['Base Color']
+            if bc.is_linked:
+                return node, bc
+    for node in nodes:
+        if node.type == 'EMISSION':
+            return node, node.inputs['Color']
+    for node in nodes:
+        if node.type == 'BSDF_PRINCIPLED':
+            return node, node.inputs['Base Color']
+    return None, None
+
+
+def _shiny_insert_stage(nodes, links, target_node, target_input,
+                        node_group, group_name, mix_name, armature):
+    """Insert a shiny stage between a source and a shader input."""
+    source_link = None
+    for link in links:
+        if link.to_node == target_node and link.to_socket == target_input:
+            source_link = link
+            break
+    if source_link is None:
+        rgb = nodes.new('ShaderNodeRGB')
+        rgb.outputs[0].default_value[:] = list(target_input.default_value)
+        source_out = rgb.outputs[0]
+    else:
+        source_out = source_link.from_socket
+        links.remove(source_link)
+    gn = nodes.new('ShaderNodeGroup')
+    gn.node_tree = node_group
+    gn.name = group_name
+    links.new(source_out, gn.inputs[0])
+    mix = nodes.new('ShaderNodeMixRGB')
+    mix.blend_type = 'MIX'
+    mix.name = mix_name
+    mix.inputs[0].default_value = 0.0
+    links.new(source_out, mix.inputs[1])
+    links.new(gn.outputs[0], mix.inputs[2])
+    links.new(mix.outputs[0], target_input)
+    # Driver for shiny toggle
+    mix.inputs[0].default_value = 0.0
+    dd = mix.inputs[0].driver_add("default_value")
+    dd.driver.type = 'AVERAGE'
+    var = dd.driver.variables.new()
+    var.name = "shiny"
+    var.type = 'SINGLE_PROP'
+    var.targets[0].id_type = 'OBJECT'
+    var.targets[0].id = armature
+    var.targets[0].data_path = 'dat_pkx_shiny'
+
+
+def prepare_shiny_filter(armature):
+    """Set up shiny filter node groups and insert into all materials.
+
+    Builds ShinyRoute and ShinyBright node groups, inserts them into every
+    material on the armature's child meshes, and adds drivers for the
+    shiny toggle. Skips materials that already have shiny nodes.
+
+    Returns the number of materials that had shiny filter added.
+    """
+    route = [
+        int(armature.dat_pkx_shiny_route_r),
+        int(armature.dat_pkx_shiny_route_g),
+        int(armature.dat_pkx_shiny_route_b),
+        int(armature.dat_pkx_shiny_route_a),
+    ]
+    brightness = [
+        armature.dat_pkx_shiny_brightness_r,
+        armature.dat_pkx_shiny_brightness_g,
+        armature.dat_pkx_shiny_brightness_b,
+    ]
+
+    route_group = _shiny_build_route_group(route, _SHINY_ROUTE_GROUP)
+    bright_group = _shiny_build_bright_group(brightness, _SHINY_BRIGHT_GROUP)
+
+    count = 0
+    for child in armature.children:
+        if child.type != 'MESH':
+            continue
+        for slot in child.material_slots:
+            mat = slot.material
+            if not mat or not mat.use_nodes:
+                continue
+            nodes = mat.node_tree.nodes
+            if any(n.name in ('shiny_route_mix', 'shiny_bright_mix') for n in nodes):
+                continue
+            target_node, target_input = _shiny_find_color_input(nodes)
+            if target_node is None:
+                continue
+            links = mat.node_tree.links
+            _shiny_insert_stage(nodes, links, target_node, target_input,
+                                route_group, 'shiny_route_shader', 'shiny_route_mix', armature)
+            _shiny_insert_stage(nodes, links, target_node, target_input,
+                                bright_group, 'shiny_bright_shader', 'shiny_bright_mix', armature)
+            _shiny_auto_layout(nodes, links)
+            count += 1
+
+    return count
+
+
+# ---------------------------------------------------------------------------
 # Ambient light
 # ---------------------------------------------------------------------------
 
@@ -365,42 +599,333 @@ def prepare_ambient_light():
 
 
 # ---------------------------------------------------------------------------
+# PKX Metadata Panel (registered if addon isn't loaded)
+# ---------------------------------------------------------------------------
+
+_SHINY_CHANNEL_ITEMS = [
+    ('0', 'Red', 'Red channel (0)'),
+    ('1', 'Green', 'Green channel (1)'),
+    ('2', 'Blue', 'Blue channel (2)'),
+    ('3', 'Alpha', 'Alpha channel (3)'),
+]
+
+_FORMAT_ITEMS = [("XD", "XD"), ("COLOSSEUM", "Colosseum")]
+_MODEL_TYPE_ITEMS = [("POKEMON", "Pokémon"), ("TRAINER", "Trainer")]
+_PARTICLE_ORIENT_ITEMS = [
+    ("-2", "Back 180°"), ("-1", "Back 90°"), ("0", "Default"),
+    ("1", "Forward 90°"), ("2", "Forward 180°"),
+]
+_ANIM_TYPE_ITEMS = [
+    ("loop", "Loop"), ("hit_reaction", "Hit Reaction"),
+    ("action", "Action"), ("compound", "Compound"),
+]
+_SUB_ANIM_TRIGGER_ITEMS = [
+    ("sleep_on", "Sleep On"), ("sleep_off", "Sleep Off"),
+    ("extra", "Extra"), ("unused", "Unused"),
+]
+_BODY_MAP_KEYS = [
+    "root", "head", "center", "body_3", "neck", "head_top",
+    "limb_a", "limb_b", "secondary_8", "secondary_9",
+    "secondary_10", "secondary_11", "attach_a", "attach_b",
+    "attach_c", "attach_d",
+]
+_BODY_MAP_NAMES = [
+    "Root", "Head", "Center", "Body Part 3", "Neck", "Head Top",
+    "Limb Left", "Limb Right", "Secondary 8", "Secondary 9",
+    "Secondary 10", "Secondary 11", "Attachment A", "Attachment B",
+    "Attachment C", "Attachment D",
+]
+_XD_POKEMON_ANIM_NAMES = [
+    "Idle", "Special A", "Physical A", "Physical B", "Physical C",
+    "Physical D", "Special B", "Physical E", "Damage", "Damage+Faint",
+    "Faint", "Idle B", "Special C", "Physical F", "Physical G",
+    "Physical H", "Idle Loop B",
+]
+_XD_TRAINER_ANIM_NAMES = [
+    "Idle", "Poké Ball Throw", "Victory", "Battle Intro", "Frustrated",
+    "Victory 2", "Slot 6", "Slot 7", "Slot 8", "Slot 9",
+    "Defeat", "Slot 11", "Slot 12", "Slot 13", "Slot 14",
+    "Slot 15", "Slot 16",
+]
+
+
+def _on_shiny_update(obj, context):
+    """Rebuild shiny node groups when toggle or params change."""
+    if not obj.dat_pkx_shiny:
+        obj.update_tag()
+        if context and context.area:
+            context.area.tag_redraw()
+        return
+    route = [int(obj.dat_pkx_shiny_route_r), int(obj.dat_pkx_shiny_route_g),
+             int(obj.dat_pkx_shiny_route_b), int(obj.dat_pkx_shiny_route_a)]
+    brightness = [obj.dat_pkx_shiny_brightness_r, obj.dat_pkx_shiny_brightness_g,
+                  obj.dat_pkx_shiny_brightness_b]
+    _shiny_build_route_group(route, _SHINY_ROUTE_GROUP)
+    _shiny_build_bright_group(brightness, _SHINY_BRIGHT_GROUP)
+    obj.update_tag()
+    for child in obj.children:
+        if child.type == 'MESH' and child.active_material:
+            child.active_material.node_tree.update_tag()
+    if context and context.area:
+        context.area.tag_redraw()
+
+
+def _draw_enum_dropdown(layout, obj, prop_key, items, label="", as_int=False):
+    """Draw a row of toggle buttons for a custom property enum."""
+    current = str(obj.get(prop_key, ""))
+    row = layout.row(align=True)
+    if label:
+        row.label(text=label)
+    sub = row.row(align=True)
+    for val, lbl in items:
+        op = sub.operator("dat.set_enum_prop", text=lbl, depress=(val == current))
+        op.prop_key = prop_key
+        op.value = val
+        op.as_int = as_int
+
+
+def _prop_row(layout, label, value):
+    row = layout.row()
+    row.label(text="%s:" % label)
+    row.label(text=str(value))
+
+
+def _register_pkx_panel():
+    """Register the PKX Metadata panel and properties if not already registered."""
+    from bpy.props import (StringProperty, BoolProperty, EnumProperty,
+                           FloatProperty, BoolVectorProperty)
+
+    # Check if already registered (by the addon or a previous script run)
+    if hasattr(bpy.types.Object, 'dat_pkx_shiny'):
+        return
+
+    # --- Operator for enum dropdowns ---
+    class DAT_OT_SetEnumProp(bpy.types.Operator):
+        """Set a custom property from an enum dropdown."""
+        bl_idname = "dat.set_enum_prop"
+        bl_label = "Set Property"
+        bl_options = {'UNDO', 'INTERNAL'}
+        prop_key: StringProperty()
+        value: StringProperty()
+        as_int: BoolProperty(default=False)
+        def execute(self, context):
+            obj = context.active_object
+            if obj and self.prop_key:
+                obj[self.prop_key] = int(self.value) if self.as_int else self.value
+            return {'FINISHED'}
+
+    # --- Panel ---
+    class DAT_PT_PKXPanel(bpy.types.Panel):
+        """PKX model metadata panel."""
+        bl_label = "PKX Metadata"
+        bl_idname = "OBJECT_PT_dat_pkx"
+        bl_space_type = 'PROPERTIES'
+        bl_region_type = 'WINDOW'
+        bl_context = "object"
+
+        @classmethod
+        def poll(cls, context):
+            obj = context.active_object
+            return (obj is not None and obj.type == 'ARMATURE'
+                    and obj.get("dat_pkx_format") is not None)
+
+        def draw(self, context):
+            obj = context.active_object
+            layout = self.layout
+
+            # === General ===
+            box = layout.box()
+            box.label(text="General", icon='INFO')
+            _draw_enum_dropdown(box, obj, "dat_pkx_format", _FORMAT_ITEMS, label="Format:")
+            if "dat_pkx_species_id" in obj:
+                box.prop(obj, '["dat_pkx_species_id"]', text="Species ID")
+            _draw_enum_dropdown(box, obj, "dat_pkx_model_type", _MODEL_TYPE_ITEMS, label="Model Type:")
+            if "dat_pkx_head_bone" in obj:
+                box.prop_search(obj, '["dat_pkx_head_bone"]', obj.data, "bones", text="Head Bone")
+            if "dat_pkx_particle_orientation" in obj:
+                _draw_enum_dropdown(box, obj, "dat_pkx_particle_orientation",
+                                    _PARTICLE_ORIENT_ITEMS, label="Particle Orientation:", as_int=True)
+
+            # === Shiny Variant ===
+            box = layout.box()
+            box.label(text="Shiny Variant", icon='COLOR')
+            box.prop(obj, "dat_pkx_shiny", text="Enable Shiny Preview")
+            col = box.column(align=True)
+            col.label(text="Channel Routing:")
+            row = col.row(align=True)
+            row.prop(obj, "dat_pkx_shiny_route_r", text="R")
+            row.prop(obj, "dat_pkx_shiny_route_g", text="G")
+            row = col.row(align=True)
+            row.prop(obj, "dat_pkx_shiny_route_b", text="B")
+            row.prop(obj, "dat_pkx_shiny_route_a", text="A")
+            col = box.column(align=True)
+            col.label(text="Brightness:")
+            col.prop(obj, "dat_pkx_shiny_brightness_r", text="Red")
+            col.prop(obj, "dat_pkx_shiny_brightness_g", text="Green")
+            col.prop(obj, "dat_pkx_shiny_brightness_b", text="Blue")
+
+            # === Flags ===
+            box = layout.box()
+            box.label(text="Flags", icon='PREFERENCES')
+            col = box.column(align=True)
+            for flag_key, flag_label in [
+                ("dat_pkx_flag_flying", "Flying Mode"),
+                ("dat_pkx_flag_skip_frac_frames", "Skip Fractional Frames"),
+                ("dat_pkx_flag_no_root_anim", "No Root Joint Animation"),
+                ("dat_pkx_flag_bit7", "Unknown (bit 7)"),
+            ]:
+                if flag_key in obj:
+                    col.prop(obj, '["%s"]' % flag_key, text=flag_label)
+
+            # === Body Map ===
+            box = layout.box()
+            box.label(text="Body Map", icon='BONE_DATA')
+            col = box.column(align=True)
+            for j, jk in enumerate(_BODY_MAP_KEYS):
+                key = "dat_pkx_body_%s" % jk
+                if key in obj:
+                    label = _BODY_MAP_NAMES[j] if j < len(_BODY_MAP_NAMES) else jk
+                    col.prop_search(obj, '["%s"]' % key, obj.data, "bones", text=label)
+
+            # === Animation Slots ===
+            anim_count = obj.get("dat_pkx_anim_count", 0)
+            if anim_count:
+                box = layout.box()
+                box.label(text="Animation Slots", icon='ACTION')
+                model_type = obj.get("dat_pkx_model_type", "POKEMON")
+                slot_names = _XD_TRAINER_ANIM_NAMES if model_type == "TRAINER" else _XD_POKEMON_ANIM_NAMES
+                for i in range(anim_count):
+                    slot_label = slot_names[i] if i < len(slot_names) else "Slot %d" % i
+                    prefix = "dat_pkx_anim_%02d" % i
+                    is_expanded = obj.dat_pkx_anim_expand[i] if i < 17 else False
+                    header = box.row(align=True)
+                    icon = 'TRIA_DOWN' if is_expanded else 'TRIA_RIGHT'
+                    header.prop(obj, "dat_pkx_anim_expand", index=i, icon=icon,
+                                text=slot_label, emboss=False)
+                    sub_count = obj.get(prefix + "_sub_count", 1)
+                    first_ref = ""
+                    for s in range(min(sub_count, 3)):
+                        ref = obj.get(prefix + "_sub_%d_anim" % s, "")
+                        if ref:
+                            first_ref = ref
+                            break
+                    if first_ref:
+                        header.label(text=first_ref.split('_', 1)[-1] if '_' in first_ref else first_ref)
+                    if not is_expanded:
+                        continue
+                    sub_box = box.box()
+                    _draw_enum_dropdown(sub_box, obj, prefix + "_type", _ANIM_TYPE_ITEMS, label="Type:")
+                    for s in range(min(sub_count, 3)):
+                        motion = obj.get(prefix + "_sub_%d_motion" % s, 0)
+                        anim_key = prefix + "_sub_%d_anim" % s
+                        row = sub_box.row(align=True)
+                        row.label(text="Action %d:" % (s + 1) if sub_count > 1 else "Action:")
+                        if anim_key in obj:
+                            row.prop_search(obj, '["%s"]' % anim_key, bpy.data, "actions", text="")
+                        motion_label = {0: "None", 1: "Play Once", 2: "Loop"}.get(motion, str(motion))
+                        row.label(text=motion_label)
+                    anim_type = obj.get(prefix + "_type", "action")
+                    if anim_type == "loop":
+                        _timing_labels = {1: "Duration"}
+                    elif anim_type == "action":
+                        _timing_labels = {1: "Wind-up", 2: "Hit", 3: "Duration"}
+                    elif anim_type == "hit_reaction":
+                        _timing_labels = {1: "Reaction", 2: "Duration"}
+                    elif anim_type == "compound":
+                        _timing_labels = {1: "Sub 1 Mid", 2: "Sub 1 End", 3: "Sub 2 Mid", 4: "Sub 2 End"}
+                    else:
+                        _timing_labels = {}
+                    if _timing_labels:
+                        col = sub_box.column(align=True)
+                        for t, label in _timing_labels.items():
+                            tk = prefix + "_timing_%d" % t
+                            if tk in obj:
+                                col.prop(obj, '["%s"]' % tk, text=label)
+
+    # --- Register properties ---
+    props = [
+        ('dat_pkx_shiny', BoolProperty(
+            name="Shiny Preview", default=False, update=_on_shiny_update,
+            description="Toggle shiny color variant preview",
+        )),
+        ('dat_pkx_shiny_route_r', EnumProperty(
+            name="Route R", items=_SHINY_CHANNEL_ITEMS, default='0', update=_on_shiny_update,
+        )),
+        ('dat_pkx_shiny_route_g', EnumProperty(
+            name="Route G", items=_SHINY_CHANNEL_ITEMS, default='1', update=_on_shiny_update,
+        )),
+        ('dat_pkx_shiny_route_b', EnumProperty(
+            name="Route B", items=_SHINY_CHANNEL_ITEMS, default='2', update=_on_shiny_update,
+        )),
+        ('dat_pkx_shiny_route_a', EnumProperty(
+            name="Route A", items=_SHINY_CHANNEL_ITEMS, default='3', update=_on_shiny_update,
+        )),
+        ('dat_pkx_shiny_brightness_r', FloatProperty(
+            name="Brightness R", default=0.0, min=-1.0, max=1.0, step=1, precision=3,
+            update=_on_shiny_update,
+        )),
+        ('dat_pkx_shiny_brightness_g', FloatProperty(
+            name="Brightness G", default=0.0, min=-1.0, max=1.0, step=1, precision=3,
+            update=_on_shiny_update,
+        )),
+        ('dat_pkx_shiny_brightness_b', FloatProperty(
+            name="Brightness B", default=0.0, min=-1.0, max=1.0, step=1, precision=3,
+            update=_on_shiny_update,
+        )),
+        ('dat_pkx_anim_expand', BoolVectorProperty(
+            name="Expand Animation Slots", size=17, default=[False] * 17,
+        )),
+    ]
+
+    for prop_name, prop in props:
+        setattr(bpy.types.Object, prop_name, prop)
+
+    bpy.utils.register_class(DAT_OT_SetEnumProp)
+    bpy.utils.register_class(DAT_PT_PKXPanel)
+    print("  Registered PKX Metadata panel")
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__" or True:
     print("=== Prepare for Colosseum/XD Export ===")
 
+    # 0. Register panel + properties if the addon isn't loaded
+    _register_pkx_panel()
+
     # 1. Camera
     cam_created = prepare_camera()
     if not cam_created:
         print("  Battle camera already exists")
 
-    # 2. PKX metadata on selected armature (if it doesn't already have it)
-    obj = bpy.context.active_object
-    if obj and obj.type == 'ARMATURE':
-        if obj.get("dat_pkx_format"):
-            print("  Armature '%s' already has PKX metadata (skipped)" % obj.name)
-        else:
-            apply_pkx_metadata(obj, format='XD', model_type='POKEMON', species_id=0)
-    else:
-        print("  No armature selected (PKX metadata step skipped)")
+    # 2-4. Per-armature steps: PKX metadata, timing, texture formats
+    armatures = [obj for obj in bpy.data.objects if obj.type == 'ARMATURE']
+    if not armatures:
+        print("  No armatures in scene (PKX/timing/texture steps skipped)")
 
-    # 3. Derive animation timing from action durations
-    if obj and obj.type == 'ARMATURE':
-        timing_count = derive_timing(obj)
+    for arm in armatures:
+        # PKX metadata
+        if arm.get("dat_pkx_format"):
+            print("  Armature '%s' already has PKX metadata (skipped)" % arm.name)
+        else:
+            apply_pkx_metadata(arm, format='XD', model_type='POKEMON', species_id=0)
+
+        # Derive animation timing from action durations
+        timing_count = derive_timing(arm)
         if timing_count:
-            print("  Derived timing for %d animation slot(s)" % timing_count)
+            print("  Derived timing for %d animation slot(s) on '%s'" % (timing_count, arm.name))
 
-    # 5. Texture formats (on the selected armature's textures)
-    if obj and obj.type == 'ARMATURE':
-        fmt_count = prepare_texture_formats(obj)
+        # Texture formats
+        fmt_count = prepare_texture_formats(arm)
         if fmt_count:
-            print("  Set GX format on %d texture(s)" % fmt_count)
-        else:
-            print("  All textures already have formats set (skipped)")
-    else:
-        print("  No armature selected (texture format step skipped)")
+            print("  Set GX format on %d texture(s) on '%s'" % (fmt_count, arm.name))
+
+        # Shiny filter
+        shiny_count = prepare_shiny_filter(arm)
+        if shiny_count:
+            print("  Shiny filter added to %d material(s) on '%s'" % (shiny_count, arm.name))
 
     # 6. Ambient light
     amb_count = prepare_ambient_light()
