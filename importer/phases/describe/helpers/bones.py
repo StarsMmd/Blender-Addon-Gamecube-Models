@@ -60,7 +60,7 @@ def describe_bones(root_joint, options=None, logger=None):
     if pkx_header and pkx_header.anim_entries:
         _NJ_LABELS = [
             "Root", "Head", "Center", "Body3", "Neck", "HeadTop",
-            "LimbA", "LimbB", "Sec8", "Sec9", "Sec10", "Sec11",
+            "LimbR", "LimbL", "Sec8", "Sec9", "Sec10", "Sec11",
             "AttachA", "AttachB", "AttachC", "AttachD",
         ]
         # Count how many null joint fields reference each bone index
