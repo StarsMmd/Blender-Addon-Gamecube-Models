@@ -238,7 +238,10 @@ def _build_animation(track, loop):
 
         # Scale translation channels from meters back to GC units
         if channel_type in _TRANSLATION_CHANNELS:
-            from shared.IR.animation import IRKeyframe
+            try:
+                from .....shared.IR.animation import IRKeyframe
+            except (ImportError, SystemError):
+                from shared.IR.animation import IRKeyframe
             keyframes = [IRKeyframe(
                 frame=kf.frame, value=kf.value * METERS_TO_GC,
                 interpolation=kf.interpolation,

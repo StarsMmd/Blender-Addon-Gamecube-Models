@@ -133,7 +133,10 @@ def _compose_single_camera_animation(anim, logger):
     def _scale_kfs(kfs):
         if not kfs:
             return kfs
-        from shared.IR.animation import IRKeyframe
+        try:
+            from .....shared.IR.animation import IRKeyframe
+        except (ImportError, SystemError):
+            from shared.IR.animation import IRKeyframe
         return [IRKeyframe(
             frame=kf.frame, value=kf.value * METERS_TO_GC,
             interpolation=kf.interpolation,
