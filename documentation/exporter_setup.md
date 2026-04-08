@@ -139,7 +139,7 @@ The plugin uses real-world meters for all positions (matching Blender's default 
 **Notes:**
 - For serpentine/elongated Pokémon (e.g. Gyarados, Rayquaza), the official "height" is body length — use the **Y dimension** instead of Z
 - Coiled or curled poses will appear shorter than the official stretched-out measurement — this is expected
-- For Pokémon with long tails, wings, or unusual poses, use your judgment on which dimension best represents the official measurement
+- Some Pokémon (e.g. those with long tails, wings, or unusual poses) may not fit neatly to a single axis — use your judgment on the overall scale rather than trying to match a specific dimension exactly
 - Models imported from the game are already in meters but may not match official heights exactly (game models are artist-scaled for visual appeal in battle)
 
 ---
