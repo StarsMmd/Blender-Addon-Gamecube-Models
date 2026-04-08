@@ -432,3 +432,231 @@ The DAT format is the core SysDolphin model container used across GameCube games
 After the header: data block, relocation table (root_count × u32 offsets), root entries (root_count × {node_offset, string_offset}), reference entries (ref_count × {node_offset, string_offset}), string table.
 
 See `documentation/ir_specification.md` for the full node hierarchy.
+
+---
+
+## CAM Camera File
+
+CAM files are standard DAT binaries (same 32-byte header, relocation table, root/reference entries) containing camera and light scene data. They use `scene_data` as their root section name, with `CameraSet` and `LightSet` nodes inside the `SceneData`.
+
+- **FSYS file type ID:** `0x18`
+- **File extension:** `.cam`
+- **Content:** Camera position/target/FOV/roll/clip planes + optional animations + optional light sets
+- **Corpus:** 78 files in XD (sizes 475–9,915 bytes), all 12 with cameras have animation data
+
+No special container handling is needed — `.cam` files pass through the normal DAT import pipeline. The `describe_scene` phase extracts cameras from `SceneData.camera` and lights from `SceneData.lights`.
+
+### CameraSet Structure
+
+```
+CameraSet
+├── camera (Camera)
+│   ├── position (WObject → static eye position vec3)
+│   ├── interest (WObject → static target position vec3)
+│   ├── field_of_view, roll, near, far, aspect
+│   └── viewport, scissor (640×480)
+└── animations (CameraAnimation[])
+    ├── animation (Animation/AOBJ → FOV/roll/near/far keyframes)
+    ├── eye_position_animation (WObjectAnimation → eye position XYZ keyframes)
+    └── interest_animation (WObjectAnimation → target position XYZ keyframes)
+```
+
+**WObjectAnimation** (8 bytes, NOT WObjDesc) is a separate struct from WObject:
+- `+0x00`: Animation pointer (AOBJ with position X/Y/Z keyframes via `HSD_A_W_TRAX/Y/Z`)
+- `+0x04`: RObjAnimation pointer (render object animations, optional)
+
+### Camera Animation Track Types
+
+Decoded from the CObj AOBJ Frame chain (`CObjUpdateFunc` dispatch table):
+
+| Type | HSD Constant | Property |
+|------|-------------|----------|
+| 1 | `HSD_A_C_EYEX` | Eye position X |
+| 2 | `HSD_A_C_EYEY` | Eye position Y |
+| 3 | `HSD_A_C_EYEZ` | Eye position Z |
+| 5 | `HSD_A_C_ATX` | Target position X |
+| 6 | `HSD_A_C_ATY` | Target position Y |
+| 7 | `HSD_A_C_ATZ` | Target position Z |
+| 9 | `HSD_A_C_ROLL` | Camera roll angle |
+| 10 | `HSD_A_C_FOVY` | Vertical field of view |
+| 11 | `HSD_A_C_NEAR` | Near clip plane |
+| 12 | `HSD_A_C_FAR` | Far clip plane |
+
+Eye/target position can also be animated via WObjectAnimation AOBJs using `HSD_A_W_TRAX` (5), `HSD_A_W_TRAY` (6), `HSD_A_W_TRAZ` (7). All keyframes use the same FObjDesc encoding as bone and material animations.
+
+---
+
+## WZX Effect Container
+
+WZX files are **WazaSequence** containers — move and overworld effect animations used by the battle system and field engine. They are stored inside FSYS archives with file type ID `0x20`, extracted to `/Assets/Models/effects/` by the GoD Tool. Each WZX file defines a complete effect sequence composed of sub-entries (particles, models, sounds, camera moves, etc.).
+
+**Known corpus:** 1,098 Colosseum files + 1,401 XD files.
+
+### Overall Layout
+
+```
+[Main SequenceEntry: 0x70 bytes at file offset 0x00]
+[Section Header: 0x20 bytes at file offset 0x70, padded to 0xA0]
+[Optional HSD Archive (DAT): align32(size) bytes at 0xA0]
+[Sub-entries × (entry_count − 1)]
+[Next section repeats: SequenceEntry → Header → content → sub-entries ...]
+```
+
+Multi-phase effects (e.g. attack + damage + special) chain multiple sections end-to-end. Empty effects (7 observed) are exactly 0xA0 bytes — one main entry + one header with zero sub-entries.
+
+### Format Detection
+
+Bytes 0x10–0x1B are always `FF FF FF FF FF FF FF FF FF FF FF FF` (12 bytes of 0xFF). This sentinel distinguishes WZX from DAT (which has a file_size u32 at 0x00) and PKX (which has different header patterns). The version field at offset 0x80 is always 5 (Colosseum) or 6 (XD).
+
+### SequenceEntry (0x70 bytes)
+
+Every entry — both the main entry at file offset 0x00 and each sub-entry — shares this structure. Derived from the `SequenceEntry` constructor in the XD disassembly (`wazaSequenceEntry/__ct__13SequenceEntryF25enumSequenceEntryDataTypeP12WazaSequencePPUc.s`).
+
+| Offset | Size | Type | Field | Notes |
+|--------|------|------|-------|-------|
+| 0x00 | 4 | u32→u8 | identifier | Stored as low byte |
+| 0x04 | 4 | u32 | entry_type | Dispatch key (0–7), see sub-entry types |
+| 0x08 | 4 | u32→u8 | param_a | |
+| 0x0C | 4 | u32→u8 | param_b | |
+| 0x10 | 4 | s32→u8 | timing_start | Negative → 0xFF |
+| 0x14 | 4 | s32→u8 | timing_hit | Negative → 0 |
+| 0x18 | 4 | s32→u8 | timing_end | Negative → 0 |
+| 0x1C | 4 | u32→u8 | bone_attachment | |
+| 0x20 | 64 | raw | extra_data | Type-specific; pointer stored at runtime |
+| 0x60 | 4 | u32→u16 | param_c | |
+| 0x64 | 4 | u32→u16 | param_d | |
+| 0x68 | 4 | — | *(not read)* | Often matches version (2 or 3) |
+| 0x6C | 4 | u32→u8 | link_ref | Reference to another entry by ID |
+
+**Main entry (file offset 0x00):** In all observed files, `timing_start/hit/end` are −1 (0xFFFFFFFF), `bone_attachment` is 2–4, and `entry_type` is 0. The 64-byte `extra_data` block (0x20–0x5F) is typically all zeros.
+
+### Section Header (0x20 bytes at file offset 0x70)
+
+Read by `WazaSequence::Load` / `WazaSequence::LoadData` after consuming the main entry. All offsets are relative to the header start; file offsets shown for reference.
+
+| Header Offset | File Offset | Size | Type | Field |
+|--------------|-------------|------|------|-------|
+| 0x00 | 0x70 | 2 | u16 | speed_value |
+| 0x02 | 0x72 | 2 | u16 | variation_slot |
+| 0x04 | 0x74 | 4 | u32 | entry_count (sub_entries = value − 1) |
+| 0x08 | 0x78 | 4 | u32 | flags |
+| 0x0C | 0x7C | 4 | u32 | param (low byte used) |
+| 0x10 | 0x80 | 4 | u32 | version (5 = Colosseum, 6 = XD) |
+| 0x14 | 0x84 | 4 | u32 | hsd_archive_size (0 = none) |
+| 0x18 | 0x88 | 4 | u32 | unknown |
+| 0x1C | 0x8C | 4 | u32 | camera_resource (non-zero = load camera) |
+
+**Version behavior:**
+- version ≤ 3: `flags |= 0x78`
+- version ≤ 5: `flags &= ~0x3F80` (clear bits 7–13)
+- version ≥ 6 (XD): `speed_value` converted from u16 to float via `(float)speed_value / constant`
+
+**HSD Archive:** When `hsd_archive_size` > 0, a standard DAT binary begins at file offset 0xA0 (after align32 padding of the section header). Parsed by `HSD_ArchiveParse`. The data pointer advances by `align32(hsd_archive_size)`.
+
+**Camera:** When `camera_resource` is non-zero, a camera DAT of `hsd_archive_size` bytes is loaded via `loadCamera`. The data pointer advances by `align32(hsd_archive_size)`.
+
+### Sub-Entry Types
+
+After the section header (and optional HSD archive), sub-entries follow sequentially. Each starts with a 0x70-byte SequenceEntry header. The `entry_type` field at offset +0x04 determines which loader handles the type-specific extra data that follows.
+
+| Type | Name | Extra Data | Description |
+|------|------|-----------|-------------|
+| 0 | Camera | 0x0C bytes; if [0x00]=3: + [0x04]×8 bytes | Camera animation keyframes |
+| 1 | Model | align32(0x28) + optional DAT | 3D model with HSD scene data |
+| 2 | Particle | align32(0x14) + align32(particle_size) | Particle effect (GPT1/GPT1v2) |
+| 3 | Effect | 0x0C header + variable (10 sub-types) | Composite effect (see below) |
+| 4 | Sound | 0x14 bytes | Sound effect reference |
+| 5 | Event | 0x08 bytes | Script event trigger |
+| 6 | LensFlare | align32(0x14) + align32([0x00]) | Lens flare effect data |
+
+#### Model Extra Data (0x28 bytes)
+
+| Offset | Size | Type | Field |
+|--------|------|------|-------|
+| 0x00 | 4 | u32 | anim_type |
+| 0x04 | 4 | u32 | anim_mode |
+| 0x08 | 4 | u32 | render_flags |
+| 0x0C | 4 | u32 | render_mode |
+| 0x10 | 4 | u32 | scale_sign (negative = flag set) |
+| 0x14 | 4 | u32 | param |
+| 0x18 | 4 | u32 | param2 |
+| 0x1C | 4 | u32 | dat_size (0 = no embedded DAT) |
+| 0x20 | 4 | u32 | model_resource_id (loaded via `loadModel`) |
+| 0x24 | 4 | u32 | unknown |
+
+When `dat_size` > 0, a DAT binary follows immediately after the align32(0x28) extra header, parsed by `HSD_ArchiveParse`.
+
+#### Particle Extra Data (0x14 bytes)
+
+| Offset | Size | Type | Field |
+|--------|------|------|-------|
+| 0x00 | 4 | u32 | unknown |
+| 0x04 | 4 | u32 | unknown |
+| 0x08 | 4 | u32 | particle_data_size |
+| 0x0C | 4 | u32 | particle_bank (set at runtime, 0 in file) |
+| 0x10 | 4 | u32 | unknown |
+
+Particle data (GPT1 or GPT1v2) of `particle_data_size` bytes follows after align32 padding. Loaded by `GSparticleLoad`.
+
+#### Effect Sub-Types (0–9)
+
+The Effect entry has a 0x0C-byte header where offset 0x00 is the sub-type ID (0–9). Each sub-type has different variable-length data. The full sub-type dispatch table (at `lbl_80412E38` in the DOL) has not been fully mapped. Known sub-type behaviors:
+
+- **Animation keyframes:** 0x10-byte header with block count at +0x04, followed by count × 0x10-byte keyframe blocks. A XOR byte-swap is applied in-place (swaps bytes 0↔3, 1↔2, 4↔7, 5↔6 within each block).
+- **Embedded HSD archive:** 0x40-byte or 0x20-byte header with DAT size, followed by DAT data parsed by `HSD_ArchiveParse`.
+- **Embedded particle:** 0x18-byte header with particle size at +0x0C, followed by particle data loaded by `GSparticleLoad`.
+
+### Colosseum vs XD Differences
+
+| Aspect | Colosseum | XD |
+|--------|-----------|-----|
+| Version field (0x80) | 5 | 6 |
+| Particle format | GPT1 V1 (`0x47505431`) | GPT1 V2 (`0x01F056DA`) |
+| Speed value | Not used (default float) | u16 → float conversion |
+| Flag adjustments | `flags \|= 0x78`, clear bits 7–13 | None |
+
+### DOL Reference Tables (XD US)
+
+The game's executable contains two tables that map moves to WZX effect animations.
+
+#### WZXMoveAnimation (DOL 0x4095C8, RAM 0x8040C5C8)
+
+373 entries × 6 bytes — one per move. Each entry indexes into the WZXAnimation table:
+
+| Offset | Size | Type | Field |
+|--------|------|------|-------|
+| 0x00 | 2 | u16 | attack_animation_index |
+| 0x02 | 2 | u16 | damage_animation_index |
+| 0x04 | 2 | u16 | special_animation_index |
+
+#### WZXAnimation (DOL 0x40D0F0, RAM 0x804100F0)
+
+1,399 entries × 8 bytes — maps animation indices to FSYS archive resources:
+
+| Offset | Size | Type | Field |
+|--------|------|------|-------|
+| 0x00 | 4 | u32 | fsys_group_id |
+| 0x04 | 4 | u32 | wzx_file_id |
+
+#### Loading Flow
+
+```
+Move ID → WZXMoveAnimation[move_id].attack_index
+       → WZXAnimation[attack_index].fsys_group_id
+       → Load FSYS archive → Extract WZX file
+       → floorReadWZXPreFunc (allocate + lock)
+       → floorReadWZXPostFunc (GSresGetResource → WazaSequence::Load)
+```
+
+### Disassembly Sources
+
+Reverse-engineered from the XD US DOL disassembly at `GoD-Tool/scripts/Disassembly XD/text1/`:
+- `wazaSequence/Load__12WazaSequenceFPUcUlUl.s` — static loader
+- `wazaSequence/LoadData__12WazaSequenceFPUc.s` — instance loader with version checks
+- `wazaSequenceEntry/__ct__13SequenceEntryF...s` — 0x70-byte entry format
+- `wazaSequenceEntry/Load__13ParticleEntryFPPUc.s` — particle data layout
+- `wazaSequenceEntry/Load__10ModelEntryFPPUc.s` — model + embedded DAT layout
+- `wazaSequenceEntry/Load__11EffectEntryFPPUc.s` — effect sub-type dispatch
+- `floorRead/floorReadWZXPostFunc.s` — WZX load entry point
+
+The XD symbol map (`GXXE.map`) provides function addresses and sizes for cross-referencing.

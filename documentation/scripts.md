@@ -47,32 +47,17 @@ After running, use the **Shiny Variant** panel in Object Properties to tweak par
 
 ---
 
-## apply_pkx_metadata.py
+## prepare_for_export.py
 
-**Purpose:** Apply default PKX metadata to an arbitrary armature so it can be exported as a `.pkx` file.
+**Purpose:** Prepare a Blender scene for Colosseum/XD export. Adds custom properties the exporter needs on cameras and armatures. Only adds properties that don't already exist — not needed on models that were imported through the DAT plugin.
 
 **Usage:**
-1. Select an armature in the viewport
+1. Optionally select an armature (for PKX metadata)
 2. Open the Scripting workspace
-3. Open `scripts/apply_pkx_metadata.py`
+3. Open `scripts/prepare_for_export.py`
 4. Click **Run Script**
 
-**What it does:**
-- Sets the PKX format to XD (editable to COLOSSEUM in custom properties)
-- Auto-detects the head bone by name heuristic (looks for "head" in name, falls back to first child of root)
-- Creates 17 animation metadata entries (slot 0 = idle loop, rest = unused)
-- Sets default null joint bone assignments (root + head)
-- Sets identity shiny routing (no shiny filter)
-- Stores all metadata as `dat_pkx_*` custom properties on the armature
-
-**After running:**
-- Edit `dat_pkx_*` properties in Object Properties > Custom Properties to customize
-- Set `dat_pkx_species_id` to the Pokédex number for Pokémon models
-- Map animation slots to DAT animation indices via `dat_pkx_anim_NN_sub_0_anim`
-- Export the model as `.pkx` from the DAT exporter — the header will be generated from these properties
-
-**Errors:**
-- "Select an armature first" — no armature is selected
+See [Exporter Setup](exporter_setup.md) for a full reference of every property, what it does, and how to choose the right values.
 
 ---
 

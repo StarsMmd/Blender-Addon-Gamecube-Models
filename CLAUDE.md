@@ -6,7 +6,7 @@ A Blender addon that imports and exports `.dat` 3D model files used in GameCube 
 
 **Target Blender version:** 4.5
 
-**Supported file extensions:** `.dat`, `.fdat`, `.rdat`, `.pkx`, `.fsys`, `.wzx`
+**Supported file extensions:** `.dat`, `.fdat`, `.rdat`, `.pkx`, `.fsys`, `.wzx`, `.cam`
 
 **Reference implementation:** [Ploaj/HSDLib](https://github.com/Ploaj/HSDLib) — a C# Super Smash Bros. Melee model viewer/editor for the same SysDolphin format. **Caveat:** HSDLib targets Melee; this plugin targets Pokémon Colosseum/XD — struct fields, flag semantics, and node types may not match exactly.
 
@@ -78,10 +78,10 @@ importer/
       helpers/dat_parser.py      # DATParser — recursive node tree parser
     describe/
       describe.py                # Phase 4: node trees → IRScene
-      helpers/                   # bones, meshes, materials, animations, constraints, lights, material_animations, keyframe_decoder
+      helpers/                   # bones, meshes, materials, animations, constraints, lights, cameras, material_animations, keyframe_decoder
     build_blender/
       build_blender.py           # Phase 5: IRScene → Blender objects
-      helpers/                   # skeleton, meshes, materials, animations, constraints, lights, material_animations
+      helpers/                   # skeleton, meshes, materials, animations, constraints, lights, cameras, material_animations
       errors/build_errors.py     # ModelBuildError
     post_process/
       post_process.py            # Phase 6: reset poses, select animations, apply shiny filters
@@ -179,15 +179,16 @@ Nodes are cached by file offset (`nodes_cache_by_offset`). Nodes with `is_cachab
 | Bone instances (JOBJ_INSTANCE) | ✅ Working |
 | Shape animation import | ❌ Stubs only (not implemented in legacy either) |
 | Particle import (GPT1) | ⚠️ Parser + IR representation working, no Blender visualization yet |
-| Camera / Fog import | ❌ Stubs only |
-| Exporter pipeline | ⚠️ Bones + meshes (RIGID/SINGLE_BONE/ENVELOPE) + materials + textures (all GX formats) + bound box + animations + material animations + lights + constraints working |
+| Camera import | ✅ Working (static + animated: position, target, FOV, roll, near/far) |
+| Fog import | ❌ Not supported (no fog data found in tested models) |
+| Exporter pipeline | ⚠️ Bones + meshes (RIGID/SINGLE_BONE/ENVELOPE) + materials + textures (all GX formats) + bound box + animations + material animations + lights + cameras + constraints working |
 | Exporter binary round-trip (DATBuilder) | ✅ Functional (0 value mismatches) |
 | Exporter PKX packaging | ✅ Working (DAT injection, shiny write-back, trailer preserved) |
 | In-game loading | ✅ Working — all three paths (BNB, NIN, IBI) produce correct geometry + textures in both Blender and in-game simultaneously |
 | IR pipeline | ✅ Default path (legacy available via toggle) |
 | FSYS archive import | ✅ Working (multi-model extraction + LZSS decompression) |
 | Shiny variant filter | ✅ Working (PKX color extraction, live-editable shader node group, per-parameter UI) |
-| Unit tests | ✅ 555 passing (27 texture encoder, 14 DAT serialization/alignment/relocation/vertex-space, 24 PKX header, 24 GPT1 particle, 14 WZX extraction) |
+| Unit tests | ✅ 626 passing (27 texture encoder, 14 DAT serialization/alignment/relocation/vertex-space, 24 PKX header, 24 GPT1 particle, 15 WZX extraction, 2 material animation scale, 14 camera describe, 22 camera animation, 12 camera compose, 20 bezier sparsification) |
 | Shader node auto-layout | ✅ Working (topological sort from output→inputs, left-to-right) |
 | Scale inheritance (animation baking) | ⚠️ Partially resolved — hybrid approach, see below |
 
@@ -324,6 +325,7 @@ The shiny parameters are stored as custom properties on the armature (`dat_pkx_s
 - **Blender API tracking:** Whenever a `bpy` API call is added, moved, removed, or modified, update `documentation/blender_api_usage.md` to match.
 - **Test count:** Whenever tests are added or removed, update the unit test count in the Current Status table above.
 - **Bug fix tests:** Whenever a bug is successfully fixed, add a unit test case that covers the fixed logic to prevent regressions.
+- **No import metadata in the IR for round-trip fidelity:** Never add fields to the IR or custom properties to Blender objects solely to shuttle import-side metadata (channel ordering, quantization format, etc.) through to the compose/export phase. The IR must be derivable from the Blender scene or deterministic algorithms. If a round-trip mismatch comes from format details, investigate whether the original compiler's behavior can be reproduced algorithmically. If no deterministic pattern exists, accept the mismatch.
 
 ---
 

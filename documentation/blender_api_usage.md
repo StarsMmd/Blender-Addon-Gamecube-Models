@@ -60,8 +60,9 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.80 | current | `bpy.data.meshes.new(name)` | `meshes.py` | |
 | 2.80 | current | `bpy.data.materials.new(name)` | `materials.py`, `meshes.py` | |
 | 2.80 | current | `bpy.data.lights.new(name, type)` | `lights.py` | |
+| 2.80 | current | `bpy.data.cameras.new(name)` | `cameras.py` | Camera import/export |
 | 2.80 | current | `bpy.data.images.new(name, w, h, alpha=True)` | `materials.py` | |
-| 2.80 | current | `bpy.data.actions.new(name)` | `animations.py`, `material_animations.py` | |
+| 2.80 | current | `bpy.data.actions.new(name)` | `animations.py`, `material_animations.py`, `cameras.py` | |
 | 2.80 | current | `bpy.data.node_groups.new(name, type)` | `shiny_filter.py` | ShinyFilter node group |
 | 2.80 | current | `bpy.data.node_groups[name]` | `shiny_filter.py` | Lookup for rebuild |
 | | | | | |
@@ -167,15 +168,16 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.80 | current | `target.data_path = 'dat_pkx_shiny'` | `shiny_filter.py` | Registered property path |
 | | | | | |
 | | | **Animation Data** | | |
-| 2.80 | current | `object.animation_data_create()` | `animations.py`, `material_animations.py` | |
-| 2.80 | current | `object.animation_data.action = action` | `animations.py`, `material_animations.py` | |
+| 2.80 | current | `object.animation_data_create()` | `animations.py`, `material_animations.py`, `cameras.py` | |
+| 2.80 | current | `object.animation_data.action = action` | `animations.py`, `material_animations.py`, `cameras.py` | |
 | 4.5 | current | `action.slots.new(type, name)` | `animations.py`, `material_animations.py` | Guarded: `>= (4, 5, 0)` |
 | 4.5 | current | `action.slots.active = slot` | `animations.py`, `material_animations.py` | Guarded: `>= (4, 5, 0)` |
 | 4.4 | current | `animation_data.action_slot = slot` | `animations.py`, `material_animations.py` | Guarded: `>= (4, 4, 0)` |
 | 2.80 | current | `action.use_fake_user = True` | `animations.py`, `material_animations.py` | |
 | | | | | |
 | | | **F-Curves & Keyframes** | | |
-| 2.80 | current | `action.fcurves.new(data_path, index=n)` | `animations.py`, `material_animations.py` | |
+| 2.80 | current | `action.fcurves.new(data_path, index=n)` | `animations.py`, `material_animations.py`, `cameras.py` | |
+| 2.80 | current | `action.fcurves.find(data_path, index=n)` | `cameras.py` (export) | Read-back camera FCurves |
 | 2.80 | current | `curve.keyframe_points.insert(frame, value)` | `animations.py`, `material_animations.py` | |
 | 2.80 | current | `keyframe.interpolation = '...'` | `animations.py` | BEZIER, LINEAR, CONSTANT |
 | 2.80 | current | `keyframe.handle_left = (x, y)` | `animations.py` | Bezier handles |

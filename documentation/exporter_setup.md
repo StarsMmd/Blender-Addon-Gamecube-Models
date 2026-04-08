@@ -1,0 +1,225 @@
+# Exporter Setup
+
+> **Status:** Work in progress — skeleton, mesh (including envelope skinning), material, texture, animation, constraint, light, and camera export functional. In-game loading verified (BNB and NIN paths produce correct results; IBI path has known mesh-bone assignment issues).
+
+The exporter writes a Blender scene to a `.dat` or `.pkx` binary that can be used in Pokemon Colosseum or Pokemon XD: Gale of Darkness. The output is not directly compatible with other games that use `.dat` models (e.g. Super Smash Bros. Melee).
+
+**Important:** The exporter exports the **entire Blender scene**, not just selected objects. All armatures, their parented meshes, lights, and cameras in the scene are included in the output.
+
+---
+
+## Quick Start
+
+1. **Check compatibility** — review the [feature compatibility table](#feature-compatibility) to confirm the exporter supports the Blender features your scene uses.
+2. **Prepare the scene** — if the model was **not** imported through the DAT plugin, run [`scripts/prepare_for_export.py`](#preparation-script) to add required custom properties. Delete any unwanted objects (default cube, extra lights/cameras).
+3. **Review export properties** — check the [custom properties](#export-properties) on your armature and cameras. Set species ID, animation mappings, and camera aspect as needed.
+4. **Export** — **File > Export > Gamecube model (.dat)**. Choose the output file location and set the file extension to `.dat` or `.pkx`. If no extension is specified, the exporter defaults to `.dat`.
+   - **`.dat`** — standalone model file, can be created from scratch
+   - **`.pkx`** — PKX container; requires an existing `.pkx` at the output path (the exporter injects the new model into the existing container)
+
+---
+
+## Feature Compatibility
+
+What the exporter can and cannot read from your Blender scene.
+
+### Scene objects
+
+| Blender feature | Export support | Notes |
+|---|---|---|
+| Armature | ✅ Exported | Each armature becomes one model in the DAT file |
+| Mesh (parented to armature) | ✅ Exported | Must be parented to an armature |
+| Mesh (not parented) | ❌ Ignored | Parent it to an armature first |
+| Camera (PERSP) | ✅ Exported | Position, FOV, clip planes, target (via TRACK_TO constraint) |
+| Camera (ORTHO) | ✅ Exported | Ortho scale exported as FOV field |
+| Camera (PANO) | ❌ Ignored | No GameCube equivalent |
+| Light (SUN) | ✅ Exported | Color + direction |
+| Light (POINT) | ✅ Exported | Color + position |
+| Light (SPOT) | ✅ Exported | Color + position + target |
+| Light (AREA) | ❌ Ignored | No GameCube equivalent |
+| Empty | ❌ Ignored | Used internally as camera/light targets, not exported as objects |
+| Curves / Text / Volumes | ❌ Ignored | Convert to mesh first if needed |
+
+### Mesh data
+
+| Blender feature | Export support | Notes |
+|---|---|---|
+| Vertices / Faces | ✅ Exported | Triangulated on export |
+| Normals | ✅ Exported | Per-vertex normals |
+| UV maps | ✅ Exported | Up to 8 UV layers (GX limit) |
+| Vertex colors | ✅ Exported | FLOAT_COLOR attribute layers |
+| Shape keys | ❌ Not yet | Shape animation stubs only |
+| Custom split normals | ✅ Exported | Read from mesh loops |
+
+### Skinning
+
+| Blender feature | Export support | Notes |
+|---|---|---|
+| Vertex groups (multi-bone) | ✅ Envelope | Weighted/envelope skinning |
+| Vertex groups (single bone) | ✅ Single-bone | All verts in one group |
+| No vertex groups | ✅ Rigid | Bound to parent bone |
+| Armature modifier | ✅ Required | Must be present for skinning |
+
+### Materials
+
+| Blender feature | Export support | Notes |
+|---|---|---|
+| Principled BSDF base color | ✅ Exported | Diffuse color |
+| Principled BSDF specular tint | ✅ Exported | Reverse-mapped to absolute specular color |
+| Principled BSDF alpha | ✅ Exported | Material transparency |
+| Image textures | ✅ Exported | All GX formats supported, format set via `dat_gx_format` |
+| `dat_ambient_emission` node | ✅ Exported | Per-material ambient color |
+| Shiny filter nodes | ⏭️ Skipped | See [Shiny Filter](#shiny-filter) below |
+| Procedural textures | ❌ Ignored | Bake to image first |
+| Multiple materials per mesh | ✅ Exported | Split into separate display lists |
+| Node groups (custom) | ❌ Ignored | Only named nodes recognized by the exporter are read |
+
+### Animations
+
+| Blender feature | Export support | Notes |
+|---|---|---|
+| Bone actions (loc/rot/scale) | ✅ Exported | Keyframed bone transforms |
+| Material color/alpha actions | ✅ Exported | Animated material properties |
+| Texture UV scroll/scale | ✅ Exported | Animated texture offset and scale |
+| Shape key actions | ❌ Not yet | |
+| Camera animations | ❌ Not yet | Static camera only |
+| NLA strips | ✅ Read | Actions referenced by NLA are exported |
+| Drivers | ❌ Ignored | Bake to keyframes first |
+
+### Constraints
+
+| Blender feature | Export support | Notes |
+|---|---|---|
+| Inverse Kinematics (IK) | ✅ Exported | Chain length + pole target |
+| Copy Location | ✅ Exported | |
+| Copy Rotation | ✅ Exported | |
+| Track To | ✅ Exported | |
+| Limit Rotation | ✅ Exported | Min/max per axis |
+| Limit Location | ✅ Exported | Min/max per axis |
+| Other constraints | ❌ Ignored | No GameCube equivalent |
+
+---
+
+## Preparation Script
+
+Before exporting a model that was **not** imported through the DAT plugin (i.e. built from scratch or imported from another format), run **`scripts/prepare_for_export.py`** from Blender's Scripting panel. The script only adds properties that don't already exist.
+
+1. Optionally select an armature (needed for PKX metadata)
+2. Open the Scripting workspace
+3. Open `scripts/prepare_for_export.py`
+4. Click **Run Script**
+
+---
+
+## Scene Preparation
+
+Delete any objects that should not be part of the model. Blender's default scene includes objects that will cause issues if left in:
+
+- **Default Cube** — delete it (`X` key)
+- **Default Light** — delete it (the exporter will include it as a game light, which may not be desired)
+- **Default Camera** — delete it if you don't want it in the game model, or keep it and set `dat_camera_aspect`
+
+Only armatures and their parented meshes should remain in the scene, plus any lights and cameras you intentionally want in the game model.
+
+---
+
+## Export Properties
+
+These are custom properties the exporter reads from Blender objects. The [preparation script](#preparation-script) sets defaults for all of them. On models imported through the DAT plugin, they are already set.
+
+### Camera properties
+
+| Property | Set on | Default | Description |
+|---|---|---|---|
+| `dat_camera_aspect` | Camera objects | `1.18` | Viewport aspect ratio (width/height). The game uses this to configure GX projection. **1.18** is the standard battle camera value used by all Pokémon models in Colosseum/XD. Use **1.333** (4:3) for fullscreen cameras like map/overworld scenes. If not set, the exporter uses 1.333. |
+
+Camera position, FOV, and clip planes are read directly from Blender's camera settings. Camera target is read from a TRACK_TO constraint (if present).
+
+### PKX metadata (armature properties)
+
+These are only needed when exporting to `.pkx` format. The preparation script sets them on the active armature if it doesn't already have `dat_pkx_format`.
+
+| Property | Default | Description |
+|---|---|---|
+| `dat_pkx_format` | `"XD"` | Target game. Set to `"COLOSSEUM"` for Colosseum models. Affects animation entry format and sub-animation layout. |
+| `dat_pkx_species_id` | `0` | Pokédex number. Set to the species' national dex ID (e.g. 291 for Shedinja). Used by the game to identify the model. |
+| `dat_pkx_model_type` | `"POKEMON"` | Model category. `"POKEMON"` for Pokémon, change for trainer models. |
+| `dat_pkx_head_bone` | _(auto-detected)_ | Name of the head bone. The script looks for bones with "head" in the name, then falls back to the first child of the root. Used for camera targeting and head tracking in battle. |
+| `dat_pkx_joint_root` | _(first bone)_ | Root bone name for null joint mapping. |
+| `dat_pkx_joint_head` | _(same as head_bone)_ | Head bone for null joint mapping. |
+| `dat_pkx_joint_center`, `_body_3` … `_attach_d` | `""` | Named body part bones for particle attachment, camera targeting, and hit detection. Leave empty if unknown — the game falls back gracefully. |
+| `dat_pkx_anim_count` | `17` | Number of animation metadata entries. Standard Pokémon models use 17 (idle + 16 action slots). |
+| `dat_pkx_anim_00_type` | `"loop"` | Animation slot 0 type. Set to `"loop"` for idle animation. Other slots default to `"action"`. Valid types: `"loop"`, `"hit_reaction"`, `"action"`, `"compound"`. |
+| `dat_pkx_anim_NN_sub_0_anim` | `0` | DAT animation index for slot N. Maps PKX animation slots to the actual animation sets in the DAT file. Set to the 0-based index of the animation in the model. |
+| `dat_pkx_anim_NN_sub_count` | `1` | Number of sub-animations per slot. Usually 1. |
+| `dat_pkx_anim_NN_damage_flags` | `0` | Bit flags for hit reaction behavior. Only relevant for `"hit_reaction"` type entries. |
+| `dat_pkx_anim_NN_timing_1` … `_4` | `0.0` | Timing parameters (seconds). Control animation blend/transition timing. |
+| `dat_pkx_has_shiny` | `True` | Enables the shiny variant panel. |
+| `dat_pkx_shiny_route_r/g/b/a` | `0/1/2/3` | Shiny color channel routing. Identity mapping (no color change). See the Shiny Variant panel for editing. |
+| `dat_pkx_shiny_brightness_r/g/b` | `0.0` | Shiny brightness offset per channel. 0.0 = no change, positive = brighter, negative = darker. Range [-1.0, 1.0]. |
+| `dat_pkx_sub_anim_N_type` | `"none"` | Sub-animation type (sleep on/off, extra). `"none"` = inactive, `"simple"` = basic, `"targeted"` = bone-targeted. |
+| `dat_pkx_flag_flying` | `False` | Model floats above ground in battle. |
+| `dat_pkx_flag_skip_frac_frames` | `False` | Skip fractional frame interpolation. |
+| `dat_pkx_flag_no_root_anim` | `False` | Disable root bone animation playback. |
+| `dat_pkx_particle_orientation` | `0` | Default particle emission orientation. |
+| `dat_pkx_distortion_param` | `0` | Screen distortion effect parameter. |
+| `dat_pkx_distortion_type` | `0` | Screen distortion effect type. |
+
+---
+
+## Other Export Settings
+
+### Bone Visibility
+
+Hidden bones in Blender are exported as hidden bones in the DAT file. Toggle bone visibility in the armature to control this.
+
+### Mesh-to-Bone Binding
+
+Each mesh must be parented to the armature. Bone assignments are determined from vertex groups:
+
+- **Weighted skinning**: Meshes with vertex groups assigned to multiple bones
+- **Single-bone binding**: Meshes where all vertices belong to one bone's vertex group
+- **No vertex groups**: Meshes with no vertex groups are bound to the root bone
+
+### Ambient Lighting
+
+The game uses per-material ambient colors to control how materials respond to ambient light. In Blender, this is approximated with an Emission node.
+
+To set up ambient lighting for export:
+1. Add an Emission node named `dat_ambient_emission` to the material
+2. Set its Color to the desired ambient color
+3. Add an Add Shader node named `dat_ambient_add` to mix it with the main shader
+4. Connect: `main_shader → Add Shader input 0`, `Emission → Add Shader input 1`, `Add Shader → Material Output`
+
+The exporter reads the ambient color from the `dat_ambient_emission` node. If no such node exists, a default of (0.5, 0.5, 0.5) is used.
+
+Use the standalone script `scripts/add_ambient_lighting.py` to add ambient nodes to all materials at once.
+
+### Specular Color
+
+The exporter computes the specular color from Blender's Principled BSDF Specular Tint and diffuse color. No manual setup is needed — the exporter reads the Specular Tint value and reverse-maps it to the game's absolute specular color.
+
+### Base Model
+
+_WIP_
+
+### Bound Boxes
+
+Bound boxes are generated automatically from the model's mesh vertices. Each animation slot gets an axis-aligned bounding box (AABB) encompassing the full model extent.
+
+### Shiny Filter
+
+The importer (or the `scripts/add_shiny_filter.py` script) inserts four shader nodes into each material to preview the Pokémon's shiny coloring in the viewport:
+
+- `shiny_route_shader` / `shiny_route_mix` — channel swizzle (which color channels map to which)
+- `shiny_bright_shader` / `shiny_bright_mix` — per-channel brightness adjustment
+
+These nodes are **not part of the model data** — they are a viewport preview of parameters stored in the PKX header. The exporter automatically skips them when reading materials back. The shiny parameters themselves are exported as PKX metadata from the `dat_pkx_shiny_route_*` and `dat_pkx_shiny_brightness_*` properties on the armature (see [PKX metadata](#pkx-metadata-armature-properties)).
+
+---
+
+## How to Use the New Model in Game
+
+> This section is a work in progress.
+
+For guidance on replacing model files in a game ISO, visit the community Discord: www.discord.gg/xCPjjnv

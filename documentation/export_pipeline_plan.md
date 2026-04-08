@@ -689,7 +689,7 @@ The compose phase (`compose/helpers/meshes.py`) groups IRMeshes sharing a materi
 | `importer/phases/build_blender/helpers/skeleton.py` | Store `hsd_flags` custom property |
 | `importer/phases/build_blender/helpers/meshes.py` | Store `hsd_skin_type` custom property |
 | `BlenderPlugin.py` | Wire ExportHSD to new exporter pipeline |
-| `documentation/exporter_usage.md` | Update feature status as features are implemented |
+| `documentation/exporter_setup.md` | Update feature status as features are implemented |
 | ~~`test_dat_write.py`~~ | Removed — functionality moved to `tests/round_trip/run_round_trips.py` |
 
 ## Key Files Created

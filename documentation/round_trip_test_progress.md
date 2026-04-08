@@ -28,7 +28,7 @@ Parse a DAT binary, write it back, and compare the output bytes against the inpu
 
 ## Test Results
 
-**Overall export pipeline completion: ✅ 81%** _(weighted: NBN 25%, NIN 40%, IBI 30%, BNB 5%)_
+**Overall export pipeline completion: ✅ 82%** _(weighted: NBN 25%, NIN 40%, IBI 30%, BNB 5%)_
 
 _Average health: 🔴 0-20% · 🟠 21-40% · 🟡 41-60% · 🔵 61-80% · ✅ 81-100%_
 
@@ -40,31 +40,31 @@ All scores displayed as `match%(error/miss)` — see "How Scores Are Computed" f
 
 | Model | Game | NBN ✅ | NIN 🔵 | IBI ✅ | BNB 🔵 |
 |---|---|---|---|---|---|
-| nukenin | XD | 97.1%(3/0) | 84.2%(13/3) | 84.7%(8/7) | 94.0% |
-| haganeil | XD | 92.7%(7/0) | 79.7%(16/5) | 80.3%(10/10) | 91.8% |
-| frygon | XD | 93.0%(7/0) | 78.3%(20/2) | 78.0%(12/10) | 83.5% |
-| achamo | XD | 92.0%(8/0) | 74.9%(24/1) | 79.4%(13/8) | 80.9% |
-| miniryu | XD | 90.2%(10/0) | 56.4%(41/2) | 84.0%(7/9) | 80.7% |
-| bohmander | XD | 91.5%(9/0) | 77.8%(21/1) | 79.3%(12/8) | 82.5% |
-| cerebi | XD | 89.6%(10/0) | 61.2%(38/1) | 79.6%(11/9) | 79.0% |
-| gallop | XD | 91.7%(8/0) | 76.7%(22/1) | 80.1%(10/10) | 77.3% |
-| usohachi | XD | 92.3%(8/0) | 68.7%(21/10) | 82.7%(10/7) | 75.2% |
-| runpappa | XD | 92.5%(7/0) | 73.6%(25/2) | 78.5%(13/8) | 81.4% |
-| rayquaza | XD | 93.6%(6/0) | 82.4%(16/2) | 75.5%(16/9) | 84.6% |
-| ken_a1 | XD | 91.6%(8/0) | 76.5%(21/2) | 88.1%(4/8) | 61.0% |
-| mage_0101 | XD | 91.8%(8/0) | 77.4%(21/2) | 82.2%(1/17) | 56.1% |
-| hinoarashi | Colo | 90.3%(10/0) | 64.1%(34/2) | 79.8%(6/14) | 84.7% |
-| hizuki_a1 | Colo | 92.5%(7/0) | 82.0%(16/2) | 88.6%(6/6) | 79.6% |
-| ghos | Colo | 90.3%(10/0) | 61.9%(35/3) | 78.9%(11/10) | 77.7% |
-| showers | Colo | 89.7%(10/0) | 62.6%(36/1) | 84.2%(6/9) | 79.9% |
+| nukenin | XD | 97.1%(3/0) | 85.3%(13/2) | 89.1%(8/2) | 94.0% |
+| haganeil | XD | 92.7%(7/0) | 80.2%(16/4) | 84.0%(10/6) | 91.8% |
+| frygon | XD | 93.0%(7/0) | 78.4%(20/2) | 83.7%(12/4) | 83.5% |
+| achamo | XD | 92.0%(8/0) | 75.0%(24/1) | 84.8%(13/2) | 80.9% |
+| miniryu | XD | 90.2%(10/0) | 56.6%(41/2) | 88.6%(8/4) | 80.7% |
+| bohmander | XD | 91.5%(9/0) | 77.9%(21/1) | 84.8%(12/3) | 82.5% |
+| cerebi | XD | 89.6%(10/0) | 61.3%(38/1) | 84.2%(10/6) | 79.0% |
+| gallop | XD | 91.7%(8/0) | 76.8%(22/1) | 85.2%(10/5) | 77.3% |
+| usohachi | XD | 92.3%(8/0) | 68.8%(21/10) | 85.7%(8/6) | 75.2% |
+| runpappa | XD | 92.5%(7/0) | 73.7%(25/2) | 84.4%(13/2) | 81.4% |
+| rayquaza | XD | 93.6%(6/0) | 82.5%(16/2) | 82.8%(16/1) | 84.6% |
+| ken_a1 | XD | 91.6%(8/0) | 76.6%(21/2) | 89.4%(5/5) | 61.0% |
+| mage_0101 | XD | 91.8%(8/0) | 77.5%(21/2) | 84.7%(1/14) | 56.1% |
+| hinoarashi | Colo | 90.3%(10/0) | 64.2%(34/2) | 83.2%(6/10) | 84.7% |
+| hizuki_a1 | Colo | 92.5%(7/0) | 82.2%(16/2) | 90.0%(6/4) | 79.6% |
+| ghos | Colo | 90.3%(10/0) | 62.1%(35/3) | 83.3%(10/7) | 77.7% |
+| showers | Colo | 89.7%(10/0) | 62.6%(36/1) | 88.9%(7/4) | 79.9% |
 
 ### Map / Scene Models (stretch goal)
 
 | Model | Game | NBN | NIN | IBI | BNB |
 |---|---|---|---|---|---|
-| D6_out_all | XD | 96.4%(4/0) | 24.7%(1/74) | 64.0%(14/22) | 18.7% |
-| M1_out | XD | 98.3%(2/0) | 23.3%(0/77) | 66.3%(9/25) | 2.6% |
-| M3_out | XD | 99.2%(1/0) | 22.8%(0/77) | 67.3%(10/23) | 1.5% |
+| D6_out_all | XD | 96.4%(4/0) | 18.0%(0/82) | 69.7%(11/20) | 43.7% |
+| M1_out | XD | 98.3%(2/0) | 22.7%(0/77) | 71.1%(8/21) | 2.6% |
+| M3_out | XD | 99.2%(1/0) | 22.7%(0/77) | 72.9%(9/18) | 1.5% |
 
 ---
 
@@ -118,15 +118,15 @@ Average per-category scores across all 20 test models:
 | Bones | ~82% | ~14% | ~4% | Errors: inverse_bind_matrix (different computation than original), rotation Euler ambiguity, scale inheritance position drift. Misses: hidden state (importer doesn't set edit_bone.hide) |
 | Meshes | ~98% | ~0% | ~2% | Near-complete geometry round-trip. Vertex positions, bone weights, and parent_bone_index all preserved |
 | Materials | ~99% | ~1% | ~0% | Specular mapped via Specular Tint correction, ambient via Emission node. GX texture format preserved via `dat_gx_format` custom property on Blender images |
-| Animations | ~26% | ~30% | ~44% | Errors from keyframe sparsification and Euler decomposition ambiguity. Misses from slope_in/slope_out fields (preserved from HSD import but not yet produced by describe_blender) |
+| Animations | ~35% | ~37% | ~28% | Errors from Euler decomposition ambiguity and slope value mismatch (finite-difference slopes vs original HSD slopes). Misses from handle_left/handle_right fields and remaining slope edge cases. Bezier sparsification now produces slope_in/slope_out via central finite differences on unbaked values |
 | Constraints | ~95% | ~5% | ~0% | IK, Copy Location, Track To, Copy Rotation, Limit Rotation, Limit Location all implemented. Errors from pole angle encoding and IK bone length precision |
 | Lights | ~100% | ~0% | ~0% | SUN, POINT, SPOT types round-trip correctly |
 
 ### Limiting Factors by Test Type
 
-**IBI** — The largest drag on IBI scores is animation accuracy (~26% match). Errors come from keyframe sparsification (frame-by-frame sampling loses original curve shape) and Euler decomposition ambiguity. Misses come from slope_in/slope_out fields on IRKeyframe — these are preserved from HSD import but describe_blender doesn't yet read Blender fcurve bezier handles to produce them. Bone errors are inherent Blender round-trip limitations: IBM values differ from original (our IBM is self-consistent but computed differently than the game tools), Euler decomposition ambiguity produces equivalent but numerically different rotation values, and accumulated parent scale drifts through Blender's edit bone normalization. Constraints and lights now round-trip at ~95-100%.
+**IBI** — Animation accuracy (~35% match) remains the largest drag on IBI scores. Bezier sparsification with slope extraction (via central finite differences on unbaked frame values) now produces slope_in/slope_out, reducing the miss rate from ~44% to ~28%. Remaining errors come from slope value mismatch (finite-difference approximation vs original HSD tangent values) and Euler decomposition ambiguity (equivalent but numerically different rotation values). Remaining misses are handle_left/handle_right fields (not yet populated) and slope edge cases. Bone errors are inherent Blender round-trip limitations: IBM values differ from original (our IBM is self-consistent but computed differently), and accumulated parent scale drifts through Blender's edit bone normalization. Constraints and lights round-trip at ~95-100%.
 
-**NIN** — Animation Frame encoding is the largest remaining error source. The compose phase now encodes BEZIER keyframes as HSD_A_OP_SPL with slopes preserved from import, sets start_frame from the first keyframe, and uses optimal quantization format selection (Colo/XD formula: `frac_bits = type_bits - ceil(log2(max_abs + 1))`, differs from HSDLib/Melee which uses lowest-frac_bits-first). Material animations are now composed (color/alpha + texture UV). Remaining Frame errors come from: (1) channel ordering in the Frame linked list (cosmetic — same data, different order), (2) quantization format edge cases (signed vs unsigned, float for channels that could be quantized), (3) material animation DObj chain alignment (empty entries for DObjs without animation not produced). Display list chunk count differences are minor (1 field per PObject). Palette data differences from C8 re-encoding. Fragment blending (PixelEngine) and TEV combiner (TextureTEV) are composed. Structural parity is solid: DObject grouping, PObject chaining, vertex descriptors, flags, and texture format selection all match the original. Future optimization: encode display lists as TRI_STRIP+QUADS+TRIANGLES (originals use ~80% strips, ~12% quads, ~8% triangles).
+**NIN** — Material color normalization is the largest NIN error source: the IR stores colors as normalized floats [0-1] while original nodes use raw u8 [0-255], causing mismatches on ambient/diffuse/specular RGBA fields across all materials. The compose phase encodes BEZIER keyframes as HSD_A_OP_SPL with slopes, sets start_frame from the first keyframe, and uses optimal quantization format selection (Colo/XD formula: `frac_bits = type_bits - ceil(log2(max_abs + 1))`). Investigation confirmed: (1) channel ordering already matches originals (ascending HSD_A_J_* constant order), (2) quantization format selection shows no systematic mismatches. Display list chunk count differences are minor (1 field per PObject). Palette data differences from C8 re-encoding. Material animations composed (color/alpha + texture UV). Structural parity is solid: DObject grouping, PObject chaining, vertex descriptors, flags, and texture format selection all match. Future optimization: encode display lists as TRI_STRIP+QUADS+TRIANGLES (originals use ~80% strips, ~12% quads, ~8% triangles).
 
 **NBN** — Pointer resolution edge cases and alignment differences in DATBuilder. Functionally correct (field values match).
 

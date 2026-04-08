@@ -55,7 +55,7 @@ shared/IR/
   constraints.py          # IRIKConstraint, IRBoneReposition, IRCopyLocationConstraint,
                           # IRTrackToConstraint, IRCopyRotationConstraint, IRLimitConstraint
   lights.py               # IRLight
-  camera.py               # IRCamera (stub)
+  camera.py               # IRCamera, IRCameraKeyframes
   fog.py                  # IRFog (stub)
 ```
 
@@ -380,14 +380,56 @@ class IRLight:
 
 ---
 
-## Camera & Fog (stubs)
+## Camera
 
 ```python
+class CameraProjection(Enum):
+    PERSPECTIVE = "PERSPECTIVE"
+    ORTHO = "ORTHO"
+
+@dataclass
+class IRCameraKeyframes:
+    """Decoded animation keyframes for one camera animation clip."""
+    name: str
+    eye_x: list[IRKeyframe] | None = None
+    eye_y: list[IRKeyframe] | None = None
+    eye_z: list[IRKeyframe] | None = None
+    target_x: list[IRKeyframe] | None = None
+    target_y: list[IRKeyframe] | None = None
+    target_z: list[IRKeyframe] | None = None
+    roll: list[IRKeyframe] | None = None
+    fov: list[IRKeyframe] | None = None
+    near: list[IRKeyframe] | None = None
+    far: list[IRKeyframe] | None = None
+    end_frame: float = 0.0
+    loop: bool = False
+
 @dataclass
 class IRCamera:
     name: str
+    projection: CameraProjection
+    position: tuple[float, float, float] | None = None
+    target_position: tuple[float, float, float] | None = None
+    roll: float = 0.0
+    near: float = 0.1
+    far: float = 1000.0
+    field_of_view: float = 60.0   # vertical FOV in degrees
+    aspect: float = 1.333
+    animations: list[IRCameraKeyframes] = field(default_factory=list)
+```
 
+- `projection`: PERSPECTIVE (from COBJ_PROJECTION_PERSPECTIVE/FRUSTUM) or ORTHO
+- `position`: camera eye position in GC world coordinates (from WObject)
+- `target_position`: camera interest/look-at point (from WObject)
+- `field_of_view`: vertical FOV in degrees for perspective; ortho_scale for orthographic
+- `viewport`/`scissor`/`up_vector` from the Camera node are not stored (GC screen-space artifacts)
+
+## Fog (stub)
+
+```python
 @dataclass
 class IRFog:
     name: str
 ```
+
+No fog data found in tested models. Stub retained for future use.
