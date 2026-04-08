@@ -190,6 +190,9 @@ Every Blender Python API call used by this addon, with the Blender version range
 | | | | | |
 | | | **Light Data** | | |
 | 2.80 | current | `light_data.color = [r, g, b]` | `lights.py` | |
+| 2.80 | current | `light_data.energy` | `lights.py` | Brightness value; 0 for ambient no-op lights |
+| | | **Light Custom Properties** | | |
+| 2.80 | current | `obj["dat_light_type"] = "AMBIENT"` | `lights.py`, `prepare_for_export.py` | Marks a POINT light as an ambient light |
 | | | | | |
 | | | **Image Data** | | |
 | 2.80 | current | `image.pixels = [...]` | `materials.py` | Flat RGBA float list |

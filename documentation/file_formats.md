@@ -124,11 +124,11 @@ For standard files (17 entries, no GPT1): `align32(0xE54) = 0xE60`
 | 0x18 | 4 | f32/u32 | timing_3 | float seconds | int frame count |
 | 0x1C | 4 | f32/u32 | timing_4 | float (compound only) | int frame count |
 | 0x20-0x4B | 44 | | *(reserved, zeros)* | | |
-| 0x4C | 64 | s32[16] | null_joint_bones | Bone indices, -1=unused | Same |
+| 0x4C | 64 | s32[16] | body_map_bones | Bone indices, -1=unused | Same |
 | 0x8C | 8×N | pairs | sub_anims | [motion_type, anim_idx] | [0, anim_idx] |
 | 0xCC | 4 | u32 | terminator | 3 | 1 |
 
-**null_joint_bones[N]:** 0=root, 1=head, 2=center/jaw, 3-15=body parts. Used for particle attachment, camera targeting, head tracking.
+**body_map_bones[N]:** 0=root, 1=head, 2=center/jaw, 3-15=body parts. Used for particle attachment, camera targeting, head tracking.
 
 **Timing conversion:** Colosseum frames = round(XD seconds × 60)
 

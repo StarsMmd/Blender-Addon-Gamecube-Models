@@ -188,7 +188,7 @@ Nodes are cached by file offset (`nodes_cache_by_offset`). Nodes with `is_cachab
 | IR pipeline | ✅ Default path (legacy available via toggle) |
 | FSYS archive import | ✅ Working (multi-model extraction + LZSS decompression) |
 | Shiny variant filter | ✅ Working (PKX color extraction, live-editable shader node group, per-parameter UI) |
-| Unit tests | ✅ 628 passing (27 texture encoder, 14 DAT serialization/alignment/relocation/vertex-space, 24 PKX header, 24 GPT1 particle, 15 WZX extraction, 2 material animation scale, 14 camera describe, 22 camera animation, 12 camera compose, 20 bezier sparsification, 15 light describe) |
+| Unit tests | ✅ 644 passing (27 texture encoder, 14 DAT serialization/alignment/relocation/vertex-space, 24 PKX header, 24 GPT1 particle, 15 WZX extraction, 2 material animation scale, 14 camera describe, 22 camera animation, 12 camera compose, 20 bezier sparsification, 15 light describe, 16 envelope display list splitting) |
 | Shader node auto-layout | ✅ Working (topological sort from output→inputs, left-to-right) |
 | Scale inheritance (animation baking) | ⚠️ Partially resolved — hybrid approach, see below |
 
@@ -321,7 +321,7 @@ The shiny parameters are stored as custom properties on the armature (`dat_pkx_s
 - **No bpy in shared/:** All Blender-specific code lives in `importer/phases/build_blender/`.
 - **Do not modify `legacy/`:** The `legacy/` folder contains the pre-refactor importer and should not be changed unless explicitly asked to do so.
 - **Fail loud over silent fallbacks:** When looking up Blender objects we created (nodes, bones, materials), raise `ValueError` with the actual names if the lookup fails — don't silently skip or fall back. Silent failures mask bugs and make debugging much harder.
-- **Standalone scripts:** Any standalone Blender scripts (run from the Scripting panel) go in `scripts/` and must be documented in `documentation/scripts.md`.
+- **Standalone scripts:** Any standalone Blender scripts (run from the Scripting panel) go in `scripts/` and must be documented in `documentation/scripts.md`. Scripts must be fully self-contained — no imports from the plugin codebase or other scripts. All code must be inlined in the single file. The only allowed imports are `bpy`, `math`, and Python standard library modules.
 - **Blender API tracking:** Whenever a `bpy` API call is added, moved, removed, or modified, update `documentation/blender_api_usage.md` to match.
 - **Test count:** Whenever tests are added or removed, update the unit test count in the Current Status table above.
 - **Bug fix tests:** Whenever a bug is successfully fixed, add a unit test case that covers the fixed logic to prevent regressions.
@@ -339,4 +339,4 @@ The shiny parameters are stored as custom properties on the armature (`dat_pkx_s
 - [x] Bone inverse_bind_matrix: computed as `srt_world.inverted()` — the inverse of the SRT-accumulated world matrix (no coordinate rotation). Only set on skinning target bones, cleared on others. See "Envelope Skinning" section in [export pipeline plan](documentation/export_pipeline_plan.md).
 - [ ] GPT1 particle export (compose + serialize phases) — validate import first
 - [ ] Blender particle visualization from IRParticleSystem
-- [ ] Envelope matrix index overflow: GX hardware supports 10 matrix slots per draw call (indices 0–27 in steps of 3). Models with >10 unique weight combos per mesh need their display lists split into multiple draws with matrix reloads. Currently clamped to 255 as a workaround — see `exporter/phases/compose/helpers/meshes.py` line 682.
+- [x] Envelope matrix index overflow: meshes with >10 unique weight combos are now split into multiple PObjects, each with ≤10 envelopes and its own display list. Greedy best-fit bin-packing minimizes the number of splits.
