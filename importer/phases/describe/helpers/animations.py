@@ -50,15 +50,23 @@ def describe_bone_animations(model_set, joint_to_bone_index, bones, options, log
     anim_name_map = _build_anim_name_map(options.get("pkx_header"))
 
     anim_sets = []
+    name_counts = {}  # track how many times each semantic name has been used
 
     for i, anim_joint_root in enumerate(animated_joints):
         semantic = anim_name_map.get(i)
         if semantic:
             # Clean up: replace " + " with "+" first, then spaces with "_"
             clean = semantic.replace(' + ', '+').replace(' ', '_')
-            name = "%s_%s" % (name_prefix, clean)
         else:
-            name = "%s_Anim_%02d" % (name_prefix, i)
+            clean = "Extra_%d" % i
+
+        # Deduplicate: first occurrence is bare, subsequent get " 2", " 3", etc.
+        if clean in name_counts:
+            name_counts[clean] += 1
+            name = "%s_%s_%d" % (name_prefix, clean, name_counts[clean])
+        else:
+            name_counts[clean] = 1
+            name = "%s_%s" % (name_prefix, clean)
 
         tracks = []
         loop = [False]  # mutable for closure
@@ -93,15 +101,27 @@ def _build_anim_name_map(pkx_header):
     except (ImportError, SystemError):
         from shared.helpers.pkx_header import XD_POKEMON_ANIM_NAMES, XD_TRAINER_ANIM_NAMES
 
-    is_trainer = (pkx_header.species_id == 0 and pkx_header.particle_orientation == 0)
+    is_xd = pkx_header.is_xd
+    is_trainer = is_xd and pkx_header.species_id == 0 and pkx_header.particle_orientation == 0
     slot_names = XD_TRAINER_ANIM_NAMES if is_trainer else XD_POKEMON_ANIM_NAMES
 
-    # Collect active slot names per animation index (motion_type > 0 only)
+    # Collect active slot names per animation index.
+    # XD uses motion_type > 0 to indicate active entries.
+    # Colosseum uses motion_type=0 as the default active state, so we check
+    # whether the entry's anim_type indicates a configured slot instead.
+    _COLO_ACTIVE_TYPES = {2, 3, 5}  # loop, hit_reaction, compound
     index_to_slots = {}
     for slot_idx, entry in enumerate(pkx_header.anim_entries):
         slot_name = slot_names[slot_idx] if slot_idx < len(slot_names) else 'Slot %d' % slot_idx
         for sub in entry.sub_anims:
-            if sub.motion_type > 0 and sub.anim_index < 1000:
+            if sub.anim_index >= 1000:
+                continue
+            if is_xd:
+                active = sub.motion_type > 0
+            else:
+                # Colosseum: entry is active if anim_type is non-default or motion_type > 0
+                active = entry.anim_type in _COLO_ACTIVE_TYPES or sub.motion_type > 0
+            if active:
                 idx = sub.anim_index
                 if idx not in index_to_slots:
                     index_to_slots[idx] = []
@@ -130,15 +150,19 @@ def _compact_anim_name(slot_names):
     """Generate a compact animation name from a list of slot names.
 
     Rules:
-    - Only active slots are included (inactive filtered upstream)
-    - All Physical 1-5 → "Physical". Partial: "Physical 1+3+5"
-    - Both Status → "Status". Single: keep as-is
-    - Damage + Faint sharing → "Faint"
+    - "Idle" (slot 0) takes absolute priority — always just "Idle"
     - Sub-animations keep their prefix: "Sub SleepOnPose"
-    - Multiple categories joined with " + "
+    - Physical-only → "Physical", Special-only → "Special", mix → "Attack"
+    - Non-attack slots appended after (except regularly defaulting ones like Take Flight)
+    - Damage + Faint sharing → "Faint"
+    - Deduplication happens upstream after all names are generated
     """
     if not slot_names:
         return 'Unknown'
+
+    # Idle (slot 0) takes absolute priority
+    if 'Idle' in slot_names:
+        return 'Idle'
 
     # Sub-animations take priority
     subs = [n for n in slot_names if n.startswith('Sub ')]
@@ -148,32 +172,40 @@ def _compact_anim_name(slot_names):
     if len(slot_names) == 1:
         return slot_names[0]
 
+    # Categorize
     physical = sorted([n for n in slot_names if 'Physical' in n])
-    status = sorted([n for n in slot_names if 'Status' in n])
+    special = sorted([n for n in slot_names if 'Special' in n])
     damage = sorted([n for n in slot_names if 'Damage' in n])
     faint = [n for n in slot_names if n == 'Faint']
 
+    # Slots that regularly default to sharing an animation — don't mention
+    _DEFAULT_SLOTS = {'Take Flight'}
+    _ALL_KNOWN = {'Physical', 'Special', 'Damage', 'Faint'}
+    other = [n for n in slot_names
+             if not any(cat in n for cat in _ALL_KNOWN)
+             and n not in _DEFAULT_SLOTS]
+
     parts = []
 
-    if physical:
-        if len(physical) >= 5:
+    # Compact Physical + Special into an attack label
+    if physical or special:
+        if physical and special:
+            parts.append('Attack')
+        elif physical:
             parts.append('Physical')
         else:
-            nums = [n.split()[-1] for n in physical]
-            parts.append('Physical ' + '+'.join(nums))
+            parts.append('Special')
 
-    if status:
-        if len(status) >= 2:
-            parts.append('Status')
-        else:
-            parts.append(status[0])
-
+    # Damage / Faint
     if damage and faint:
         parts.append('Faint')
     elif damage:
         parts.append('Damage' if len(damage) >= 2 else damage[0])
     elif faint:
         parts.append('Faint')
+
+    # Remaining non-defaulting slots (Idle 2-5, Special, etc.)
+    parts.extend(other)
 
     return ' + '.join(parts) if parts else slot_names[0]
 

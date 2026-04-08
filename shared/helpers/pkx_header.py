@@ -80,8 +80,8 @@ _NUM_NULL_JOINTS = 16
 class AnimMetadataEntry:
     """One animation slot in the PKX header (0xD0 bytes).
 
-    XD Pokémon slots: [0]Idle [1]Status1 [2-5]Physical1-4 [6]Status2
-    [7]Physical5 [8]Damage [9]Damage2 [10]Faint [11-16]Idle2/Special/etc.
+    XD Pokémon slots: [0]Idle [1]SpecialA [2-5]PhysicalA-D [6]SpecialB
+    [7]PhysicalE [8]Damage [9]DamageB [10]Faint [11-16]IdleB/SpecialC/etc.
 
     XD Trainer slots: [0]Idle [1]PokéballThrow [2]Victory [3]BattleIntro
     [4]Frustrated [5]Victory2 [6-9]Unused [10]Defeat [11-16]Unused
@@ -486,9 +486,9 @@ class PKXHeader:
 # ---------------------------------------------------------------------------
 
 XD_POKEMON_ANIM_NAMES = [
-    "Idle", "Status 1", "Physical 1", "Physical 2", "Physical 3",
-    "Physical 4", "Status 2", "Physical 5", "Damage", "Damage 2",
-    "Faint", "Idle 2", "Special", "Idle 3", "Idle 4", "Idle 5",
+    "Idle", "Special A", "Physical A", "Physical B", "Physical C",
+    "Physical D", "Special B", "Physical E", "Damage", "Damage B",
+    "Faint", "Idle B", "Special C", "Idle C", "Idle D", "Idle E",
     "Take Flight",
 ]
 

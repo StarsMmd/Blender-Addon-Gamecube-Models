@@ -126,7 +126,7 @@ def build_bone_animations(ir_model, armature, options, logger=StubLogger(), mate
                 break
 
         if is_static:
-            action.name = anim_set.name.replace('Anim', 'Pose')
+            action.name = anim_set.name.replace('Extra_', 'Pose_')
 
         actions.append(action)
         logger.info("  Action '%s': %d bone fcurves, %d material fcurves, static=%s",
