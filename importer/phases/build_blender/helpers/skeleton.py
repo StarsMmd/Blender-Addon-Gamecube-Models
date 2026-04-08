@@ -61,9 +61,9 @@ def build_skeleton(ir_model, context, options, logger=StubLogger(), model_index=
 
         # IK hack: shrink effector/spline bones
         if bone_data.ik_shrink:
-            bone.tail = Vector((0.0, 1e-3 / bone_data.scale[1] if bone_data.scale[1] != 0 else 1e-3, 0.0))
+            bone.tail = Vector((0.0, 1e-4 / bone_data.scale[1] if bone_data.scale[1] != 0 else 1e-4, 0.0))
         else:
-            bone.tail = Vector((0.0, 1.0, 0.0))
+            bone.tail = Vector((0.0, 0.01, 0.0))
 
         # Set parent
         if bone_data.parent_index is not None:
