@@ -62,16 +62,18 @@ def _build_camera(ir_cam, logger=StubLogger()):
     cam_obj = bpy.data.objects.new(name=ir_cam.name, object_data=cam_data)
     cam_obj["dat_camera_aspect"] = ir_cam.aspect
 
+    # Convert IR position from Y-up to Blender Z-up: (x, y, z) → (x, -z, y)
     if ir_cam.position:
-        cam_obj.matrix_basis = (Matrix.Translation(Vector(ir_cam.position))
-                                @ Matrix.Rotation(-math.pi / 2, 4, [1.0, 0.0, 0.0]))
+        x, y, z = ir_cam.position
+        cam_obj.location = (x, -z, y)
 
     target_obj = None
     if ir_cam.target_position:
+        tx, ty, tz = ir_cam.target_position
         target_obj = bpy.data.objects.new(ir_cam.name + '_target', None)
         target_obj.empty_display_type = 'PLAIN_AXES'
         target_obj.empty_display_size = max(0.1, min(3.0, _scene_model_size() * 0.03))
-        target_obj.matrix_basis = Matrix.Translation(Vector(ir_cam.target_position))
+        target_obj.location = (tx, -tz, ty)
         bpy.context.scene.collection.objects.link(target_obj)
 
         constraint = cam_obj.constraints.new(type='TRACK_TO')
@@ -80,9 +82,6 @@ def _build_camera(ir_cam, logger=StubLogger()):
         constraint.up_axis = 'UP_Y'
 
     bpy.context.scene.collection.objects.link(cam_obj)
-
-    # Coordinate system rotation (GameCube Y-up -> Blender Z-up)
-    cam_obj.matrix_basis @= Matrix.Rotation(math.pi / 2, 4, [1.0, 0.0, 0.0])
 
     # Build camera animations
     if ir_cam.animations:

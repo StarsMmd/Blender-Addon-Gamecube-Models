@@ -61,9 +61,9 @@ def describe_cameras(context, logger=StubLogger()):
             else:
                 field_of_view = 60.0
 
-        # Position: obj.location is in GC space (coordinate rotations cancel)
+        # Position: convert Blender Z-up to IR Y-up: (x, y, z) → (x, z, -y)
         pos = obj.location
-        position = (pos.x, pos.y, pos.z)
+        position = (pos.x, pos.z, -pos.y)
 
         # Target position from TRACK_TO constraint
         target_position = None
@@ -71,8 +71,8 @@ def describe_cameras(context, logger=StubLogger()):
         for constraint in obj.constraints:
             if constraint.type == 'TRACK_TO' and constraint.target:
                 target_obj = constraint.target
-                target_loc = target_obj.location
-                target_position = (target_loc.x, target_loc.y, target_loc.z)
+                t = target_obj.location
+                target_position = (t.x, t.z, -t.y)
                 break
 
         ir_cam = IRCamera(

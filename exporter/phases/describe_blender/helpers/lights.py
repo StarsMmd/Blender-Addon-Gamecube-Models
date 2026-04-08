@@ -60,18 +60,16 @@ def describe_lights(context, logger=StubLogger()):
         c = obj.data.color
         color = (linear_to_srgb(c[0]), linear_to_srgb(c[1]), linear_to_srgb(c[2]))
 
-        # Position: the importer places lights at their GC Y-up positions
-        # directly (the coordinate rotations cancel out in the build phase),
-        # so obj.location is already in GC space.
+        # Position: convert Blender Z-up to IR Y-up: (x, y, z) → (x, z, -y)
         pos = obj.location
-        position = (pos.x, pos.y, pos.z)
+        position = (pos.x, pos.z, -pos.y)
 
         # Target position from TRACK_TO constraint
         target_position = None
         for constraint in obj.constraints:
             if constraint.type == 'TRACK_TO' and constraint.target:
-                target_loc = constraint.target.location
-                target_position = (target_loc.x, target_loc.y, target_loc.z)
+                t = constraint.target.location
+                target_position = (t.x, t.z, -t.y)
                 break
 
         ir_light = IRLight(
