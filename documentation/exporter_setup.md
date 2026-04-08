@@ -141,6 +141,7 @@ The plugin uses real-world meters for all positions (matching Blender's default 
 - Coiled or curled poses will appear shorter than the official stretched-out measurement — this is expected
 - Some Pokémon (e.g. those with long tails, wings, or unusual poses) may not fit neatly to a single axis — use your judgment on the overall scale rather than trying to match a specific dimension exactly
 - Models imported from the game are already in meters but may not match official heights exactly (game models are artist-scaled for visual appeal in battle)
+- For a visual reference, try importing an existing game model of a similar-sized Pokémon and comparing side by side. Reset the scene completely afterwards — any leftover game objects will be included in the export
 
 ---
 
