@@ -142,22 +142,6 @@ The plugin uses real-world meters for all positions (matching Blender's default 
 - For Pokémon with long tails, wings, or unusual poses, use your judgment on which dimension best represents the official measurement
 - Models imported from the game are already in meters but may not match official heights exactly (game models are artist-scaled for visual appeal in battle)
 
-**Reference: imported model dimensions vs official heights** (scale factor = 0.10):
-
-| Model | Pokémon | Official | Axis | Imported | Note |
-|---|---|---|---|---|---|
-| achamo | Torchic | 0.4m | Z | 0.41m | |
-| eievui | Eevee | 0.3m | Z | 0.35m | |
-| pikachu | Pikachu | 0.4m | Z | 0.46m | |
-| nukenin | Shedinja | 0.8m | Z | 1.03m | |
-| absol | Absol | 1.2m | Z | 1.20m | |
-| denryu | Ampharos | 1.4m | Z | 1.44m | |
-| bohmander | Salamence | 1.5m | Z | 1.54m | |
-| gallop | Rapidash | 1.7m | Z | 2.17m | |
-| kairyu | Dragonite | 2.2m | Z | 2.24m | |
-| haganeil | Steelix | 9.2m | Y | 8.59m | Coiled pose; official is stretched length |
-| rayquaza | Rayquaza | 7.0m | Y | 2.83m | Coiled pose; official is stretched length |
-
 ---
 
 ## Export Properties
