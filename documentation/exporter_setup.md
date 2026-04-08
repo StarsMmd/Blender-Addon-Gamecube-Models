@@ -210,8 +210,8 @@ The game uses 16 named bone slots ("null joints") per model for particle attachm
 | Body 3 | `_body_3` | Generic body attachment point (torso/chest area) |
 | Neck | `_neck` | Neck bone — typically the parent of the head bone |
 | Head Top | `_head_top` | Top of head — typically a child of the head bone. Used for status effect particles (sleep Z's, confusion stars) |
-| Limb Right | `_limb_a` | Right arm/wing/fin endpoint (from the Pokémon's perspective) |
-| Limb Left | `_limb_b` | Left arm/wing/fin endpoint (from the Pokémon's perspective) |
+| Limb Left | `_limb_a` | Left arm/wing/fin endpoint (from the Pokémon's perspective) |
+| Limb Right | `_limb_b` | Right arm/wing/fin endpoint (from the Pokémon's perspective) |
 | Secondary 8-11 | `_secondary_8` … `_11` | Less commonly used attachment points. Leave empty if unknown |
 | Attach A-D | `_attach_a` … `_d` | Particle and effect attachment points (e.g. tail tip, horn, mouth). Used by battle move particle effects |
 

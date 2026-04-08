@@ -60,7 +60,7 @@ def describe_bones(root_joint, options=None, logger=None):
     if pkx_header and pkx_header.anim_entries:
         _NJ_LABELS = [
             "Root", "Head", "Center", "Body3", "Neck", "HeadTop",
-            "LimbR", "LimbL", "Sec8", "Sec9", "Sec10", "Sec11",
+            "LimbL", "LimbR", "Sec8", "Sec9", "Sec10", "Sec11",
             "AttachA", "AttachB", "AttachC", "AttachD",
         ]
         # Count how many null joint fields reference each bone index
@@ -70,9 +70,12 @@ def describe_bones(root_joint, options=None, logger=None):
             idx = first_entry.null_joint_bones[j]
             if idx >= 0:
                 bone_ref_counts.setdefault(idx, []).append(_NJ_LABELS[j])
-        # Only suffix bones referenced by exactly one field
+        # Suffix bones referenced by exactly one field, but always
+        # suffix the root bone regardless of how many fields reference it.
         for idx, labels in bone_ref_counts.items():
-            if len(labels) == 1:
+            if "Root" in labels:
+                _null_joint_suffixes[idx] = "Root"
+            elif len(labels) == 1:
                 _null_joint_suffixes[idx] = labels[0]
 
     def _walk(joint, parent_index, parent_data):

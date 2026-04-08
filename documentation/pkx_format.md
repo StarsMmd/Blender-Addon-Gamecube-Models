@@ -137,8 +137,8 @@ The GameCube renders in gamma space (no linear pipeline). The shiny brightness m
 | 3 | Body 3 | Generic body attachment |
 | 4 | Neck | Typically head bone - 1 |
 | 5 | Head Top | Typically head bone + 1 |
-| 6 | Limb Right | Right limb (from the Pokémon's perspective, not the viewer's) |
-| 7 | Limb Left | Left limb (from the Pokémon's perspective, not the viewer's) |
+| 6 | Limb Left | Left limb (from the Pokémon's perspective, not the viewer's) |
+| 7 | Limb Right | Right limb (from the Pokémon's perspective, not the viewer's) |
 | 8-11 | Secondary | Less commonly used attachments |
 | 12-15 | Attach A-D | Particle/effect attachment points |
 

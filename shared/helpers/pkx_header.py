@@ -513,8 +513,8 @@ NULL_JOINT_NAMES = [
     "Body Part 3",      # 3
     "Neck",             # 4 — typically head-1
     "Head Top",         # 5 — typically head+1
-    "Limb Right",       # 6 — from the Pokémon's perspective
-    "Limb Left",        # 7 — from the Pokémon's perspective
+    "Limb Left",        # 6 — from the Pokémon's perspective
+    "Limb Right",       # 7 — from the Pokémon's perspective
     "Secondary 8",      # 8
     "Secondary 9",      # 9
     "Secondary 10",     # 10
