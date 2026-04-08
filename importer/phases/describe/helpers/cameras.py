@@ -11,6 +11,7 @@ try:
     from .....shared.IR.camera import IRCamera, IRCameraKeyframes
     from .....shared.IR.enums import CameraProjection
     from .....shared.helpers.logger import StubLogger
+    from .....shared.helpers.scale import GC_TO_METERS
     from .keyframe_decoder import decode_fobjdesc
 except (ImportError, SystemError):
     from shared.Constants.hsd import (
@@ -24,6 +25,7 @@ except (ImportError, SystemError):
     from shared.IR.camera import IRCamera, IRCameraKeyframes
     from shared.IR.enums import CameraProjection
     from shared.helpers.logger import StubLogger
+    from shared.helpers.scale import GC_TO_METERS
     from importer.phases.describe.helpers.keyframe_decoder import decode_fobjdesc
 
 _PROJECTION_MAP = {
@@ -78,11 +80,11 @@ def describe_camera(camera_node, camera_index=0):
 
     position = None
     if camera_node.position and hasattr(camera_node.position, 'position'):
-        position = tuple(camera_node.position.position)
+        position = tuple(p * GC_TO_METERS for p in camera_node.position.position)
 
     target_position = None
     if camera_node.interest and hasattr(camera_node.interest, 'position') and camera_node.interest.position:
-        target_position = tuple(camera_node.interest.position)
+        target_position = tuple(p * GC_TO_METERS for p in camera_node.interest.position)
 
     return IRCamera(
         name=name,
@@ -90,8 +92,8 @@ def describe_camera(camera_node, camera_index=0):
         position=position,
         target_position=target_position,
         roll=camera_node.roll,
-        near=camera_node.near,
-        far=camera_node.far,
+        near=camera_node.near * GC_TO_METERS,
+        far=camera_node.far * GC_TO_METERS,
         field_of_view=camera_node.field_of_view,
         aspect=camera_node.aspect,
     )
@@ -165,6 +167,9 @@ def describe_camera_animations(camera_set, camera_index=0, logger=StubLogger()):
     return results
 
 
+_POSITION_FIELDS = {'eye_x', 'eye_y', 'eye_z', 'target_x', 'target_y', 'target_z', 'near', 'far'}
+
+
 def _decode_aobj_tracks(aobj, track_map, tracks, logger):
     """Walk an AOBJ's Frame chain and decode each track into the tracks dict.
 
@@ -181,6 +186,18 @@ def _decode_aobj_tracks(aobj, track_map, tracks, logger):
         if field_name is not None:
             keyframes = decode_fobjdesc(fobj, bias=0, scale=1.0)
             if keyframes:
+                # Scale position and distance tracks to meters
+                if field_name in _POSITION_FIELDS:
+                    for kf in keyframes:
+                        kf.value *= GC_TO_METERS
+                        if kf.handle_left is not None:
+                            kf.handle_left = (kf.handle_left[0], kf.handle_left[1] * GC_TO_METERS)
+                        if kf.handle_right is not None:
+                            kf.handle_right = (kf.handle_right[0], kf.handle_right[1] * GC_TO_METERS)
+                        if kf.slope_in is not None:
+                            kf.slope_in *= GC_TO_METERS
+                        if kf.slope_out is not None:
+                            kf.slope_out *= GC_TO_METERS
                 tracks[field_name] = keyframes
                 logger.debug("    Decoded camera track type %s → %s: %d keyframes",
                              fobj_type, field_name, len(keyframes))

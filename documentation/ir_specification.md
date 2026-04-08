@@ -34,7 +34,7 @@ The IR uses standard, widely-adopted conventions so that any build phase can con
 | **Mesh vertices** | World-space positions | All vertices are in world space regardless of skin type. Phase 4 transforms RIGID/SINGLE_BONE vertices from bone-local to world space (`parent_world @ vertex`), and ENVELOPE vertices via deformation (`bone_world @ IBM @ vertex`). The compose phase reverses these transforms per skin type |
 | **Animation values** | Raw per-channel SRT | Keyframe values are raw rotation/translation/scale from the source. Phase 5 composes them via plain `T @ R @ S`. Format-specific corrections (e.g. aligned scale inheritance) are pre-baked into `rest_local_matrix` by Phase 4 |
 | **Angles** | Radians | All rotation values throughout the IR |
-| **Units** | Unitless (source scale) | No unit conversion is applied; 1 unit = 1 source unit |
+| **Units** | Meters | All position values are in meters (Blender units). GameCube positions are converted using `GC_TO_METERS = 0.10` on import (Phase 4) and `METERS_TO_GC = 10.0` on export (compose phase). The scale constant is defined in `shared/helpers/scale.py` |
 
 ---
 

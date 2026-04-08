@@ -105,10 +105,11 @@ What the exporter can and cannot read from your Blender scene.
 
 Before exporting a model that was **not** imported through the DAT plugin (i.e. built from scratch or imported from another format), run **`scripts/prepare_for_export.py`** from Blender's Scripting panel. The script only adds properties that don't already exist.
 
-1. Optionally select an armature (needed for PKX metadata)
-2. Open the Scripting workspace
-3. Open `scripts/prepare_for_export.py`
-4. Click **Run Script**
+1. Open the Scripting workspace
+2. Open `scripts/prepare_for_export.py`
+3. Click **Run Script**
+
+The script operates on all objects in the scene — no selection required.
 
 ---
 
@@ -121,6 +122,41 @@ Delete any objects that should not be part of the model. Blender's default scene
 - **Default Camera** — delete it if you don't want it in the game model, or keep it and set `dat_camera_aspect`
 
 Only armatures and their parented meshes should remain in the scene, plus any lights and cameras you intentionally want in the game model.
+
+---
+
+## Model Scale
+
+The plugin uses real-world meters for all positions (matching Blender's default 1 unit = 1 meter). Before exporting, ensure your model is scaled to match the Pokémon's official dimensions:
+
+1. Select the armature and press **N** to open the sidebar
+2. In the **Item** tab, check the **Dimensions** values (X, Y, Z in meters)
+3. Look up the Pokémon's official height (e.g. from Bulbapedia)
+4. Scale the model so its **Z dimension** (height) matches the official height in meters
+5. To scale: select the armature, press **S** then **Z**, type the scale factor, press **Enter**
+   - Or type the desired value directly into the Z Dimensions field in the N-panel
+
+**Notes:**
+- For serpentine/elongated Pokémon (e.g. Gyarados, Rayquaza), the official "height" is body length — use the **Y dimension** instead of Z
+- Coiled or curled poses will appear shorter than the official stretched-out measurement — this is expected
+- For Pokémon with long tails, wings, or unusual poses, use your judgment on which dimension best represents the official measurement
+- Models imported from the game are already in meters but may not match official heights exactly (game models are artist-scaled for visual appeal in battle)
+
+**Reference: imported model dimensions vs official heights** (scale factor = 0.10):
+
+| Model | Pokémon | Official | Axis | Imported | Note |
+|---|---|---|---|---|---|
+| achamo | Torchic | 0.4m | Z | 0.41m | |
+| eievui | Eevee | 0.3m | Z | 0.35m | |
+| pikachu | Pikachu | 0.4m | Z | 0.46m | |
+| nukenin | Shedinja | 0.8m | Z | 1.03m | |
+| absol | Absol | 1.2m | Z | 1.20m | |
+| denryu | Ampharos | 1.4m | Z | 1.44m | |
+| bohmander | Salamence | 1.5m | Z | 1.54m | |
+| gallop | Rapidash | 1.7m | Z | 2.17m | |
+| kairyu | Dragonite | 2.2m | Z | 2.24m | |
+| haganeil | Steelix | 9.2m | Y | 8.59m | Coiled pose; official is stretched length |
+| rayquaza | Rayquaza | 7.0m | Y | 2.83m | Coiled pose; official is stretched length |
 
 ---
 
@@ -179,13 +215,13 @@ These are only needed when exporting to `.pkx` format. The preparation script se
 | `dat_pkx_species_id` | `0` | Pokédex number. Set to the species' national dex ID (e.g. 291 for Shedinja). Used by the game to identify the model. |
 | `dat_pkx_model_type` | `"POKEMON"` | Model category. `"POKEMON"` for Pokémon, change for trainer models. |
 | `dat_pkx_head_bone` | _(auto-detected)_ | Name of the head bone. The script looks for bones with "head" in the name, then falls back to the first child of the root. Used for camera targeting and head tracking in battle. |
-| `dat_pkx_joint_*` | _(see below)_ | Null joint bone mappings — see [Null Joint Bones](#null-joint-bones) for details. |
+| `dat_pkx_body_*` | _(see below)_ | Body map bone mappings — see [Body Map](#body-map) for details. |
 | `dat_pkx_anim_count` | `17` | Number of animation metadata entries. Standard Pokémon models use 17 (idle + 16 action slots). |
 | `dat_pkx_anim_00_type` | `"loop"` | Animation slot 0 type. Set to `"loop"` for idle animation. Other slots default to `"action"`. Valid types: `"loop"`, `"hit_reaction"`, `"action"`, `"compound"`. |
 | `dat_pkx_anim_NN_sub_0_anim` | `""` | Blender Action name for slot N. Maps PKX animation slots to actions by name (resolved to DAT indices at export time). Use the action search dropdown in the PKX Metadata panel to set this. |
 | `dat_pkx_anim_NN_sub_count` | `1` | Number of sub-animations per slot. Usually 1. |
 | `dat_pkx_anim_NN_damage_flags` | `0` | Bit flags for hit reaction behavior. Only relevant for `"hit_reaction"` type entries. |
-| `dat_pkx_anim_NN_timing_1` … `_4` | `0.0` | Timing parameters (seconds). Control animation blend/transition timing. |
+| `dat_pkx_anim_NN_timing_1` … `_4` | `0.0` | Timing parameters (seconds). Control animation blend/transition timing. The `prepare_for_export` script auto-derives these from action durations: action types use 33%/66%/100% splits for wind-up/hit/duration; re-run the script after assigning actions to update. |
 | `dat_pkx_shiny_route_r/g/b/a` | `0/1/2/3` | Shiny color channel routing. Identity mapping (no color change). The Shiny Variant section appears in the PKX Metadata panel when these differ from identity. |
 | `dat_pkx_shiny_brightness_r/g/b` | `0.0` | Shiny brightness offset per channel. 0.0 = no change, positive = brighter, negative = darker. Range [-1.0, 1.0]. |
 | `dat_pkx_sub_anim_N_type` | `"none"` | Sub-animation type (sleep on/off, extra). `"none"` = inactive, `"simple"` = basic, `"targeted"` = bone-targeted. |
@@ -198,9 +234,9 @@ These are only needed when exporting to `.pkx` format. The preparation script se
 
 ---
 
-## Null Joint Bones
+## Body Map
 
-The game uses 16 named bone slots ("null joints") per model for particle attachment, camera targeting, hit detection, and head tracking. Set these in the **Null Joint Bones** section of the PKX Metadata panel using the bone name dropdowns. Right/left are from the **Pokémon's perspective**, not the viewer's.
+The game uses 16 named bone slots per model for particle attachment, camera targeting, hit detection, and head tracking. Set these in the **Body Map** section of the PKX Metadata panel using the bone name dropdowns. Right/left are from the **Pokémon's perspective**, not the viewer's.
 
 | Slot | Property suffix | What to assign |
 |------|----------------|----------------|
@@ -254,6 +290,10 @@ Use the standalone script `scripts/add_ambient_lighting.py` to add ambient nodes
 ### Specular Color
 
 The exporter computes the specular color from Blender's Principled BSDF Specular Tint and diffuse color. No manual setup is needed — the exporter reads the Specular Tint value and reverse-maps it to the game's absolute specular color.
+
+### Model Scale
+
+_TODO: Document recommended model scale for in-game use. What units does the game expect? How tall should a typical Pokémon be in Blender units? How does model scale interact with the camera, battle stage, and particle effects? Include reference measurements from existing models._
 
 ### Base Model
 

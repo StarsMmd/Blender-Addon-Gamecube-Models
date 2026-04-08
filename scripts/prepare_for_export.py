@@ -60,11 +60,11 @@ def prepare_camera():
         cam_data = bpy.data.cameras.new(BATTLE_CAMERA_NAME)
         cam_data.type = 'PERSP'
         cam_data.lens = 37.5       # ~27° vertical FOV (most common across all PKX models)
-        cam_data.clip_start = 0.1
-        cam_data.clip_end = 32768.0
+        cam_data.clip_start = 0.01    # 0.1 GC units × 0.10
+        cam_data.clip_end = 3277.0    # 32768 GC units × 0.10
 
         cam_obj = bpy.data.objects.new(BATTLE_CAMERA_NAME, cam_data)
-        cam_obj.location = (0.0, 8.0, 50.0)
+        cam_obj.location = (0.0, 0.8, 5.0)   # ~(0, 8, 50) GC × 0.10
         cam_obj["dat_camera_aspect"] = 1.18
         bpy.context.scene.collection.objects.link(cam_obj)
 
@@ -72,7 +72,7 @@ def prepare_camera():
         target = bpy.data.objects.new(BATTLE_CAMERA_TARGET, None)
         target.empty_display_type = 'PLAIN_AXES'
         target.empty_display_size = _model_display_size()
-        target.location = (0.0, 5.0, 0.0)
+        target.location = (0.0, 0.5, 0.0)    # ~(0, 5, 0) GC × 0.10
         bpy.context.scene.collection.objects.link(target)
 
         # Add TRACK_TO constraint

@@ -10,12 +10,14 @@ try:
     from .....shared.IR.animation import IRBoneAnimationSet, IRBoneTrack, IRSplinePath, IRKeyframe
     from .....shared.IR.enums import Interpolation
     from .keyframe_decoder import decode_fobjdesc
+    from .....shared.helpers.scale import GC_TO_METERS
 except (ImportError, SystemError):
     from shared.Constants.hsd import *
     from shared.helpers.logger import StubLogger
     from shared.helpers.math_shim import Matrix, compile_srt_matrix, matrix_to_list
     from shared.IR.animation import IRBoneAnimationSet, IRBoneTrack, IRSplinePath, IRKeyframe
     from shared.IR.enums import Interpolation
+    from shared.helpers.scale import GC_TO_METERS
     from importer.phases.describe.helpers.keyframe_decoder import decode_fobjdesc
 
 
@@ -258,6 +260,17 @@ def _describe_bone_track(aobj, joint, bone, bone_index, bones, logger=None):
             if category == 'r':
                 rotation[component] = keyframes
             elif category == 'l':
+                # Scale translation keyframes to meters
+                for kf in keyframes:
+                    kf.value *= GC_TO_METERS
+                    if kf.handle_left is not None:
+                        kf.handle_left = (kf.handle_left[0], kf.handle_left[1] * GC_TO_METERS)
+                    if kf.handle_right is not None:
+                        kf.handle_right = (kf.handle_right[0], kf.handle_right[1] * GC_TO_METERS)
+                    if kf.slope_in is not None:
+                        kf.slope_in *= GC_TO_METERS
+                    if kf.slope_out is not None:
+                        kf.slope_out *= GC_TO_METERS
                 location[component] = keyframes
             elif category == 's':
                 scale[component] = keyframes
@@ -288,7 +301,8 @@ def _describe_bone_track(aobj, joint, bone, bone_index, bones, logger=None):
     else:
         use_scale = rest_scale
 
-    rest_local = compile_srt_matrix(use_scale, joint.rotation, joint.position)
+    scaled_pos = tuple(p * GC_TO_METERS for p in joint.position)
+    rest_local = compile_srt_matrix(use_scale, joint.rotation, scaled_pos)
 
     return IRBoneTrack(
         bone_name=bone.name,
@@ -298,7 +312,7 @@ def _describe_bone_track(aobj, joint, bone, bone_index, bones, logger=None):
         scale=scale,
         rest_local_matrix=matrix_to_list(rest_local),
         rest_rotation=tuple(joint.rotation),
-        rest_position=tuple(joint.position),
+        rest_position=scaled_pos,
         rest_scale=rest_scale,
         end_frame=aobj.end_frame,
         spline_path=spline_path,
@@ -343,7 +357,7 @@ def _extract_spline_path(aobj, joint, bone, bones, fobj, logger):
     if spline_node is None or not isinstance(getattr(spline_node, 's1', None), list):
         return None
 
-    control_points = [list(p) for p in spline_node.s1]
+    control_points = [[c * GC_TO_METERS for c in p] for p in spline_node.s1]
     curve_type = getattr(spline_node, 'flags', 0) >> 8
     tension = getattr(spline_node, 'f0', 0.0) or 0.0
     num_cvs = getattr(spline_node, 'n', 0)
@@ -351,8 +365,9 @@ def _extract_spline_path(aobj, joint, bone, bones, fobj, logger):
     # Compute world matrix for the spline joint (for curve positioning)
     world_matrix = None
     if spline_joint:
+        scaled_spl_pos = tuple(p * GC_TO_METERS for p in spline_joint.position)
         spline_local = compile_srt_matrix(
-            spline_joint.scale, spline_joint.rotation, spline_joint.position
+            spline_joint.scale, spline_joint.rotation, scaled_spl_pos
         )
         if bone.parent_index is not None:
             parent_world = Matrix(bones[bone.parent_index].world_matrix)

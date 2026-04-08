@@ -3,6 +3,7 @@ from exporter.phases.compose.helpers.cameras import compose_camera
 from shared.IR.camera import IRCamera, IRCameraKeyframes
 from shared.IR.animation import IRKeyframe
 from shared.IR.enums import CameraProjection, Interpolation
+from shared.helpers.scale import METERS_TO_GC as G
 from shared.Constants.hsd import (
     COBJ_PROJECTION_PERSPECTIVE, COBJ_PROJECTION_ORTHO,
     HSD_A_C_FOVY, HSD_A_C_ROLL, HSD_A_C_NEAR, HSD_A_C_FAR,
@@ -53,12 +54,12 @@ class TestComposeCamera:
     def test_position_flows_to_wobject(self):
         ir_cam = _make_ir_camera(position=(10.0, 20.0, 30.0))
         result = compose_camera(ir_cam)
-        assert result.camera.position.position == [10.0, 20.0, 30.0]
+        assert result.camera.position.position == [10.0 * G, 20.0 * G, 30.0 * G]
 
     def test_interest_flows_to_wobject(self):
         ir_cam = _make_ir_camera(target_position=(5.0, 6.0, 7.0))
         result = compose_camera(ir_cam)
-        assert result.camera.interest.position == [5.0, 6.0, 7.0]
+        assert result.camera.interest.position == [5.0 * G, 6.0 * G, 7.0 * G]
 
     def test_fov_preserved(self):
         ir_cam = _make_ir_camera(field_of_view=40.0)
@@ -68,8 +69,8 @@ class TestComposeCamera:
     def test_clip_planes(self):
         ir_cam = _make_ir_camera(near=0.5, far=1000.0)
         result = compose_camera(ir_cam)
-        assert result.camera.near == 0.5
-        assert result.camera.far == 1000.0
+        assert abs(result.camera.near - 0.5 * G) < 1e-6
+        assert abs(result.camera.far - 1000.0 * G) < 1e-3
 
     def test_roll_preserved(self):
         ir_cam = _make_ir_camera(roll=0.3)

@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 from importer.phases.describe.helpers.lights import describe_light
 from shared.IR.lights import IRLight
+from shared.helpers.scale import GC_TO_METERS as S
 from shared.IR.enums import LightType
 from shared.Constants.hsd import (
     LOBJ_AMBIENT, LOBJ_INFINITE, LOBJ_POINT, LOBJ_SPOT,
@@ -46,9 +47,23 @@ class TestDescribeLight:
         ir = describe_light(light, light_index=2)
         assert ir.type == LightType.SPOT
 
-    def test_ambient_returns_none(self):
-        light = _make_light(flags=LOBJ_AMBIENT)
-        assert describe_light(light) is None
+    def test_ambient_light(self):
+        light = _make_light(flags=LOBJ_AMBIENT, color=_make_color(76, 76, 76))
+        ir = describe_light(light)
+        assert isinstance(ir, IRLight)
+        assert ir.type == LightType.AMBIENT
+        assert abs(ir.color[0] - 76 / 255) < 1e-5
+
+    def test_brightness_from_property(self):
+        light = _make_light(flags=LOBJ_INFINITE, color=_make_color(255, 255, 255))
+        light.property = 16.0
+        ir = describe_light(light)
+        assert ir.brightness == 16.0
+
+    def test_brightness_default(self):
+        light = _make_light(flags=LOBJ_INFINITE, color=_make_color(255, 255, 255))
+        ir = describe_light(light)
+        assert ir.brightness == 1.0
 
     def test_color_is_srgb_normalized(self):
         """Light colors should be normalized [0-1] sRGB, not linearized."""
@@ -80,7 +95,7 @@ class TestDescribeLight:
             position=_make_wobject(position=(1.0, 2.0, 3.0)),
         )
         ir = describe_light(light)
-        assert ir.position == (1.0, 2.0, 3.0)
+        assert ir.position == (1.0 * S, 2.0 * S, 3.0 * S)
 
     def test_no_position(self):
         light = _make_light(flags=LOBJ_POINT, color=_make_color(255, 255, 255))
@@ -94,7 +109,7 @@ class TestDescribeLight:
             interest=_make_wobject(position=(5.0, 6.0, 7.0)),
         )
         ir = describe_light(light)
-        assert ir.target_position == (5.0, 6.0, 7.0)
+        assert ir.target_position == (5.0 * S, 6.0 * S, 7.0 * S)
 
     def test_name_from_node(self):
         light = _make_light(flags=LOBJ_POINT, name='my_light',

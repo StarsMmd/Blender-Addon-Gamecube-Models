@@ -13,10 +13,12 @@ try:
         JOBJ_BILLBOARD_FIELD, JOBJ_BILLBOARD, JOBJ_VBILLBOARD,
         JOBJ_HBILLBOARD, JOBJ_RBILLBOARD,
     )
+    from .....shared.helpers.scale import GC_TO_METERS
 except (ImportError, SystemError):
     from shared.helpers.math_shim import Matrix, Vector, Euler, compile_srt_matrix, matrix_to_list
     from shared.IR.skeleton import IRBone
     from shared.IR.enums import ScaleInheritance
+    from shared.helpers.scale import GC_TO_METERS
     from shared.Constants.hsd import (
         JOBJ_HIDDEN, JOBJ_INSTANCE, JOBJ_EFFECTOR, JOBJ_SPLINE,
         JOBJ_TYPE_MASK, JOBJ_CLASSICAL_SCALING, JOBJ_USE_QUATERNION,
@@ -54,8 +56,8 @@ def describe_bones(root_joint, options=None, logger=None):
     total_bones = _count_joints(root_joint)
     bone_digits = len(str(max(total_bones - 1, 0)))
 
-    # Build bone_index → null joint suffix from PKX header
-    _null_joint_suffixes = {}
+    # Build bone_index → body map suffix from PKX header
+    _body_map_suffixes = {}
     pkx_header = options.get("pkx_header") if options else None
     if pkx_header and pkx_header.anim_entries:
         _NJ_LABELS = [
@@ -63,20 +65,20 @@ def describe_bones(root_joint, options=None, logger=None):
             "LimbL", "LimbR", "Sec8", "Sec9", "Sec10", "Sec11",
             "AttachA", "AttachB", "AttachC", "AttachD",
         ]
-        # Count how many null joint fields reference each bone index
+        # Count how many body map fields reference each bone index
         bone_ref_counts = {}
         first_entry = pkx_header.anim_entries[0]
         for j in range(16):
-            idx = first_entry.null_joint_bones[j]
+            idx = first_entry.body_map_bones[j]
             if idx >= 0:
                 bone_ref_counts.setdefault(idx, []).append(_NJ_LABELS[j])
         # Suffix bones referenced by exactly one field, but always
         # suffix the root bone regardless of how many fields reference it.
         for idx, labels in bone_ref_counts.items():
             if "Root" in labels:
-                _null_joint_suffixes[idx] = "Root"
+                _body_map_suffixes[idx] = "Root"
             elif len(labels) == 1:
-                _null_joint_suffixes[idx] = labels[0]
+                _body_map_suffixes[idx] = labels[0]
 
     def _walk(joint, parent_index, parent_data):
         """Recursively describe a Joint and its children/siblings.
@@ -89,7 +91,7 @@ def describe_bones(root_joint, options=None, logger=None):
 
         idx = bone_count[0]
         name = 'Bone_%s' % str(idx).zfill(bone_digits)
-        suffix = _null_joint_suffixes.get(idx)
+        suffix = _body_map_suffixes.get(idx)
         if suffix:
             name = '%s_%s' % (name, suffix)
         bone_count[0] += 1
@@ -134,9 +136,12 @@ def describe_bones(root_joint, options=None, logger=None):
             accumulated_scale = tuple(joint.scale)
             parent_scl = None
 
-        # Build local SRT matrix
+        # Scale position to meters
+        scaled_position = tuple(p * GC_TO_METERS for p in joint.position)
+
+        # Build local SRT matrix (with scaled position)
         local_matrix = compile_srt_matrix(
-            joint.scale, joint.rotation, joint.position, parent_scl
+            joint.scale, joint.rotation, scaled_position, parent_scl
         )
 
         # Compute world matrix
@@ -158,7 +163,7 @@ def describe_bones(root_joint, options=None, logger=None):
             normalized_local = normalized_world
             scale_correction = local_matrix.normalized().inverted() @ local_matrix
 
-        # Get inverse bind matrix if present
+        # Get inverse bind matrix if present, scaling translation to meters
         inverse_bind = None
         if hasattr(joint, 'inverse_bind') and joint.inverse_bind is not None:
             inv = joint.inverse_bind
@@ -168,11 +173,14 @@ def describe_bones(root_joint, options=None, logger=None):
                 inverse_bind = [list(row) for row in inv]
             else:
                 inverse_bind = [[inv[i][j] for j in range(4)] for i in range(4)]
+            # Scale translation column (column 3, rows 0-2) to meters
+            for row in range(3):
+                inverse_bind[row][3] *= GC_TO_METERS
 
         bone = IRBone(
             name=name,
             parent_index=parent_index,
-            position=tuple(joint.position),
+            position=scaled_position,
             rotation=tuple(joint.rotation),
             scale=tuple(joint.scale),
             inverse_bind_matrix=inverse_bind,

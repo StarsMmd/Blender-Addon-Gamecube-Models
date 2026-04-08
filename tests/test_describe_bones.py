@@ -8,6 +8,9 @@ from shared.IR.skeleton import IRBone
 from shared.IR.enums import ScaleInheritance
 from importer.phases.describe.helpers.bones import describe_bones
 from shared.helpers.math_shim import compile_srt_matrix
+from shared.helpers.scale import GC_TO_METERS
+
+S = GC_TO_METERS  # shorthand for scaling expected values
 
 from helpers import (
     build_joint, build_dat_with_sections, build_minimal_dat,
@@ -63,9 +66,9 @@ class TestDescribeBonesBasic:
         bones, _ = describe_bones(joint)
 
         bone = bones[0]
-        assert abs(bone.position[0] - 10.0) < 1e-5
-        assert abs(bone.position[1] - 20.0) < 1e-5
-        assert abs(bone.position[2] - 30.0) < 1e-5
+        assert abs(bone.position[0] - 10.0 * S) < 1e-5
+        assert abs(bone.position[1] - 20.0 * S) < 1e-5
+        assert abs(bone.position[2] - 30.0 * S) < 1e-5
         assert abs(bone.rotation[0] - 0.5) < 1e-5
         assert abs(bone.scale[0] - 2.0) < 1e-5
         assert abs(bone.scale[2] - 0.5) < 1e-5
@@ -175,9 +178,9 @@ class TestDescribeBonesMatrices:
         bones, _ = describe_bones(joint)
 
         wm = bones[0].world_matrix
-        assert abs(wm[0][3] - 3.0) < 1e-5
-        assert abs(wm[1][3] - 4.0) < 1e-5
-        assert abs(wm[2][3] - 5.0) < 1e-5
+        assert abs(wm[0][3] - 3.0 * S) < 1e-5
+        assert abs(wm[1][3] - 4.0 * S) < 1e-5
+        assert abs(wm[2][3] - 5.0 * S) < 1e-5
 
     def test_child_inherits_parent_transform(self):
         """Child world matrix includes parent translation."""
@@ -190,9 +193,9 @@ class TestDescribeBonesMatrices:
         joint = _parse_joint_tree(data, relocations)
         bones, _ = describe_bones(joint)
 
-        # Child world position should be 10 + 5 = 15
+        # Child world position should be (10 + 5) * scale_factor
         child_wm = bones[1].world_matrix
-        assert abs(child_wm[0][3] - 15.0) < 1e-5
+        assert abs(child_wm[0][3] - 15.0 * S) < 1e-5
 
     def test_accumulated_scale(self):
         """Child accumulated_scale multiplies parent and own scale."""

@@ -2,6 +2,7 @@
 from types import SimpleNamespace
 
 from importer.phases.describe.helpers.cameras import describe_camera, describe_camera_animations
+from shared.helpers.scale import GC_TO_METERS as S
 from shared.IR.enums import CameraProjection, Interpolation
 from shared.IR.camera import IRCameraKeyframes
 from shared.Constants.hsd import (
@@ -141,12 +142,12 @@ class TestDescribeCamera:
     def test_position_extracted(self):
         cam = _make_camera(position=(1.0, 2.0, 3.0))
         result = describe_camera(cam)
-        assert result.position == (1.0, 2.0, 3.0)
+        assert result.position == (1.0 * S, 2.0 * S, 3.0 * S)
 
     def test_target_position(self):
         cam = _make_camera(interest=(4.0, 5.0, 6.0))
         result = describe_camera(cam)
-        assert result.target_position == (4.0, 5.0, 6.0)
+        assert result.target_position == (4.0 * S, 5.0 * S, 6.0 * S)
 
     def test_no_position(self):
         cam = _make_camera()
@@ -157,8 +158,8 @@ class TestDescribeCamera:
     def test_clip_planes(self):
         cam = _make_camera(near=0.5, far=1000.0)
         result = describe_camera(cam)
-        assert result.near == 0.5
-        assert result.far == 1000.0
+        assert abs(result.near - 0.5 * S) < 1e-6
+        assert abs(result.far - 1000.0 * S) < 1e-3
 
     def test_fov_preserved(self):
         cam = _make_camera(field_of_view=40.0)
@@ -268,7 +269,7 @@ class TestDescribeCameraAnimations:
         assert len(result) == 1
         assert result[0].eye_x is not None
         assert len(result[0].eye_x) == 2
-        assert abs(result[0].eye_x[0].value - 10.0) < 0.01
+        assert abs(result[0].eye_x[0].value - 10.0 * S) < 0.01
         assert result[0].eye_y is not None
         assert result[0].eye_z is not None
 

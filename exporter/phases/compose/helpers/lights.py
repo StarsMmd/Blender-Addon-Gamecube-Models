@@ -17,6 +17,7 @@ try:
     )
     from .....shared.IR.enums import LightType
     from .....shared.helpers.logger import StubLogger
+    from .....shared.helpers.scale import METERS_TO_GC
 except (ImportError, SystemError):
     from shared.Nodes.Classes.Light.Light import Light
     from shared.Nodes.Classes.Light.LightSet import LightSet
@@ -30,6 +31,7 @@ except (ImportError, SystemError):
     )
     from shared.IR.enums import LightType
     from shared.helpers.logger import StubLogger
+    from shared.helpers.scale import METERS_TO_GC
 
 
 _TYPE_TO_FLAG = {
@@ -40,38 +42,38 @@ _TYPE_TO_FLAG = {
 
 
 def compose_lights(ir_lights, logger=StubLogger()):
-    """Convert IRLight list into a LightSet node.
+    """Convert IRLight list into LightSet nodes (one per light).
+
+    Sorts ambient lights first (LightSet[0]) to match the convention
+    from all tested Colo/XD models.
 
     Args:
         ir_lights: list[IRLight] from the IR.
         logger: Logger instance.
 
     Returns:
-        list[LightSet] (single-element) or None if no lights.
+        list[LightSet] or None if no lights.
     """
     if not ir_lights:
         return None
 
-    light_nodes = []
-    for ir_light in ir_lights:
+    # Sort: ambient lights first, then others in original order
+    sorted_lights = sorted(ir_lights, key=lambda l: (0 if l.type == LightType.AMBIENT else 1))
+
+    light_sets = []
+    for ir_light in sorted_lights:
         light_node = _compose_light(ir_light, logger)
         if light_node is not None:
-            light_nodes.append(light_node)
+            light_set = LightSet(address=None, blender_obj=None)
+            light_set.light = light_node
+            light_set.animations = None
+            light_sets.append(light_set)
 
-    if not light_nodes:
+    if not light_sets:
         return None
 
-    # Chain lights via .link
-    for i in range(len(light_nodes) - 1):
-        light_nodes[i].link = light_nodes[i + 1]
-
-    # Wrap in LightSet
-    light_set = LightSet(address=None, blender_obj=None)
-    light_set.light = light_nodes[0]
-    light_set.animations = None
-
-    logger.info("    Composed %d light(s)", len(light_nodes))
-    return [light_set]
+    logger.info("    Composed %d light(s) in %d LightSet(s)", len(light_sets), len(light_sets))
+    return light_sets
 
 
 def _compose_light(ir_light, logger):
@@ -80,26 +82,36 @@ def _compose_light(ir_light, logger):
     light.name = None
     light.link = None
 
-    # Flags: type + diffuse + specular (standard for visible lights)
-    type_flag = _TYPE_TO_FLAG.get(ir_light.type, LOBJ_INFINITE)
-    light.flags = type_flag | LOBJ_DIFFUSE | LOBJ_SPECULAR
-    light.attn_flags = 0
-
     # Color: IR stores sRGB 0-1, Light node stores 0-255 RGBA
     r = int(ir_light.color[0] * 255 + 0.5)
     g = int(ir_light.color[1] * 255 + 0.5)
     b = int(ir_light.color[2] * 255 + 0.5)
-    light.color = _make_rgba(r, g, b, 255)
+
+    if ir_light.type == LightType.AMBIENT:
+        # Ambient: LOBJ_DIFFUSE only (0x4), no type bits, no position
+        light.flags = LOBJ_DIFFUSE
+        light.attn_flags = 0
+        light.color = _make_rgba(r, g, b, 0)
+        light.position = None
+        light.interest = None
+        light.property = None
+        return light
+
+    # Non-ambient: type + diffuse + specular
+    type_flag = _TYPE_TO_FLAG.get(ir_light.type, LOBJ_INFINITE)
+    light.flags = type_flag | LOBJ_DIFFUSE | LOBJ_SPECULAR
+    light.attn_flags = 0
+    light.color = _make_rgba(r, g, b, 0)
 
     # Position
     light.position = _make_wobject(ir_light.position)
 
-    # Interest (target position for spotlights)
-    light.interest = _make_wobject(ir_light.target_position)
+    # Interest (target position for spotlights — None if no target)
+    light.interest = _make_wobject(ir_light.target_position) if ir_light.target_position else None
 
     # Type-specific property
     if ir_light.type == LightType.SUN:
-        light.property = 1.0  # Brightness float
+        light.property = ir_light.brightness
     elif ir_light.type == LightType.POINT:
         prop = PointLight(address=None, blender_obj=None)
         prop.reference_br = 1.0
@@ -118,10 +130,10 @@ def _compose_light(ir_light, logger):
 
 
 def _make_wobject(position):
-    """Create a WObject with a position vec3."""
+    """Create a WObject with a position vec3, scaled to GC units."""
     wobj = WObject(address=None, blender_obj=None)
     wobj.name = None
-    wobj.position = list(position) if position else [0.0, 0.0, 0.0]
+    wobj.position = [p * METERS_TO_GC for p in position] if position else [0.0, 0.0, 0.0]
     wobj.render = None
     return wobj
 

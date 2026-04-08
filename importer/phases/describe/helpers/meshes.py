@@ -17,6 +17,7 @@ try:
         GX_VA_TEX0, GX_VA_PNMTXIDX,
     )
     from .....shared.helpers.logger import StubLogger
+    from .....shared.helpers.scale import GC_TO_METERS
 except (ImportError, SystemError):
     from shared.helpers.math_shim import Matrix, Vector
     from shared.IR.geometry import IRMesh, IRUVLayer, IRColorLayer, IRBoneWeights, IRShapeKey
@@ -31,6 +32,7 @@ except (ImportError, SystemError):
         GX_VA_TEX0, GX_VA_PNMTXIDX,
     )
     from shared.helpers.logger import StubLogger
+    from shared.helpers.scale import GC_TO_METERS
 
 
 def describe_meshes(root_joint, bones, joint_to_bone_index, image_cache=None, logger=StubLogger()):
@@ -119,8 +121,8 @@ def describe_meshes(root_joint, bones, joint_to_bone_index, image_cache=None, lo
             logger.debug("  pobj 0x%X mesh#%d: removed %d degenerate faces (%d → %d)",
                          pobj.address, count, orig_face_count - len(faces), orig_face_count, len(faces))
 
-        # Convert vertices to tuples
-        verts_out = [tuple(v) for v in vertices]
+        # Convert vertices to tuples and scale to meters
+        verts_out = [tuple(c * GC_TO_METERS for c in v) for v in vertices]
 
         # Extract UV layers, color layers, normals
         uv_layers = []

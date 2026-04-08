@@ -8,6 +8,7 @@ import pytest
 from shared.IR.skeleton import IRBone, IRModel
 from shared.IR.enums import ScaleInheritance
 from shared.IR import IRScene
+from shared.helpers.scale import METERS_TO_GC as G
 from shared.helpers.shiny_params import ShinyParams
 from shared.helpers.pkx import PKXContainer
 from shared.helpers.binary import read
@@ -146,7 +147,7 @@ class TestComposeBones:
         assert root is not None
         assert len(joints) == 1
         assert root.name == "Root"
-        assert list(root.position) == [1, 2, 3]
+        assert [round(p, 6) for p in root.position] == [round(1 * G, 6), round(2 * G, 6), round(3 * G, 6)]
         assert list(root.rotation) == pytest.approx([0.1, 0.2, 0.3])
         assert list(root.scale) == [1, 1, 1]
         assert root.child is None
@@ -201,11 +202,14 @@ class TestComposeBones:
         assert root.flags == JOBJ_HIDDEN
 
     def test_inverse_bind_matrix(self):
-        """Inverse bind matrix is passed through."""
+        """Inverse bind matrix translation column is scaled to GC units."""
         ibm = [[1, 0, 0, 5], [0, 1, 0, 10], [0, 0, 1, 15], [0, 0, 0, 1]]
         bones = [_make_bone("Bone", inverse_bind=ibm)]
         root, joints = compose_bones(bones)
-        assert root.inverse_bind == ibm
+        expected = [[1, 0, 0, 5 * G], [0, 1, 0, 10 * G], [0, 0, 1, 15 * G], [0, 0, 0, 1]]
+        for r in range(4):
+            for c in range(4):
+                assert abs(root.inverse_bind[r][c] - expected[r][c]) < 1e-6
 
     def test_instance_bone(self):
         """JOBJ_INSTANCE bone's child points to the target bone."""
