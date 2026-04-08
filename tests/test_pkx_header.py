@@ -65,7 +65,7 @@ def test_entry_unused_defaults():
     e = AnimMetadataEntry.default_unused(is_xd=True)
     assert e.anim_type == 4
     assert e.terminator == 3
-    assert e.null_joint_bones == [-1] * 16
+    assert e.body_map_bones == [-1] * 16
     assert e.sub_anims[0].motion_type == 0
     assert e.sub_anims[0].anim_index == 0
 
@@ -77,7 +77,7 @@ def test_entry_idle_defaults():
     e = AnimMetadataEntry.default_idle(is_xd=True)
     assert e.anim_type == 2
     assert e.sub_anims[0].motion_type == 2  # loop
-    assert e.null_joint_bones[0] == 0  # root bone
+    assert e.body_map_bones[0] == 0  # root bone
 
 def test_entry_to_bytes_size():
     assert len(AnimMetadataEntry.default_unused().to_bytes()) == 0xD0
@@ -89,7 +89,7 @@ def test_entry_xd_round_trip():
         sub_anim_count=2,
         damage_flags=0,
         timing=(1.367, 2.267, 3.100, 0.0),
-        null_joint_bones=[0, 66, 60, 5, 65, 67, 66, 66, 0, 0, 0, 0, 40, 19, 53, 14],
+        body_map_bones=[0, 66, 60, 5, 65, 67, 66, 66, 0, 0, 0, 0, 40, 19, 53, 14],
         sub_anims=[SubAnim(1, 5), SubAnim(1, 7)],
         terminator=3,
     )
@@ -99,7 +99,7 @@ def test_entry_xd_round_trip():
     e2 = AnimMetadataEntry.from_bytes(raw, 0, is_xd=True)
     assert e2.anim_type == 4
     assert e2.sub_anim_count == 2
-    assert e2.null_joint_bones[1] == 66  # head bone
+    assert e2.body_map_bones[1] == 66  # head bone
     assert len(e2.sub_anims) == 2
     assert e2.sub_anims[0].anim_index == 5
     assert e2.sub_anims[1].anim_index == 7
@@ -115,7 +115,7 @@ def test_entry_colo_timing_conversion():
         anim_type=4,
         sub_anim_count=1,
         timing=(1.8333, 3.0, 3.9667, 0.0),
-        null_joint_bones=[0] + [-1] * 15,
+        body_map_bones=[0] + [-1] * 15,
         sub_anims=[SubAnim(0, 3)],
         terminator=1,
     )
@@ -187,7 +187,7 @@ def test_header_xd_round_trip():
     h.anim_entries[0] = AnimMetadataEntry(
         anim_type=2, sub_anim_count=1,
         timing=(2.633, 0.0, 0.0, 0.0),
-        null_joint_bones=[0, 66, 60, 5, 65, 67] + [-1] * 10,
+        body_map_bones=[0, 66, 60, 5, 65, 67] + [-1] * 10,
         sub_anims=[SubAnim(2, 4)],
         terminator=3,
     )
@@ -208,7 +208,7 @@ def test_header_xd_round_trip():
     assert len(h2.anim_entries) == 17
     assert h2.anim_entries[0].anim_type == 2
     assert h2.anim_entries[0].sub_anims[0].anim_index == 4
-    assert h2.anim_entries[0].null_joint_bones[1] == 66
+    assert h2.anim_entries[0].body_map_bones[1] == 66
 
 def test_header_colo_round_trip():
     """Build a Colosseum header, serialize, re-parse."""

@@ -34,8 +34,10 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
                             description='Write import logs to a temp file for debugging.')
     setup_workspace: BoolProperty(default=True, name='Setup Workspace',
                                  description='Split the viewport and open an Action Editor. Sets playback end frame to 60.')
-    import_lights: BoolProperty(default=True, name='Import Lights',
+    import_lights: BoolProperty(default=False, name='Import Lights',
                                description='Import light sets from the model file.')
+    import_cameras: BoolProperty(default=False, name='Import Cameras',
+                                description='Import cameras from the model file.')
     include_shiny: BoolProperty(default=True, name='Include Shiny Variant',
                                description='Extract shiny color parameters from PKX files and add a toggleable shiny filter to materials.')
     use_legacy: BoolProperty(default=False, name='Use Legacy Importer',
@@ -84,6 +86,7 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
             "max_frame": 10000,
             "filepath": path,
             "import_lights": self.import_lights,
+            "import_cameras": self.import_cameras,
             "include_shiny": self.include_shiny,
         }
 
@@ -381,25 +384,24 @@ class DAT_PT_PKXPanel(bpy.types.Panel):
                                 as_int=True)
 
         # === Shiny Variant ===
-        if hasattr(obj, 'dat_pkx_shiny'):
-            box = layout.box()
-            box.label(text="Shiny Variant", icon='COLOR')
-            box.prop(obj, "dat_pkx_shiny", text="Enable Shiny Preview")
+        box = layout.box()
+        box.label(text="Shiny Variant", icon='COLOR')
+        box.prop(obj, "dat_pkx_shiny", text="Enable Shiny Preview")
 
-            col = box.column(align=True)
-            col.label(text="Channel Routing:")
-            row = col.row(align=True)
-            row.prop(obj, "dat_pkx_shiny_route_r", text="R")
-            row.prop(obj, "dat_pkx_shiny_route_g", text="G")
-            row = col.row(align=True)
-            row.prop(obj, "dat_pkx_shiny_route_b", text="B")
-            row.prop(obj, "dat_pkx_shiny_route_a", text="A")
+        col = box.column(align=True)
+        col.label(text="Channel Routing:")
+        row = col.row(align=True)
+        row.prop(obj, "dat_pkx_shiny_route_r", text="R")
+        row.prop(obj, "dat_pkx_shiny_route_g", text="G")
+        row = col.row(align=True)
+        row.prop(obj, "dat_pkx_shiny_route_b", text="B")
+        row.prop(obj, "dat_pkx_shiny_route_a", text="A")
 
-            col = box.column(align=True)
-            col.label(text="Brightness:")
-            col.prop(obj, "dat_pkx_shiny_brightness_r", text="Red")
-            col.prop(obj, "dat_pkx_shiny_brightness_g", text="Green")
-            col.prop(obj, "dat_pkx_shiny_brightness_b", text="Blue")
+        col = box.column(align=True)
+        col.label(text="Brightness:")
+        col.prop(obj, "dat_pkx_shiny_brightness_r", text="Red")
+        col.prop(obj, "dat_pkx_shiny_brightness_g", text="Green")
+        col.prop(obj, "dat_pkx_shiny_brightness_b", text="Blue")
 
         # === Flags ===
         box = layout.box()

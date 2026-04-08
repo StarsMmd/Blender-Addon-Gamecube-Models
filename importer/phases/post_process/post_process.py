@@ -210,9 +210,9 @@ def _store_pkx_metadata(armature, pkx_header, logger, actions=None):
         actions: list of Blender Actions in DAT animation order (from Phase 5).
     """
     try:
-        from ....shared.helpers.pkx_header import NULL_JOINT_NAMES
+        from ....shared.helpers.pkx_header import BODY_MAP_NAMES
     except (ImportError, SystemError):
-        from shared.helpers.pkx_header import NULL_JOINT_NAMES
+        from shared.helpers.pkx_header import BODY_MAP_NAMES
 
     h = pkx_header
 
@@ -230,8 +230,8 @@ def _store_pkx_metadata(armature, pkx_header, logger, actions=None):
     _SUB_ANIM_TRIGGERS = {0: "sleep_on", 1: "sleep_off", 2: "extra", 3: "unused"}
     _SUB_ANIM_TYPES = {0: "none", 1: "simple", 2: "targeted"}
 
-    # Null joint descriptive names (index → property suffix)
-    _JOINT_NAMES = [
+    # Body map descriptive names (index → property suffix)
+    _BODY_MAP_KEYS = [
         "root", "head", "center", "body_3", "neck", "head_top",
         "limb_a", "limb_b", "secondary_8", "secondary_9",
         "secondary_10", "secondary_11", "attach_a", "attach_b",
@@ -277,12 +277,12 @@ def _store_pkx_metadata(armature, pkx_header, logger, actions=None):
             armature[prefix + "_trigger"] = _SUB_ANIM_TRIGGERS.get(i, "unknown")
             armature[prefix + "_anim_ref"] = _action_name_for_index(ref) if ref >= 0 else ""
 
-    # --- Null joint bones (descriptive names) ---
+    # --- Body map bones ---
     first_active = h.anim_entries[0] if h.anim_entries else None
     if first_active:
         for j in range(16):
-            bone_idx = first_active.null_joint_bones[j]
-            key = "dat_pkx_joint_%s" % _JOINT_NAMES[j]
+            bone_idx = first_active.body_map_bones[j]
+            key = "dat_pkx_body_%s" % _BODY_MAP_KEYS[j]
             armature[key] = _bone_name_for_index(bone_list, bone_idx)
 
     # --- Animation entries ---
@@ -307,12 +307,12 @@ def _store_pkx_metadata(armature, pkx_header, logger, actions=None):
             else:
                 armature[prefix + "_sub_%d_anim" % s] = ""
 
-        # Per-entry null joint overrides (only when different from model-level)
-        if first_active and entry.null_joint_bones != first_active.null_joint_bones:
+        # Per-entry body map overrides (only when different from model-level)
+        if first_active and entry.body_map_bones != first_active.body_map_bones:
             for j in range(16):
-                if entry.null_joint_bones[j] != first_active.null_joint_bones[j]:
-                    bone_name = _bone_name_for_index(bone_list, entry.null_joint_bones[j])
-                    armature[prefix + "_joint_%s" % _JOINT_NAMES[j]] = bone_name
+                if entry.body_map_bones[j] != first_active.body_map_bones[j]:
+                    bone_name = _bone_name_for_index(bone_list, entry.body_map_bones[j])
+                    armature[prefix + "_body_%s" % _BODY_MAP_KEYS[j]] = bone_name
 
     # --- Property descriptions ---
     _add_property_descriptions(armature)

@@ -73,7 +73,7 @@ class SubAnim:
 
 _ENTRY_SIZE = 0xD0
 _MAX_SUB_ANIMS = 8   # space from 0x8C to 0xCC = 64 bytes = 8 × 8
-_NUM_NULL_JOINTS = 16
+_NUM_BODY_MAP_SLOTS = 16
 
 
 @dataclass
@@ -90,7 +90,7 @@ class AnimMetadataEntry:
     sub_anim_count: int = 1     # 1-3
     damage_flags: int = 0
     timing: tuple = (0.0, 0.0, 0.0, 0.0)  # 4 floats (seconds)
-    null_joint_bones: list = field(default_factory=lambda: [-1] * _NUM_NULL_JOINTS)
+    body_map_bones: list = field(default_factory=lambda: [-1] * _NUM_BODY_MAP_SLOTS)
     sub_anims: list = field(default_factory=lambda: [SubAnim()])
     terminator: int = 3         # 3 for XD, 1 for Colosseum
 
@@ -101,7 +101,7 @@ class AnimMetadataEntry:
             anim_type=4,
             sub_anim_count=1,
             timing=(0.0, 0.0, 0.0, 0.0),
-            null_joint_bones=[-1] * _NUM_NULL_JOINTS,
+            body_map_bones=[-1] * _NUM_BODY_MAP_SLOTS,
             sub_anims=[SubAnim(0, 0)],
             terminator=3 if is_xd else 1,
         )
@@ -113,7 +113,7 @@ class AnimMetadataEntry:
             anim_type=2,
             sub_anim_count=1,
             timing=(0.0, 0.0, 0.0, 0.0),
-            null_joint_bones=[0] + [-1] * (_NUM_NULL_JOINTS - 1),
+            body_map_bones=[0] + [-1] * (_NUM_BODY_MAP_SLOTS - 1),
             sub_anims=[SubAnim(2 if is_xd else 0, 0)],
             terminator=3 if is_xd else 1,
         )
@@ -137,7 +137,7 @@ class AnimMetadataEntry:
             t4 = read('uint', data, offset + 0x1C) / _COLO_FPS
 
         bones = []
-        for i in range(_NUM_NULL_JOINTS):
+        for i in range(_NUM_BODY_MAP_SLOTS):
             bones.append(read('int', data, offset + 0x4C + i * 4))
 
         count = min(sub_anim_count, _MAX_SUB_ANIMS)
@@ -154,7 +154,7 @@ class AnimMetadataEntry:
             sub_anim_count=sub_anim_count,
             damage_flags=damage_flags,
             timing=(t1, t2, t3, t4),
-            null_joint_bones=bones,
+            body_map_bones=bones,
             sub_anims=subs,
             terminator=terminator,
         )
@@ -181,8 +181,8 @@ class AnimMetadataEntry:
 
         # 0x20-0x4B reserved zeros (already zero)
 
-        for i in range(min(len(self.null_joint_bones), _NUM_NULL_JOINTS)):
-            write_into('int', self.null_joint_bones[i], out, 0x4C + i * 4)
+        for i in range(min(len(self.body_map_bones), _NUM_BODY_MAP_SLOTS)):
+            write_into('int', self.body_map_bones[i], out, 0x4C + i * 4)
 
         count = min(len(self.sub_anims), _MAX_SUB_ANIMS)
         for i in range(count):
@@ -379,9 +379,9 @@ class PKXHeader:
             if offset + _ENTRY_SIZE <= file_size:
                 h.anim_entries.append(AnimMetadataEntry.from_bytes(data, offset, is_xd=False))
 
-        # Head bone from first active entry's null_joint[1]
-        if h.anim_entries and h.anim_entries[0].null_joint_bones[1] >= 0:
-            h.head_bone_index = h.anim_entries[0].null_joint_bones[1]
+        # Head bone from first active entry's body_map[1]
+        if h.anim_entries and h.anim_entries[0].body_map_bones[1] >= 0:
+            h.head_bone_index = h.anim_entries[0].body_map_bones[1]
 
         # Shiny: last 20 bytes of file (4×uint32 routing + 1×uint32 ARGB)
         shiny_base = file_size - _COLO_SHINY_SIZE
@@ -506,7 +506,7 @@ COLO_TRAINER_ANIM_NAMES = [
     "Unused 4", "Unused 5", "Unused 6", "Unused 7",
 ]
 
-NULL_JOINT_NAMES = [
+BODY_MAP_NAMES = [
     "Root",             # 0 — always bone 0
     "Head",             # 1 — head tracking
     "Center",           # 2 — center null fallback

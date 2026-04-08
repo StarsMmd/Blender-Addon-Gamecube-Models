@@ -397,17 +397,17 @@ def _extract_pkx_header(armatures, action_name_to_index, logger):
             h.colo_unknown_10 = 5
             h.colo_unknown_14 = arm.get("dat_pkx_particle_orientation", -1)
 
-        # Null joint bones (descriptive names)
-        _JOINT_KEYS = [
+        # Body map bones (descriptive names)
+        _BODY_MAP_KEYS = [
             "root", "head", "center", "body_3", "neck", "head_top",
             "limb_a", "limb_b", "secondary_8", "secondary_9",
             "secondary_10", "secondary_11", "attach_a", "attach_b",
             "attach_c", "attach_d",
         ]
-        model_null_bones = []
+        model_body_map = []
         for j in range(16):
-            name = arm.get("dat_pkx_joint_%s" % _JOINT_KEYS[j], "")
-            model_null_bones.append(bone_name_to_idx.get(name, -1) if name else -1)
+            name = arm.get("dat_pkx_body_%s" % _BODY_MAP_KEYS[j], "")
+            model_body_map.append(bone_name_to_idx.get(name, -1) if name else -1)
 
         # Animation entries
         anim_count = arm.get("dat_pkx_anim_count", 17)
@@ -437,10 +437,10 @@ def _extract_pkx_header(armatures, action_name_to_index, logger):
             if not subs:
                 subs = [SubAnim(0, 0)]
 
-            # Per-entry null joint bones (check for overrides)
-            entry_bones = list(model_null_bones)
+            # Per-entry body map overrides
+            entry_bones = list(model_body_map)
             for j in range(16):
-                override_name = arm.get(prefix + "_joint_%s" % _JOINT_KEYS[j])
+                override_name = arm.get(prefix + "_body_%s" % _BODY_MAP_KEYS[j])
                 if override_name is not None:
                     entry_bones[j] = bone_name_to_idx.get(override_name, -1) if override_name else -1
 
@@ -454,7 +454,7 @@ def _extract_pkx_header(armatures, action_name_to_index, logger):
                     arm.get(prefix + "_timing_3", 0.0),
                     arm.get(prefix + "_timing_4", 0.0),
                 ),
-                null_joint_bones=entry_bones,
+                body_map_bones=entry_bones,
                 sub_anims=subs,
                 terminator=arm.get(prefix + "_terminator", 3 if is_xd else 1),
             )

@@ -125,9 +125,9 @@ The GameCube renders in gamma space (no linear pipeline). The shiny brightness m
 
 ---
 
-## Null Joint Bones
+## Body Map (Null Joint Bones)
 
-16 bone indices stored per animation entry, accessed by `GetPart__13ModelSequenceF17enumNullJointName`. Used for particle attachment, camera targeting, and head tracking.
+16 bone indices stored per animation entry, accessed by `GetPart__13ModelSequenceF17enumNullJointName` in the game code. Used for particle attachment, camera targeting, and head tracking.
 
 | Index | Name | Purpose |
 |-------|------|---------|
