@@ -98,7 +98,7 @@ def apply_pkx_metadata(armature, format='XD', model_type='POKEMON', species_id=0
         prefix = "dat_pkx_sub_anim_%d" % i
         armature[prefix + "_type"] = "none"
         armature[prefix + "_trigger"] = sub_triggers[i]
-        armature[prefix + "_anim_ref"] = 0
+        armature[prefix + "_anim_ref"] = ""
 
     # --- Null joint bones ---
     bones = list(armature.data.bones)
@@ -120,11 +120,11 @@ def apply_pkx_metadata(armature, format='XD', model_type='POKEMON', species_id=0
         if i == 0:
             armature[prefix + "_type"] = "loop"
             armature[prefix + "_sub_0_motion"] = 2 if is_xd else 0
-            armature[prefix + "_sub_0_anim"] = 0
+            armature[prefix + "_sub_0_anim"] = ""
         else:
             armature[prefix + "_type"] = "action"
             armature[prefix + "_sub_0_motion"] = 0
-            armature[prefix + "_sub_0_anim"] = 0
+            armature[prefix + "_sub_0_anim"] = ""
         armature[prefix + "_sub_count"] = 1
         armature[prefix + "_damage_flags"] = 0
         armature[prefix + "_timing_1"] = 0.0

@@ -150,12 +150,11 @@ These are only needed when exporting to `.pkx` format. The preparation script se
 | `dat_pkx_joint_center`, `_body_3` … `_attach_d` | `""` | Named body part bones for particle attachment, camera targeting, and hit detection. Leave empty if unknown — the game falls back gracefully. |
 | `dat_pkx_anim_count` | `17` | Number of animation metadata entries. Standard Pokémon models use 17 (idle + 16 action slots). |
 | `dat_pkx_anim_00_type` | `"loop"` | Animation slot 0 type. Set to `"loop"` for idle animation. Other slots default to `"action"`. Valid types: `"loop"`, `"hit_reaction"`, `"action"`, `"compound"`. |
-| `dat_pkx_anim_NN_sub_0_anim` | `0` | DAT animation index for slot N. Maps PKX animation slots to the actual animation sets in the DAT file. Set to the 0-based index of the animation in the model. |
+| `dat_pkx_anim_NN_sub_0_anim` | `""` | Blender Action name for slot N. Maps PKX animation slots to actions by name (resolved to DAT indices at export time). Use the action search dropdown in the PKX Metadata panel to set this. |
 | `dat_pkx_anim_NN_sub_count` | `1` | Number of sub-animations per slot. Usually 1. |
 | `dat_pkx_anim_NN_damage_flags` | `0` | Bit flags for hit reaction behavior. Only relevant for `"hit_reaction"` type entries. |
 | `dat_pkx_anim_NN_timing_1` … `_4` | `0.0` | Timing parameters (seconds). Control animation blend/transition timing. |
-| `dat_pkx_has_shiny` | `True` | Enables the shiny variant panel. |
-| `dat_pkx_shiny_route_r/g/b/a` | `0/1/2/3` | Shiny color channel routing. Identity mapping (no color change). See the Shiny Variant panel for editing. |
+| `dat_pkx_shiny_route_r/g/b/a` | `0/1/2/3` | Shiny color channel routing. Identity mapping (no color change). The Shiny Variant section appears in the PKX Metadata panel when these differ from identity. |
 | `dat_pkx_shiny_brightness_r/g/b` | `0.0` | Shiny brightness offset per channel. 0.0 = no change, positive = brighter, negative = darker. Range [-1.0, 1.0]. |
 | `dat_pkx_sub_anim_N_type` | `"none"` | Sub-animation type (sleep on/off, extra). `"none"` = inactive, `"simple"` = basic, `"targeted"` = bone-targeted. |
 | `dat_pkx_flag_flying` | `False` | Model floats above ground in battle. |
