@@ -74,7 +74,7 @@ def describe_camera(camera_node, camera_index=0):
     if projection is None:
         return None
 
-    name = 'Camera_%s' % (camera_node.name or str(camera_index))
+    name = 'Battle_Camera' if camera_index == 0 else 'Camera_%d' % camera_index
 
     position = None
     if camera_node.position and hasattr(camera_node.position, 'position'):

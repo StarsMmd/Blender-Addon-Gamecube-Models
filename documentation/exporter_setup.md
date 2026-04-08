@@ -33,9 +33,10 @@ What the exporter can and cannot read from your Blender scene.
 | Camera (PERSP) | ✅ Exported | Position, FOV, clip planes, target (via TRACK_TO constraint) |
 | Camera (ORTHO) | ✅ Exported | Ortho scale exported as FOV field |
 | Camera (PANO) | ❌ Ignored | No GameCube equivalent |
-| Light (SUN) | ✅ Exported | Color + direction |
+| Light (SUN) | ✅ Exported | Color + direction + brightness |
 | Light (POINT) | ✅ Exported | Color + position |
 | Light (SPOT) | ✅ Exported | Color + position + target |
+| Light (AMBIENT) | ✅ Exported | POINT light with `dat_light_type = "AMBIENT"` custom property and `energy = 0`. No visible effect in Blender — controls scene-level fill lighting in-game |
 | Light (AREA) | ❌ Ignored | No GameCube equivalent |
 | Empty | ❌ Ignored | Used internally as camera/light targets, not exported as objects |
 | Curves / Text / Volumes | ❌ Ignored | Convert to mesh first if needed |
@@ -116,7 +117,7 @@ Before exporting a model that was **not** imported through the DAT plugin (i.e. 
 Delete any objects that should not be part of the model. Blender's default scene includes objects that will cause issues if left in:
 
 - **Default Cube** — delete it (`X` key)
-- **Default Light** — delete it (the exporter will include it as a game light, which may not be desired)
+- **Default Light** — delete it (the exporter will include it as a game light, which may not be desired). The `prepare_for_export` script adds a proper ambient light automatically
 - **Default Camera** — delete it if you don't want it in the game model, or keep it and set `dat_camera_aspect`
 
 Only armatures and their parented meshes should remain in the scene, plus any lights and cameras you intentionally want in the game model.
@@ -129,11 +130,44 @@ These are custom properties the exporter reads from Blender objects. The [prepar
 
 ### Camera properties
 
+Every PKX model requires exactly **1 camera** named `Battle_Camera` for the default battle framing. The [preparation script](#preparation-script) creates one automatically. All game models use these constant values:
+
+| Setting | Value | Notes |
+|---|---|---|
+| Type | Perspective | Orthographic is not used by battle models |
+| `dat_camera_aspect` | `1.18` | Standard battle viewport ratio. Use 1.333 for fullscreen/map cameras |
+| Near clip | `0.1` | |
+| Far clip | `32768.0` | |
+
+**FOV (lens)** varies by model size. Adjust the camera's focal length in Blender:
+
+| Model size | Lens (mm) | Vertical FOV | Examples |
+|---|---|---|---|
+| Small | 24-34 | 30-40° | Eevee, Roselia, Hinoarashi |
+| Medium | 37.5 | 27° | Most Pokémon (default) |
+| Large | 46-60 | 17-22° | Deoxys, Rayquaza, trainers |
+| Very large | 100-300+ | 3-10° | Kairyu, Houou, Lizardon |
+
+Camera position, FOV, and clip planes are read directly from Blender's camera settings. Camera target is read from a TRACK_TO constraint pointing at `Battle_Camera_target`.
+
+### Scene lights
+
+The exporter reads all light objects in the scene. Each light becomes a separate LightSet in the DAT file. Colosseum/XD models typically have 1 ambient light + 3 directional (SUN) lights.
+
+**Ambient lights** are represented in Blender as POINT lights with `energy = 0` and a `dat_light_type = "AMBIENT"` custom property. They have no visible effect in Blender — their color controls scene-level fill lighting in-game, applied uniformly to all materials.
+
 | Property | Set on | Default | Description |
 |---|---|---|---|
-| `dat_camera_aspect` | Camera objects | `1.18` | Viewport aspect ratio (width/height). The game uses this to configure GX projection. **1.18** is the standard battle camera value used by all Pokémon models in Colosseum/XD. Use **1.333** (4:3) for fullscreen cameras like map/overworld scenes. If not set, the exporter uses 1.333. |
+| `dat_light_type` | Light objects | _(not set)_ | Set to `"AMBIENT"` to mark a light as an ambient light. The `prepare_for_export` script adds one automatically. |
 
-Camera position, FOV, and clip planes are read directly from Blender's camera settings. Camera target is read from a TRACK_TO constraint (if present).
+**Choosing an ambient color:**
+- The ambient color acts as a minimum brightness floor for all surfaces in the scene
+- Lower values (darker gray like `0.1, 0.1, 0.1`) produce more contrast and deeper shadows
+- Higher values (lighter gray like `0.5, 0.5, 0.5`) produce a flatter, softer look with less shadow contrast
+- Most Pokémon models use `(0.3, 0.3, 0.3)` (= 76/255 per channel). Some special models use black `(0, 0, 0)` for full contrast
+- The ambient light is sorted first (LightSet[0]) in the exported file, matching the standard Colo/XD convention
+
+SUN, POINT, and SPOT lights export their Blender color (de-linearized to sRGB), position, and `energy` value as brightness.
 
 ### PKX metadata (armature properties)
 
