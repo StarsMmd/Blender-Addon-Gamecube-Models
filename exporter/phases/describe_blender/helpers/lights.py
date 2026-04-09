@@ -76,6 +76,16 @@ def describe_lights(context, logger=StubLogger()):
                 target_position = (t.x, t.z, -t.y)
                 break
 
+        # SUN lights: if no TRACK_TO, derive direction from object rotation.
+        # Blender SUN direction is the object's -Z axis (forward vector).
+        # Convert to position + target pair for the IR/game format.
+        if ir_type == LightType.SUN and target_position is None:
+            from mathutils import Vector
+            forward = obj.matrix_world.to_quaternion() @ Vector((0, 0, -1))
+            # Position at origin, target along the light direction
+            position = (0.0, 0.0, 0.0)
+            target_position = (forward.x, forward.z, -forward.y)
+
         ir_light = IRLight(
             name=obj.name,
             type=ir_type,
