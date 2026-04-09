@@ -14,6 +14,13 @@ Original implementation provided by Made.
 
 This addon uses Blender's extensions system. Compress the contents of this repository into a `.zip` file and install it via **Edit > Preferences > Extensions** (drag-and-drop the `.zip` into Blender also works). When the addon is enabled, navigate to **File > Import > Gamecube model (.dat)** and select your model file.
 
+## Importing
+
+- **File > Import > Gamecube model (.dat)** — select one or more `.dat` / `.pkx` / `.fsys` / `.wzx` files
+- Imports skeleton, meshes, materials, textures, animations, lights, cameras, and constraints
+- `.pkx` files automatically extract PKX metadata for animation naming and shiny variants
+- `.fsys` archives are unpacked and each contained model is imported separately
+
 ## Shiny Variants
 
 When importing `.pkx` Pokemon models, the addon extracts shiny color parameters from the file header and builds a toggleable shader filter into the imported materials. Select the armature and find the **Shiny Variant** panel in **Properties > Object Properties** to toggle the shiny appearance and edit channel routing and brightness parameters.
