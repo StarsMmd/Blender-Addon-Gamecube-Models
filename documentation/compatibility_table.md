@@ -14,16 +14,16 @@ This table tracks every feature in the GameCube SysDolphin `.dat` format and its
 
 | Feature | DAT Parse (Phase 3) | IR Type (Phase 4) | Import (Phase 5) | Export | Notes |
 |---------|---------------------|--------------------|--------------------|--------|-------|
-| Skeleton / Bone hierarchy | ✅ | `IRBone` | ✅ | ⚠️ Round-trip only | |
-| Bone transforms (SRT) | ✅ | `IRBone` matrices | ✅ | ⚠️ Round-trip only | |
+| Skeleton / Bone hierarchy | ✅ | `IRBone` | ✅ | ✅ | Arbitrary armatures supported |
+| Bone transforms (SRT) | ✅ | `IRBone` matrices | ✅ | ✅ | Armature object scale applied |
 | Bone flags (hidden) | ✅ | `IRBone.is_hidden` | ✅ | ❌ | |
 | Bone flags (billboard) | ✅ | `IRBone.flags` | ❌ | ❌ | Parsed but not applied |
-| Meshes (tris, quads, tri-strips) | ✅ | `IRMesh` | ✅ | ⚠️ Round-trip only | |
-| UV coordinates (up to 8 layers) | ✅ | `IRUVLayer` | ✅ | ⚠️ | |
+| Meshes (tris, quads, tri-strips) | ✅ | `IRMesh` | ✅ | ✅ | Multi-material meshes split by material slot |
+| UV coordinates (up to 8 layers) | ✅ | `IRUVLayer` | ✅ | ✅ | Per-material UV remapping on split |
 | Vertex colors (CLR0, CLR1) | ✅ | `IRColorLayer` | ✅ | ⚠️ | |
 | Custom normals | ✅ | `IRMesh.normals` | ✅ | ⚠️ | Normalized in describe phase |
-| Bone weights / envelopes | ✅ | `IRBoneWeights` | ✅ | ⚠️ | |
-| Single-bone skinning | ✅ | `IRBoneWeights` | ✅ | ⚠️ | |
+| Bone weights / envelopes | ✅ | `IRBoneWeights` | ✅ | ✅ | Weights remapped when mesh is split |
+| Single-bone skinning | ✅ | `IRBoneWeights` | ✅ | ✅ | |
 | Shape keys / morph targets | ⚠️ | `IRShapeKey` | ❌ | ❌ | Dataclass exists but never populated |
 | Bone instances (JOBJ_INSTANCE) | ✅ | `IRBone.instance_child` | ✅ | ❌ | |
 | Spline curves | ✅ | via path animation | ⚠️ Path only | ❌ | |
@@ -45,16 +45,16 @@ This table tracks every feature in the GameCube SysDolphin `.dat` format and its
 | Pixel engine (BLEND mode) | ✅ | `FragmentBlending` | ✅ | ❌ | |
 | Pixel engine (LOGIC mode) | ✅ | `FragmentBlending` | ✅ | ❌ | Maps to BLACK/WHITE/INVERT/INVISIBLE/OPAQUE |
 | Pixel engine (SUBTRACT) | ✅ | `FragmentBlending` | ⚠️ | ❌ | Maps to CUSTOM, best-effort in build |
-| Image decoding (all GX formats) | ✅ | `IRImage` | ✅ | ⚠️ Round-trip only | |
+| Image decoding (all GX formats) | ✅ | `IRImage` | ✅ | ✅ | All GX formats; auto-select or user override via `dat_gx_format` |
 
 ## Animations
 
 | Feature | DAT Parse (Phase 3) | IR Type (Phase 4) | Import (Phase 5) | Export | Notes |
 |---------|---------------------|--------------------|--------------------|--------|-------|
-| Bone animation (SRT keyframes) | ✅ | `IRBoneAnimationSet` | ✅ | ❌ | |
+| Bone animation (SRT keyframes) | ✅ | `IRBoneAnimationSet` | ✅ | ✅ | Euler and quaternion rotation supported |
 | Path animation (spline-based) | ✅ | `IRBoneTrack` | ✅ | ❌ | |
-| Animation looping | ✅ | `.loop` flag | ✅ (CYCLES modifier) | ❌ | |
-| Multiple animation sets | ✅ | `list[IRBoneAnimationSet]` | ✅ | ❌ | |
+| Animation looping | ✅ | `.loop` flag | ✅ (CYCLES modifier) | ✅ | `_Loop` / `_loop` in action name |
+| Multiple animation sets | ✅ | `list[IRBoneAnimationSet]` | ✅ | ✅ | All matching actions exported |
 | Material color animation (RGB) | ✅ | `IRMaterialTrack` | ✅ (sRGB->linear) | ❌ | |
 | Material alpha animation | ✅ | `IRMaterialTrack` | ✅ | ❌ | |
 | Texture UV animation | ✅ | `IRTextureUVTrack` | ✅ | ❌ | |

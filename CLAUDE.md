@@ -181,9 +181,9 @@ Nodes are cached by file offset (`nodes_cache_by_offset`). Nodes with `is_cachab
 | Particle import (GPT1) | ⚠️ Parser + IR representation working, no Blender visualization yet |
 | Camera import | ✅ Working (static + animated: position, target, FOV, roll, near/far) |
 | Fog import | ❌ Not supported (no fog data found in tested models) |
-| Exporter pipeline | ⚠️ Bones + meshes (RIGID/SINGLE_BONE/ENVELOPE) + materials + textures (all GX formats) + bound box + animations + material animations + lights + cameras + constraints working |
+| Exporter pipeline | ✅ Bones + meshes (RIGID/SINGLE_BONE/ENVELOPE, multi-material split) + materials + textures (all GX formats) + bound box + animations (Euler + quaternion) + material animations + lights + cameras + constraints working. Supports arbitrary Blender models (GLB/FBX) with armature object scale + coordinate rotation applied automatically. |
 | Exporter binary round-trip (DATBuilder) | ✅ Functional (0 value mismatches) |
-| Exporter PKX packaging | ✅ Working (DAT injection, shiny write-back, trailer preserved) |
+| Exporter PKX packaging | ✅ Working (from-scratch via PKX metadata OR DAT injection into existing, shiny write-back, trailer preserved) |
 | In-game loading | ✅ Working — all three paths (BNB, NIN, IBI) produce correct geometry + textures in both Blender and in-game simultaneously |
 | IR pipeline | ✅ Default path (legacy available via toggle) |
 | FSYS archive import | ✅ Working (multi-model extraction + LZSS decompression) |

@@ -247,13 +247,11 @@ DATBuilder lives at `exporter/phases/serialize/helpers/dat_builder.py`.
 #### Phase 4: Package Output
 
 **`package/package.py`**:
-1. If target path doesn't exist or extension is `.dat`/`.fdat`/`.rdat`: write raw DAT bytes
-2. If target path is an existing `.pkx` file:
-   - Read existing PKX file
-   - Detect format (Colosseum 0x40 header vs XD 0xE60 header)
-   - Copy header bytes from existing file
-   - Replace DAT payload with new DAT bytes
-   - Write: original_header + new_dat_bytes
+1. If extension is `.dat`/`.fdat`/`.rdat`: write raw DAT bytes
+2. If extension is `.pkx`:
+   a. If PKX metadata found on armature (via `prepare_for_export.py`): build PKX from scratch using `PKXHeader` + `PKXContainer.build_xd()`/`build_colosseum()`
+   b. Else if target `.pkx` file already exists: inject new DAT into existing PKX container (preserves original header)
+   c. Else: build PKX from scratch with default XD header
 
 #### Custom Properties Strategy
 

@@ -220,6 +220,7 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.80 | current | `edit_bone.matrix` | `exporter/skeleton.py` | 4x4 bone matrix in armature space |
 | 2.80 | current | `edit_bone.hide` | `exporter/skeleton.py` | Bone visibility |
 | 2.80 | current | `edit_bone.children` | `exporter/skeleton.py` | Child bones for DFS traversal |
+| 2.80 | current | `armature.matrix_world.to_scale()` | `exporter/skeleton.py`, `exporter/meshes.py` | Armature object scale for bone/vertex scaling |
 | 2.80 | current | `matrix.decompose()` | `exporter/skeleton.py` | Decompose to (trans, quat, scale) |
 | 2.80 | current | `matrix.inverted()` | `exporter/skeleton.py` | Compute local from parent/child world |
 | 2.80 | current | `Matrix.Rotation(angle, size, axis)` | `exporter/skeleton.py` | Coordinate system conversion |
@@ -229,6 +230,9 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.80 | current | `mesh_data.calc_loop_triangles()` | `exporter/meshes.py` | Ensure geometry is up to date |
 | 2.80 | current | `mesh_data.vertices` | `exporter/meshes.py` | Read vertex positions |
 | 2.80 | current | `mesh_data.polygons` | `exporter/meshes.py` | Read face indices |
+| 2.80 | current | `polygon.material_index` | `exporter/meshes.py` | Group faces by material for multi-material mesh splitting |
+| 2.80 | current | `polygon.loop_start` / `polygon.loop_total` | `exporter/meshes.py` | Map polygon to per-loop data indices |
+| 2.80 | current | `mesh_data.materials` | `exporter/meshes.py` | Access material slots for multi-material meshes |
 | 2.80 | current | `mesh_data.uv_layers` | `exporter/meshes.py` | Read UV layers |
 | 3.2 | current | `mesh_data.color_attributes` | `exporter/meshes.py` | Read vertex color layers (FLOAT_COLOR) |
 | 2.80 | current | `mesh_data.has_custom_normals` | `exporter/meshes.py` | Check for custom normals |
@@ -241,6 +245,16 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.80 | current | `group_element.weight` | `exporter/meshes.py` | Vertex weight value |
 | 2.80 | current | `obj.hide_render` | `exporter/meshes.py` | Mesh visibility |
 | 2.80 | current | `material.use_backface_culling` | `exporter/meshes.py` | Backface culling flag |
+| | | | | |
+| | | **Exporter — Describe Animations (Phase 1)** | | |
+| 2.80 | current | `bpy.data.actions` | `exporter/animations.py` | Iterate all actions to find bone animations |
+| 2.80 | current | `action.id_root` | `exporter/animations.py` | Filter actions by root type |
+| 2.80 | current | `action.fcurves` | `exporter/animations.py` | Access F-Curves for channel grouping |
+| 2.80 | current | `fcurve.data_path` | `exporter/animations.py` | Match `pose.bones["..."].rotation_euler` etc |
+| 2.80 | current | `fcurve.array_index` | `exporter/animations.py` | Channel component index (X=0, Y=1, Z=2; W=0 for quat) |
+| 2.80 | current | `fcurve.evaluate(frame)` | `exporter/animations.py` | Sample animation value at a frame |
+| 2.80 | current | `action.frame_range` | `exporter/animations.py` | Get action start/end frames |
+| 2.80 | current | `Quaternion((w, x, y, z)).to_euler('XYZ')` | `exporter/animations.py` | Convert quaternion rotation fcurves to Euler |
 | | | | | |
 | | | **Exporter — Describe Materials (Phase 1)** | | |
 | 2.80 | current | `material.use_nodes` | `exporter/materials.py` | Check for node-based material |

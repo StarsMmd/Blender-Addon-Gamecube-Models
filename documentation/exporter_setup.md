@@ -14,8 +14,8 @@ The exporter writes a Blender scene to a `.dat` or `.pkx` binary that can be use
 2. **Prepare the scene** — if the model was **not** imported through the DAT plugin, run [`scripts/prepare_for_export.py`](#preparation-script) to add required custom properties. Delete any unwanted objects (default cube, extra lights/cameras).
 3. **Review export properties** — check the [custom properties](#export-properties) on your armature and cameras. Set species ID, animation mappings, and camera aspect as needed.
 4. **Export** — **File > Export > Gamecube model (.dat)**. Choose the output file location and set the file extension to `.dat` or `.pkx`. If no extension is specified, the exporter defaults to `.dat`.
-   - **`.dat`** — standalone model file, can be created from scratch
-   - **`.pkx`** — PKX container; requires an existing `.pkx` at the output path (the exporter injects the new model into the existing container)
+   - **`.dat`** — standalone model file
+   - **`.pkx`** — PKX container with game metadata (species ID, animation slots, shiny params, etc.). Can be created from scratch when PKX metadata is set via `prepare_for_export.py`. If an existing `.pkx` file is at the output path and no PKX metadata is on the armature, the exporter injects the new model into the existing container.
 
 ---
 
