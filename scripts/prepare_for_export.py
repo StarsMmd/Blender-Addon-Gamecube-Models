@@ -604,69 +604,36 @@ def _srgb_to_linear(c):
 # Mesh weight limiting and splitting
 # ---------------------------------------------------------------------------
 
-MAX_WEIGHTS_PER_VERTEX = 3
-MAX_POBJS_PER_MESH = 25
-
-
-def _estimate_pobj_count(mesh_obj, bone_names):
-    """Estimate how many PObjects envelope splitting will create.
-
-    Counts the unique sets of bones influencing each vertex. The exporter
-    creates one PObject per 10 unique bone sets, so dividing by 10 gives
-    the estimate.
-    """
-    combos = set()
-    for v in mesh_obj.data.vertices:
-        combo = tuple(sorted(
-            (mesh_obj.vertex_groups[g.group].name, round(g.weight, 1))
-            for g in v.groups
-            if g.weight > 0.0 and g.group < len(mesh_obj.vertex_groups)
-            and mesh_obj.vertex_groups[g.group].name in bone_names
-        ))
-        if combo:
-            combos.add(combo)
-    return max(1, (len(combos) + 9) // 10)
-
-
-def _get_bone_region(bone, root_children):
-    """Find which root-child subtree a bone belongs to.
-
-    Walks up the hierarchy until hitting a direct child of the skeleton
-    root. Returns that child's name as the region identifier.
-    """
-    current = bone
-    while current.parent is not None:
-        if current.parent.parent is None or current in root_children:
-            return current.name
-        current = current.parent
-    return current.name
+MAX_WEIGHTS_PER_VERTEX = 2
 
 
 def prepare_mesh_weights(armature):
-    """Limit vertex weights and split oversized meshes.
+    """Optimize mesh weights for GameCube export.
 
-    1. Limits all mesh vertices to MAX_WEIGHTS_PER_VERTEX influences.
-    2. Normalizes weights after limiting.
-    3. If a mesh would produce >MAX_POBJS_PER_MESH PObjects from envelope
-       splitting, splits it into body regions based on the bone hierarchy.
+    1. Limits all vertices to MAX_WEIGHTS_PER_VERTEX bone influences.
+    2. Quantizes weights to 10% steps (matching game model precision).
+    3. Separates single-bone vertices into rigid meshes per bone,
+       leaving only multi-bone vertices in the envelope mesh.
 
-    Returns (weights_limited, meshes_split) counts.
+    This produces the same structure as game models: many small RIGID
+    meshes (1 PObject each, no envelope overhead) + smaller envelope
+    meshes at joints.
+
+    Returns (weights_limited, rigid_meshes_created) counts.
     """
     bone_names = {b.name for b in armature.data.bones}
     meshes = [obj for obj in bpy.data.objects
               if obj.type == 'MESH' and obj.parent == armature]
 
     total_limited = 0
-    total_split = 0
+    total_rigid = 0
 
-    # Step 1: Limit weights on all meshes
     for mesh_obj in meshes:
-        # Select only this mesh
         bpy.ops.object.select_all(action='DESELECT')
         mesh_obj.select_set(True)
         bpy.context.view_layer.objects.active = mesh_obj
 
-        # Count vertices that will be affected
+        # Step 1: Limit weights
         affected = 0
         for v in mesh_obj.data.vertices:
             bone_groups = [g for g in v.groups
@@ -684,12 +651,7 @@ def prepare_mesh_weights(armature):
             print("    %s: limited %d vertices to %d weights" %
                   (mesh_obj.name, affected, MAX_WEIGHTS_PER_VERTEX))
 
-        # Quantize weights to 10% steps (matching game model precision).
-        # Smooth weight painting gives every joint vertex a unique ratio —
-        # without quantization a 6000-vertex model can have 1000+ unique combos,
-        # each requiring a separate hardware draw call (PObject).
-        # We normalize first, THEN quantize, THEN normalize again — this avoids
-        # re-normalization creating new non-round values.
+        # Step 2: Quantize weights to 10% steps
         bpy.ops.object.mode_set(mode='WEIGHT_PAINT')
         bpy.ops.object.vertex_group_normalize_all(lock_active=False)
         bpy.ops.object.mode_set(mode='OBJECT')
@@ -706,190 +668,146 @@ def prepare_mesh_weights(armature):
                             quantized += 1
 
         if quantized > 0:
-            # Final normalize pass
             bpy.ops.object.mode_set(mode='WEIGHT_PAINT')
             bpy.ops.object.vertex_group_normalize_all(lock_active=False)
             bpy.ops.object.mode_set(mode='OBJECT')
-
-            # Second quantize pass — normalization may have un-rounded values
             for v in mesh_data.vertices:
                 for g in v.groups:
                     if g.group < len(mesh_obj.vertex_groups):
                         if mesh_obj.vertex_groups[g.group].name in bone_names:
                             g.weight = round(g.weight, 1)
-
             print("    %s: quantized %d weight values to 10%% steps" %
                   (mesh_obj.name, quantized))
 
-    # Step 2: Split oversized meshes by body region (one pass)
-    meshes = [obj for obj in bpy.data.objects
-              if obj.type == 'MESH' and obj.parent == armature]
-
-    for mesh_obj in list(meshes):
-        est = _estimate_pobj_count(mesh_obj, bone_names)
-        if est <= MAX_POBJS_PER_MESH:
-            continue
-
-        print("    %s: estimated %d PObjects (threshold %d), splitting by body region..." %
-              (mesh_obj.name, est, MAX_POBJS_PER_MESH))
-
-        split_count = _split_mesh_by_region(mesh_obj, armature, bone_names)
-        if split_count > 1:
-            total_split += split_count
-            print("    Split into %d region meshes" % split_count)
-        else:
-            print("    Could not split further — consider splitting manually")
-
-    return total_limited, total_split
+    return total_limited, 0
 
 
-def _split_mesh_by_region(mesh_obj, armature, bone_names):
-    """Split a mesh into body regions based on the bone hierarchy.
+def _split_rigid_from_envelope(mesh_obj, armature, bone_names):
+    """Separate single-bone vertices into per-bone rigid meshes.
 
-    Groups vertices by which root-child subtree their dominant bone
-    belongs to, then separates into one mesh per region.
+    Vertices weighted to exactly one bone are grouped by that bone and
+    separated into individual mesh objects. The remaining multi-bone
+    vertices stay in the original mesh for envelope skinning.
 
-    Returns the number of resulting meshes.
+    Returns the number of rigid meshes created.
     """
-    # Find the body root for THIS mesh — the deepest bone in the hierarchy
-    # that is an ancestor of all dominant bones used by this mesh, and has
-    # >1 child subtree with mesh vertices. This enables recursive splitting:
-    # the first pass splits at the hips/spine level, the second pass splits
-    # the upper body at the shoulder/head level, etc.
-
-    # Collect bones actually used by this mesh
-    mesh_bones = set()
-    for v in mesh_obj.data.vertices:
-        best_bone = None
-        best_weight = -1
-        for g in v.groups:
-            if g.group < len(mesh_obj.vertex_groups):
-                name = mesh_obj.vertex_groups[g.group].name
-                if name in bone_names and g.weight > best_weight:
-                    best_weight = g.weight
-                    best_bone = name
-        if best_bone:
-            mesh_bones.add(best_bone)
-
-    if len(mesh_bones) < 2:
-        return 1
-
-    # Find the lowest common ancestor of all mesh bones, then walk down
-    # to the first node with >1 child subtree that has mesh bones
-    def _descendants(bone):
-        result = {bone.name}
-        for c in bone.children:
-            result.update(_descendants(c))
-        return result
-
-    roots = [b for b in armature.data.bones if b.parent is None]
-    if not roots:
-        return 1
-
-    body_root = roots[0]
-    while True:
-        children_with_mesh = [
-            c for c in body_root.children
-            if _descendants(c) & mesh_bones
-        ]
-        if len(children_with_mesh) == 1:
-            body_root = children_with_mesh[0]
-        else:
-            break
-
-    if len(children_with_mesh) < 2:
-        return 1
-
-    root_children = set(children_with_mesh)
-
-    # Build bone → region map
-    bone_to_region = {}
-    for bone in armature.data.bones:
-        bone_to_region[bone.name] = _get_bone_region(bone, root_children)
-
-    # Assign each vertex to a region based on its dominant (highest weight) bone
     mesh_data = mesh_obj.data
-    vertex_regions = {}
+
+    # Classify each vertex: single-bone → bone name, multi-bone → None
+    vertex_bone = {}  # {vertex_index: bone_name or None}
     for v in mesh_data.vertices:
-        best_bone = None
-        best_weight = -1
-        for g in v.groups:
-            if g.group < len(mesh_obj.vertex_groups):
-                vg_name = mesh_obj.vertex_groups[g.group].name
-                if vg_name in bone_names and g.weight > best_weight:
-                    best_weight = g.weight
-                    best_bone = vg_name
-        if best_bone and best_bone in bone_to_region:
-            vertex_regions[v.index] = bone_to_region[best_bone]
+        bones = [(mesh_obj.vertex_groups[g.group].name, g.weight)
+                 for g in v.groups
+                 if g.group < len(mesh_obj.vertex_groups)
+                 and mesh_obj.vertex_groups[g.group].name in bone_names
+                 and g.weight > 0.0]
+        if len(bones) == 1:
+            vertex_bone[v.index] = bones[0][0]
         else:
-            vertex_regions[v.index] = '_default'
+            vertex_bone[v.index] = None
 
-    # Count regions
-    regions = set(vertex_regions.values())
-    if len(regions) <= 1:
-        return 1
+    # Group single-bone vertices by bone name
+    bone_vertices = {}  # {bone_name: set of vertex indices}
+    for vi, bone_name in vertex_bone.items():
+        if bone_name is not None:
+            if bone_name not in bone_vertices:
+                bone_vertices[bone_name] = set()
+            bone_vertices[bone_name].add(vi)
 
-    # Split by selecting vertices per region and separating
-    bpy.ops.object.select_all(action='DESELECT')
-    mesh_obj.select_set(True)
-    bpy.context.view_layer.objects.active = mesh_obj
+    if not bone_vertices:
+        return 0
 
-    # We separate all-but-one region (keep the largest in the original mesh)
-    region_vert_counts = {}
-    for vi, region in vertex_regions.items():
-        region_vert_counts[region] = region_vert_counts.get(region, 0) + 1
-    largest_region = max(region_vert_counts, key=region_vert_counts.get)
+    # Only split bones that have enough vertices to form faces.
+    # A bone group needs at least 3 vertices to possibly form a triangle.
+    splittable = {bn: vis for bn, vis in bone_vertices.items() if len(vis) >= 3}
+    if not splittable:
+        return 0
 
-    regions_to_split = [r for r in regions if r != largest_region]
-    split_count = 1  # The original mesh counts as one
+    # Check which bone groups actually have faces (all face vertices in the group)
+    face_bone_groups = {}
+    for poly in mesh_data.polygons:
+        poly_verts = set(poly.vertices)
+        # Check if ALL vertices of this face belong to the same single bone
+        face_bones = set()
+        for vi in poly_verts:
+            b = vertex_bone.get(vi)
+            if b is None:
+                face_bones = None
+                break
+            face_bones.add(b)
+        if face_bones and len(face_bones) == 1:
+            bone = next(iter(face_bones))
+            if bone not in face_bone_groups:
+                face_bone_groups[bone] = 0
+            face_bone_groups[bone] += 1
 
-    for region in regions_to_split:
-        # Re-get mesh_obj reference (may have changed after splits)
+    if not face_bone_groups:
+        return 0
+
+    # Sort by face count descending — split largest groups first
+    bones_to_split = sorted(face_bone_groups.keys(),
+                            key=lambda b: -face_bone_groups[b])
+
+    created = 0
+    original_name = mesh_obj.name
+
+    for bone_name in bones_to_split:
+        # Re-get active mesh (may have changed after previous splits)
         mesh_obj = bpy.context.view_layer.objects.active
         if mesh_obj is None or mesh_obj.type != 'MESH':
             break
 
+        # Select vertices for this bone group
         bpy.ops.object.mode_set(mode='EDIT')
         bpy.ops.mesh.select_all(action='DESELECT')
         bpy.ops.object.mode_set(mode='OBJECT')
 
-        # Select vertices belonging to this region
-        mesh_data = mesh_obj.data
-        selected = 0
-        for v in mesh_data.vertices:
-            if vertex_regions.get(v.index) == region:
-                v.select = True
-                selected += 1
-            else:
-                v.select = False
-
-        if selected == 0:
-            continue
+        vis = bone_vertices[bone_name]
+        for v in mesh_obj.data.vertices:
+            v.select = v.index in vis
 
         bpy.ops.object.mode_set(mode='EDIT')
-        bpy.ops.mesh.separate(type='SELECTED')
+        try:
+            bpy.ops.mesh.separate(type='SELECTED')
+        except RuntimeError:
+            bpy.ops.object.mode_set(mode='OBJECT')
+            continue
         bpy.ops.object.mode_set(mode='OBJECT')
 
-        split_count += 1
-
-        # The newly created mesh is the last selected object
+        # Name the new mesh and ensure armature modifier
         for obj in bpy.context.selected_objects:
             if obj != mesh_obj and obj.type == 'MESH':
-                obj.name = "%s_%s" % (mesh_obj.name, region)
-                # Ensure armature modifier exists
+                obj.name = "%s_%s" % (original_name, bone_name)
                 if not any(m.type == 'ARMATURE' for m in obj.modifiers):
                     mod = obj.modifiers.new('Armature', 'ARMATURE')
                     mod.object = armature
 
-        # Rebuild vertex_regions for the remaining mesh (indices shifted)
-        new_regions = {}
-        for v in mesh_obj.data.vertices:
-            # After split, vertex indices are renumbered — use position matching
-            # Actually, after separate, the remaining vertices keep their region
-            new_regions[v.index] = largest_region
-        vertex_regions = new_regions
+        created += 1
 
-    return split_count
+        # Rebuild vertex_bone mapping for the reduced mesh
+        # (vertex indices are renumbered after separate)
+        new_vertex_bone = {}
+        for v in mesh_obj.data.vertices:
+            bones = [(mesh_obj.vertex_groups[g.group].name, g.weight)
+                     for g in v.groups
+                     if g.group < len(mesh_obj.vertex_groups)
+                     and mesh_obj.vertex_groups[g.group].name in bone_names
+                     and g.weight > 0.0]
+            if len(bones) == 1:
+                new_vertex_bone[v.index] = bones[0][0]
+            else:
+                new_vertex_bone[v.index] = None
+        vertex_bone = new_vertex_bone
+
+        # Rebuild bone_vertices for remaining bones
+        bone_vertices = {}
+        for vi, bn in vertex_bone.items():
+            if bn is not None:
+                if bn not in bone_vertices:
+                    bone_vertices[bn] = set()
+                bone_vertices[bn].add(vi)
+
+    return created
 
 
 # ---------------------------------------------------------------------------

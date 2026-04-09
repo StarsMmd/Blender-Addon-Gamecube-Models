@@ -520,8 +520,9 @@ def _build_envelope_map(assignments, bone_name_to_index):
     vertex_to_env = {}
 
     for vertex_idx, weight_list in assignments:
-        # Normalize: sort by bone name for consistent keys
-        key = tuple(sorted((name, round(w, 6)) for name, w in weight_list))
+        # Normalize: sort by bone name, quantize weights to 25% steps
+        # to aggressively collapse near-duplicate combos for GameCube memory
+        key = tuple(sorted((name, round(round(w * 4) / 4, 2)) for name, w in weight_list))
         if key not in combo_to_env:
             combo_to_env[key] = len(envelopes)
             envelopes.append(weight_list)
