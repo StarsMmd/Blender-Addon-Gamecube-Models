@@ -56,10 +56,19 @@ What the exporter can and cannot read from your Blender scene.
 
 | Blender feature | Export support | Notes |
 |---|---|---|
-| Vertex groups (multi-bone) | ✅ Envelope | Weighted/envelope skinning |
+| Vertex groups (multi-bone) | ✅ Envelope | Weighted/envelope skinning (max 3 influences per vertex) |
 | Vertex groups (single bone) | ✅ Single-bone | All verts in one group |
 | No vertex groups | ✅ Rigid | Bound to parent bone |
 | Armature modifier | ✅ Required | Must be present for skinning |
+| Multi-material meshes | ✅ Auto-split | Automatically split per material slot on export |
+
+### GameCube constraints
+
+The GameCube has limited memory. The preparation script optimizes models automatically, but manual optimization gives better results:
+
+- **Bone weights:** Keep to **3 influences per vertex** max. The script reduces this automatically, but you'll get cleaner deformation by painting weights manually with this limit in mind (Weight Paint mode → Weights → Limit Total).
+- **Mesh splitting:** For best results, split your model into separate body parts (head, torso, arms, legs) before running the script. This reduces the exported file size significantly. The script will attempt automatic splitting if needed.
+- **Polygon count:** Up to ~10,000 faces is fine (Dark Lugia has 10,266). The poly count is rarely the bottleneck — bone weight complexity is.
 
 ### Materials
 

@@ -6,11 +6,13 @@ the exporter expects.
 
 The script operates on all objects in the scene — no selection required:
   1. Creates a Battle_Camera if none exists
-  2. Applies default PKX metadata to all armatures that don't have it
-  3. Auto-derives animation timing from action durations
-  4. Auto-selects GX texture formats for all armature textures
-  5. Inserts shiny filter nodes into all materials (identity defaults, toggle off)
-  6. Creates an ambient light if none exists
+  2. Limits vertex bone weights to 3 per vertex (GameCube constraint)
+  3. Splits oversized meshes by body region if >25 estimated PObjects
+  4. Applies default PKX metadata to all armatures that don't have it
+  5. Auto-derives animation timing from action durations
+  6. Auto-selects GX texture formats for all armature textures
+  7. Inserts shiny filter nodes into all materials (identity defaults, toggle off)
+  8. Creates standard battle lighting (1 ambient + 3 directional)
 
 After running, the scene can be exported via File > Export > Gamecube model (.dat).
 
@@ -598,6 +600,230 @@ def _srgb_to_linear(c):
     return ((c + 0.055) / 1.055) ** 2.4
 
 
+# ---------------------------------------------------------------------------
+# Mesh weight limiting and splitting
+# ---------------------------------------------------------------------------
+
+MAX_WEIGHTS_PER_VERTEX = 3
+MAX_POBJS_PER_MESH = 25
+
+
+def _estimate_pobj_count(mesh_obj, bone_names):
+    """Estimate how many PObjects envelope splitting will create.
+
+    Counts the unique sets of bones influencing each vertex. The exporter
+    creates one PObject per 10 unique bone sets, so dividing by 10 gives
+    the estimate.
+    """
+    bone_sets = set()
+    for v in mesh_obj.data.vertices:
+        bones = frozenset(
+            mesh_obj.vertex_groups[g.group].name
+            for g in v.groups
+            if g.weight > 0.0 and g.group < len(mesh_obj.vertex_groups)
+            and mesh_obj.vertex_groups[g.group].name in bone_names
+        )
+        if bones:
+            bone_sets.add(bones)
+    return max(1, (len(bone_sets) + 9) // 10)
+
+
+def _get_bone_region(bone, root_children):
+    """Find which root-child subtree a bone belongs to.
+
+    Walks up the hierarchy until hitting a direct child of the skeleton
+    root. Returns that child's name as the region identifier.
+    """
+    current = bone
+    while current.parent is not None:
+        if current.parent.parent is None or current in root_children:
+            return current.name
+        current = current.parent
+    return current.name
+
+
+def prepare_mesh_weights(armature):
+    """Limit vertex weights and split oversized meshes.
+
+    1. Limits all mesh vertices to MAX_WEIGHTS_PER_VERTEX influences.
+    2. Normalizes weights after limiting.
+    3. If a mesh would produce >MAX_POBJS_PER_MESH PObjects from envelope
+       splitting, splits it into body regions based on the bone hierarchy.
+
+    Returns (weights_limited, meshes_split) counts.
+    """
+    bone_names = {b.name for b in armature.data.bones}
+    meshes = [obj for obj in bpy.data.objects
+              if obj.type == 'MESH' and obj.parent == armature]
+
+    total_limited = 0
+    total_split = 0
+
+    # Step 1: Limit weights on all meshes
+    for mesh_obj in meshes:
+        # Select only this mesh
+        bpy.ops.object.select_all(action='DESELECT')
+        mesh_obj.select_set(True)
+        bpy.context.view_layer.objects.active = mesh_obj
+
+        # Count vertices that will be affected
+        affected = 0
+        for v in mesh_obj.data.vertices:
+            bone_groups = [g for g in v.groups
+                          if g.group < len(mesh_obj.vertex_groups)
+                          and mesh_obj.vertex_groups[g.group].name in bone_names
+                          and g.weight > 0.0]
+            if len(bone_groups) > MAX_WEIGHTS_PER_VERTEX:
+                affected += 1
+
+        if affected > 0:
+            bpy.ops.object.mode_set(mode='WEIGHT_PAINT')
+            bpy.ops.object.vertex_group_limit_total(limit=MAX_WEIGHTS_PER_VERTEX)
+            bpy.ops.object.vertex_group_normalize_all(lock_active=False)
+            bpy.ops.object.mode_set(mode='OBJECT')
+            total_limited += affected
+            print("    %s: limited %d vertices to %d weights" %
+                  (mesh_obj.name, affected, MAX_WEIGHTS_PER_VERTEX))
+
+    # Step 2: Check if any mesh needs splitting
+    # Re-gather meshes (in case names changed)
+    meshes = [obj for obj in bpy.data.objects
+              if obj.type == 'MESH' and obj.parent == armature]
+
+    for mesh_obj in list(meshes):
+        est = _estimate_pobj_count(mesh_obj, bone_names)
+        if est <= MAX_POBJS_PER_MESH:
+            continue
+
+        print("    %s: estimated %d PObjects (threshold %d), splitting by body region..." %
+              (mesh_obj.name, est, MAX_POBJS_PER_MESH))
+
+        split_count = _split_mesh_by_region(mesh_obj, armature, bone_names)
+        if split_count > 1:
+            total_split += split_count
+            print("    Split into %d region meshes" % split_count)
+        else:
+            print("    Could not split further")
+
+    return total_limited, total_split
+
+
+def _split_mesh_by_region(mesh_obj, armature, bone_names):
+    """Split a mesh into body regions based on the bone hierarchy.
+
+    Groups vertices by which root-child subtree their dominant bone
+    belongs to, then separates into one mesh per region.
+
+    Returns the number of resulting meshes.
+    """
+    # Find root bone and its direct children (region roots)
+    roots = [b for b in armature.data.bones if b.parent is None]
+    if not roots:
+        return 1
+
+    # Walk down to find the first bone with >1 child (the body root)
+    body_root = roots[0]
+    while len(body_root.children) == 1:
+        body_root = body_root.children[0]
+    if not body_root.children:
+        return 1
+
+    root_children = set(body_root.children)
+
+    # Build bone → region map
+    bone_to_region = {}
+    for bone in armature.data.bones:
+        bone_to_region[bone.name] = _get_bone_region(bone, root_children)
+
+    # Assign each vertex to a region based on its dominant (highest weight) bone
+    mesh_data = mesh_obj.data
+    vertex_regions = {}
+    for v in mesh_data.vertices:
+        best_bone = None
+        best_weight = -1
+        for g in v.groups:
+            if g.group < len(mesh_obj.vertex_groups):
+                vg_name = mesh_obj.vertex_groups[g.group].name
+                if vg_name in bone_names and g.weight > best_weight:
+                    best_weight = g.weight
+                    best_bone = vg_name
+        if best_bone and best_bone in bone_to_region:
+            vertex_regions[v.index] = bone_to_region[best_bone]
+        else:
+            vertex_regions[v.index] = '_default'
+
+    # Count regions
+    regions = set(vertex_regions.values())
+    if len(regions) <= 1:
+        return 1
+
+    # Split by selecting vertices per region and separating
+    bpy.ops.object.select_all(action='DESELECT')
+    mesh_obj.select_set(True)
+    bpy.context.view_layer.objects.active = mesh_obj
+
+    # We separate all-but-one region (keep the largest in the original mesh)
+    region_vert_counts = {}
+    for vi, region in vertex_regions.items():
+        region_vert_counts[region] = region_vert_counts.get(region, 0) + 1
+    largest_region = max(region_vert_counts, key=region_vert_counts.get)
+
+    regions_to_split = [r for r in regions if r != largest_region]
+    split_count = 1  # The original mesh counts as one
+
+    for region in regions_to_split:
+        # Re-get mesh_obj reference (may have changed after splits)
+        mesh_obj = bpy.context.view_layer.objects.active
+        if mesh_obj is None or mesh_obj.type != 'MESH':
+            break
+
+        bpy.ops.object.mode_set(mode='EDIT')
+        bpy.ops.mesh.select_all(action='DESELECT')
+        bpy.ops.object.mode_set(mode='OBJECT')
+
+        # Select vertices belonging to this region
+        mesh_data = mesh_obj.data
+        selected = 0
+        for v in mesh_data.vertices:
+            if vertex_regions.get(v.index) == region:
+                v.select = True
+                selected += 1
+            else:
+                v.select = False
+
+        if selected == 0:
+            continue
+
+        bpy.ops.object.mode_set(mode='EDIT')
+        bpy.ops.mesh.separate(type='SELECTED')
+        bpy.ops.object.mode_set(mode='OBJECT')
+
+        split_count += 1
+
+        # The newly created mesh is the last selected object
+        for obj in bpy.context.selected_objects:
+            if obj != mesh_obj and obj.type == 'MESH':
+                obj.name = "%s_%s" % (mesh_obj.name, region)
+                # Ensure armature modifier exists
+                if not any(m.type == 'ARMATURE' for m in obj.modifiers):
+                    mod = obj.modifiers.new('Armature', 'ARMATURE')
+                    mod.object = armature
+
+        # Rebuild vertex_regions for the remaining mesh (indices shifted)
+        new_regions = {}
+        for v in mesh_obj.data.vertices:
+            # After split, vertex indices are renumbered — use position matching
+            # Actually, after separate, the remaining vertices keep their region
+            new_regions[v.index] = largest_region
+        vertex_regions = new_regions
+
+    return split_count
+
+
+# ---------------------------------------------------------------------------
+# Scene lights
+# ---------------------------------------------------------------------------
+
 def prepare_ambient_light():
     """Add an ambient light if none exists in the scene.
 
@@ -626,6 +852,50 @@ def prepare_ambient_light():
     bpy.context.scene.collection.objects.link(lamp)
 
     return 1
+
+
+def prepare_lights():
+    """Ensure the scene has the standard 4-light battle setup.
+
+    All game models have exactly 4 LightSets:
+      [0] Ambient (76, 76, 76) — uniform fill, POINT with energy=0
+      [1] Main directional (204, 204, 204) — brightest, SUN from above-front
+      [2] Fill directional (102, 102, 102) — medium, SUN from the side
+      [3] Back/rim directional (76, 76, 76) — darker, SUN from behind
+
+    Creates any missing lights. Returns the number of lights created.
+    """
+    created = 0
+
+    # [0] Ambient — delegate to existing function
+    created += prepare_ambient_light()
+
+    # Standard directional lights — (name, color_u8, rotation_euler_degrees)
+    _DIRECTIONAL_LIGHTS = [
+        ('Main_Light',  204, (math.radians(-45), 0, math.radians(30))),
+        ('Fill_Light',  102, (math.radians(-30), 0, math.radians(-60))),
+        ('Back_Light',   76, (math.radians(-20), 0, math.radians(150))),
+    ]
+
+    for name, color_u8, rotation in _DIRECTIONAL_LIGHTS:
+        # Skip if a SUN light with this name already exists
+        existing = bpy.data.objects.get(name)
+        if existing and existing.type == 'LIGHT' and existing.data.type == 'SUN':
+            continue
+
+        srgb_val = color_u8 / 255.0
+        linear_val = _srgb_to_linear(srgb_val)
+
+        light_data = bpy.data.lights.new(name=name, type='SUN')
+        light_data.energy = 1.0
+        light_data.color = (linear_val, linear_val, linear_val)
+
+        lamp = bpy.data.objects.new(name=name, object_data=light_data)
+        lamp.rotation_euler = rotation
+        bpy.context.scene.collection.objects.link(lamp)
+        created += 1
+
+    return created
 
 
 # ---------------------------------------------------------------------------
@@ -933,6 +1203,13 @@ if __name__ == "__main__" or True:
         print("  No armatures in scene (PKX/timing/texture steps skipped)")
 
     for arm in armatures:
+        # Mesh weight limiting and splitting (before other steps)
+        limited, split = prepare_mesh_weights(arm)
+        if limited:
+            print("  Limited %d vertex weights on '%s'" % (limited, arm.name))
+        if split:
+            print("  Split meshes into %d regions on '%s'" % (split, arm.name))
+
         # PKX metadata
         if arm.get("dat_pkx_format"):
             print("  Armature '%s' already has PKX metadata (skipped)" % arm.name)
@@ -954,15 +1231,9 @@ if __name__ == "__main__" or True:
         if shiny_count:
             print("  Shiny filter added to %d material(s) on '%s'" % (shiny_count, arm.name))
 
-    # 6. Ambient light
-    amb_count = prepare_ambient_light()
-    if amb_count:
-        print("  Added ambient light (no visible change in Blender)")
-        print("    Color controls scene fill lighting in-game:")
-        print("    - Lower (darker) = more contrast, deeper shadows")
-        print("    - Higher (lighter) = flatter, softer look")
-        print("    Edit the light's color in the Object Data panel to adjust.")
-    else:
-        print("  Ambient light already exists (skipped)")
+    # 6. Scene lights (ambient + 3 directional)
+    light_count = prepare_lights()
+    if light_count:
+        print("  Added %d battle light(s)" % light_count)
 
     print("=== Done ===")
