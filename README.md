@@ -165,8 +165,8 @@ See [Round-Trip Test Progress](documentation/round_trip_test_progress.md) for pe
 
 Detailed documentation lives in the `documentation/` folder:
 
-- [**Export Pipeline Plan**](documentation/export_pipeline_plan.md) — design for the export pipeline (DAT writing)
 - [**Round-Trip Test Progress**](documentation/round_trip_test_progress.md) — NBN/NIN/IBI/BNB test results per model
+- [**File Formats**](documentation/file_formats.md) — binary format specs for DAT, GX textures, WZX, PKX, and GPT1
 - [**IR Specification**](documentation/ir_specification.md) — the Intermediate Representation dataclass hierarchy and design principles
 - [**Compatibility Table**](documentation/compatibility_table.md) — feature support across different games and file types
 - [**Blender API Usage**](documentation/blender_api_usage.md) — reference for Blender Python API patterns used in the addon
