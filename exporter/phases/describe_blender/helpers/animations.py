@@ -36,6 +36,12 @@ def describe_bone_animations(armature, bones, logger=StubLogger(), use_bezier=Tr
     Returns:
         list[IRBoneAnimationSet]
     """
+    # The bone rest data used for unbaking includes the armature's object
+    # scale (baked into bone matrices by describe_skeleton). Blender fcurve
+    # location values are in the original unscaled bone-local space, so we
+    # need to scale them to match. Use uniform scale (average of axes).
+    obj_scale = armature.matrix_world.to_scale()
+    loc_scale = (obj_scale.x + obj_scale.y + obj_scale.z) / 3.0
     # Find actions associated with this armature
     armature_prefix = armature.name.split('_skeleton_')[0] if '_skeleton_' in armature.name else armature.name
     actions = []
@@ -57,7 +63,7 @@ def describe_bone_animations(armature, bones, logger=StubLogger(), use_bezier=Tr
 
     anim_sets = []
     for action in actions:
-        anim_set = _describe_action(action, bones, bone_data, bone_name_to_index, logger, use_bezier)
+        anim_set = _describe_action(action, bones, bone_data, bone_name_to_index, logger, use_bezier, loc_scale)
         if anim_set is not None:
             anim_sets.append(anim_set)
 
@@ -102,7 +108,7 @@ def _build_bone_data(bones):
     return data
 
 
-def _describe_action(action, bones, bone_data, bone_name_to_index, logger, use_bezier=True):
+def _describe_action(action, bones, bone_data, bone_name_to_index, logger, use_bezier=True, loc_scale=1.0):
     """Convert a single Blender Action to an IRBoneAnimationSet."""
 
     # Group fcurves by bone name
@@ -112,7 +118,7 @@ def _describe_action(action, bones, bone_data, bone_name_to_index, logger, use_b
         if not match:
             continue
         bone_name, channel = match.groups()
-        if channel not in ('rotation_euler', 'location', 'scale'):
+        if channel not in ('rotation_euler', 'rotation_quaternion', 'location', 'scale'):
             continue
         if bone_name not in bone_fcurves:
             bone_fcurves[bone_name] = {}
@@ -136,7 +142,7 @@ def _describe_action(action, bones, bone_data, bone_name_to_index, logger, use_b
 
         track = _unbake_bone_track(
             bone_name, bone_idx, channels, bone_data, bones,
-            frame_start, frame_end, end_frame, logger, use_bezier)
+            frame_start, frame_end, end_frame, logger, use_bezier, loc_scale)
         if track is not None:
             tracks.append(track)
 
@@ -157,7 +163,7 @@ def _describe_action(action, bones, bone_data, bone_name_to_index, logger, use_b
 
 
 def _unbake_bone_track(bone_name, bone_idx, channels, bone_data, bones,
-                       frame_start, frame_end, end_frame, logger, use_bezier=True):
+                       frame_start, frame_end, end_frame, logger, use_bezier=True, loc_scale=1.0):
     """Unbake Blender pose-space fcurves to HSD SRT keyframes for one bone."""
     bd = bone_data[bone_idx]
     parent_idx = bd['parent_index']
@@ -174,15 +180,27 @@ def _unbake_bone_track(bone_name, bone_idx, channels, bone_data, bones,
         blender_loc = [0.0, 0.0, 0.0]
         blender_scl = [1.0, 1.0, 1.0]
 
-        rot_fcs = channels.get('rotation_euler', {})
+        rot_euler_fcs = channels.get('rotation_euler', {})
+        rot_quat_fcs = channels.get('rotation_quaternion', {})
         loc_fcs = channels.get('location', {})
         scl_fcs = channels.get('scale', {})
 
+        if rot_quat_fcs:
+            # Quaternion rotation: evaluate W,X,Y,Z then convert to Euler
+            qw = rot_quat_fcs[0].evaluate(frame) if 0 in rot_quat_fcs else 1.0
+            qx = rot_quat_fcs[1].evaluate(frame) if 1 in rot_quat_fcs else 0.0
+            qy = rot_quat_fcs[2].evaluate(frame) if 2 in rot_quat_fcs else 0.0
+            qz = rot_quat_fcs[3].evaluate(frame) if 3 in rot_quat_fcs else 0.0
+            euler = Quaternion((qw, qx, qy, qz)).to_euler('XYZ')
+            blender_rot = [euler.x, euler.y, euler.z]
+        else:
+            for i in range(3):
+                if i in rot_euler_fcs:
+                    blender_rot[i] = rot_euler_fcs[i].evaluate(frame)
+
         for i in range(3):
-            if i in rot_fcs:
-                blender_rot[i] = rot_fcs[i].evaluate(frame)
             if i in loc_fcs:
-                blender_loc[i] = loc_fcs[i].evaluate(frame)
+                blender_loc[i] = loc_fcs[i].evaluate(frame) * loc_scale
             if i in scl_fcs:
                 blender_scl[i] = scl_fcs[i].evaluate(frame)
 

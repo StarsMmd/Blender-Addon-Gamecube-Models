@@ -430,8 +430,15 @@ def _extract_pkx_header(armatures, action_name_to_index, logger):
                     anim_idx = anim_name
                 else:
                     anim_idx = 0
+                # Derive motion_type from slot type and whether an action is assigned.
+                # loop=2, action/hit_reaction/compound=1, empty/disabled=0.
+                has_anim = isinstance(anim_name, str) and anim_name != ""
+                if is_xd and has_anim:
+                    derived_motion = 2 if anim_type_str == "loop" else 1
+                else:
+                    derived_motion = 0
                 subs.append(SubAnim(
-                    motion_type=arm.get(prefix + "_sub_%d_motion" % s, 0),
+                    motion_type=derived_motion,
                     anim_index=anim_idx,
                 ))
             if not subs:
