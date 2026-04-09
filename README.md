@@ -16,23 +16,9 @@ This addon uses Blender's extensions system. Compress the contents of this repos
 
 ## Shiny Variants
 
-When importing `.pkx` Pokemon models with the **Include Shiny Variant** option enabled (on by default), the addon extracts shiny color parameters from the file header and builds a toggleable shader filter into the imported materials.
+When importing `.pkx` Pokemon models, the addon extracts shiny color parameters from the file header and builds a toggleable shader filter into the imported materials. Select the armature and find the **Shiny Variant** panel in **Properties > Object Properties** to toggle the shiny appearance and edit channel routing and brightness parameters.
 
-To use the shiny toggle:
-
-1. Select the armature in the viewport
-2. Open **Properties > Object Properties** (orange square icon)
-3. Find the **Shiny Variant** panel
-4. Check **Enable** to switch to the shiny appearance
-
-The panel also exposes all 8 shiny parameters for live editing:
-
-- **Channel Routing** — 4 dropdowns (Red/Green/Blue/Alpha) controlling which source channel maps to each output channel
-- **Brightness** — 4 sliders (-1.0 to 1.0) for per-channel brightness adjustment
-
-Not every Pokemon has shiny parameters in its PKX file — some (e.g. legendaries and starters) use a separate model for their shiny form instead. For these models, the Shiny Variant panel will not appear. See `documentation/shiny_variants.md` for technical details. Shiny variants are not available with the legacy importer setting enabled.
-
-The shiny filter can also be added to any model manually using the standalone script documented in [Scripts](documentation/scripts.md).
+Not every Pokemon has shiny parameters — some use a separate model for their shiny form instead. See [Shiny Variants](documentation/shiny_variants.md) for technical details.
 
 ## Exporting
 
@@ -40,13 +26,34 @@ The exporter writes a Blender scene to a `.dat` or `.pkx` binary. See the [Expor
 
 For models not imported through this plugin (e.g. GLB/FBX from other games), run `scripts/prepare_for_export.py` first to set up camera, lights, weight optimization, and PKX metadata.
 
-## Remaining Work
+## Developer Instructions
 
-- Shape animation and fog import
-- Particle visualization
-- Export quality tuning for arbitrary models (weight optimization)
+### Dependencies
 
-## Code Structure
+Install the following Python packages for development and testing:
+
+```bash
+pip install pytest
+
+# bpy 4.5 requires Python 3.11
+python3.11 -m pip install bpy==4.5.7
+```
+
+| Package | Purpose |
+|---|---|
+| `pytest` | Required for running the unit test suite |
+| `bpy` | Required for round-trip tests (IBI) and CLI pipeline phases 5-6. **Requires Python 3.11.** |
+
+`bpy` bundles `mathutils` — no separate install needed.
+
+To verify:
+
+```bash
+python3.11 -c "import bpy; print(bpy.app.version_string)"
+# Should print: 4.5.7 LTS
+```
+
+### Code Structure
 
 ```
 importer/
@@ -76,35 +83,8 @@ exporter/
 
 legacy/                    # Pre-refactor importer (available via "Use Legacy" toggle)
 documentation/             # Pipeline docs, API reference, compatibility table, IR spec
-tests/                     # pytest suite (661 tests, no game files required)
+tests/                     # pytest suite (no game files required)
 tests/round_trip/          # Round-trip tests with real model files (requires bpy)
-```
-
-## Developer Instructions
-
-### Dependencies
-
-Install the following Python packages for development and testing:
-
-```bash
-pip install pytest
-
-# bpy 4.5 requires Python 3.11
-python3.11 -m pip install bpy==4.5.7
-```
-
-| Package | Purpose |
-|---|---|
-| `pytest` | Required for running the unit test suite |
-| `bpy` | Required for round-trip tests (IBI) and CLI pipeline phases 5-6. **Requires Python 3.11.** |
-
-`bpy` bundles `mathutils` — no separate install needed.
-
-To verify:
-
-```bash
-python3.11 -c "import bpy; print(bpy.app.version_string)"
-# Should print: 4.5.7 LTS
 ```
 
 ### Running the CLI Pipeline
