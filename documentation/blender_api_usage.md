@@ -17,7 +17,7 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.80 | current | `bpy.types.TOPBAR_MT_file_import.remove()` | `BlenderPlugin.py` | |
 | 2.80 | current | `bpy.types.TOPBAR_MT_file_export.remove()` | `BlenderPlugin.py` | |
 | 2.80 | current | `bpy.types.Operator` (subclass) | `BlenderPlugin.py` | ImportHSD, ExportHSD |
-| 2.80 | current | `bpy.types.Panel` (subclass) | `BlenderPlugin.py` | DAT_PT_ShinyPanel |
+| 2.80 | current | `bpy.types.Panel` (subclass) | `BlenderPlugin.py` | DAT_PT_PKXPanel |
 | 2.80 | current | `bpy.types.OperatorFileListElement` | `BlenderPlugin.py` | |
 | | | | | |
 | | | **Properties (bpy.props)** | | |
@@ -32,8 +32,8 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.80 | current | Property `update` callback | `BlenderPlugin.py` | `_on_shiny_toggle_update`, `_on_shiny_param_update` |
 | | | | | |
 | | | **Custom Properties** | | |
-| 2.80 | current | `object["key"] = value` | `shiny_filter.py`, `post_process.py` | `dat_pkx_has_shiny`, `dat_pkx_shiny_*_group`, `dat_pkx_*` metadata |
-| 2.80 | current | `object.get("key", default)` | `shiny_filter.py`, `BlenderPlugin.py`, `describe_blender.py` | Panel poll, group name lookup, PKX metadata extraction |
+| 2.80 | current | `object["key"] = value` | `shiny_filter.py`, `post_process.py`, `cameras.py` | `dat_pkx_has_shiny`, `dat_pkx_shiny_*_group`, `dat_pkx_*` metadata, `dat_camera_aspect` |
+| 2.80 | current | `object.get("key", default)` | `shiny_filter.py`, `BlenderPlugin.py`, `describe_blender.py`, `export/cameras.py` | Panel poll, group name lookup, PKX metadata extraction, camera aspect readback |
 | | | | | |
 | | | **IO Helpers (bpy_extras)** | | |
 | 2.80 | current | `bpy_extras.io_utils.ImportHelper` | `BlenderPlugin.py` | |
@@ -41,22 +41,28 @@ Every Blender Python API call used by this addon, with the Blender version range
 | | | | | |
 | | | **App & Version** | | |
 | 2.80 | current | `bpy.app.version` | Multiple | Returns `(major, minor, patch)` tuple |
+| 2.80 | current | `bpy.app.handlers.depsgraph_update_post` | `post_process.py` | Register/unregister shiny toggle handler |
 | | | | | |
 | | | **Context & Scene** | | |
-| 2.80 | current | `bpy.context.scene.collection.objects.link(obj)` | `meshes.py`, `skeleton.py`, `lights.py` | |
-| 2.80 | current | `bpy.context.view_layer.objects.active = obj` | `skeleton.py` | |
+| 2.80 | current | `bpy.context.scene.collection.objects.link(obj)` | `meshes.py`, `skeleton.py`, `lights.py`, `cameras.py` | |
+| 2.80 | current | `bpy.context.view_layer.objects.active = obj` | `skeleton.py`, `exporter/skeleton.py` | |
+| 2.80 | current | `bpy.context.view_layer.update()` | `skeleton.py`, `animations.py` | Force dependency graph update |
+| 2.80 | current | `bpy.context.scene.frame_set(n)` | `post_process.py` | Reset timeline to frame 0 |
 | 2.80 | current | `bpy.context.scene.frame_end = n` | `BlenderPlugin.py` | Workspace setup |
+| 2.80 | current | `bpy.context.mode` | `skeleton.py`, `exporter/skeleton.py` | Check current editor mode |
 | 2.80 | current | `context.screen.areas` | `BlenderPlugin.py` | Workspace setup |
 | 3.2 | current | `context.temp_override(area=...)` | `BlenderPlugin.py` | Workspace split |
 | | | | | |
 | | | **Operators (bpy.ops)** | | |
-| 2.80 | current | `bpy.ops.object.mode_set(mode=...)` | `skeleton.py` | EDIT/OBJECT mode switching |
-| 2.80 | current | `bpy.ops.object.select_all(action='DESELECT')` | `BlenderPlugin.py` | |
+| 2.80 | current | `bpy.ops.object.mode_set(mode=...)` | `skeleton.py`, `animations.py`, `constraints.py`, `exporter/skeleton.py`, `exporter/constraints.py` | EDIT/OBJECT/POSE mode switching |
+| 2.80 | current | `bpy.ops.object.select_all(action='DESELECT')` | `BlenderPlugin.py`, `exporter/skeleton.py` | |
 | 2.80 | current | `bpy.ops.screen.area_split(direction, factor)` | `BlenderPlugin.py` | Workspace setup |
 | | | | | |
 | | | **Object Data Creation** | | |
 | 2.80 | current | `bpy.data.armatures.new(name)` | `skeleton.py` | |
-| 2.80 | current | `bpy.data.objects.new(name, object_data)` | `skeleton.py`, `meshes.py`, `lights.py` | |
+| 2.80 | current | `bpy.data.objects.new(name, object_data)` | `skeleton.py`, `meshes.py`, `lights.py`, `cameras.py`, `animations.py` | |
+| 2.80 | current | `bpy.data.objects` (iteration) | `cameras.py`, `BlenderPlugin.py`, `exporter/*.py` | Find objects by type |
+| 2.80 | current | `bpy.data.curves.new(name, type)` | `animations.py` | Spline path curves |
 | 2.80 | current | `bpy.data.meshes.new(name)` | `meshes.py` | |
 | 2.80 | current | `bpy.data.materials.new(name)` | `materials.py`, `meshes.py` | |
 | 2.80 | current | `bpy.data.lights.new(name, type)` | `lights.py` | |
@@ -67,7 +73,10 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.80 | current | `bpy.data.node_groups[name]` | `shiny_filter.py` | Lookup for rebuild |
 | | | | | |
 | | | **Object Properties** | | |
-| 2.80 | current | `object.location = Vector(...)` | `meshes.py` | |
+| 2.80 | current | `object.location = Vector(...)` | `meshes.py`, `cameras.py`, `lights.py` | |
+| 2.80 | current | `object.empty_display_type = '...'` | `cameras.py`, `lights.py` | Display type for target empties |
+| 2.80 | current | `object.empty_display_size = n` | `cameras.py` | Scale target empty to model size |
+| 2.80 | current | `object.constraints.new(type=...)` | `cameras.py` | TRACK_TO for camera look-at |
 | 2.80 | current | `object.matrix_local = Matrix(...)` | `meshes.py` | |
 | 2.80 | current | `object.parent = obj` | `meshes.py` | |
 | 2.80 | current | `object.select_set(True)` | `skeleton.py` | |
@@ -187,6 +196,14 @@ Every Blender Python API call used by this addon, with the Blender version range
 | | | **NLA** | | |
 | 2.80 | current | `material.animation_data.nla_tracks.new()` | `material_animations.py` | |
 | 2.80 | current | `track.strips.new(name, start, action)` | `material_animations.py` | |
+| | | | | |
+| | | **Camera Data** | | |
+| 2.80 | current | `cam_data.type = 'PERSP'/'ORTHO'` | `cameras.py` | Camera projection type |
+| 2.80 | current | `cam_data.sensor_fit = 'VERTICAL'` | `cameras.py` | Sensor fit mode for FOV |
+| 2.80 | current | `cam_data.sensor_height` | `cameras.py` | Sensor height for FOV→lens conversion |
+| 2.80 | current | `cam_data.lens` | `cameras.py` | Focal length in mm |
+| 2.80 | current | `cam_data.clip_start` / `clip_end` | `cameras.py` | Near/far clipping planes |
+| 2.80 | current | `obj["dat_camera_aspect"]` | `cameras.py`, `export/cameras.py` | Custom property: aspect ratio (Blender has no per-camera aspect) |
 | | | | | |
 | | | **Light Data** | | |
 | 2.80 | current | `light_data.color = [r, g, b]` | `lights.py` | |

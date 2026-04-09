@@ -370,11 +370,10 @@ The shiny parameters are stored as custom properties on the armature (`dat_pkx_s
 ## Outstanding TODOs
 
 - [ ] Code audit: identify opportunities to simplify and clean up code
-- [x] Code audit: identify opportunities to reduce algorithmic complexity — see [complexity optimization plan](documentation/complexity_optimization_plan.md)
-- [ ] Implement remaining complexity optimizations (items 1-3 in the plan above)
+- [x] Code audit: identify opportunities to reduce algorithmic complexity
 - [x] Shiny filter: split into separate routing and brightness shaders. The routing shader (channel swizzle) only applies to texture colors, not vertex colors. The brightness shader applies to the final result after vertex color multiplication.
 - [x] Ambient lighting: per-material stored in Emission node (`dat_ambient_emission`, strength=0 by default). Scene-level `LOBJ_AMBIENT` lights imported as no-op POINT light with `dat_light_type = "AMBIENT"` and `energy = 0`. Sorted first (LightSet[0]) on export.
-- [x] Bone inverse_bind_matrix: computed as `srt_world.inverted()` — the inverse of the SRT-accumulated world matrix (no coordinate rotation). Only set on skinning target bones, cleared on others. See "Envelope Skinning" section in [export pipeline plan](documentation/export_pipeline_plan.md).
+- [x] Bone inverse_bind_matrix: computed as `srt_world.inverted()` — the inverse of the SRT-accumulated world matrix (no coordinate rotation). Only set on skinning target bones, cleared on others.
 - [ ] GPT1 particle export (compose + serialize phases) — validate import first
 - [ ] Blender particle visualization from IRParticleSystem
 - [x] Envelope matrix index overflow: meshes with >10 unique weight combos are now split into multiple PObjects, each with ≤10 envelopes and its own display list. Greedy best-fit bin-packing minimizes the number of splits.
