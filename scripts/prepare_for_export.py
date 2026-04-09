@@ -615,17 +615,17 @@ def _estimate_pobj_count(mesh_obj, bone_names):
     creates one PObject per 10 unique bone sets, so dividing by 10 gives
     the estimate.
     """
-    bone_sets = set()
+    combos = set()
     for v in mesh_obj.data.vertices:
-        bones = frozenset(
-            mesh_obj.vertex_groups[g.group].name
+        combo = tuple(sorted(
+            (mesh_obj.vertex_groups[g.group].name, round(g.weight, 1))
             for g in v.groups
             if g.weight > 0.0 and g.group < len(mesh_obj.vertex_groups)
             and mesh_obj.vertex_groups[g.group].name in bone_names
-        )
-        if bones:
-            bone_sets.add(bones)
-    return max(1, (len(bone_sets) + 9) // 10)
+        ))
+        if combo:
+            combos.add(combo)
+    return max(1, (len(combos) + 9) // 10)
 
 
 def _get_bone_region(bone, root_children):
@@ -679,14 +679,49 @@ def prepare_mesh_weights(armature):
         if affected > 0:
             bpy.ops.object.mode_set(mode='WEIGHT_PAINT')
             bpy.ops.object.vertex_group_limit_total(limit=MAX_WEIGHTS_PER_VERTEX)
-            bpy.ops.object.vertex_group_normalize_all(lock_active=False)
             bpy.ops.object.mode_set(mode='OBJECT')
             total_limited += affected
             print("    %s: limited %d vertices to %d weights" %
                   (mesh_obj.name, affected, MAX_WEIGHTS_PER_VERTEX))
 
-    # Step 2: Check if any mesh needs splitting
-    # Re-gather meshes (in case names changed)
+        # Quantize weights to 10% steps (matching game model precision).
+        # Smooth weight painting gives every joint vertex a unique ratio —
+        # without quantization a 6000-vertex model can have 1000+ unique combos,
+        # each requiring a separate hardware draw call (PObject).
+        # We normalize first, THEN quantize, THEN normalize again — this avoids
+        # re-normalization creating new non-round values.
+        bpy.ops.object.mode_set(mode='WEIGHT_PAINT')
+        bpy.ops.object.vertex_group_normalize_all(lock_active=False)
+        bpy.ops.object.mode_set(mode='OBJECT')
+
+        mesh_data = mesh_obj.data
+        quantized = 0
+        for v in mesh_data.vertices:
+            for g in v.groups:
+                if g.group < len(mesh_obj.vertex_groups):
+                    if mesh_obj.vertex_groups[g.group].name in bone_names:
+                        q = round(g.weight, 1)
+                        if abs(q - g.weight) > 0.001:
+                            g.weight = q
+                            quantized += 1
+
+        if quantized > 0:
+            # Final normalize pass
+            bpy.ops.object.mode_set(mode='WEIGHT_PAINT')
+            bpy.ops.object.vertex_group_normalize_all(lock_active=False)
+            bpy.ops.object.mode_set(mode='OBJECT')
+
+            # Second quantize pass — normalization may have un-rounded values
+            for v in mesh_data.vertices:
+                for g in v.groups:
+                    if g.group < len(mesh_obj.vertex_groups):
+                        if mesh_obj.vertex_groups[g.group].name in bone_names:
+                            g.weight = round(g.weight, 1)
+
+            print("    %s: quantized %d weight values to 10%% steps" %
+                  (mesh_obj.name, quantized))
+
+    # Step 2: Split oversized meshes by body region (one pass)
     meshes = [obj for obj in bpy.data.objects
               if obj.type == 'MESH' and obj.parent == armature]
 
@@ -703,7 +738,7 @@ def prepare_mesh_weights(armature):
             total_split += split_count
             print("    Split into %d region meshes" % split_count)
         else:
-            print("    Could not split further")
+            print("    Could not split further — consider splitting manually")
 
     return total_limited, total_split
 
@@ -716,19 +751,56 @@ def _split_mesh_by_region(mesh_obj, armature, bone_names):
 
     Returns the number of resulting meshes.
     """
-    # Find root bone and its direct children (region roots)
+    # Find the body root for THIS mesh — the deepest bone in the hierarchy
+    # that is an ancestor of all dominant bones used by this mesh, and has
+    # >1 child subtree with mesh vertices. This enables recursive splitting:
+    # the first pass splits at the hips/spine level, the second pass splits
+    # the upper body at the shoulder/head level, etc.
+
+    # Collect bones actually used by this mesh
+    mesh_bones = set()
+    for v in mesh_obj.data.vertices:
+        best_bone = None
+        best_weight = -1
+        for g in v.groups:
+            if g.group < len(mesh_obj.vertex_groups):
+                name = mesh_obj.vertex_groups[g.group].name
+                if name in bone_names and g.weight > best_weight:
+                    best_weight = g.weight
+                    best_bone = name
+        if best_bone:
+            mesh_bones.add(best_bone)
+
+    if len(mesh_bones) < 2:
+        return 1
+
+    # Find the lowest common ancestor of all mesh bones, then walk down
+    # to the first node with >1 child subtree that has mesh bones
+    def _descendants(bone):
+        result = {bone.name}
+        for c in bone.children:
+            result.update(_descendants(c))
+        return result
+
     roots = [b for b in armature.data.bones if b.parent is None]
     if not roots:
         return 1
 
-    # Walk down to find the first bone with >1 child (the body root)
     body_root = roots[0]
-    while len(body_root.children) == 1:
-        body_root = body_root.children[0]
-    if not body_root.children:
+    while True:
+        children_with_mesh = [
+            c for c in body_root.children
+            if _descendants(c) & mesh_bones
+        ]
+        if len(children_with_mesh) == 1:
+            body_root = children_with_mesh[0]
+        else:
+            break
+
+    if len(children_with_mesh) < 2:
         return 1
 
-    root_children = set(body_root.children)
+    root_children = set(children_with_mesh)
 
     # Build bone → region map
     bone_to_region = {}
