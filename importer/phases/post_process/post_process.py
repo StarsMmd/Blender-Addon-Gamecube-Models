@@ -300,8 +300,9 @@ def _store_pkx_metadata(armature, pkx_header, logger, actions=None):
 
         for s in range(min(len(entry.sub_anims), 3)):
             sub = entry.sub_anims[s]
-            armature[prefix + "_sub_%d_motion" % s] = _clamp_int32(sub.motion_type)
-            # Only resolve to action name for active sub-anims; inactive keep empty
+            # motion_type is derived at export from slot type + action presence;
+            # not stored as a custom property. Use it here only to decide which
+            # sub-anims get action name resolution.
             if sub.motion_type > 0:
                 armature[prefix + "_sub_%d_anim" % s] = _action_name_for_index(sub.anim_index)
             else:

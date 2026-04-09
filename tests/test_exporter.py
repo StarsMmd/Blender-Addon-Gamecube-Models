@@ -115,11 +115,10 @@ class TestPreProcess:
             f.write(b'\x00' * 64)
         _validate_output_path(filepath, logger=StubLogger())
 
-    def test_pkx_output_missing_file_raises(self, tmp_path):
-        """PKX output raises ValueError when the target doesn't exist."""
+    def test_pkx_output_new_file_passes(self, tmp_path):
+        """PKX output to a new file passes validation (created from scratch)."""
         filepath = str(tmp_path / "nonexistent.pkx")
-        with pytest.raises(ValueError, match="PKX export requires"):
-            _validate_output_path(filepath, logger=StubLogger())
+        _validate_output_path(filepath, logger=StubLogger())
 
     def test_no_extension_passes(self, tmp_path):
         """Files without extension pass validation."""

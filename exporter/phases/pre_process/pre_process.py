@@ -37,22 +37,12 @@ def pre_process(context, filepath, options=None, logger=StubLogger()):
 def _validate_output_path(filepath, logger):
     """Check the output path is valid for export.
 
-    For .pkx output, the target file must already exist — the exporter
-    injects the new DAT model into an existing PKX container. Creating
-    a PKX from scratch is not yet supported.
-
-    Raises:
-        ValueError: If .pkx target does not exist.
+    Both .dat and .pkx output are supported:
+    - .dat: always written from scratch.
+    - .pkx: if PKX metadata exists on the armature (from prepare_for_export.py),
+      builds a new PKX from scratch. Otherwise injects into an existing file,
+      or falls back to a default XD header.
     """
-    ext = filepath.rsplit('.', 1)[-1].lower() if '.' in filepath else ''
-
-    if ext == 'pkx' and not os.path.exists(filepath):
-        raise ValueError(
-            f"PKX export requires an existing .pkx file to inject into. "
-            f"File not found: {filepath}\n"
-            f"Export to .dat instead, or provide an existing .pkx file."
-        )
-
     logger.info("  Output path OK: %s", filepath)
 
 

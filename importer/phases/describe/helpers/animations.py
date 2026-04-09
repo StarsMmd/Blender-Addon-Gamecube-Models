@@ -56,13 +56,23 @@ def describe_bone_animations(model_set, joint_to_bone_index, bones, options, log
     anim_digits = len(str(max(total_anims - 1, 0))) if total_anims > 0 else 1
     name_counts = {}  # track how many times each semantic name has been used
 
+    has_pkx = bool(anim_name_map)
+
     for i, anim_joint_root in enumerate(animated_joints):
+        tracks = []
+        loop = [False]  # mutable for closure
+
+        _walk_parallel(anim_joint_root, root_joint, tracks, loop,
+                       joint_to_bone_index, bones, logger)
+
         semantic = anim_name_map.get(i)
         if semantic:
             # Clean up: replace " + " with "+" first, then spaces with "_"
             clean = semantic.replace(' + ', '+').replace(' ', '_')
-        else:
+        elif has_pkx:
             clean = "Extra"
+        else:
+            clean = "Pose" if _is_static_pose(tracks) else "Anim"
 
         # Deduplicate: first occurrence is bare, subsequent get "_2", "_3", etc.
         if clean in name_counts:
@@ -75,12 +85,6 @@ def describe_bone_animations(model_set, joint_to_bone_index, bones, options, log
         idx_str = str(i).zfill(anim_digits)
         name = "%s_%s_%s" % (name_prefix, idx_str, clean)
 
-        tracks = []
-        loop = [False]  # mutable for closure
-
-        _walk_parallel(anim_joint_root, root_joint, tracks, loop,
-                       joint_to_bone_index, bones, logger)
-
         anim_set = IRBoneAnimationSet(
             name=name,
             tracks=tracks,
@@ -90,6 +94,21 @@ def describe_bone_animations(model_set, joint_to_bone_index, bones, options, log
         logger.debug("  Animation set '%s': %d bone tracks", name, len(tracks))
 
     return anim_sets
+
+
+def _is_static_pose(tracks):
+    """Return True if every keyframe channel in the tracks holds a constant value."""
+    for track in tracks:
+        for kf_list in (track.rotation, track.location, track.scale):
+            if kf_list is None:
+                continue
+            for axis_kfs in kf_list:
+                if axis_kfs and len(axis_kfs) > 1:
+                    first = axis_kfs[0].value
+                    for kf in axis_kfs[1:]:
+                        if abs(kf.value - first) > 1e-6:
+                            return False
+    return True
 
 
 def _build_anim_name_map(pkx_header):
@@ -167,8 +186,8 @@ def _compact_anim_name(slot_names):
     if not slot_names:
         return 'Unknown'
 
-    # Idle (slot 0) takes absolute priority
-    if 'Idle' in slot_names:
+    # Any Idle variant (Idle, Idle B, Idle C, ...) compacts to just "Idle"
+    if any(n == 'Idle' or n.startswith('Idle ') for n in slot_names):
         return 'Idle'
 
     # Sub-animations take priority

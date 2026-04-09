@@ -506,14 +506,11 @@ class DAT_PT_PKXPanel(bpy.types.Panel):
 
                 # Sub-animations
                 for s in range(min(sub_count, 3)):
-                    motion = obj.get(prefix + "_sub_%d_motion" % s, 0)
                     anim_key = prefix + "_sub_%d_anim" % s
                     row = sub_box.row(align=True)
                     row.label(text="Action %d:" % (s + 1) if sub_count > 1 else "Action:")
                     if anim_key in obj:
                         row.prop_search(obj, '["%s"]' % anim_key, bpy.data, "actions", text="")
-                    motion_label = {0: "None", 1: "Play Once", 2: "Loop"}.get(motion, str(motion))
-                    row.label(text=motion_label)
 
                 # Timing — only show fields relevant to this animation type
                 anim_type = obj.get(prefix + "_type", "action")

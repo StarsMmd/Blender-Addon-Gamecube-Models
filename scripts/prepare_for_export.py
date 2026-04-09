@@ -210,11 +210,6 @@ def apply_pkx_metadata(armature, format='XD', model_type='POKEMON', species_id=0
         prefix = "dat_pkx_anim_%02d" % i
         anim_type = _SLOT_TYPES.get(i, "action")
 
-        if i == 0:
-            armature[prefix + "_sub_0_motion"] = 2 if is_xd else 0
-        else:
-            armature[prefix + "_sub_0_motion"] = 0
-
         armature[prefix + "_type"] = anim_type
         armature[prefix + "_sub_0_anim"] = ""
         armature[prefix + "_sub_count"] = 2 if anim_type == "compound" else 1
@@ -851,14 +846,11 @@ def _register_pkx_panel():
                     sub_box = box.box()
                     _draw_enum_dropdown(sub_box, obj, prefix + "_type", _ANIM_TYPE_ITEMS, label="Type:")
                     for s in range(min(sub_count, 3)):
-                        motion = obj.get(prefix + "_sub_%d_motion" % s, 0)
                         anim_key = prefix + "_sub_%d_anim" % s
                         row = sub_box.row(align=True)
                         row.label(text="Action %d:" % (s + 1) if sub_count > 1 else "Action:")
                         if anim_key in obj:
                             row.prop_search(obj, '["%s"]' % anim_key, bpy.data, "actions", text="")
-                        motion_label = {0: "None", 1: "Play Once", 2: "Loop"}.get(motion, str(motion))
-                        row.label(text=motion_label)
                     anim_type = obj.get(prefix + "_type", "action")
                     if anim_type == "loop":
                         _timing_labels = {1: "Duration"}
