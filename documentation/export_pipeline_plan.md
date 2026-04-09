@@ -247,13 +247,11 @@ DATBuilder lives at `exporter/phases/serialize/helpers/dat_builder.py`.
 #### Phase 4: Package Output
 
 **`package/package.py`**:
-1. If target path doesn't exist or extension is `.dat`/`.fdat`/`.rdat`: write raw DAT bytes
-2. If target path is an existing `.pkx` file:
-   - Read existing PKX file
-   - Detect format (Colosseum 0x40 header vs XD 0xE60 header)
-   - Copy header bytes from existing file
-   - Replace DAT payload with new DAT bytes
-   - Write: original_header + new_dat_bytes
+1. If extension is `.dat`/`.fdat`/`.rdat`: write raw DAT bytes
+2. If extension is `.pkx`:
+   a. If PKX metadata found on armature (via `prepare_for_export.py`): build PKX from scratch using `PKXHeader` + `PKXContainer.build_xd()`/`build_colosseum()`
+   b. Else if target `.pkx` file already exists: inject new DAT into existing PKX container (preserves original header)
+   c. Else: build PKX from scratch with default XD header
 
 #### Custom Properties Strategy
 
@@ -274,6 +272,27 @@ The exporter deduces HSD values from Blender state rather than relying on custom
 - WEIGHTED — vertices reference multiple different bones via vertex groups → encoded as EnvelopeList (HSD ENVELOPE)
 - No vertex groups → `bone_weights=None`, bound to root bone (index 0)
 - RIGID — not produced by the exporter (RIGID requires bone-local vertex positions set via `matrix_local`, which is an import-only concept)
+
+#### PObject Splitting and GameCube Memory
+
+WEIGHTED meshes are split into multiple PObjects during the compose phase, with each PObject holding at most 10 unique envelope bone-sets (the GX hardware matrix palette limit). The number of PObjects is driven by the number of **unique bone weight combinations** — not the polygon count.
+
+**Impact:** Each PObject carries its own vertex buffers and display list. A model with 337 PObjects (like an unoptimized GLB import) produces a 1.3MB DAT, far exceeding the GameCube's available memory during battle (~400KB practical limit). Game models range from 15–40 PObjects and 65–430KB.
+
+**Mitigation (`prepare_for_export.py`):**
+1. `prepare_mesh_weights()` limits vertices to 3 bone influences (from 4+). This collapses unique weight combinations dramatically — the Greninja test model dropped from 337 to 16 estimated PObjects from weight limiting alone.
+2. If a mesh still exceeds 25 estimated PObjects after weight limiting, it is automatically split into body regions by dominant bone hierarchy (arms, legs, torso, head). Each sub-mesh has fewer unique combos.
+3. `_estimate_pobj_count()` approximates the PObject count: count unique bone-sets, divide by 10.
+
+#### Standard Battle Lighting
+
+Game models require exactly 4 LightSets for correct rendering in battle, summary, and Pokédex screens:
+- [0] Ambient POINT (76/255 gray, energy=0, `dat_light_type="AMBIENT"`)
+- [1] Main SUN (204/255 white, above-front)
+- [2] Fill SUN (102/255 gray, side)
+- [3] Back SUN (76/255 gray, behind)
+
+`prepare_lights()` creates all four. Battle stages provide their own lighting but the model's lights are used for summary/status screens.
 
 ---
 
@@ -689,7 +708,7 @@ The compose phase (`compose/helpers/meshes.py`) groups IRMeshes sharing a materi
 | `importer/phases/build_blender/helpers/skeleton.py` | Store `hsd_flags` custom property |
 | `importer/phases/build_blender/helpers/meshes.py` | Store `hsd_skin_type` custom property |
 | `BlenderPlugin.py` | Wire ExportHSD to new exporter pipeline |
-| `documentation/exporter_usage.md` | Update feature status as features are implemented |
+| `documentation/exporter_setup.md` | Update feature status as features are implemented |
 | ~~`test_dat_write.py`~~ | Removed — functionality moved to `tests/round_trip/run_round_trips.py` |
 
 ## Key Files Created

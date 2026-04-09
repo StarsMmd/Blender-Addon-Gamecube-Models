@@ -35,13 +35,15 @@ def _linearize_rgb(rgba):
             srgb_to_linear(rgba[2]), rgba[3])
 
 
-def build_material(ir_material, image_cache=None, name=''):
+def build_material(ir_material, image_cache=None, name='', has_color_animation=False):
     """Create a Blender material from IRMaterial.
 
     Args:
         ir_material: IRMaterial dataclass.
         image_cache: dict for caching bpy.data.images by (image_id, palette_id).
         name: Material name.
+        has_color_animation: If True, always create a DiffuseColor node so
+            material animations have a valid target for diffuse color keyframes.
 
     Returns:
         bpy.types.Material.
@@ -59,7 +61,8 @@ def build_material(ir_material, image_cache=None, name=''):
     output = nodes.new('ShaderNodeOutputMaterial')
 
     # --- Base color and alpha ---
-    color_out, alpha_out = _build_base_color_alpha(ir_material, nodes, links)
+    color_out, alpha_out = _build_base_color_alpha(ir_material, nodes, links,
+                                                   has_color_animation=has_color_animation)
 
     last_color = color_out
     last_alpha = alpha_out
@@ -129,14 +132,16 @@ def build_material(ir_material, image_cache=None, name=''):
     )
 
     # --- Ambient approximation ---
-    # Add a low-strength Emission node with the ambient color, mixed via
-    # Add Shader. This makes the material slightly self-illuminated,
-    # approximating HSD's per-material ambient contribution.
+    # Store ambient color in a hidden Emission node for round-trip export.
+    # The node is disconnected by default (strength=0) because HSD ambient
+    # lighting is handled by scene-level LOBJ_AMBIENT lights, not per-material
+    # emission. Adding emission makes textures too bright (especially maps).
+    # The exporter reads back from this node by name.
     ambient_emission = nodes.new('ShaderNodeEmission')
     ambient_emission.name = 'dat_ambient_emission'
     ambient_color_linear = _linearize_rgb(ir_material.ambient_color)
     ambient_emission.inputs['Color'].default_value = ambient_color_linear
-    ambient_emission.inputs['Strength'].default_value = 0.1
+    ambient_emission.inputs['Strength'].default_value = 0.0
 
     ambient_add = nodes.new('ShaderNodeAddShader')
     ambient_add.name = 'dat_ambient_add'
@@ -148,8 +153,13 @@ def build_material(ir_material, image_cache=None, name=''):
     return mat
 
 
-def _build_base_color_alpha(ir_mat, nodes, links):
-    """Build base color and alpha nodes from IRMaterial source flags."""
+def _build_base_color_alpha(ir_mat, nodes, links, has_color_animation=False):
+    """Build base color and alpha nodes from IRMaterial source flags.
+
+    When has_color_animation is True, a DiffuseColor RGB node is always
+    created so material animation keyframes have a valid target — even for
+    vertex-only unlit materials that normally wouldn't need one.
+    """
     # IR stores sRGB — linearize for Blender's shader nodes
     dc = _linearize_rgb(ir_mat.diffuse_color)
 
@@ -171,10 +181,20 @@ def _build_base_color_alpha(ir_mat, nodes, links):
 
     else:
         # RENDER_DIFFUSE not set — vertex color is the base
-        if ir_mat.color_source == ColorSource.MATERIAL:
+        if ir_mat.color_source == ColorSource.MATERIAL or has_color_animation:
             color = nodes.new('ShaderNodeRGB')
             color.name = 'DiffuseColor'
             color.outputs[0].default_value[:] = list(dc)
+            if ir_mat.color_source != ColorSource.MATERIAL:
+                # Vertex color exists too — multiply diffuse with vertex color
+                vtx = nodes.new('ShaderNodeAttribute')
+                vtx.attribute_name = 'color_0'
+                mix = nodes.new('ShaderNodeMixRGB')
+                mix.blend_type = 'MULTIPLY'
+                mix.inputs[0].default_value = 1
+                links.new(vtx.outputs[0], mix.inputs[1])
+                links.new(color.outputs[0], mix.inputs[2])
+                color = mix
         else:
             color = nodes.new('ShaderNodeAttribute')
             color.attribute_name = 'color_0'
@@ -250,21 +270,109 @@ def _build_texture_sampling(tex_layer, nodes, links, image_cache, tex_idx=0):
     tex_node = nodes.new('ShaderNodeTexImage')
     tex_node.image = _get_or_create_bpy_image(tex_layer.image, image_cache)
 
-    # Wrap / extension
+    # Wrap / extension — Blender has no native MIRROR mode for texture
+    # images (only REPEAT, EXTEND, CLIP). When GX uses MIRROR wrap, we
+    # implement it via shader math: a triangle wave that bounces the UV
+    # coordinate between 0 and 1.  Formula: 1 - abs(mod(u, 2) - 1)
+    mirror_s = tex_layer.wrap_s == WrapMode.MIRROR
+    mirror_t = tex_layer.wrap_t == WrapMode.MIRROR
     has_repeat = tex_layer.wrap_s == WrapMode.REPEAT or tex_layer.wrap_t == WrapMode.REPEAT
-    has_mirror = tex_layer.wrap_s == WrapMode.MIRROR or tex_layer.wrap_t == WrapMode.MIRROR
-    if has_repeat or has_mirror:
+
+    if mirror_s or mirror_t:
+        tex_node.extension = 'EXTEND'
+        # Build mirror math between mapping and texture node
+        uv_in = mapping.outputs[0]
+        if mirror_s and mirror_t:
+            # Mirror both axes — operate on the vector directly
+            uv_in = _build_mirror_nodes(nodes, links, uv_in, tex_idx)
+        else:
+            # Mirror one axis only — separate, mirror, recombine
+            uv_in = _build_mirror_single_axis(
+                nodes, links, uv_in, tex_idx, axis=0 if mirror_s else 1)
+        links.new(uv_in, tex_node.inputs[0])
+    elif has_repeat:
         tex_node.extension = 'REPEAT'
+        links.new(mapping.outputs[0], tex_node.inputs[0])
     else:
         tex_node.extension = 'EXTEND'
+        links.new(mapping.outputs[0], tex_node.inputs[0])
 
     # Interpolation
     if tex_layer.interpolation:
         tex_node.interpolation = tex_layer.interpolation.value
 
-    links.new(mapping.outputs[0], tex_node.inputs[0])
-
     return tex_node.outputs[0], tex_node.outputs[1], uv_output
+
+
+def _build_mirror_nodes(nodes, links, uv_input, tex_idx):
+    """Build shader nodes to mirror UV coordinates on both S and T axes.
+
+    Implements the triangle wave: 1 - abs(mod(u, 2) - 1)
+    This bounces UV values between 0 and 1 at each integer boundary,
+    matching GX's MIRROR wrap mode.
+    """
+    # mod(uv, 2.0)
+    mod_node = nodes.new('ShaderNodeMath')
+    mod_node.name = 'mirror_mod_%d' % tex_idx
+    mod_node.operation = 'PINGPONG'
+    mod_node.inputs[1].default_value = 1.0
+    # PINGPONG with value 1.0 directly computes the triangle wave:
+    # pingpong(u, 1) = 1 - abs(mod(u, 2) - 1) when u >= 0
+    # This works on scalar. We need per-component, so use Separate/Combine.
+
+    sep = nodes.new('ShaderNodeSeparateXYZ')
+    sep.name = 'mirror_sep_%d' % tex_idx
+    links.new(uv_input, sep.inputs[0])
+
+    pp_s = nodes.new('ShaderNodeMath')
+    pp_s.name = 'mirror_pp_s_%d' % tex_idx
+    pp_s.operation = 'PINGPONG'
+    pp_s.inputs[1].default_value = 1.0
+    links.new(sep.outputs[0], pp_s.inputs[0])
+
+    pp_t = nodes.new('ShaderNodeMath')
+    pp_t.name = 'mirror_pp_t_%d' % tex_idx
+    pp_t.operation = 'PINGPONG'
+    pp_t.inputs[1].default_value = 1.0
+    links.new(sep.outputs[1], pp_t.inputs[0])
+
+    comb = nodes.new('ShaderNodeCombineXYZ')
+    comb.name = 'mirror_comb_%d' % tex_idx
+    links.new(pp_s.outputs[0], comb.inputs[0])
+    links.new(pp_t.outputs[0], comb.inputs[1])
+    links.new(sep.outputs[2], comb.inputs[2])
+
+    return comb.outputs[0]
+
+
+def _build_mirror_single_axis(nodes, links, uv_input, tex_idx, axis):
+    """Build shader nodes to mirror UV coordinates on one axis only.
+
+    Args:
+        axis: 0 for S (X), 1 for T (Y).
+    """
+    sep = nodes.new('ShaderNodeSeparateXYZ')
+    sep.name = 'mirror_sep_%d' % tex_idx
+    links.new(uv_input, sep.inputs[0])
+
+    pp = nodes.new('ShaderNodeMath')
+    pp.name = 'mirror_pp_%d_%d' % (tex_idx, axis)
+    pp.operation = 'PINGPONG'
+    pp.inputs[1].default_value = 1.0
+    links.new(sep.outputs[axis], pp.inputs[0])
+
+    comb = nodes.new('ShaderNodeCombineXYZ')
+    comb.name = 'mirror_comb_%d' % tex_idx
+    # Pass through the non-mirrored axis unchanged
+    if axis == 0:
+        links.new(pp.outputs[0], comb.inputs[0])
+        links.new(sep.outputs[1], comb.inputs[1])
+    else:
+        links.new(sep.outputs[0], comb.inputs[0])
+        links.new(pp.outputs[0], comb.inputs[1])
+    links.new(sep.outputs[2], comb.inputs[2])
+
+    return comb.outputs[0]
 
 
 def _get_or_create_bpy_image(ir_image, image_cache):
@@ -575,12 +683,7 @@ def _build_pixel_engine(ir_mat, nodes, links, last_color, last_alpha, mat):
 
     elif effect == OutputBlendEffect.ADDITIVE_ALPHA:
         transparent_shader = True
-        alt_blend_mode = 'ADD'
-        blend = nodes.new('ShaderNodeMixRGB')
-        links.new(last_alpha, blend.inputs[0])
-        blend.inputs[1].default_value = [0, 0, 0, 0xFF]
-        links.new(last_color, blend.inputs[2])
-        last_color = blend.outputs[0]
+        alt_blend_mode = 'ADD_ALPHA'
 
     elif effect == OutputBlendEffect.ADDITIVE_INV_ALPHA:
         transparent_shader = True
@@ -707,13 +810,23 @@ def _build_output_shader(ir_mat, nodes, links, last_color, last_alpha, bump_map,
         links.new(bump_map, bump.inputs[2])
         links.new(bump.outputs[0], shader.inputs['Normal'])
 
-    if alt_blend_mode == 'ADD':
+    if alt_blend_mode in ('ADD', 'ADD_ALPHA'):
         mat.blend_method = 'BLEND'
         e = nodes.new('ShaderNodeEmission')
-        e.inputs[1].default_value = 1.9
         t = nodes.new('ShaderNodeBsdfTransparent')
         add = nodes.new('ShaderNodeAddShader')
         links.new(last_color, e.inputs[0])
+        if alt_blend_mode == 'ADD_ALPHA':
+            # ADDITIVE_ALPHA: output = color × alpha + framebuffer
+            # Modulate emission strength by alpha so near-zero alpha still
+            # contributes visible additive light with the full color hue.
+            strength = nodes.new('ShaderNodeMath')
+            strength.operation = 'MULTIPLY'
+            strength.inputs[1].default_value = 1.9
+            links.new(last_alpha, strength.inputs[0])
+            links.new(strength.outputs[0], e.inputs[1])
+        else:
+            e.inputs[1].default_value = 1.9
         links.new(e.outputs[0], add.inputs[0])
         links.new(t.outputs[0], add.inputs[1])
         shader = add

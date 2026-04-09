@@ -24,6 +24,7 @@ try:
     from .....shared.IR.enums import Interpolation
     from .....shared.helpers.binary import pack_native
     from .....shared.helpers.logger import StubLogger
+    from .....shared.helpers.scale import METERS_TO_GC
 except (ImportError, SystemError):
     from shared.Nodes.Classes.Animation.AnimationJoint import AnimationJoint
     from shared.Nodes.Classes.Animation.Animation import Animation
@@ -41,6 +42,7 @@ except (ImportError, SystemError):
     from shared.IR.enums import Interpolation
     from shared.helpers.binary import pack_native
     from shared.helpers.logger import StubLogger
+    from shared.helpers.scale import METERS_TO_GC
 
 
 # Channel type constants for each SRT component
@@ -227,10 +229,28 @@ def _build_animation(track, loop):
         list(track.scale)        # [X, Y, Z]
     )
 
+    _TRANSLATION_CHANNELS = {HSD_A_J_TRAX, HSD_A_J_TRAY, HSD_A_J_TRAZ}
+
     for ch_idx, keyframes in enumerate(all_channels):
         if not keyframes:
             continue
         channel_type = _CHANNEL_TYPES[ch_idx]
+
+        # Scale translation channels from meters back to GC units
+        if channel_type in _TRANSLATION_CHANNELS:
+            try:
+                from .....shared.IR.animation import IRKeyframe
+            except (ImportError, SystemError):
+                from shared.IR.animation import IRKeyframe
+            keyframes = [IRKeyframe(
+                frame=kf.frame, value=kf.value * METERS_TO_GC,
+                interpolation=kf.interpolation,
+                handle_left=kf.handle_left,
+                handle_right=kf.handle_right,
+                slope_in=kf.slope_in * METERS_TO_GC if kf.slope_in is not None else None,
+                slope_out=kf.slope_out * METERS_TO_GC if kf.slope_out is not None else None,
+            ) for kf in keyframes]
+
         frame = _encode_channel(keyframes, channel_type)
         if frame is not None:
             frames.append(frame)

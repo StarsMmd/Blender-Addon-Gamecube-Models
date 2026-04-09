@@ -10,12 +10,14 @@ try:
     from .....shared.IR.animation import IRBoneAnimationSet, IRBoneTrack, IRSplinePath, IRKeyframe
     from .....shared.IR.enums import Interpolation
     from .keyframe_decoder import decode_fobjdesc
+    from .....shared.helpers.scale import GC_TO_METERS
 except (ImportError, SystemError):
     from shared.Constants.hsd import *
     from shared.helpers.logger import StubLogger
     from shared.helpers.math_shim import Matrix, compile_srt_matrix, matrix_to_list
     from shared.IR.animation import IRBoneAnimationSet, IRBoneTrack, IRSplinePath, IRKeyframe
     from shared.IR.enums import Interpolation
+    from shared.helpers.scale import GC_TO_METERS
     from importer.phases.describe.helpers.keyframe_decoder import decode_fobjdesc
 
 
@@ -45,15 +47,43 @@ def describe_bone_animations(model_set, joint_to_bone_index, bones, options, log
     animated_joints = getattr(model_set, 'animated_joints', None) or []
     root_joint = model_set.root_joint
     name_prefix = model_name or root_joint.name or "Model"
+
+    # Build semantic name map from PKX header if available
+    anim_name_map = _build_anim_name_map(options.get("pkx_header"))
+
     anim_sets = []
+    total_anims = len(animated_joints)
+    anim_digits = len(str(max(total_anims - 1, 0))) if total_anims > 0 else 1
+    name_counts = {}  # track how many times each semantic name has been used
+
+    has_pkx = bool(anim_name_map)
 
     for i, anim_joint_root in enumerate(animated_joints):
-        name = "%s_Anim_%02d" % (name_prefix, i)
         tracks = []
         loop = [False]  # mutable for closure
 
         _walk_parallel(anim_joint_root, root_joint, tracks, loop,
                        joint_to_bone_index, bones, logger)
+
+        semantic = anim_name_map.get(i)
+        if semantic:
+            # Clean up: replace " + " with "+" first, then spaces with "_"
+            clean = semantic.replace(' + ', '+').replace(' ', '_')
+        elif has_pkx:
+            clean = "Extra"
+        else:
+            clean = "Pose" if _is_static_pose(tracks) else "Anim"
+
+        # Deduplicate: first occurrence is bare, subsequent get "_2", "_3", etc.
+        if clean in name_counts:
+            name_counts[clean] += 1
+            clean = "%s_%d" % (clean, name_counts[clean])
+        else:
+            name_counts[clean] = 1
+
+        # Infix padded index after model name to preserve import order alphabetically
+        idx_str = str(i).zfill(anim_digits)
+        name = "%s_%s_%s" % (name_prefix, idx_str, clean)
 
         anim_set = IRBoneAnimationSet(
             name=name,
@@ -64,6 +94,146 @@ def describe_bone_animations(model_set, joint_to_bone_index, bones, options, log
         logger.debug("  Animation set '%s': %d bone tracks", name, len(tracks))
 
     return anim_sets
+
+
+def _is_static_pose(tracks):
+    """Return True if every keyframe channel in the tracks holds a constant value."""
+    for track in tracks:
+        for kf_list in (track.rotation, track.location, track.scale):
+            if kf_list is None:
+                continue
+            for axis_kfs in kf_list:
+                if axis_kfs and len(axis_kfs) > 1:
+                    first = axis_kfs[0].value
+                    for kf in axis_kfs[1:]:
+                        if abs(kf.value - first) > 1e-6:
+                            return False
+    return True
+
+
+def _build_anim_name_map(pkx_header):
+    """Build a map of animation index → semantic name from PKX metadata.
+
+    Uses the animation slot entries and sub-animation references to produce
+    compact, human-readable names for each DAT animation index.
+
+    Returns dict[int, str] or empty dict if no PKX header.
+    """
+    if pkx_header is None:
+        return {}
+
+    try:
+        from .....shared.helpers.pkx_header import XD_POKEMON_ANIM_NAMES, XD_TRAINER_ANIM_NAMES
+    except (ImportError, SystemError):
+        from shared.helpers.pkx_header import XD_POKEMON_ANIM_NAMES, XD_TRAINER_ANIM_NAMES
+
+    is_xd = pkx_header.is_xd
+    is_trainer = is_xd and pkx_header.species_id == 0 and pkx_header.particle_orientation == 0
+    slot_names = XD_TRAINER_ANIM_NAMES if is_trainer else XD_POKEMON_ANIM_NAMES
+
+    # Collect active slot names per animation index.
+    # XD uses motion_type > 0 to indicate active entries.
+    # Colosseum uses motion_type=0 as the default active state, so we check
+    # whether the entry's anim_type indicates a configured slot instead.
+    _COLO_ACTIVE_TYPES = {2, 3, 5}  # loop, hit_reaction, compound
+    index_to_slots = {}
+    for slot_idx, entry in enumerate(pkx_header.anim_entries):
+        slot_name = slot_names[slot_idx] if slot_idx < len(slot_names) else 'Slot %d' % slot_idx
+        for sub in entry.sub_anims:
+            if sub.anim_index >= 1000:
+                continue
+            if is_xd:
+                active = sub.motion_type > 0
+            else:
+                # Colosseum: entry is active if anim_type is non-default or motion_type > 0
+                active = entry.anim_type in _COLO_ACTIVE_TYPES or sub.motion_type > 0
+            if active:
+                idx = sub.anim_index
+                if idx not in index_to_slots:
+                    index_to_slots[idx] = []
+                if slot_name not in index_to_slots[idx]:
+                    index_to_slots[idx].append(slot_name)
+
+    # Add sub-animation references
+    sub_triggers = {0: 'Sub SleepOnPose', 1: 'Sub SleepOffPose', 2: 'Sub Extra'}
+    for i in range(min(len(pkx_header.part_anim_data), 3)):
+        pad = pkx_header.part_anim_data[i]
+        if pad.has_data > 0 and pad.anim_index_ref > 0:
+            idx = pad.anim_index_ref
+            if idx not in index_to_slots:
+                index_to_slots[idx] = []
+            index_to_slots[idx].append(sub_triggers.get(i, 'Sub %d' % i))
+
+    # Compact names
+    result = {}
+    for idx, names in index_to_slots.items():
+        result[idx] = _compact_anim_name(names)
+
+    return result
+
+
+def _compact_anim_name(slot_names):
+    """Generate a compact animation name from a list of slot names.
+
+    Rules:
+    - "Idle" (slot 0) takes absolute priority — always just "Idle"
+    - Sub-animations keep their prefix: "Sub SleepOnPose"
+    - Physical-only → "Physical", Special-only → "Special", mix → "Attack"
+    - Non-attack slots appended after (except regularly defaulting ones like Take Flight)
+    - Damage + Faint sharing → "Faint"
+    - Deduplication happens upstream after all names are generated
+    """
+    if not slot_names:
+        return 'Unknown'
+
+    # Any Idle variant (Idle, Idle B, Idle C, ...) compacts to just "Idle"
+    if any(n == 'Idle' or n.startswith('Idle ') for n in slot_names):
+        return 'Idle'
+
+    # Sub-animations take priority
+    subs = [n for n in slot_names if n.startswith('Sub ')]
+    if subs:
+        return subs[0]
+
+    if len(slot_names) == 1:
+        return slot_names[0]
+
+    # Categorize
+    physical = sorted([n for n in slot_names if 'Physical' in n])
+    special = sorted([n for n in slot_names if 'Special' in n])
+    damage = sorted([n for n in slot_names if 'Damage' in n])
+    faint = [n for n in slot_names if n == 'Faint']
+
+    # Slots that regularly default to sharing an animation — don't mention
+    _DEFAULT_SLOTS = {'Take Flight'}
+    _ALL_KNOWN = {'Physical', 'Special', 'Damage', 'Faint'}
+    other = [n for n in slot_names
+             if not any(cat in n for cat in _ALL_KNOWN)
+             and n not in _DEFAULT_SLOTS]
+
+    parts = []
+
+    # Compact Physical + Special into an attack label
+    if physical or special:
+        if physical and special:
+            parts.append('Attack')
+        elif physical:
+            parts.append('Physical')
+        else:
+            parts.append('Special')
+
+    # Damage / Faint
+    if damage and faint:
+        parts.append('Faint')
+    elif damage:
+        parts.append('Damage' if len(damage) >= 2 else damage[0])
+    elif faint:
+        parts.append('Faint')
+
+    # Remaining non-defaulting slots (Idle 2-5, Special, etc.)
+    parts.extend(other)
+
+    return ' + '.join(parts) if parts else slot_names[0]
 
 
 def _walk_parallel(anim_joint, joint, tracks, loop_flag,
@@ -109,6 +279,17 @@ def _describe_bone_track(aobj, joint, bone, bone_index, bones, logger=None):
             if category == 'r':
                 rotation[component] = keyframes
             elif category == 'l':
+                # Scale translation keyframes to meters
+                for kf in keyframes:
+                    kf.value *= GC_TO_METERS
+                    if kf.handle_left is not None:
+                        kf.handle_left = (kf.handle_left[0], kf.handle_left[1] * GC_TO_METERS)
+                    if kf.handle_right is not None:
+                        kf.handle_right = (kf.handle_right[0], kf.handle_right[1] * GC_TO_METERS)
+                    if kf.slope_in is not None:
+                        kf.slope_in *= GC_TO_METERS
+                    if kf.slope_out is not None:
+                        kf.slope_out *= GC_TO_METERS
                 location[component] = keyframes
             elif category == 's':
                 scale[component] = keyframes
@@ -139,7 +320,8 @@ def _describe_bone_track(aobj, joint, bone, bone_index, bones, logger=None):
     else:
         use_scale = rest_scale
 
-    rest_local = compile_srt_matrix(use_scale, joint.rotation, joint.position)
+    scaled_pos = tuple(p * GC_TO_METERS for p in joint.position)
+    rest_local = compile_srt_matrix(use_scale, joint.rotation, scaled_pos)
 
     return IRBoneTrack(
         bone_name=bone.name,
@@ -149,7 +331,7 @@ def _describe_bone_track(aobj, joint, bone, bone_index, bones, logger=None):
         scale=scale,
         rest_local_matrix=matrix_to_list(rest_local),
         rest_rotation=tuple(joint.rotation),
-        rest_position=tuple(joint.position),
+        rest_position=scaled_pos,
         rest_scale=rest_scale,
         end_frame=aobj.end_frame,
         spline_path=spline_path,
@@ -194,7 +376,7 @@ def _extract_spline_path(aobj, joint, bone, bones, fobj, logger):
     if spline_node is None or not isinstance(getattr(spline_node, 's1', None), list):
         return None
 
-    control_points = [list(p) for p in spline_node.s1]
+    control_points = [[c * GC_TO_METERS for c in p] for p in spline_node.s1]
     curve_type = getattr(spline_node, 'flags', 0) >> 8
     tension = getattr(spline_node, 'f0', 0.0) or 0.0
     num_cvs = getattr(spline_node, 'n', 0)
@@ -202,8 +384,9 @@ def _extract_spline_path(aobj, joint, bone, bones, fobj, logger):
     # Compute world matrix for the spline joint (for curve positioning)
     world_matrix = None
     if spline_joint:
+        scaled_spl_pos = tuple(p * GC_TO_METERS for p in spline_joint.position)
         spline_local = compile_srt_matrix(
-            spline_joint.scale, spline_joint.rotation, spline_joint.position
+            spline_joint.scale, spline_joint.rotation, scaled_spl_pos
         )
         if bone.parent_index is not None:
             parent_world = Matrix(bones[bone.parent_index].world_matrix)

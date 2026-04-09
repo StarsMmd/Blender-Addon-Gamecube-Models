@@ -113,24 +113,9 @@ def build_bone_animations(ir_model, armature, options, logger=StubLogger(), mate
             # Restore armature slot as active
             action.slots.active = armature_slot
 
-        # Detect static poses
-        is_static = True
-        for fcurve in action.fcurves:
-            if len(fcurve.keyframe_points) > 1:
-                first_val = fcurve.keyframe_points[0].co[1]
-                for kp in fcurve.keyframe_points:
-                    if abs(kp.co[1] - first_val) > 1e-6:
-                        is_static = False
-                        break
-            if not is_static:
-                break
-
-        if is_static:
-            action.name = anim_set.name.replace('Anim', 'Pose')
-
         actions.append(action)
-        logger.info("  Action '%s': %d bone fcurves, %d material fcurves, static=%s",
-                    action.name, len(action.fcurves), mat_fcurve_count, is_static)
+        logger.info("  Action '%s': %d bone fcurves, %d material fcurves",
+                    action.name, len(action.fcurves), mat_fcurve_count)
 
         bpy.ops.object.mode_set(mode='OBJECT')
 

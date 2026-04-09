@@ -21,7 +21,7 @@ from shared.IR import (
     IRLight, IRCamera, IRFog,
     # Enums
     CoordType, WrapMode, Interpolation, TextureInterpolation,
-    LightType, SkinType, ScaleInheritance,
+    LightType, CameraProjection, SkinType, ScaleInheritance,
     ColorSource, LightingModel, LayerBlendMode, LightmapChannel,
     CombinerInputSource, CombinerOp, CombinerBias, CombinerScale,
     OutputBlendEffect, BlendFactor,
@@ -346,9 +346,29 @@ def test_ir_light():
     assert light.target_position is None
 
 
-def test_ir_camera_stub():
-    cam = IRCamera(name="cam_0")
-    assert cam.name == "cam_0"
+def test_ir_camera():
+    cam = IRCamera(
+        name="cam_0",
+        projection=CameraProjection.PERSPECTIVE,
+        position=(1.0, 2.0, 3.0),
+        target_position=(0.0, 0.0, 0.0),
+        roll=0.0,
+        near=0.1,
+        far=32768.0,
+        field_of_view=27.0,
+        aspect=1.18,
+    )
+    assert cam.projection == CameraProjection.PERSPECTIVE
+    assert cam.position == (1.0, 2.0, 3.0)
+    assert cam.field_of_view == 27.0
+
+
+def test_ir_camera_defaults():
+    cam = IRCamera(name="cam_1", projection=CameraProjection.ORTHO)
+    assert cam.position is None
+    assert cam.target_position is None
+    assert cam.near == 0.1
+    assert cam.far == 1000.0
 
 
 def test_ir_fog_stub():

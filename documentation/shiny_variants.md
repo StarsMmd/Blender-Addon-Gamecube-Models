@@ -73,7 +73,7 @@ The addon creates two reusable node groups, inserted at different points in the 
 2. **Brightness multiply** — scales each RGB channel by `brightness + 1.0`
 3. **Combine Color** — recombines into the output color
 
-Each group is inserted into every material via a `MixRGB` node that blends between the original and filtered color. The mix factor is driven by the armature's `dat_shiny` property.
+Each group is inserted into every material via a `MixRGB` node that blends between the original and filtered color. The mix factor is driven by the armature's `dat_pkx_shiny` property.
 
 ### Vertex Color Separation
 
@@ -96,21 +96,21 @@ All shiny parameters are registered as `bpy.props` properties on `bpy.types.Obje
 
 | Property | Type | Description |
 |---|---|---|
-| `dat_shiny` | BoolProperty | Enable/disable the shiny filter |
-| `dat_shiny_route_r` | EnumProperty (Red/Green/Blue/Alpha) | Source channel for red output |
-| `dat_shiny_route_g` | EnumProperty | Source channel for green output |
-| `dat_shiny_route_b` | EnumProperty | Source channel for blue output |
-| `dat_shiny_route_a` | EnumProperty | Source channel for alpha output |
-| `dat_shiny_brightness_r` | FloatProperty (-1.0 to 1.0) | Red brightness offset |
-| `dat_shiny_brightness_g` | FloatProperty | Green brightness offset |
-| `dat_shiny_brightness_b` | FloatProperty | Blue brightness offset |
-| `dat_shiny_brightness_a` | FloatProperty | Alpha brightness offset |
+| `dat_pkx_shiny` | BoolProperty | Enable/disable the shiny filter |
+| `dat_pkx_shiny_route_r` | EnumProperty (Red/Green/Blue/Alpha) | Source channel for red output |
+| `dat_pkx_shiny_route_g` | EnumProperty | Source channel for green output |
+| `dat_pkx_shiny_route_b` | EnumProperty | Source channel for blue output |
+| `dat_pkx_shiny_route_a` | EnumProperty | Source channel for alpha output |
+| `dat_pkx_shiny_brightness_r` | FloatProperty (-1.0 to 1.0) | Red brightness offset |
+| `dat_pkx_shiny_brightness_g` | FloatProperty | Green brightness offset |
+| `dat_pkx_shiny_brightness_b` | FloatProperty | Blue brightness offset |
+| `dat_pkx_shiny_brightness_a` | FloatProperty | Alpha brightness offset |
 
 On import, these are initialized from the extracted raw shiny param values. Users can then tweak any parameter and see the result in real time.
 
 ### UI Panel
 
-A panel ("Shiny Variant") appears in **Object Properties** when the selected armature has `dat_has_shiny` set. It shows:
+A panel ("Shiny Variant") appears in **Object Properties** when the selected armature has `dat_pkx_has_shiny` set. It shows:
 
 - **Enable** checkbox — toggles the shiny filter on/off via driver
 - **Channel Routing** — 4 enum dropdowns
@@ -120,7 +120,7 @@ The routing/brightness controls are greyed out when Enable is unchecked.
 
 ### Viewport Refresh
 
-The `dat_shiny` toggle uses a driver on the MixRGB factor input, with an update callback (`_on_shiny_toggle_update`) that tags the depsgraph for refresh. Routing and brightness changes use a separate callback (`_on_shiny_param_update`) that rebuilds the node group and tags materials for update.
+The `dat_pkx_shiny` toggle uses a driver on the MixRGB factor input, with an update callback (`_on_shiny_toggle_update`) that tags the depsgraph for refresh. Routing and brightness changes use a separate callback (`_on_shiny_param_update`) that rebuilds the node group and tags materials for update.
 
 ### Key Files
 

@@ -18,10 +18,48 @@ class PObject(Node):
     ]
     display_list_chunk_size = 32
 
-    # Parse struct from binary file.
-    def loadFromBinary(self, parser):
-        super().loadFromBinary(parser)
+    # Fields with 'next' replaced by a raw uint to avoid recursive linked-list parsing.
+    _iterative_fields = [
+        ('name', 'string'),
+        ('_next_raw_ptr', 'uint'),
+        ('vertex_list', 'VertexList'),
+        ('flags', 'ushort'),
+        ('display_list_chunk_count', 'ushort'),
+        ('display_list_address', 'uint'),
+        ('property', 'uint')
+    ]
 
+    # Parse struct from binary file.
+    # Uses iterative parsing for the 'next' chain to avoid RecursionError
+    # on models with many PObjects (e.g. from aggressive envelope splitting).
+    def loadFromBinary(self, parser):
+        self._parse_one_pobj(parser)
+
+        # Iteratively parse the next chain
+        current = self
+        while current._next_raw_ptr != 0:
+            ptr = current._next_raw_ptr
+
+            cached = parser.nodes_cache_by_offset.get(ptr)
+            if cached is not None:
+                current.next = cached
+                break
+
+            next_pobj = PObject(ptr, None)
+            parser.nodes_cache_by_offset[ptr] = next_pobj
+            next_pobj._parse_one_pobj(parser)
+            current.next = next_pobj
+            current = next_pobj
+        else:
+            current.next = None
+
+    def _parse_one_pobj(self, parser):
+        """Parse a single PObject's fields without recursing through 'next'."""
+        parser.parseNode(self, fields=list(self._iterative_fields))
+        self._parse_pobj_data(parser)
+
+    def _parse_pobj_data(self, parser):
+        """PObject-specific parsing: property, display list, geometry."""
         # Log key fields for debugging UV/vertex issues
         vtx_descs = []
         for v in self.vertex_list.vertices:

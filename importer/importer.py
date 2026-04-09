@@ -11,6 +11,7 @@ from .phases.extract.extract import extract_dat
 from .phases.route.route import route_sections
 from .phases.parse.parse import parse_sections
 from .phases.describe.describe import describe_scene
+from .phases.describe.helpers.particles import describe_particles
 from .phases.build_blender.build_blender import build_blender_scene
 from .phases.build_blender.errors.build_errors import ModelBuildError
 from .phases.post_process.post_process import post_process
@@ -43,6 +44,16 @@ class Importer:
             options["filepath"] = metadata.filename
 
             try:
+                # GPT1-only entry (e.g. standalone particle from WZX) — skip DAT phases
+                if not dat_bytes and metadata.gpt1_data:
+                    logger.info("=== Phase 4b: Particle Description (standalone) ===")
+                    particle_system = describe_particles(metadata.gpt1_data, logger=logger)
+                    if particle_system:
+                        logger.info("Described standalone particle system: %d generators",
+                                    len(particle_system.generators) if particle_system.generators else 0)
+                    any_succeeded = True
+                    continue
+
                 # Phase 2 — Section Routing: DAT bytes → section name→type map
                 logger.info("=== Phase 2: Section Routing ===")
                 section_map = route_sections(dat_bytes, logger=logger)
@@ -53,15 +64,26 @@ class Importer:
                 logger.info("Parsed %d section(s)", len(sections))
 
                 # Phase 4 — Scene Description: node trees → Intermediate Representation
+                options["pkx_header"] = metadata.pkx_header
                 ir_scene = describe_scene(sections, options, logger=logger)
+
+                # Phase 4b — Particle Description: GPT1 binary → IRParticleSystem
+                if metadata.gpt1_data:
+                    logger.info("=== Phase 4b: Particle Description ===")
+                    particle_system = describe_particles(metadata.gpt1_data, logger=logger)
+                    if particle_system and ir_scene.models:
+                        ir_scene.models[0].particles = particle_system
+                        logger.info("Attached particle system to model '%s'",
+                                    ir_scene.models[0].name)
 
                 # Phase 5 — Blender Build: Intermediate Representation → Blender scene
                 if context is not None:
                     build_results = build_blender_scene(ir_scene, context, options, logger=logger)
 
-                    # Phase 6 — Post-Processing: select animations, apply shiny
+                    # Phase 6 — Post-Processing: select animations, apply shiny, store PKX metadata
                     post_process(set(), metadata.shiny_params, options, logger=logger,
-                                 build_results=build_results)
+                                 build_results=build_results,
+                                 pkx_header=metadata.pkx_header)
 
                 any_succeeded = True
 
@@ -74,7 +96,10 @@ class Importer:
         logger.close()
 
         if not any_succeeded:
-            first_file, first_error = errors[0]
-            raise ModelBuildError(first_file, first_error) from first_error
+            if errors:
+                first_file, first_error = errors[0]
+                raise ModelBuildError(first_file, first_error) from first_error
+            else:
+                raise ModelBuildError(filename, ValueError("No importable content found in file"))
 
         return {'FINISHED'}

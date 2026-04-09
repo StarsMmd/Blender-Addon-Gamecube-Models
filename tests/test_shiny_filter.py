@@ -17,44 +17,38 @@ def _extract_shiny_params(raw_bytes, is_xd):
 # Helper to build a minimal Colosseum PKX with shiny data
 # ---------------------------------------------------------------------------
 
-def _build_colo_pkx(shiny_color1, shiny_color2_abgr, dat_body_size=64):
-    """Build a Colosseum-style PKX with shiny data at file_length - 0x11.
+def _build_colo_pkx(shiny_color1, shiny_color2_rgba, dat_body_size=64):
+    """Build a Colosseum-style PKX with shiny data at file_length - 20.
 
     Args:
-        shiny_color1: tuple of 4 ints (R, G, B, A route values) placed at 3-byte gaps.
-        shiny_color2_abgr: tuple of 4 ints (A, B, G, R) — Colosseum ABGR order.
+        shiny_color1: tuple of 4 ints (R, G, B, A route values).
+        shiny_color2_rgba: tuple of 4 ints (R, G, B, A) brightness bytes.
         dat_body_size: size of the DAT body after header.
     """
     # Colosseum: bytes at 0x00 == bytes at 0x40 (same uint)
     marker = 0x12345678
     header = struct.pack('>I', marker) + b'\x00' * 0x3C
     dat_body = struct.pack('>I', marker) + b'\x00' * (dat_body_size - 4)
-    raw = bytearray(header + dat_body)
+    # Shiny: 4 × uint32 routing + 1 × uint32 ARGB (20 bytes at end)
+    shiny = bytearray(20)
+    struct.pack_into('>I', shiny, 0, shiny_color1[0])
+    struct.pack_into('>I', shiny, 4, shiny_color1[1])
+    struct.pack_into('>I', shiny, 8, shiny_color1[2])
+    struct.pack_into('>I', shiny, 12, shiny_color1[3])
+    # RGBA → ARGB
+    r, g, b, a = shiny_color2_rgba
+    argb = (a << 24) | (r << 16) | (g << 8) | b
+    struct.pack_into('>I', shiny, 16, argb)
 
-    # Shiny data lives at file_length - 0x11 (17 bytes from end)
-    base = len(raw) - 0x11
-
-    # Color1: bytes at base+0, base+4, base+8, base+12 with 3-byte gaps
-    raw[base + 0] = shiny_color1[0]
-    raw[base + 4] = shiny_color1[1]
-    raw[base + 8] = shiny_color1[2]
-    raw[base + 12] = shiny_color1[3]
-
-    # Color2: bytes at base+13..16 in ABGR order
-    raw[base + 13] = shiny_color2_abgr[0]
-    raw[base + 14] = shiny_color2_abgr[1]
-    raw[base + 15] = shiny_color2_abgr[2]
-    raw[base + 16] = shiny_color2_abgr[3]
-
-    return bytes(raw)
+    return header + dat_body + bytes(shiny)
 
 
 def _build_xd_pkx(shiny_color1, shiny_color2_rgba, dat_body_size=64):
-    """Build an XD-style PKX with shiny data at offset 0x73.
+    """Build an XD-style PKX with shiny data at offset 0x70.
 
     Args:
         shiny_color1: tuple of 4 ints (R, G, B, A route values).
-        shiny_color2_rgba: tuple of 4 ints (R, G, B, A) — XD RGBA order.
+        shiny_color2_rgba: tuple of 4 ints (R, G, B, A) brightness bytes.
         dat_body_size: size of the DAT body after header.
     """
     # XD: bytes at 0x00 != bytes at 0x40
@@ -64,21 +58,19 @@ def _build_xd_pkx(shiny_color1, shiny_color2_rgba, dat_body_size=64):
     # Different values at 0x00 and 0x40 to signal XD
     struct.pack_into('>I', raw, 0, 0xAAAAAAAA)
     struct.pack_into('>I', raw, 0x40, 0xBBBBBBBB)
-    # GPT1 size = 0 (no GPT1 chunk)
-    struct.pack_into('>I', raw, 8, 0)
+    struct.pack_into('>I', raw, 8, 0)  # GPT1 size = 0
+    struct.pack_into('>I', raw, 0x10, 17)  # anim_section_count = 17
 
-    # Shiny data at offset 0x73
-    base = 0x73
-    raw[base + 0] = shiny_color1[0]
-    raw[base + 4] = shiny_color1[1]
-    raw[base + 8] = shiny_color1[2]
-    raw[base + 12] = shiny_color1[3]
-
-    # Color2 in RGBA order
-    raw[base + 13] = shiny_color2_rgba[0]
-    raw[base + 14] = shiny_color2_rgba[1]
-    raw[base + 15] = shiny_color2_rgba[2]
-    raw[base + 16] = shiny_color2_rgba[3]
+    # Shiny routing: 4 × uint32 at 0x70
+    struct.pack_into('>I', raw, 0x70, shiny_color1[0])
+    struct.pack_into('>I', raw, 0x74, shiny_color1[1])
+    struct.pack_into('>I', raw, 0x78, shiny_color1[2])
+    struct.pack_into('>I', raw, 0x7C, shiny_color1[3])
+    # Shiny brightness: 4 × uint8 at 0x80
+    raw[0x80] = shiny_color2_rgba[0]
+    raw[0x81] = shiny_color2_rgba[1]
+    raw[0x82] = shiny_color2_rgba[2]
+    raw[0x83] = shiny_color2_rgba[3]
 
     return bytes(raw)
 
@@ -88,14 +80,13 @@ def _build_xd_pkx(shiny_color1, shiny_color2_rgba, dat_body_size=64):
 # ---------------------------------------------------------------------------
 
 def test_colo_pkx_shiny_extraction():
-    """Colosseum PKX: shiny params extracted with correct channel routing and ABGR-reversed brightness."""
+    """Colosseum PKX: shiny params extracted with correct channel routing and brightness."""
     # Color1: R→G(1), G→B(2), B→R(0), A→A(3)
     color1 = (1, 2, 0, 3)
-    # Color2 in ABGR: A=200, B=100, G=150, R=255
-    # After reversal to RGBA: R=255, G=150, B=100, A=200
-    color2_abgr = (200, 100, 150, 255)
+    # Color2 in RGBA: R=255, G=150, B=100, A=200
+    color2_rgba = (255, 150, 100, 200)
 
-    raw = _build_colo_pkx(color1, color2_abgr)
+    raw = _build_colo_pkx(color1, color2_rgba)
     params = _extract_shiny_params(raw, is_xd=False)
 
     assert params is not None
@@ -104,12 +95,13 @@ def test_colo_pkx_shiny_extraction():
     assert params.route_b == 0
     assert params.route_a == 3
 
-    # ABGR reversed → RGBA: R=255, G=150, B=100, A=200
-    # Brightness: (value / 255 * 2) - 1
-    assert pytest.approx(params.brightness_r, abs=0.01) == (255 / 255.0 * 2.0) - 1.0  # 1.0
-    assert pytest.approx(params.brightness_g, abs=0.01) == (150 / 255.0 * 2.0) - 1.0
-    assert pytest.approx(params.brightness_b, abs=0.01) == (100 / 255.0 * 2.0) - 1.0
-    assert pytest.approx(params.brightness_a, abs=0.01) == (200 / 255.0 * 2.0) - 1.0
+    # Brightness: _to_brightness maps bytes to [-1, 1]
+    # 255 → (255-127)/128 ≈ 1.0, 150 → (150-127)/128 ≈ 0.18, etc.
+    from shared.helpers.pkx import _to_brightness
+    assert pytest.approx(params.brightness_r, abs=0.01) == _to_brightness(255)
+    assert pytest.approx(params.brightness_g, abs=0.01) == _to_brightness(150)
+    assert pytest.approx(params.brightness_b, abs=0.01) == _to_brightness(100)
+    assert pytest.approx(params.brightness_a, abs=0.01) == _to_brightness(200)
 
 
 def test_xd_pkx_shiny_extraction():

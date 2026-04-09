@@ -4,8 +4,9 @@ Reads mesh objects parented to an armature, extracts geometry (vertices,
 faces, UVs, vertex colors, normals) and bone weight data. Works with
 any well-formed Blender mesh — no assumptions about naming conventions.
 """
+import math
 import bpy
-from mathutils import Matrix
+from mathutils import Matrix, Vector
 
 try:
     from .....shared.IR.geometry import IRMesh, IRUVLayer, IRColorLayer, IRBoneWeights
@@ -18,6 +19,9 @@ except (ImportError, SystemError):
     from shared.helpers.logger import StubLogger
     from exporter.phases.describe_blender.helpers.materials import describe_material
 
+# Blender Z-up → GameCube Y-up (same constant as skeleton.py)
+_COORD_ROTATION_INV = Matrix.Rotation(math.pi / 2, 4, [1.0, 0.0, 0.0]).inverted()
+
 
 def describe_meshes(armature, bones, logger=StubLogger()):
     """Read mesh objects parented to an armature and produce IRMesh list.
@@ -28,9 +32,18 @@ def describe_meshes(armature, bones, logger=StubLogger()):
         logger: Logger instance.
 
     Returns:
-        list[IRMesh] — one entry per mesh object found.
+        list[IRMesh] — one per material slot per mesh object.
     """
     bone_name_to_index = {bone.name: i for i, bone in enumerate(bones)}
+    # Transform vertices and normals from Blender space to IR space (Y-up),
+    # matching what describe_skeleton does for bone matrices.
+    # vertex_transform: includes armature rotation + scale + Z-up→Y-up.
+    # normal_transform: rotation only (normals shouldn't be scaled).
+    obj_transform = armature.matrix_world.copy()
+    obj_transform.translation = Vector((0, 0, 0))
+    obj_rotation = armature.matrix_world.to_3x3().normalized().to_4x4()
+    vertex_transform = _COORD_ROTATION_INV @ obj_transform
+    normal_transform = (_COORD_ROTATION_INV @ obj_rotation).to_3x3()
     meshes = []
 
     # Find all mesh objects parented to this armature, sorted by name.
@@ -43,9 +56,9 @@ def describe_meshes(armature, bones, logger=StubLogger()):
     )
 
     for mesh_obj in mesh_objects:
-        ir_mesh = _describe_mesh_object(mesh_obj, bone_name_to_index, bones, logger)
-        if ir_mesh is not None:
-            meshes.append(ir_mesh)
+        ir_meshes = _describe_mesh_object(mesh_obj, bone_name_to_index, bones,
+                                          vertex_transform, normal_transform, logger)
+        meshes.extend(ir_meshes)
 
     total_verts = sum(len(m.vertices) for m in meshes)
     total_faces = sum(len(m.faces) for m in meshes)
@@ -57,86 +70,182 @@ def describe_meshes(armature, bones, logger=StubLogger()):
     return meshes
 
 
-def _describe_mesh_object(mesh_obj, bone_name_to_index, bones, logger):
+def _describe_mesh_object(mesh_obj, bone_name_to_index, bones,
+                          vertex_transform, normal_transform, logger):
     """Extract geometry and weight data from a single Blender mesh object.
+
+    If the mesh has multiple material slots with faces assigned, it is split
+    into one IRMesh per material slot. This handles GLB/FBX models that use
+    a single mesh with multiple materials.
 
     Args:
         mesh_obj: Blender mesh object (bpy.types.Object with mesh data).
         bone_name_to_index: dict mapping bone name → index in IRBone list.
+        vertex_transform: 4x4 Matrix (scale + rotation + coord conversion).
+        normal_transform: 3x3 Matrix (rotation + coord conversion, no scale).
         logger: Logger instance.
 
     Returns:
-        IRMesh, or None if the mesh has no geometry.
+        list[IRMesh] — one per material slot (or one for the whole mesh).
     """
     mesh_data = mesh_obj.data
-
-    # Ensure geometry is up to date
     mesh_data.calc_loop_triangles()
 
-    # Vertices
-    vertices = [tuple(v.co) for v in mesh_data.vertices]
-    if not vertices:
+    # Transform vertices from Blender space (Z-up) to IR space (Y-up, scaled).
+    all_vertices = [tuple(vertex_transform @ v.co) for v in mesh_data.vertices]
+    if not all_vertices:
         logger.debug("  Skipping mesh '%s': no vertices", mesh_obj.name)
-        return None
+        return []
 
-    # Faces — from polygons (not triangulated, preserving original topology)
-    faces = [list(poly.vertices) for poly in mesh_data.polygons]
-    if not faces:
+    all_polys = list(mesh_data.polygons)
+    if not all_polys:
         logger.debug("  Skipping mesh '%s': no faces", mesh_obj.name)
-        return None
+        return []
 
-    # UV layers — stored per-loop in Blender
-    uv_layers = []
+    # Read all per-loop data once
+    all_uv_data = []
     for uv_layer in mesh_data.uv_layers:
-        uvs = [(loop_uv.uv[0], loop_uv.uv[1]) for loop_uv in uv_layer.data]
-        uv_layers.append(IRUVLayer(name=uv_layer.name, uvs=uvs))
+        all_uv_data.append((uv_layer.name, [(d.uv[0], d.uv[1]) for d in uv_layer.data]))
 
-    # Color layers — read as-is (FLOAT_COLOR stores sRGB values, matching IR convention)
-    color_layers = []
+    all_color_data = []
     for color_attr in mesh_data.color_attributes:
-        colors = [tuple(cd.color) for cd in color_attr.data]
-        color_layers.append(IRColorLayer(name=color_attr.name, colors=colors))
+        all_color_data.append((color_attr.name, [tuple(cd.color) for cd in color_attr.data]))
 
-    # Normals — per-loop custom split normals if available
-    normals = _extract_normals(mesh_data, faces)
+    all_normals = _extract_normals(mesh_data, [list(p.vertices) for p in all_polys],
+                                   normal_transform)
 
-    # Bone weights and parent bone index
+    # Shared across all sub-meshes
     bone_weights = _extract_bone_weights(mesh_obj, bone_name_to_index)
     parent_bone_index = _determine_parent_bone(bone_weights, bone_name_to_index, bones)
-
-    # Visibility
     is_hidden = mesh_obj.hide_render
 
-    # Material — extract from first material slot
+    # Determine material slot usage — group polygons by material_index
+    num_materials = len(mesh_data.materials)
+    if num_materials <= 1:
+        # Single material (or none) — no splitting needed
+        material_groups = [(0, list(range(len(all_polys))))]
+    else:
+        groups_by_mat = {}
+        for pi, poly in enumerate(all_polys):
+            mi = poly.material_index
+            if mi not in groups_by_mat:
+                groups_by_mat[mi] = []
+            groups_by_mat[mi].append(pi)
+        material_groups = sorted(groups_by_mat.items())
+
+    results = []
+    for mat_index, poly_indices in material_groups:
+        if not poly_indices:
+            continue
+
+        ir_mesh = _build_submesh(
+            mesh_obj.name, mat_index, num_materials,
+            all_vertices, all_polys, poly_indices,
+            all_uv_data, all_color_data, all_normals,
+            bone_weights, parent_bone_index, is_hidden,
+            mesh_data.materials, logger,
+        )
+        if ir_mesh is not None:
+            results.append(ir_mesh)
+
+    return results
+
+
+def _build_submesh(mesh_name, mat_index, num_materials,
+                   all_vertices, all_polys, poly_indices,
+                   all_uv_data, all_color_data, all_normals,
+                   bone_weights, parent_bone_index, is_hidden,
+                   materials, logger):
+    """Build an IRMesh from a subset of polygons sharing one material.
+
+    Remaps vertex indices and per-loop data so the sub-mesh is self-contained.
+    """
+    # Collect unique vertex indices used by these polygons and build remap
+    used_verts = set()
+    for pi in poly_indices:
+        for vi in all_polys[pi].vertices:
+            used_verts.add(vi)
+    sorted_verts = sorted(used_verts)
+    vert_remap = {old: new for new, old in enumerate(sorted_verts)}
+    vertices = [all_vertices[vi] for vi in sorted_verts]
+
+    # Remap faces and collect loop indices
+    faces = []
+    loop_indices = []  # flat list of original loop indices for this sub-mesh
+    for pi in poly_indices:
+        poly = all_polys[pi]
+        faces.append([vert_remap[vi] for vi in poly.vertices])
+        for li in range(poly.loop_start, poly.loop_start + poly.loop_total):
+            loop_indices.append(li)
+
+    if not faces:
+        return None
+
+    # Remap per-loop UV data
+    uv_layers = []
+    for uv_name, uv_data in all_uv_data:
+        uvs = [uv_data[li] for li in loop_indices]
+        uv_layers.append(IRUVLayer(name=uv_name, uvs=uvs))
+
+    # Remap per-loop color data
+    color_layers = []
+    for clr_name, clr_data in all_color_data:
+        colors = [clr_data[li] for li in loop_indices]
+        color_layers.append(IRColorLayer(name=clr_name, colors=colors))
+
+    # Remap per-loop normals
+    normals = None
+    if all_normals:
+        normals = [all_normals[li] for li in loop_indices]
+
+    # Remap bone weights — filter to only vertices in this sub-mesh
+    sub_weights = None
+    if bone_weights:
+        if bone_weights.type == SkinType.WEIGHTED and bone_weights.assignments:
+            sub_assignments = []
+            for old_vi, weight_list in bone_weights.assignments:
+                if old_vi in vert_remap:
+                    sub_assignments.append((vert_remap[old_vi], weight_list))
+            if sub_assignments:
+                sub_weights = IRBoneWeights(
+                    type=SkinType.WEIGHTED,
+                    assignments=sub_assignments,
+                )
+        else:
+            sub_weights = bone_weights
+
+    # Material
     ir_material = None
     cull_back = False
-    if mesh_obj.data.materials and mesh_obj.data.materials[0]:
-        blender_mat = mesh_obj.data.materials[0]
+    if materials and mat_index < len(materials) and materials[mat_index]:
+        blender_mat = materials[mat_index]
         cull_back = blender_mat.use_backface_culling
         ir_material = describe_material(blender_mat, logger=logger)
 
+    # Name: append material index suffix only when the mesh was split
+    name = mesh_name if num_materials <= 1 else "%s_%03d" % (mesh_name, mat_index)
+
     ir_mesh = IRMesh(
-        name=mesh_obj.name,
+        name=name,
         vertices=vertices,
         faces=faces,
         uv_layers=uv_layers,
         color_layers=color_layers,
         normals=normals,
         material=ir_material,
-        bone_weights=bone_weights,
+        bone_weights=sub_weights,
         is_hidden=is_hidden,
         parent_bone_index=parent_bone_index,
         cull_back=cull_back,
     )
 
-    # Log mesh details
-    weight_type = bone_weights.type.value if bone_weights else 'none'
-    weight_bone = bone_weights.bone_name if bone_weights and hasattr(bone_weights, 'bone_name') else None
-    weight_count = len(bone_weights.assignments) if bone_weights and bone_weights.assignments else 0
+    weight_type = sub_weights.type.value if sub_weights else 'none'
+    weight_bone = sub_weights.bone_name if sub_weights and hasattr(sub_weights, 'bone_name') else None
+    weight_count = len(sub_weights.assignments) if sub_weights and sub_weights.assignments else 0
     uv_names = [uv.name for uv in uv_layers]
     clr_names = [cl.name for cl in color_layers]
     logger.debug("  mesh '%s': %d verts, %d faces, parent_bone=%d, hidden=%s, cull_back=%s",
-                 mesh_obj.name, len(vertices), len(faces), parent_bone_index, is_hidden, cull_back)
+                 name, len(vertices), len(faces), parent_bone_index, is_hidden, cull_back)
     logger.debug("    uvs=%s, colors=%s, normals=%s",
                  uv_names, clr_names, len(normals) if normals else 'none')
     logger.debug("    weights: type=%s, bone=%s, assignments=%d",
@@ -158,11 +267,12 @@ def _mesh_sort_key(mesh_obj):
     return (name, 0)
 
 
-def _extract_normals(mesh_data, faces):
+def _extract_normals(mesh_data, faces, normal_transform=None):
     """Extract per-loop normals from mesh data.
 
     Uses corner_normals (Blender 4.1+). Falls back to loop.normal for
-    older versions.
+    older versions. Applies normal_transform (3x3 rotation matrix) to
+    convert from Blender space to IR space.
 
     Returns:
         list[tuple[float, float, float]] per loop, or None if unavailable.
@@ -173,12 +283,14 @@ def _extract_normals(mesh_data, faces):
     # Blender 4.1+ removed calc_normals_split(); normals are always
     # available via corner_normals.
     if hasattr(mesh_data, 'corner_normals'):
-        return [(cn.vector.x, cn.vector.y, cn.vector.z)
-                for cn in mesh_data.corner_normals]
+        raw = [cn.vector for cn in mesh_data.corner_normals]
+    else:
+        mesh_data.calc_normals_split()
+        raw = [loop.normal for loop in mesh_data.loops]
 
-    mesh_data.calc_normals_split()
-    return [(loop.normal.x, loop.normal.y, loop.normal.z)
-            for loop in mesh_data.loops]
+    if normal_transform is not None:
+        return [tuple(normal_transform @ n) for n in raw]
+    return [(n.x, n.y, n.z) for n in raw]
 
 
 def _extract_bone_weights(mesh_obj, bone_name_to_index):

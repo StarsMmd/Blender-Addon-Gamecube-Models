@@ -40,7 +40,7 @@ _TEX_UV_MAP = {
 }
 
 
-def describe_material_animations(model_set, joint_to_bone_index, bones, options, logger, model_name=None):
+def describe_material_animations(model_set, joint_to_bone_index, bones, options, logger, model_name=None, total_meshes=0):
     """Walk MaterialAnimationJoint trees and produce material animation sets.
 
     Returns:
@@ -49,13 +49,14 @@ def describe_material_animations(model_set, joint_to_bone_index, bones, options,
     mat_anim_joints = getattr(model_set, 'animated_material_joints', None) or []
     root_joint = model_set.root_joint
     name_prefix = model_name or root_joint.name or "Model"
+    mesh_digits = len(str(max(total_meshes - 1, 0))) if total_meshes > 0 else 1
     anim_sets = []
 
     for i, mat_anim_root in enumerate(mat_anim_joints):
         name = "%s_MatAnim_%02d" % (name_prefix, i)
         tracks = []
 
-        _walk_parallel(mat_anim_root, root_joint, tracks, joint_to_bone_index, bones, logger)
+        _walk_parallel(mat_anim_root, root_joint, tracks, joint_to_bone_index, bones, logger, mesh_digits=mesh_digits)
 
         if tracks:
             anim_sets.append(SimpleNamespace(name=name, tracks=tracks))
@@ -64,7 +65,7 @@ def describe_material_animations(model_set, joint_to_bone_index, bones, options,
     return anim_sets
 
 
-def _walk_parallel(mat_anim_joint, joint, tracks, jtb, bones, logger):
+def _walk_parallel(mat_anim_joint, joint, tracks, jtb, bones, logger, mesh_digits=1):
     """Walk MaterialAnimationJoint and Joint trees in parallel."""
     try:
         from .....shared.Nodes.Classes.Mesh.Mesh import Mesh
@@ -94,7 +95,7 @@ def _walk_parallel(mat_anim_joint, joint, tracks, jtb, bones, logger):
             for p in range(pobj_count):
                 idx = pobj_offset + p
                 global_idx = bone.mesh_indices[idx] if idx < len(bone.mesh_indices) else 0
-                track = _describe_material_track(mat_anim, mesh, bone.name, global_idx, logger)
+                track = _describe_material_track(mat_anim, mesh, bone.name, global_idx, logger, mesh_digits=mesh_digits)
                 if track:
                     tracks.append(track)
 
@@ -103,12 +104,12 @@ def _walk_parallel(mat_anim_joint, joint, tracks, jtb, bones, logger):
             mesh = mesh.next
 
     if mat_anim_joint.child and joint.child:
-        _walk_parallel(mat_anim_joint.child, joint.child, tracks, jtb, bones, logger)
+        _walk_parallel(mat_anim_joint.child, joint.child, tracks, jtb, bones, logger, mesh_digits=mesh_digits)
     if mat_anim_joint.next and joint.next:
-        _walk_parallel(mat_anim_joint.next, joint.next, tracks, jtb, bones, logger)
+        _walk_parallel(mat_anim_joint.next, joint.next, tracks, jtb, bones, logger, mesh_digits=mesh_digits)
 
 
-def _describe_material_track(mat_anim, mesh, bone_name, mesh_idx, logger):
+def _describe_material_track(mat_anim, mesh, bone_name, mesh_idx, logger, mesh_digits=1):
     """Extract one MaterialAnimation into an IRMaterialTrack."""
     aobj = mat_anim.animation
     tex_anim = mat_anim.texture_animation
@@ -119,7 +120,7 @@ def _describe_material_track(mat_anim, mesh, bone_name, mesh_idx, logger):
     if not has_aobj and not has_tex:
         return None
 
-    mesh_name = "mesh_%d_%s" % (mesh_idx, bone_name)
+    mesh_name = "mesh_%s_%s" % (str(mesh_idx).zfill(mesh_digits), bone_name)
     loop = bool(aobj.flags & AOBJ_ANIM_LOOP) if aobj else False
 
     track = IRMaterialTrack(
@@ -128,14 +129,15 @@ def _describe_material_track(mat_anim, mesh, bone_name, mesh_idx, logger):
     )
 
     # Decode color/alpha tracks (stored as sRGB [0-1] in IR;
-    # linearization for Blender happens in Phase 5)
+    # linearization for Blender happens in Phase 5).
+    # Raw keyframe values from the FObjDesc are already in 0-1 range
+    # (same encoding as bone animation tracks), not byte-range 0-255.
     if has_aobj:
         fobj = aobj.frame
         while fobj:
             field = _MAT_TRACK_MAP.get(fobj.type)
             if field:
-                scale = 1.0 / 255.0
-                keyframes = decode_fobjdesc(fobj, bias=0, scale=scale)
+                keyframes = decode_fobjdesc(fobj, bias=0, scale=1.0)
                 setattr(track, field, keyframes)
             fobj = fobj.next
 

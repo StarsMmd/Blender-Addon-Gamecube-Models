@@ -37,12 +37,14 @@ def test_pkx_colo_header_stripped():
 
 
 def test_pkx_xd_header_stripped():
-    """An XD PKX has a 0xE60 byte header stripped (no GPT1)."""
-    header = b'\x00' * 0xE60
-    header = struct.pack('>I', 0xAAAAAAAA) + b'\x00' * 4 + struct.pack('>I', 0) + header[12:]
-    header = header[:0x40] + struct.pack('>I', 0xBBBBBBBB) + header[0x44:]
+    """An XD PKX has a 0xE60 byte header stripped (no GPT1, 17 anim entries)."""
+    header = bytearray(0xE60)
+    struct.pack_into('>I', header, 0x00, 0xAAAAAAAA)  # dat_file_size (signals XD when != 0x40)
+    struct.pack_into('>I', header, 0x08, 0)  # gpt1_length = 0
+    struct.pack_into('>I', header, 0x10, 17)  # anim_section_count = 17
+    struct.pack_into('>I', header, 0x40, 0xBBBBBBBB)  # different from 0x00 → XD detected
     dat_body = b'\xFF' * 64
-    raw = header + dat_body
+    raw = bytes(header) + dat_body
     entries = extract_dat(raw, 'model.pkx')
     assert len(entries) == 1
     assert entries[0][0] == dat_body
@@ -219,3 +221,22 @@ def test_fsys_detected_by_extension():
     ])
     entries = extract_dat(archive, 'archive.fsys')
     assert len(entries) == 1
+
+
+# ---------------------------------------------------------------------------
+# WZX inside FSYS tests
+# ---------------------------------------------------------------------------
+
+def test_fsys_wzx_entry_extracted():
+    """A WZX entry inside FSYS is extracted through the WZX handler."""
+    from tests.test_wzx import _build_wzx_header, _build_dat
+    dat = _build_dat(data_size=64)
+    wzx_data = _build_wzx_header(entry_count=1, hsd_size=len(dat)) + dat
+
+    archive = build_fsys_archive([
+        {'file_type': 0x20, 'data': wzx_data, 'compressed': False, 'filename': 'effect'}
+    ])
+    entries = extract_dat(archive, 'archive.fsys')
+    assert len(entries) == 1
+    assert entries[0][0] == dat
+    assert 'effect' in entries[0][1].filename

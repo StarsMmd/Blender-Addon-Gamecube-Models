@@ -47,3 +47,5 @@ class IRModel:
     copy_rotation_constraints: list = field(default_factory=list)
     limit_rotation_constraints: list = field(default_factory=list)
     limit_location_constraints: list = field(default_factory=list)
+    # Particles
+    particles: object = None  # IRParticleSystem or None

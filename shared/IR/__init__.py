@@ -18,5 +18,6 @@ from .constraints import (
     IRTrackToConstraint, IRCopyRotationConstraint, IRLimitConstraint,
 )
 from .lights import IRLight
-from .camera import IRCamera
+from .camera import IRCamera, IRCameraKeyframes
 from .fog import IRFog
+from .particles import IRParticleSystem, IRParticleGenerator, IRParticleTexture

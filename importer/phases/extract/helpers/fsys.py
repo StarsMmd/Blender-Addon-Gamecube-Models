@@ -36,7 +36,9 @@ _FLAG_COMPRESSED = 0x80000000
 _MODEL_FILE_TYPES = {
     0x02: 'dat',   # mdat — model data, treat as dat
     0x04: 'dat',   # dat
+    0x18: 'cam',   # cam — camera scene data (standard DAT format)
     0x1E: 'pkx',   # pkx — Pokemon model, needs header stripping
+    0x20: 'wzx',   # wzx — move/effect animation container
 }
 
 

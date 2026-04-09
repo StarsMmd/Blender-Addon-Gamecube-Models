@@ -28,6 +28,7 @@ try:
     from .....shared.helpers.binary import pack, pack_many
     from .....shared.helpers.math_shim import Matrix, Vector
     from .....shared.helpers.logger import StubLogger
+    from .....shared.helpers.scale import METERS_TO_GC
     from .materials import compose_material
 except (ImportError, SystemError):
     from shared.Nodes.Classes.Mesh.Mesh import Mesh
@@ -50,6 +51,7 @@ except (ImportError, SystemError):
     from shared.helpers.binary import pack, pack_many
     from shared.helpers.math_shim import Matrix, Vector
     from shared.helpers.logger import StubLogger
+    from shared.helpers.scale import METERS_TO_GC
     from exporter.phases.compose.helpers.materials import compose_material
 
 
@@ -119,9 +121,9 @@ def compose_meshes(meshes, joints, bones, logger=StubLogger()):
             # Build PObjects for each mesh in this material group
             pobjs = []
             for ir_mesh in group_meshes:
-                pobj = _build_pobj(ir_mesh, joints, bones, bone_name_to_index, logger)
-                if pobj is not None:
-                    pobjs.append(pobj)
+                result = _build_pobj(ir_mesh, joints, bones, bone_name_to_index, logger)
+                if result is not None:
+                    pobjs.extend(result)
 
             if not pobjs:
                 continue
@@ -159,13 +161,16 @@ def compose_meshes(meshes, joints, bones, logger=StubLogger()):
 
 
 def _build_pobj(ir_mesh, joints, bones, bone_name_to_index, logger):
-    """Build a PObject node from an IRMesh.
+    """Build PObject node(s) from an IRMesh.
 
     Creates vertex descriptors, encodes vertex buffer data, and builds
-    a GX display list for the geometry.
+    GX display list(s) for the geometry. If the mesh has more than 10
+    unique envelope (bone weight) combinations, it is split into multiple
+    PObjects — one per group of ≤10 envelopes — since the GX hardware
+    only has 10 position/normal matrix slots per draw call.
 
     Returns:
-        PObject node, or None if the mesh has no geometry.
+        list[PObject], or None if the mesh has no geometry.
     """
     if not ir_mesh.vertices or not ir_mesh.faces:
         return None
@@ -216,7 +221,9 @@ def _build_pobj(ir_mesh, joints, bones, bone_name_to_index, logger):
                 tuple(world_inv @ Vector(v)) for v in ir_mesh.vertices
             ]
 
-    pos_data, pos_buffer = _encode_float3_buffer(export_vertices)
+    # Scale from meters back to GameCube units
+    gc_vertices = [tuple(c * METERS_TO_GC for c in v) for v in export_vertices]
+    pos_data, pos_buffer = _encode_float3_buffer(gc_vertices)
     pos_desc = _make_vertex_desc(GX_VA_POS, GX_POS_XYZ, GX_F32, stride=12)
     pos_desc.raw_vertex_data = pos_buffer
     vertex_descs.append(pos_desc)
@@ -261,33 +268,25 @@ def _build_pobj(ir_mesh, joints, bones, bone_name_to_index, logger):
         vertex_descs.append(clr_desc)
         vertex_buffers.append(('color', clr_verts, clr_indices))
 
-    # Build the display list
-    raw_dl = _encode_display_list(ir_mesh.faces, ir_mesh.vertices, vertex_descs, vertex_buffers)
-
-    # Create VertexList
-    vtx_list = VertexList(address=None, blender_obj=None)
-    vtx_list.vertices = vertex_descs
-    vtx_list.vertex_length = 24  # sizeof(Vertex) in binary: 7 fields
-
-    # Create PObject
-    pobj = PObject(address=None, blender_obj=None)
-    pobj.name = None
-    pobj.next = None
-    pobj.vertex_list = vtx_list
-    pobj.flags = 0
-    pobj.raw_display_list = raw_dl
-    pobj.display_list_chunk_count = (len(raw_dl) + 31) // 32
-    pobj.display_list_address = 0  # Will be set during writePrivateData
-    pobj.sources = []
-    pobj.face_lists = []
-    pobj.normals = []
-
-    # Cull flags — POBJ_CULLBACK is the default in HSD (backface culling on)
-    pobj.flags |= POBJ_CULLBACK
+    # Determine cull flags (shared across all split PObjects)
+    cull_flags = POBJ_CULLBACK
     if ir_mesh.cull_front:
-        pobj.flags |= POBJ_CULLFRONT
+        cull_flags |= POBJ_CULLFRONT
     if not ir_mesh.cull_back:
-        pobj.flags &= ~POBJ_CULLBACK
+        cull_flags &= ~POBJ_CULLBACK
+
+    # Split into multiple PObjects if envelope count exceeds GX's 10 matrix slots
+    max_envelopes = 10
+    if is_envelope and len(envelope_map['envelopes']) > max_envelopes:
+        return _build_split_pobjs(
+            ir_mesh, envelope_map, vertex_descs, vertex_buffers,
+            joints, bone_name_to_index, cull_flags, logger)
+
+    # Single PObject path (<=10 envelopes or non-envelope mesh)
+    raw_dl = _encode_display_list(ir_mesh.faces, ir_mesh.vertices,
+                                  vertex_descs, vertex_buffers)
+
+    pobj = _make_pobj_node(vertex_descs, raw_dl, cull_flags)
 
     # Skinning
     if is_envelope:
@@ -297,11 +296,7 @@ def _build_pobj(ir_mesh, joints, bones, bone_name_to_index, logger):
     elif bw and bw.type == SkinType.SINGLE_BONE and bw.bone_name:
         bone_idx = bone_name_to_index.get(bw.bone_name)
         if bone_idx is not None and bone_idx < len(joints):
-            # Set SKIN property — the Joint reference tells the game which
-            # bone deforms this mesh. For self-referencing (bone == parent),
-            # the mesh vertices are already positioned by the Joint hierarchy.
             pobj.property = joints[bone_idx]
-            # POBJ_SKIN is 0x0 (default type field value), no flag to set
         else:
             pobj.property = None
     else:
@@ -316,7 +311,79 @@ def _build_pobj(ir_mesh, joints, bones, bone_name_to_index, logger):
                  len(vertex_descs), desc_summary, len(raw_dl), total_buf_bytes,
                  skin_type, pobj.flags)
 
+    return [pobj]
+
+
+def _make_pobj_node(vertex_descs, raw_dl, cull_flags):
+    """Create a PObject node with the given display list and cull flags."""
+    vtx_list = VertexList(address=None, blender_obj=None)
+    vtx_list.vertices = vertex_descs
+    vtx_list.vertex_length = 24  # sizeof(Vertex) in binary: 7 fields
+
+    pobj = PObject(address=None, blender_obj=None)
+    pobj.name = None
+    pobj.next = None
+    pobj.vertex_list = vtx_list
+    pobj.flags = cull_flags
+    pobj.raw_display_list = raw_dl
+    pobj.display_list_chunk_count = (len(raw_dl) + 31) // 32
+    pobj.display_list_address = 0  # Will be set during writePrivateData
+    pobj.sources = []
+    pobj.face_lists = []
+    pobj.normals = []
+    pobj.property = None
     return pobj
+
+
+def _build_split_pobjs(ir_mesh, envelope_map, vertex_descs, vertex_buffers,
+                       joints, bone_name_to_index, cull_flags, logger):
+    """Split an envelope mesh with >10 weight combos into multiple PObjects.
+
+    The GX hardware has 10 position/normal matrix slots (PNMTXIDX 0..27
+    in steps of 3). Each PObject's display list can reference at most 10
+    envelopes. This function partitions the mesh's triangles into groups
+    where each group uses ≤10 unique envelopes, then builds one PObject
+    per group.
+
+    Returns:
+        list[PObject] — one per envelope group.
+    """
+    triangles, tri_loop_indices = _triangulate_faces(ir_mesh.faces)
+    groups = _partition_triangles_by_envelope(
+        triangles, tri_loop_indices, envelope_map)
+
+    num_envs = len(envelope_map['envelopes'])
+    logger.info("      splitting mesh '%s' (%d envelopes) into %d PObjects",
+                ir_mesh.name, num_envs, len(groups))
+
+    pobjs = []
+    for group_idx, group in enumerate(groups):
+        local_env_map = _build_split_envelope_map(
+            envelope_map, group['envelope_indices'], group['triangles'])
+
+        # Build local vertex_buffers with the split envelope map
+        local_vbufs = []
+        for desc, vbuf in zip(vertex_descs, vertex_buffers):
+            if desc.attribute == GX_VA_PNMTXIDX:
+                local_vbufs.append(('pnmtxidx', local_env_map))
+            else:
+                local_vbufs.append(vbuf)
+
+        raw_dl = _encode_display_list(
+            None, ir_mesh.vertices, vertex_descs, local_vbufs,
+            pre_triangulated=(group['triangles'], group['tri_loop_indices']))
+
+        pobj = _make_pobj_node(vertex_descs, raw_dl, cull_flags)
+        pobj.property = _build_envelope_lists(
+            local_env_map, joints, bone_name_to_index)
+        pobj.flags |= POBJ_ENVELOPE | 0x1
+
+        logger.debug("        group %d: %d tris, %d envelopes, dl=%d bytes",
+                     group_idx, len(group['triangles']),
+                     len(group['envelope_indices']), len(raw_dl))
+        pobjs.append(pobj)
+
+    return pobjs
 
 
 # ---------------------------------------------------------------------------
@@ -453,8 +520,9 @@ def _build_envelope_map(assignments, bone_name_to_index):
     vertex_to_env = {}
 
     for vertex_idx, weight_list in assignments:
-        # Normalize: sort by bone name for consistent keys
-        key = tuple(sorted((name, round(w, 6)) for name, w in weight_list))
+        # Normalize: sort by bone name, quantize weights to 25% steps
+        # to aggressively collapse near-duplicate combos for GameCube memory
+        key = tuple(sorted((name, round(round(w * 4) / 4, 2)) for name, w in weight_list))
         if key not in combo_to_env:
             combo_to_env[key] = len(envelopes)
             envelopes.append(weight_list)
@@ -612,25 +680,16 @@ def _encode_indexed_rgba(per_loop_data):
 
 
 # ---------------------------------------------------------------------------
-# Display list encoding
+# Display list splitting (envelope overflow)
 # ---------------------------------------------------------------------------
 
-def _encode_display_list(faces, vertices, vertex_descs, vertex_buffers):
-    """Encode faces into a GX_DRAW_TRIANGLES display list.
-
-    The display list encodes triangulated faces. Each vertex in the DL
-    contains one index per vertex descriptor (position, normal, UV, etc.).
-
-    Args:
-        faces: list[list[int]] — per-face vertex index lists (may be quads).
-        vertices: list[tuple] — position vertices (for index range).
-        vertex_descs: list[Vertex] — vertex attribute descriptors.
-        vertex_buffers: list — parallel to vertex_descs.
+def _triangulate_faces(faces):
+    """Convert polygon faces into triangles.
 
     Returns:
-        bytes — the raw display list, padded to 32-byte alignment.
+        (triangles, tri_loop_indices) — parallel lists of [v0, v1, v2]
+        vertex indices and [l0, l1, l2] loop indices.
     """
-    # Triangulate faces (split quads into two triangles)
     triangles = []
     tri_loop_indices = []
     loop_idx = 0
@@ -650,6 +709,120 @@ def _encode_display_list(faces, vertices, vertex_descs, vertex_buffers):
                 triangles.append([face[0], face[i], face[i + 1]])
                 tri_loop_indices.append([base, base + i, base + i + 1])
         loop_idx += len(face)
+
+    return triangles, tri_loop_indices
+
+
+def _partition_triangles_by_envelope(triangles, tri_loop_indices,
+                                     envelope_map, max_envelopes=10):
+    """Partition triangles into groups where each uses ≤max_envelopes.
+
+    Uses greedy best-fit: each triangle is added to the group whose
+    envelope set has the most overlap (smallest resulting union), or
+    a new group is created if none can fit.
+
+    Returns:
+        list of dicts, each with:
+            'triangles': list of [v0, v1, v2]
+            'tri_loop_indices': list of [l0, l1, l2]
+            'envelope_indices': sorted list of global envelope indices used
+    """
+    vtx_to_env = envelope_map['vertex_to_env']
+
+    groups = []  # list of (env_set, triangles, tri_loop_indices)
+
+    for tri_idx, tri in enumerate(triangles):
+        tri_envs = {vtx_to_env.get(v, 0) for v in tri}
+
+        # Find best-fit group: smallest union size that's still <= max
+        best_group = None
+        best_union_size = max_envelopes + 1
+        for group in groups:
+            union_size = len(group[0] | tri_envs)
+            if union_size <= max_envelopes and union_size < best_union_size:
+                best_group = group
+                best_union_size = union_size
+
+        if best_group is not None:
+            best_group[0].update(tri_envs)
+            best_group[1].append(tri)
+            best_group[2].append(tri_loop_indices[tri_idx])
+        else:
+            groups.append((
+                set(tri_envs),
+                [tri],
+                [tri_loop_indices[tri_idx]],
+            ))
+
+    return [
+        {
+            'triangles': g[1],
+            'tri_loop_indices': g[2],
+            'envelope_indices': sorted(g[0]),
+        }
+        for g in groups
+    ]
+
+
+def _build_split_envelope_map(global_envelope_map, group_envelope_indices,
+                              group_triangles):
+    """Build a local envelope map for one split group.
+
+    Remaps global envelope indices to local 0-based indices and includes
+    only the envelopes/vertices used by this group.
+
+    Returns:
+        dict with 'vertex_to_env' (local indices) and 'envelopes' (subset).
+    """
+    global_to_local = {g: l for l, g in enumerate(group_envelope_indices)}
+    global_vtx_to_env = global_envelope_map['vertex_to_env']
+    global_envelopes = global_envelope_map['envelopes']
+
+    # Collect vertices used by this group's triangles
+    group_verts = set()
+    for tri in group_triangles:
+        group_verts.update(tri)
+
+    local_vtx_to_env = {}
+    for v in group_verts:
+        global_idx = global_vtx_to_env.get(v, 0)
+        local_vtx_to_env[v] = global_to_local[global_idx]
+
+    local_envelopes = [global_envelopes[g] for g in group_envelope_indices]
+
+    return {
+        'vertex_to_env': local_vtx_to_env,
+        'envelopes': local_envelopes,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Display list encoding
+# ---------------------------------------------------------------------------
+
+def _encode_display_list(faces, vertices, vertex_descs, vertex_buffers,
+                         pre_triangulated=None):
+    """Encode faces into a GX_DRAW_TRIANGLES display list.
+
+    The display list encodes triangulated faces. Each vertex in the DL
+    contains one index per vertex descriptor (position, normal, UV, etc.).
+
+    Args:
+        faces: list[list[int]] — per-face vertex index lists (may be quads).
+               Ignored when pre_triangulated is provided.
+        vertices: list[tuple] — position vertices (for index range).
+        vertex_descs: list[Vertex] — vertex attribute descriptors.
+        vertex_buffers: list — parallel to vertex_descs.
+        pre_triangulated: optional (triangles, tri_loop_indices) tuple.
+               When provided, faces is ignored and these are used directly.
+
+    Returns:
+        bytes — the raw display list, padded to 32-byte alignment.
+    """
+    if pre_triangulated:
+        triangles, tri_loop_indices = pre_triangulated
+    else:
+        triangles, tri_loop_indices = _triangulate_faces(faces)
 
     if not triangles:
         return b'\x00' * 32
@@ -677,8 +850,12 @@ def _encode_display_list(faces, vertices, vertex_descs, vertex_buffers):
 
                 if desc.attribute == GX_VA_PNMTXIDX:
                     # Envelope index: vertex_idx → env_idx * 3
+                    # GX hardware has 10 matrix slots (indices 0,3,...,27)
                     _, env_map = vbuf
                     env_idx = env_map['vertex_to_env'].get(pos_index, 0)
+                    assert env_idx < 10, (
+                        f"PNMTXIDX {env_idx} >= 10: mesh needs display list "
+                        f"splitting (should have been handled by _build_split_pobjs)")
                     buf.append(env_idx * 3)
                 elif desc.attribute == GX_VA_POS:
                     buf.extend(pack('ushort', pos_index))

@@ -9,24 +9,31 @@ try:
     from .....shared.IR.enums import ScaleInheritance
     from .....shared.Constants.hsd import (
         JOBJ_HIDDEN, JOBJ_INSTANCE, JOBJ_EFFECTOR, JOBJ_SPLINE,
-        JOBJ_TYPE_MASK,
+        JOBJ_TYPE_MASK, JOBJ_CLASSICAL_SCALING, JOBJ_USE_QUATERNION,
+        JOBJ_BILLBOARD_FIELD, JOBJ_BILLBOARD, JOBJ_VBILLBOARD,
+        JOBJ_HBILLBOARD, JOBJ_RBILLBOARD,
     )
+    from .....shared.helpers.scale import GC_TO_METERS
 except (ImportError, SystemError):
     from shared.helpers.math_shim import Matrix, Vector, Euler, compile_srt_matrix, matrix_to_list
     from shared.IR.skeleton import IRBone
     from shared.IR.enums import ScaleInheritance
+    from shared.helpers.scale import GC_TO_METERS
     from shared.Constants.hsd import (
         JOBJ_HIDDEN, JOBJ_INSTANCE, JOBJ_EFFECTOR, JOBJ_SPLINE,
-        JOBJ_TYPE_MASK,
+        JOBJ_TYPE_MASK, JOBJ_CLASSICAL_SCALING, JOBJ_USE_QUATERNION,
+        JOBJ_BILLBOARD_FIELD, JOBJ_BILLBOARD, JOBJ_VBILLBOARD,
+        JOBJ_HBILLBOARD, JOBJ_RBILLBOARD,
     )
 
 
-def describe_bones(root_joint, options=None):
+def describe_bones(root_joint, options=None, logger=None):
     """Walk a Joint tree and produce a flat list of IRBone.
 
     Args:
         root_joint: Root Joint node from the parsed node tree.
         options: dict of importer options (uses 'ik_hack').
+        logger: optional Logger instance.
 
     Returns:
         (list[IRBone], dict[int, int]) — bones list and joint_address→bone_index map.
@@ -38,6 +45,41 @@ def describe_bones(root_joint, options=None):
     joint_to_bone_index = {}
     bone_count = [0]  # mutable counter for closure
 
+    # Pre-count total bones to determine digit padding
+    def _count_joints(joint):
+        n = 1
+        if joint.child and not (joint.flags & (1 << 12)):
+            n += _count_joints(joint.child)
+        if joint.next:
+            n += _count_joints(joint.next)
+        return n
+    total_bones = _count_joints(root_joint)
+    bone_digits = len(str(max(total_bones - 1, 0)))
+
+    # Build bone_index → body map suffix from PKX header
+    _body_map_suffixes = {}
+    pkx_header = options.get("pkx_header") if options else None
+    if pkx_header and pkx_header.anim_entries:
+        _NJ_LABELS = [
+            "Root", "Head", "Center", "Body3", "Neck", "HeadTop",
+            "LimbL", "LimbR", "Sec8", "Sec9", "Sec10", "Sec11",
+            "AttachA", "AttachB", "AttachC", "AttachD",
+        ]
+        # Count how many body map fields reference each bone index
+        bone_ref_counts = {}
+        first_entry = pkx_header.anim_entries[0]
+        for j in range(16):
+            idx = first_entry.body_map_bones[j]
+            if idx >= 0:
+                bone_ref_counts.setdefault(idx, []).append(_NJ_LABELS[j])
+        # Suffix bones referenced by exactly one field, but always
+        # suffix the root bone regardless of how many fields reference it.
+        for idx, labels in bone_ref_counts.items():
+            if "Root" in labels:
+                _body_map_suffixes[idx] = "Root"
+            elif len(labels) == 1:
+                _body_map_suffixes[idx] = labels[0]
+
     def _walk(joint, parent_index, parent_data):
         """Recursively describe a Joint and its children/siblings.
 
@@ -47,8 +89,27 @@ def describe_bones(root_joint, options=None):
         my_index = len(bones)
         joint_to_bone_index[joint.address] = my_index
 
-        name = 'Bone_' + str(bone_count[0])
+        idx = bone_count[0]
+        name = 'Bone_%s' % str(idx).zfill(bone_digits)
+        suffix = _body_map_suffixes.get(idx)
+        if suffix:
+            name = '%s_%s' % (name, suffix)
         bone_count[0] += 1
+
+        # Warn about special JOBJ flags that we preserve but don't fully handle.
+        if logger:
+            if joint.flags & JOBJ_USE_QUATERNION:
+                logger.info("  WARNING: %s has JOBJ_USE_QUATERNION flag (0x%X) — "
+                            "rotation may be incorrect if stored as quaternion",
+                            name, joint.flags)
+            billboard_type = joint.flags & JOBJ_BILLBOARD_FIELD
+            if billboard_type:
+                bb_names = {
+                    JOBJ_BILLBOARD: 'BILLBOARD', JOBJ_VBILLBOARD: 'VBILLBOARD',
+                    JOBJ_HBILLBOARD: 'HBILLBOARD', JOBJ_RBILLBOARD: 'RBILLBOARD',
+                }
+                logger.info("  INFO: %s has billboard flag: %s (camera-dependent, not visualized)",
+                            name, bb_names.get(billboard_type, hex(billboard_type)))
 
         # Determine IK shrink
         ik_shrink = bool(
@@ -57,19 +118,30 @@ def describe_bones(root_joint, options=None):
                  or joint.flags & JOBJ_SPLINE)
         )
 
-        # Accumulate parent scales for aligned scale inheritance
+        # Accumulate parent scales for aligned scale inheritance.
+        # When JOBJ_CLASSICAL_SCALING is set, the bone's own scale does NOT
+        # accumulate into the chain — only the parent's accumulated scale
+        # passes through. Confirmed in HSD_JObjMakeMatrix.s: the flag
+        # causes a direct copy of parent accumulated_scale, skipping the
+        # multiplication by own scale.
         if parent_data:
-            accumulated_scale = tuple(
-                joint.scale[i] * parent_data['scl'][i] for i in range(3)
-            )
+            if joint.flags & JOBJ_CLASSICAL_SCALING:
+                accumulated_scale = parent_data['scl']
+            else:
+                accumulated_scale = tuple(
+                    joint.scale[i] * parent_data['scl'][i] for i in range(3)
+                )
             parent_scl = parent_data['scl']
         else:
             accumulated_scale = tuple(joint.scale)
             parent_scl = None
 
-        # Build local SRT matrix
+        # Scale position to meters
+        scaled_position = tuple(p * GC_TO_METERS for p in joint.position)
+
+        # Build local SRT matrix (with scaled position)
         local_matrix = compile_srt_matrix(
-            joint.scale, joint.rotation, joint.position, parent_scl
+            joint.scale, joint.rotation, scaled_position, parent_scl
         )
 
         # Compute world matrix
@@ -91,7 +163,7 @@ def describe_bones(root_joint, options=None):
             normalized_local = normalized_world
             scale_correction = local_matrix.normalized().inverted() @ local_matrix
 
-        # Get inverse bind matrix if present
+        # Get inverse bind matrix if present, scaling translation to meters
         inverse_bind = None
         if hasattr(joint, 'inverse_bind') and joint.inverse_bind is not None:
             inv = joint.inverse_bind
@@ -101,11 +173,14 @@ def describe_bones(root_joint, options=None):
                 inverse_bind = [list(row) for row in inv]
             else:
                 inverse_bind = [[inv[i][j] for j in range(4)] for i in range(4)]
+            # Scale translation column (column 3, rows 0-2) to meters
+            for row in range(3):
+                inverse_bind[row][3] *= GC_TO_METERS
 
         bone = IRBone(
             name=name,
             parent_index=parent_index,
-            position=tuple(joint.position),
+            position=scaled_position,
             rotation=tuple(joint.rotation),
             scale=tuple(joint.scale),
             inverse_bind_matrix=inverse_bind,

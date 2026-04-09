@@ -48,7 +48,7 @@ The shiny filter can also be added to any model manually using the standalone sc
 
 ## Exporting
 
-The exporter writes a Blender scene to a `.dat` or `.pkx` binary. Skeleton and mesh geometry export is functional. Materials, animations, and constraints are not yet implemented. See the [Exporter Usage](documentation/exporter_usage.md) documentation for details.
+The exporter writes a Blender scene to a `.dat` or `.pkx` binary. Skeleton and mesh geometry export is functional. Materials, animations, and constraints are not yet implemented. See the [Exporter Setup](documentation/exporter_setup.md) documentation for details.
 
 ## Remaining Work
 
@@ -177,7 +177,7 @@ Detailed documentation lives in the `documentation/` folder:
 - [**Compatibility Table**](documentation/compatibility_table.md) — feature support across different games and file types
 - [**Blender API Usage**](documentation/blender_api_usage.md) — reference for Blender Python API patterns used in the addon
 - [**Shiny Variants**](documentation/shiny_variants.md) — how the game stores shiny color data and how the addon implements it
-- [**Exporter Usage**](documentation/exporter_usage.md) — supported features and usage guide for the exporter (WIP)
+- [**Exporter Setup**](documentation/exporter_setup.md) — supported features and usage guide for the exporter (WIP)
 - [**Scripts**](documentation/scripts.md) — standalone Blender scripts and how to run them
 
 ## Community

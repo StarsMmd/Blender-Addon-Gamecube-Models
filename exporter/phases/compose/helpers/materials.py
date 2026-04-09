@@ -271,11 +271,17 @@ def _build_texture_node(ir_layer, tex_index, logger):
 
     # Transform — convert Blender UV convention to GX convention.
     # Blender V origin is bottom, GX V origin is top: v_gx = 1 - scale_v - v_blender
+    # When wrap_t is MIRROR, HSD adds an extra offset of scale_t/repeat_t to the
+    # V translation (confirmed in MakeTextureMtx.s). The import describe phase
+    # subtracted this, so we add it back here.
     tex.rotation = list(ir_layer.rotation)
     tex.scale = list(ir_layer.scale)
+    v_gx = 1.0 - ir_layer.scale[1] - ir_layer.translation[1]
+    if ir_layer.wrap_t == WrapMode.MIRROR and ir_layer.repeat_t > 0 and abs(ir_layer.scale[1]) > 1e-6:
+        v_gx -= ir_layer.scale[1] / ir_layer.repeat_t
     tex.translation = [
         ir_layer.translation[0],
-        1.0 - ir_layer.scale[1] - ir_layer.translation[1],  # reverse V-flip
+        v_gx,
         ir_layer.translation[2],
     ]
 

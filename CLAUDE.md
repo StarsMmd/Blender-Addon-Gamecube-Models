@@ -6,7 +6,7 @@ A Blender addon that imports and exports `.dat` 3D model files used in GameCube 
 
 **Target Blender version:** 4.5
 
-**Supported file extensions:** `.dat`, `.fdat`, `.rdat`, `.pkx`, `.fsys`
+**Supported file extensions:** `.dat`, `.fdat`, `.rdat`, `.pkx`, `.fsys`, `.wzx`, `.cam`
 
 **Reference implementation:** [Ploaj/HSDLib](https://github.com/Ploaj/HSDLib) — a C# Super Smash Bros. Melee model viewer/editor for the same SysDolphin format. **Caveat:** HSDLib targets Melee; this plugin targets Pokémon Colosseum/XD — struct fields, flag semantics, and node types may not match exactly.
 
@@ -69,7 +69,7 @@ Phase 4 (package)            DAT bytes → final output (.dat or .pkx)
 importer/
   importer.py                    # Importer.run() — pipeline entry point
   phases/
-    extract/extract.py           # Phase 1: container detection + header stripping (uses PKXContainer)
+    extract/extract.py           # Phase 1: container detection + header stripping (uses PKXContainer, WZX extractor)
       helpers/fsys.py            # FSYS archive parser (header, metadata, LZSS decompression)
       helpers/lzss.py            # LZSS decompression algorithm
     route/route.py               # Phase 2: section name → node type mapping
@@ -78,10 +78,10 @@ importer/
       helpers/dat_parser.py      # DATParser — recursive node tree parser
     describe/
       describe.py                # Phase 4: node trees → IRScene
-      helpers/                   # bones, meshes, materials, animations, constraints, lights, material_animations, keyframe_decoder
+      helpers/                   # bones, meshes, materials, animations, constraints, lights, cameras, material_animations, keyframe_decoder
     build_blender/
       build_blender.py           # Phase 5: IRScene → Blender objects
-      helpers/                   # skeleton, meshes, materials, animations, constraints, lights, material_animations
+      helpers/                   # skeleton, meshes, materials, animations, constraints, lights, cameras, material_animations
       errors/build_errors.py     # ModelBuildError
     post_process/
       post_process.py            # Phase 6: reset poses, select animations, apply shiny filters
@@ -97,6 +97,7 @@ shared/
     logger.py                    # Logger / StubLogger
     math_shim.py                 # Matrix/Vector/Euler (mathutils or pure-Python fallback)
     pkx.py                       # PKXContainer — read/write PKX headers, DAT payloads, shiny params
+    wzx.py                       # WZX effect container — extract DATs and GPT1 particles from WazaSequence files
     shiny_params.py              # ShinyParams dataclass (channel routing + brightness)
     srgb.py                      # sRGB ↔ linear conversion
   ClassLookup/                   # Node type name → class resolution
@@ -173,19 +174,22 @@ Nodes are cached by file offset (`nodes_cache_by_offset`). Nodes with `is_cachab
 | Skeleton/armature import | ✅ Working |
 | Joint animation import | ✅ Working |
 | Material animation import | ✅ Working (color/alpha + texture UV + NLA) |
-| Light import | ✅ Working (SUN, POINT, SPOT) |
+| Light import | ✅ Working (AMBIENT, SUN, POINT, SPOT) |
 | Bone constraints (IK, copy loc/rot, track-to, limits) | ✅ Working |
 | Bone instances (JOBJ_INSTANCE) | ✅ Working |
 | Shape animation import | ❌ Stubs only (not implemented in legacy either) |
-| Camera / Fog import | ❌ Stubs only |
-| Exporter pipeline | ⚠️ Bones + meshes (RIGID/SINGLE_BONE/ENVELOPE) + materials + textures (all GX formats) + bound box + animations + material animations + lights + constraints working |
+| Particle import (GPT1) | ⚠️ Parser + IR representation working, no Blender visualization yet |
+| Camera import | ✅ Working (static + animated: position, target, FOV, roll, near/far) |
+| Fog import | ❌ Not supported (no fog data found in tested models) |
+| Exporter pipeline | ✅ Bones + meshes (RIGID/SINGLE_BONE/ENVELOPE, multi-material split) + materials + textures (all GX formats) + bound box + animations (Euler + quaternion) + material animations + lights + cameras + constraints working. Supports arbitrary Blender models (GLB/FBX) with armature object scale + coordinate rotation applied automatically. |
 | Exporter binary round-trip (DATBuilder) | ✅ Functional (0 value mismatches) |
-| Exporter PKX packaging | ✅ Working (DAT injection, shiny write-back, trailer preserved) |
-| In-game loading | ✅ Working — all three paths (BNB, NIN, IBI) produce correct geometry + textures in both Blender and in-game simultaneously |
+| Exporter PKX packaging | ✅ Working (from-scratch via PKX metadata OR DAT injection into existing, shiny write-back, trailer preserved) |
+| In-game loading (re-exported) | ✅ Working — all three paths (BNB, NIN, IBI) produce correct geometry + textures in both Blender and in-game simultaneously |
+| In-game loading (arbitrary models) | ⚠️ Loads without crashing but geometry garbled at aggressive optimization — see "Arbitrary Model Export" section below |
 | IR pipeline | ✅ Default path (legacy available via toggle) |
 | FSYS archive import | ✅ Working (multi-model extraction + LZSS decompression) |
 | Shiny variant filter | ✅ Working (PKX color extraction, live-editable shader node group, per-parameter UI) |
-| Unit tests | ✅ 483 passing (27 texture encoder, 13 DAT serialization/alignment/relocation/vertex-space) |
+| Unit tests | ✅ 661 passing (27 texture encoder, 14 DAT serialization/alignment/relocation/vertex-space, 24 PKX header, 24 GPT1 particle, 15 WZX extraction, 2 material animation scale, 18 camera describe, 22 camera animation, 12 camera compose, 4 coordinate conversion, 20 bezier sparsification, 16 light describe, 16 envelope display list splitting, 2 PObject iterative parsing, 3 envelope weight quantization, 4 motion type derivation, 3 idle name compaction) |
 | Shader node auto-layout | ✅ Working (topological sort from output→inputs, left-to-right) |
 | Scale inheritance (animation baking) | ⚠️ Partially resolved — hybrid approach, see below |
 
@@ -221,6 +225,43 @@ Nodes are cached by file offset (`nodes_cache_by_offset`). Nodes with `is_cachab
 3. For the "unit mismatch" problem on non-uniform bones: explore whether Blender's `inherit_scale='NONE'` mode can be combined with explicit scale compensation in the bake values
 4. The per-frame hierarchy walk for animated parent scales was attempted but the conversion from world matrices to Blender pose-bone space couldn't be solved due to Blender's opaque ALIGNED evaluation. Reverse-engineering `armature.cc`'s `BKE_bone_parent_transform_calc_from_matrices` could enable this.
 
+### Arbitrary Model Export — ⚠️ Experimental
+
+**Status:** Models from external sources (GLB/FBX) can be exported to .dat/.pkx. A Greninja model (Sun/Moon GLB) loads in-game without crashing but geometry is garbled at aggressive optimization levels. Needs tuning.
+
+**What works:**
+- Multi-material meshes auto-split by material slot on export
+- Quaternion rotation fcurves (from GLB) converted to Euler for HSD
+- Armature object scale applied to bone positions, vertex positions, and animation values
+- Armature object rotation (including importer's Y-up matrix_basis) normalized to Z-up before coordinate conversion — no root bone special case
+- SUN light direction derived from object rotation when no TRACK_TO constraint
+- PKX files can be created from scratch (no existing .pkx required)
+- Motion_type derived from slot type (loop→2, active→1, empty→0)
+- Standard 4-light battle setup (ambient + 3 directional SUN)
+
+**Weight optimization pipeline (`prepare_for_export.py`):**
+1. Limit vertex weights to N per vertex (currently 2 for aggressive, 3 for quality)
+2. Quantize weights to 10% steps (matching game model precision)
+3. Compose phase rounds envelope weights to 25% steps for further combo reduction
+
+**Known limitations:**
+- Game models have 15-40 PObjects and 65-430 KB DAT size. Arbitrary models with smooth weight painting produce many more unique weight combinations → more PObjects → larger files
+- The compose phase's triangle partitioning creates more PObjects than `unique_combos / 10` due to boundary vertex duplication
+- Game models are hand-crafted with separate mesh objects per body part, each referencing few bones. Arbitrary models with one large mesh + many bones are inherently harder to optimize
+
+**Key files:**
+- `scripts/prepare_for_export.py` — weight limiting, quantization, texture formats, lights, PKX metadata
+- `exporter/phases/describe_blender/helpers/skeleton.py` — `obj_rotation` pre-transform, `obj_scale` position scaling
+- `exporter/phases/describe_blender/helpers/meshes.py` — multi-material split, vertex/normal coord conversion
+- `exporter/phases/describe_blender/helpers/animations.py` — quaternion support, `loc_scale` for fcurve values
+- `exporter/phases/compose/helpers/meshes.py` — `round(w * 4) / 4` weight quantization in envelope map
+
+**Next steps to investigate:**
+1. Find the right weight limit and quantization level that produces acceptable quality in-game — currently too aggressive (2 weights + 25% quant) causes garbling
+2. Try 3 weights + 10% quantization (game-exact precision) and see if the ~160 PObject / ~1.1 MB result loads cleanly
+3. Explore mesh splitting by body region to reduce per-mesh bone count (the key metric game models optimize for)
+4. Compare envelope list structure between exported and original game models for subtle format differences
+
 ---
 
 ## Testing Strategy
@@ -230,7 +271,8 @@ Nodes are cached by file offset (`nodes_cache_by_offset`). Nodes with `is_cachab
 - Test data: Python helper functions that build valid node binaries in memory
 - All tests use `io.BytesIO` — no temp files
 - Tests cover: node parsing round-trip, IR type instantiation, helper functions, phase stubs
-- Round-trip test runner: `python3 tests/round_trip/run_round_trips.py <model_file_or_dir>`
+- Round-trip test runner: `python3.11 tests/round_trip/run_round_trips.py <model_file_or_dir>`
+- **Use `python3.11`** for round-trip tests (has `bpy==4.5.7`). The default `python3` (3.10) has an old `bpy==3.4.0` that lacks required APIs like `action.slots`.
 
 ### Round-Trip Test Types
 
@@ -291,39 +333,37 @@ Do not linearize colors in the IR, parsing, or describe phases.
 
 ## Shiny Filter Shader Nodes
 
-The shiny filter is applied entirely in Phase 6 (post-processing), independent of the parsing/IR/build phases. Raw shiny parameters are extracted from PKX headers in Phase 1 and passed directly to Phase 6. There is no shiny data in the IR.
+The shiny filter is applied entirely in Phase 6 (post-processing). Raw shiny parameters are extracted from PKX headers in Phase 1 and stored as `dat_pkx_shiny_route` (list of 4 ints) and `dat_pkx_shiny_brightness` (list of 3 floats) on the armature. There is no shiny data in the IR.
 
-The filter inserts four named nodes into each material's node tree, split into two stages:
+The filter inserts four named nodes into each material's node tree at the shader input:
 
-**Routing stage** (placed BEFORE vertex color multiply):
-- **`shiny_route_shader`** — ShaderNodeGroup referencing `ShinyRoute_{model_name}` (channel swizzle + Gamma linearization)
+- **`shiny_route_shader`** — ShaderNodeGroup referencing `ShinyRoute_{model_name}` (RGB channel swizzle via Separate→Combine, matching `GXSetTevSwapModeTable`)
 - **`shiny_route_mix`** — MixRGB blending between normal and routed output
-
-**Brightness stage** (placed AFTER vertex color multiply):
-- **`shiny_bright_shader`** — ShaderNodeGroup referencing `ShinyBright_{model_name}` (per-channel brightness scaling)
+- **`shiny_bright_shader`** — ShaderNodeGroup referencing `ShinyBright_{model_name}` (per-channel RGB brightness scaling, multiply factor = brightness + 1.0 → [0.0, 2.0], matching TEV modulation with 2x scale)
 - **`shiny_bright_mix`** — MixRGB blending between normal and brightness-adjusted output
 
-This separation ensures channel routing only affects texture/material colors, not vertex colors. The vertex color multiply node is found by graph analysis (MixRGB MULTIPLY with ShaderNodeAttribute input), not by name.
+Both stages are inserted at the Principled BSDF Base Color input (after all texture + vertex color processing), applied globally to ALL materials. This matches the game where `GSmodelEnableColorSwap` and `GSmodelEnableModulation` iterate all materials. Only RGB channels are routed — alpha route is always identity (3) and has no visual effect since the game forces brightness alpha to 0xFF.
 
 The exporter **must skip these nodes** when reading back materials — they are display-only and not part of the original model data. Identify them by the node names above.
 
-The shiny parameters are stored as registered `bpy.props` properties on the armature (`dat_shiny_route_r`, `dat_shiny_brightness_r`, etc.). When exporting to PKX, the exporter can read these properties from the armature to write updated shiny metadata back into the PKX header.
+The shiny parameters are stored as custom properties on the armature (`dat_pkx_shiny_route`, `dat_pkx_shiny_brightness`). The `dat_pkx_shiny` toggle (registered `BoolProperty`) controls viewport preview via drivers on the MixRGB nodes. When toggled on, the node groups are rebuilt from the current custom property values, enabling live editing.
 
 ---
 
 ## Coding Conventions
 
 - **Logger parameter:** Functions default to `StubLogger()`, never `None`. Always use `logger.info()`/`logger.debug()` instead of `print()` — logger output is written to log files on disk that persist after import and can be read directly for investigation. `print()` only goes to the Blender console which is transient.
-- **Imports:** Phase files use try/except for Blender (relative) vs pytest (absolute) imports.
+- **Imports:** Phase files **must** use try/except for Blender (relative) vs pytest (absolute) imports. Blender cannot resolve bare `from shared.` imports — only relative imports like `from .....shared.` work inside the addon package. Always put the relative import first in the `try` block, with the absolute fallback in `except (ImportError, SystemError)`. This applies to **every** import from `shared/`, including imports inside nested functions.
 - **Binary reads/writes:** Use `shared/helpers/binary.py` helpers with descriptive type names (`read('uint', data, offset)`, `pack('float', value)`, `pack_many('uchar', r, g, b, a)`) instead of raw `struct.pack`/`struct.unpack` with format codes. For keyframe data that uses native byte order, use `read_native`/`pack_native`.
 - **Errors:** Use `ValueError("descriptive message")` instead of custom exception classes. Only `ModelBuildError` (in build phase) carries structured data.
 - **No bpy in shared/:** All Blender-specific code lives in `importer/phases/build_blender/`.
 - **Do not modify `legacy/`:** The `legacy/` folder contains the pre-refactor importer and should not be changed unless explicitly asked to do so.
 - **Fail loud over silent fallbacks:** When looking up Blender objects we created (nodes, bones, materials), raise `ValueError` with the actual names if the lookup fails — don't silently skip or fall back. Silent failures mask bugs and make debugging much harder.
-- **Standalone scripts:** Any standalone Blender scripts (run from the Scripting panel) go in `scripts/` and must be documented in `documentation/scripts.md`.
+- **Standalone scripts:** Any standalone Blender scripts (run from the Scripting panel) go in `scripts/` and must be documented in `documentation/scripts.md`. Scripts must be fully self-contained — no imports from the plugin codebase or other scripts. All code must be inlined in the single file. The only allowed imports are `bpy`, `math`, and Python standard library modules.
 - **Blender API tracking:** Whenever a `bpy` API call is added, moved, removed, or modified, update `documentation/blender_api_usage.md` to match.
 - **Test count:** Whenever tests are added or removed, update the unit test count in the Current Status table above.
 - **Bug fix tests:** Whenever a bug is successfully fixed, add a unit test case that covers the fixed logic to prevent regressions.
+- **No import metadata in the IR for round-trip fidelity:** Never add fields to the IR or custom properties to Blender objects solely to shuttle import-side metadata (channel ordering, quantization format, etc.) through to the compose/export phase. The IR must be derivable from the Blender scene or deterministic algorithms. If a round-trip mismatch comes from format details, investigate whether the original compiler's behavior can be reproduced algorithmically. If no deterministic pattern exists, accept the mismatch.
 
 ---
 
@@ -333,5 +373,11 @@ The shiny parameters are stored as registered `bpy.props` properties on the arma
 - [x] Code audit: identify opportunities to reduce algorithmic complexity — see [complexity optimization plan](documentation/complexity_optimization_plan.md)
 - [ ] Implement remaining complexity optimizations (items 1-3 in the plan above)
 - [x] Shiny filter: split into separate routing and brightness shaders. The routing shader (channel swizzle) only applies to texture colors, not vertex colors. The brightness shader applies to the final result after vertex color multiplication.
-- [x] Ambient lighting: approximated with per-material Emission node (`dat_ambient_emission`), read back on export. Scene-level `LOBJ_AMBIENT` lights still ignored.
+- [x] Ambient lighting: per-material stored in Emission node (`dat_ambient_emission`, strength=0 by default). Scene-level `LOBJ_AMBIENT` lights imported as no-op POINT light with `dat_light_type = "AMBIENT"` and `energy = 0`. Sorted first (LightSet[0]) on export.
 - [x] Bone inverse_bind_matrix: computed as `srt_world.inverted()` — the inverse of the SRT-accumulated world matrix (no coordinate rotation). Only set on skinning target bones, cleared on others. See "Envelope Skinning" section in [export pipeline plan](documentation/export_pipeline_plan.md).
+- [ ] GPT1 particle export (compose + serialize phases) — validate import first
+- [ ] Blender particle visualization from IRParticleSystem
+- [x] Envelope matrix index overflow: meshes with >10 unique weight combos are now split into multiple PObjects, each with ≤10 envelopes and its own display list. Greedy best-fit bin-packing minimizes the number of splits.
+- [ ] MIRROR wrap mode round-trip: the importer now implements GX MIRROR via PINGPONG shader math nodes (Blender has no native mirror texture extension). The exporter could detect PINGPONG Math nodes in the texture UV chain to recover MIRROR wrap mode. Currently MIRROR round-trips as CLAMP.
+- [ ] Arbitrary model optimization: find the right weight limit and quantization level for in-game quality. Current aggressive settings (2 weights, 25% quantization) load without crashing but garble geometry. Game models use 10% weight steps — try relaxing to 3 weights + 10% quantization and test if the larger file (~1.1 MB) loads cleanly. The bottleneck is unique weight combinations causing PObject proliferation (each PObject duplicates boundary vertices).
+- [ ] Importer Y-up bone storage: the importer stores Y-up bone data in edit bones with a π/2 X rotation on armature.matrix_basis. This is a shortcut — ideally edit bones should always be in Z-up (Blender native). The exporter handles both cases via `obj_rotation` normalization, but this design creates confusion. Low priority since changing it would affect all existing imported models.

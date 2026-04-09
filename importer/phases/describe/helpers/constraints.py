@@ -9,6 +9,7 @@ try:
     )
     from .....shared.Nodes.Classes.Joints.Joint import Joint as JointCls
     from .....shared.Nodes.Classes.Joints.BoneReference import BoneReference
+    from .....shared.helpers.scale import GC_TO_METERS
 except (ImportError, SystemError):
     from shared.Constants.hsd import *
     from shared.IR.constraints import (
@@ -17,6 +18,7 @@ except (ImportError, SystemError):
     )
     from shared.Nodes.Classes.Joints.Joint import Joint as JointCls
     from shared.Nodes.Classes.Joints.BoneReference import BoneReference
+    from shared.helpers.scale import GC_TO_METERS
 
 
 def describe_constraints(root_joint, bones, joint_to_bone_index):
@@ -131,7 +133,7 @@ def _describe_ik(joint, bones, jtb, addr_to_joint, bone_idx_to_addr):
 
     repositions.append(IRBoneReposition(
         bone_name=bone_name,
-        bone_length=effector_length_robj.property.length * parent_scale,
+        bone_length=effector_length_robj.property.length * parent_scale * GC_TO_METERS,
     ))
 
     if chain_length == 3 and joint2_length_robj and pole_data_joint:
@@ -140,7 +142,7 @@ def _describe_ik(joint, bones, jtb, addr_to_joint, bone_idx_to_addr):
         parent_bone_name = bones[parent_idx].name
         repositions.append(IRBoneReposition(
             bone_name=parent_bone_name,
-            bone_length=joint2_length_robj.property.length * pole_scale,
+            bone_length=joint2_length_robj.property.length * pole_scale * GC_TO_METERS,
         ))
 
     return IRIKConstraint(
@@ -227,6 +229,9 @@ def _describe_regular(joint, bones, jtb):
     # Limits
     for limit_var, component, direction, value in limits:
         axis = ['x', 'y', 'z'][component]
+        # Scale location limits to meters (rotation limits stay in radians)
+        if limit_var == 'pos':
+            value *= GC_TO_METERS
         target_list = limit_rot if limit_var == 'rot' else limit_loc
         existing = next((c for c in target_list if c.bone_name == bone_name), None)
         if not existing:

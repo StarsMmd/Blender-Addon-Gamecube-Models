@@ -99,3 +99,33 @@ class TestEvaluateTrack:
         # = 0 + 0 + 3*10*0.25*0.25... let me just check it's between 0 and 10
         val = _evaluate_track(kfs, 5)
         assert 0.0 <= val <= 10.0
+
+
+# ---------------------------------------------------------------------------
+# Material color/alpha keyframe scale factor
+# ---------------------------------------------------------------------------
+
+class TestMaterialKeyframeScale:
+    """Regression: material color/alpha keyframes must use scale=1.0, not 1/255.
+
+    The FObjDesc keyframe decoder already outputs values in 0-1 range.
+    A previous bug applied scale=1/255 which made all material animation
+    values ~255x too small, causing invisible effects.
+    """
+
+    def test_scale_is_one_not_255(self):
+        """The describe code uses scale=1.0 for material color/alpha tracks."""
+        import inspect
+        from importer.phases.describe.helpers import material_animations as mod
+        source = inspect.getsource(mod._describe_material_track)
+        # Must NOT contain 1/255 or 1.0/255.0 scale
+        assert '/ 255' not in source, "Material animation scale should be 1.0, not 1/255"
+        assert 'scale=1.0' in source or 'scale=1)' in source or 'scale=1,' in source
+
+    def test_scale_value_in_call(self):
+        """The actual call to decode_fobjdesc passes scale=1.0."""
+        import inspect
+        from importer.phases.describe.helpers import material_animations as mod
+        source = inspect.getsource(mod._describe_material_track)
+        # Find the decode_fobjdesc call and verify scale parameter
+        assert 'decode_fobjdesc(fobj, bias=0, scale=1.0)' in source

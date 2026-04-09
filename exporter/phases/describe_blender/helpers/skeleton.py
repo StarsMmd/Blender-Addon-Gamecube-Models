@@ -9,7 +9,7 @@ metadata — this works with any well-formed Blender armature.
 """
 import math
 import bpy
-from mathutils import Matrix
+from mathutils import Matrix, Vector
 
 try:
     from .....shared.IR.skeleton import IRBone
@@ -45,6 +45,26 @@ def describe_skeleton(armature, logger=StubLogger()):
     """
     armature_data = armature.data
 
+    # Capture the armature's object rotation and scale before entering
+    # edit mode. Edit bone matrices are in armature-local space which
+    # doesn't include the object transform. We handle rotation and scale
+    # separately:
+    #
+    # ROTATION: baked into edit bone matrices up front. This normalizes
+    # all edit bones to Blender world-space Z-up, so _COORD_ROTATION_INV
+    # works uniformly for all models:
+    #   - .dat re-imports: matrix_basis has π/2 X rotation → converts
+    #     Y-up edit bones to Z-up.
+    #   - GLB/FBX models: typically no rotation → no change.
+    # The rotation cancels for child bones (parent.inv() @ child),
+    # which is the correct behavior for local SRT computation.
+    #
+    # SCALE: applied to each bone's decomposed position AFTER local SRT
+    # extraction. We can't bake scale into the matrices because it would
+    # cancel in parent.inv() @ child, leaving child positions unscaled.
+    obj_rotation = armature.matrix_world.to_3x3().normalized().to_4x4()
+    obj_scale = armature.matrix_world.to_scale()
+
     # Enter edit mode to read edit bone data
     prev_active = bpy.context.view_layer.objects.active
     bpy.context.view_layer.objects.active = armature
@@ -78,14 +98,14 @@ def describe_skeleton(armature, logger=StubLogger()):
     bpy.ops.object.mode_set(mode='OBJECT')
     bpy.context.view_layer.objects.active = prev_active
 
-    # Edit bone matrices are in armature-local space (Blender Z-up).
-    # The IR and DAT format expect Y-up. We apply the coordinate rotation
-    # to compute GameCube-space world matrices, then derive local SRT from
-    # parent-child relationships. For child bones the coordinate rotation
-    # cancels out (parent and child both get the same transform). For root
-    # bones we use the raw armature-local matrix — the Z→Y conversion is
-    # handled at the armature level by the importer (matrix_basis), not in
-    # bone SRT data.
+    # Bake the armature's object rotation into edit bone matrices.
+    # After this, all matrices are in Blender world space (Z-up).
+    for data in edit_bone_data:
+        data['matrix'] = obj_rotation @ data['matrix']
+
+    # Convert from Blender Z-up to GameCube Y-up via _COORD_ROTATION_INV.
+    # For child bones the rotation cancels in parent.inv() @ child.
+    # For root bones local = world (no parent to cancel against).
 
     bones = []
     gc_world_matrices = {}  # {index: Matrix} in GameCube Y-up space
@@ -94,25 +114,26 @@ def describe_skeleton(armature, logger=StubLogger()):
     for i, data in enumerate(edit_bone_data):
         parent_index = bone_name_to_index.get(data['parent_name']) if data['parent_name'] else None
 
-        # Convert from Blender Z-up armature space to GameCube Y-up
+        # Convert from Blender Z-up to GameCube Y-up
         gc_world = _COORD_ROTATION_INV @ data['matrix']
         gc_world_matrices[i] = gc_world
 
-        # Compute local matrix relative to parent.
-        # For root bones: use the raw armature-local matrix (no coord rotation).
-        # The coord rotation is an armature-level concern applied by the importer
-        # via armature.matrix_basis, not part of any bone's SRT.
-        # For child bones: coord rotation cancels out in parent.inv() @ child.
+        # Compute local matrix relative to parent
         if parent_index is not None:
             gc_local = gc_world_matrices[parent_index].inverted() @ gc_world
         else:
-            gc_local = data['matrix']
+            gc_local = gc_world
 
         # Decompose local matrix to SRT
         translation, quat, scale = gc_local.decompose()
         euler = quat.to_euler('XYZ')
 
-        position = (translation.x, translation.y, translation.z)
+        # Apply armature object scale to bone positions. Scale can't be
+        # baked into matrices (it cancels in parent.inv() @ child), so we
+        # apply it to the decomposed position.
+        position = (translation.x * obj_scale.x,
+                    translation.y * obj_scale.y,
+                    translation.z * obj_scale.z)
         rotation = (euler.x, euler.y, euler.z)
         scale_tuple = (scale.x, scale.y, scale.z)
 

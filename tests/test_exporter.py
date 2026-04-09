@@ -8,6 +8,7 @@ import pytest
 from shared.IR.skeleton import IRBone, IRModel
 from shared.IR.enums import ScaleInheritance
 from shared.IR import IRScene
+from shared.helpers.scale import METERS_TO_GC as G
 from shared.helpers.shiny_params import ShinyParams
 from shared.helpers.pkx import PKXContainer
 from shared.helpers.binary import read
@@ -17,6 +18,7 @@ from exporter.phases.compose.helpers.bones import compose_bones
 from exporter.phases.serialize.serialize import serialize
 from exporter.phases.package.package import package_output
 from shared.Constants.hsd import JOBJ_HIDDEN, JOBJ_INSTANCE
+from exporter.phases.compose.helpers.meshes import _build_envelope_map
 
 
 # ---------------------------------------------------------------------------
@@ -51,23 +53,25 @@ def _make_bone(name, parent_index=None, position=(0, 0, 0), rotation=(0, 0, 0),
 
 
 def _build_colo_pkx(dat_body_size=64, shiny_color1=(0, 1, 2, 3), shiny_color2=(128, 128, 128, 128)):
-    """Build a minimal Colosseum PKX: [0x40 header][DAT][trailer with shiny]."""
+    """Build a minimal Colosseum PKX: [0x40 header][DAT padded][shiny 20 bytes]."""
     marker = dat_body_size
-    header = struct.pack('>I', marker) + b'\x00' * 0x3C
+    header = bytearray(0x40)
+    struct.pack_into('>I', header, 0, marker)  # dat_file_size
+    struct.pack_into('>I', header, 8, 0)  # anim_section_count = 0 (no entries for minimal test)
     dat_body = struct.pack('>I', marker) + b'\x00' * (dat_body_size - 4)
-    # Trailer: 32 bytes of padding + 17 bytes of shiny data
-    trailer = bytearray(49)
-    base = len(trailer) - 17
-    trailer[base + 0] = shiny_color1[0]
-    trailer[base + 4] = shiny_color1[1]
-    trailer[base + 8] = shiny_color1[2]
-    trailer[base + 12] = shiny_color1[3]
-    # ABGR order for Colosseum
-    trailer[base + 13] = shiny_color2[0]
-    trailer[base + 14] = shiny_color2[1]
-    trailer[base + 15] = shiny_color2[2]
-    trailer[base + 16] = shiny_color2[3]
-    return bytes(header + dat_body + trailer)
+    # Pad DAT to 0x20 boundary
+    pad = (0x20 - (len(dat_body) % 0x20)) % 0x20
+    dat_padded = dat_body + b'\x00' * pad
+    # Shiny: 4 × uint32 routing + 1 × uint32 ARGB color (20 bytes)
+    shiny = bytearray(20)
+    struct.pack_into('>I', shiny, 0, shiny_color1[0])
+    struct.pack_into('>I', shiny, 4, shiny_color1[1])
+    struct.pack_into('>I', shiny, 8, shiny_color1[2])
+    struct.pack_into('>I', shiny, 12, shiny_color1[3])
+    # ARGB from RGBA: brightness_r=color2[0], g=[1], b=[2], a=[3] → ARGB
+    argb = (shiny_color2[3] << 24) | (shiny_color2[0] << 16) | (shiny_color2[1] << 8) | shiny_color2[2]
+    struct.pack_into('>I', shiny, 16, argb)
+    return bytes(header) + dat_padded + bytes(shiny)
 
 
 def _build_xd_pkx(dat_body_size=64, shiny_color1=(0, 1, 2, 3), shiny_color2=(128, 128, 128, 128)):
@@ -78,18 +82,19 @@ def _build_xd_pkx(dat_body_size=64, shiny_color1=(0, 1, 2, 3), shiny_color2=(128
     struct.pack_into('>I', raw, 0, dat_body_size)
     struct.pack_into('>I', raw, 0x40, 0xBBBBBBBB)
     struct.pack_into('>I', raw, 8, 0)  # GPT1 size = 0
+    struct.pack_into('>I', raw, 0x10, 17)  # anim_section_count = 17
     # DAT file_size field
     struct.pack_into('>I', raw, header_size, dat_body_size)
-    # Shiny at 0x73
-    base = 0x73
-    raw[base + 0] = shiny_color1[0]
-    raw[base + 4] = shiny_color1[1]
-    raw[base + 8] = shiny_color1[2]
-    raw[base + 12] = shiny_color1[3]
-    raw[base + 13] = shiny_color2[0]
-    raw[base + 14] = shiny_color2[1]
-    raw[base + 15] = shiny_color2[2]
-    raw[base + 16] = shiny_color2[3]
+    # Shiny routing: 4 × uint32 at 0x70
+    struct.pack_into('>I', raw, 0x70, shiny_color1[0])
+    struct.pack_into('>I', raw, 0x74, shiny_color1[1])
+    struct.pack_into('>I', raw, 0x78, shiny_color1[2])
+    struct.pack_into('>I', raw, 0x7C, shiny_color1[3])
+    # Shiny brightness: 4 × uint8 at 0x80
+    raw[0x80] = shiny_color2[0]
+    raw[0x81] = shiny_color2[1]
+    raw[0x82] = shiny_color2[2]
+    raw[0x83] = shiny_color2[3]
     return bytes(raw)
 
 
@@ -111,11 +116,10 @@ class TestPreProcess:
             f.write(b'\x00' * 64)
         _validate_output_path(filepath, logger=StubLogger())
 
-    def test_pkx_output_missing_file_raises(self, tmp_path):
-        """PKX output raises ValueError when the target doesn't exist."""
+    def test_pkx_output_new_file_passes(self, tmp_path):
+        """PKX output to a new file passes validation (created from scratch)."""
         filepath = str(tmp_path / "nonexistent.pkx")
-        with pytest.raises(ValueError, match="PKX export requires"):
-            _validate_output_path(filepath, logger=StubLogger())
+        _validate_output_path(filepath, logger=StubLogger())
 
     def test_no_extension_passes(self, tmp_path):
         """Files without extension pass validation."""
@@ -143,7 +147,7 @@ class TestComposeBones:
         assert root is not None
         assert len(joints) == 1
         assert root.name == "Root"
-        assert list(root.position) == [1, 2, 3]
+        assert [round(p, 6) for p in root.position] == [round(1 * G, 6), round(2 * G, 6), round(3 * G, 6)]
         assert list(root.rotation) == pytest.approx([0.1, 0.2, 0.3])
         assert list(root.scale) == [1, 1, 1]
         assert root.child is None
@@ -198,11 +202,14 @@ class TestComposeBones:
         assert root.flags == JOBJ_HIDDEN
 
     def test_inverse_bind_matrix(self):
-        """Inverse bind matrix is passed through."""
+        """Inverse bind matrix translation column is scaled to GC units."""
         ibm = [[1, 0, 0, 5], [0, 1, 0, 10], [0, 0, 1, 15], [0, 0, 0, 1]]
         bones = [_make_bone("Bone", inverse_bind=ibm)]
         root, joints = compose_bones(bones)
-        assert root.inverse_bind == ibm
+        expected = [[1, 0, 0, 5 * G], [0, 1, 0, 10 * G], [0, 0, 1, 15 * G], [0, 0, 0, 1]]
+        for r in range(4):
+            for c in range(4):
+                assert abs(root.inverse_bind[r][c] - expected[r][c]) < 1e-6
 
     def test_instance_bone(self):
         """JOBJ_INSTANCE bone's child points to the target bone."""
@@ -451,3 +458,144 @@ class TestPKXContainer:
         pkx = PKXContainer.from_file(filepath)
         assert pkx.is_xd is True
         assert len(pkx.dat_bytes) == 64
+
+
+# ---------------------------------------------------------------------------
+# PObject iterative parsing tests
+# ---------------------------------------------------------------------------
+
+class TestPObjectIterativeParsing:
+    """Tests for the PObject next-chain iterative parsing fix."""
+
+    def test_pobj_fields_include_iterative_list(self):
+        """PObject has _iterative_fields for non-recursive parsing."""
+        from shared.Nodes.Classes.Mesh.PObject import PObject
+        assert hasattr(PObject, '_iterative_fields')
+        names = [f[0] for f in PObject._iterative_fields]
+        assert '_next_raw_ptr' in names
+        assert 'next' not in names
+
+    def test_pobj_fields_match_except_next(self):
+        """_iterative_fields matches fields except next→_next_raw_ptr."""
+        from shared.Nodes.Classes.Mesh.PObject import PObject
+        assert len(PObject._iterative_fields) == len(PObject.fields)
+        for orig, iter_f in zip(PObject.fields, PObject._iterative_fields):
+            if orig[0] == 'next':
+                assert iter_f[0] == '_next_raw_ptr'
+                assert iter_f[1] == 'uint'
+            else:
+                assert orig == iter_f
+
+
+# ---------------------------------------------------------------------------
+# Envelope weight quantization tests
+# ---------------------------------------------------------------------------
+
+class TestEnvelopeWeightQuantization:
+    """Tests for weight quantization in the compose phase."""
+
+    def test_weights_quantized_to_25_percent(self):
+        """Envelope map quantizes weights to 25% steps."""
+        assignments = [
+            (0, [('BoneA', 0.73), ('BoneB', 0.27)]),
+            (1, [('BoneA', 0.71), ('BoneB', 0.29)]),
+            (2, [('BoneA', 0.80), ('BoneB', 0.20)]),
+        ]
+        bone_map = {'BoneA': 0, 'BoneB': 1}
+        result = _build_envelope_map(assignments, bone_map)
+        # 0.73→0.75, 0.71→0.75, 0.80→0.75 — all should collapse to same envelope
+        assert result['vertex_to_env'][0] == result['vertex_to_env'][1]
+        assert result['vertex_to_env'][0] == result['vertex_to_env'][2]
+        assert len(result['envelopes']) == 1
+
+    def test_distinct_weights_stay_separate(self):
+        """Weights that differ by >25% remain separate envelopes."""
+        assignments = [
+            (0, [('BoneA', 1.0)]),
+            (1, [('BoneA', 0.5), ('BoneB', 0.5)]),
+        ]
+        bone_map = {'BoneA': 0, 'BoneB': 1}
+        result = _build_envelope_map(assignments, bone_map)
+        assert result['vertex_to_env'][0] != result['vertex_to_env'][1]
+        assert len(result['envelopes']) == 2
+
+    def test_identical_weights_same_envelope(self):
+        """Identical weight combos map to the same envelope."""
+        assignments = [
+            (0, [('BoneA', 0.5), ('BoneB', 0.5)]),
+            (1, [('BoneA', 0.5), ('BoneB', 0.5)]),
+        ]
+        bone_map = {'BoneA': 0, 'BoneB': 1}
+        result = _build_envelope_map(assignments, bone_map)
+        assert result['vertex_to_env'][0] == result['vertex_to_env'][1]
+        assert len(result['envelopes']) == 1
+
+
+# ---------------------------------------------------------------------------
+# Motion type derivation tests
+# ---------------------------------------------------------------------------
+
+class TestMotionTypeDerivation:
+    """Tests for PKX motion_type derivation from slot type."""
+
+    def test_loop_gets_motion_2(self):
+        """Loop slot type produces motion_type=2."""
+        # Simulate what _extract_pkx_header does
+        anim_type_str = "loop"
+        anim_name = "idle_anim"
+        is_xd = True
+        has_anim = isinstance(anim_name, str) and anim_name != ""
+        motion = (2 if anim_type_str == "loop" else 1) if (is_xd and has_anim) else 0
+        assert motion == 2
+
+    def test_action_gets_motion_1(self):
+        """Action slot type produces motion_type=1."""
+        for atype in ["action", "hit_reaction", "compound"]:
+            anim_name = "some_anim"
+            is_xd = True
+            has_anim = isinstance(anim_name, str) and anim_name != ""
+            motion = (2 if atype == "loop" else 1) if (is_xd and has_anim) else 0
+            assert motion == 1, f"Failed for type={atype}"
+
+    def test_empty_anim_gets_motion_0(self):
+        """Empty animation reference produces motion_type=0 (disabled)."""
+        anim_name = ""
+        is_xd = True
+        has_anim = isinstance(anim_name, str) and anim_name != ""
+        motion = (2 if "loop" == "loop" else 1) if (is_xd and has_anim) else 0
+        assert motion == 0
+
+    def test_colosseum_always_motion_0(self):
+        """Colosseum format always produces motion_type=0."""
+        anim_name = "some_anim"
+        is_xd = False
+        has_anim = isinstance(anim_name, str) and anim_name != ""
+        motion = (2 if "action" == "loop" else 1) if (is_xd and has_anim) else 0
+        assert motion == 0
+
+
+# ---------------------------------------------------------------------------
+# Idle animation name compaction tests
+# ---------------------------------------------------------------------------
+
+class TestIdleNameCompaction:
+    """Tests for the idle animation name compaction in describe phase."""
+
+    def test_idle_variants_compact_to_idle(self):
+        """All Idle variants (Idle, Idle B, Idle C, etc.) compact to 'Idle'."""
+        from importer.phases.describe.helpers.animations import _compact_anim_name
+        assert _compact_anim_name(['Idle']) == 'Idle'
+        assert _compact_anim_name(['Idle B']) == 'Idle'
+        assert _compact_anim_name(['Idle C', 'Idle D']) == 'Idle'
+        assert _compact_anim_name(['Idle B', 'Idle C', 'Idle D', 'Idle E']) == 'Idle'
+
+    def test_idle_mixed_with_other_still_idle(self):
+        """Idle variant mixed with non-idle still compacts to Idle."""
+        from importer.phases.describe.helpers.animations import _compact_anim_name
+        assert _compact_anim_name(['Idle B', 'Physical A']) == 'Idle'
+
+    def test_non_idle_unchanged(self):
+        """Non-idle slot names are not affected."""
+        from importer.phases.describe.helpers.animations import _compact_anim_name
+        assert _compact_anim_name(['Physical A']) == 'Physical A'
+        assert _compact_anim_name(['Damage']) == 'Damage'

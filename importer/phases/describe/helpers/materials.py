@@ -167,10 +167,18 @@ def _describe_texture(texture, image_cache):
         combiner = _describe_tev(texture.tev)
 
     # Flip V translation: GX UV origin is top-left, IR uses bottom-left (standard).
-    # Formula: v_corrected = 1 - scale_v - translation_v
+    # Base formula: v_corrected = 1 - scale_v - translation_v
+    #
+    # When wrap_t is MIRROR, HSD's MakeTextureMtx applies an additional offset
+    # of scale_t / repeat_t to the V translation before negation. This shifts
+    # the texture by one tile in normalized UV space to properly center the
+    # mirror tiling. Confirmed in MakeTextureMtx.s (XD disassembly).
+    v_corrected = 1.0 - texture.scale[1] - texture.translation[1]
+    if texture.wrap_t == GX_MIRROR and texture.repeat_t > 0 and abs(texture.scale[1]) > 1e-6:
+        v_corrected -= texture.scale[1] / texture.repeat_t
     corrected_translation = (
         texture.translation[0],
-        1.0 - texture.scale[1] - texture.translation[1],
+        v_corrected,
         texture.translation[2],
     )
 

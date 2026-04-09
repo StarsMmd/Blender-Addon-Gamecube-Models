@@ -23,6 +23,7 @@ from .helpers.meshes import compose_meshes
 from .helpers.animations import compose_bone_animations
 from .helpers.material_animations import compose_material_animations
 from .helpers.lights import compose_lights
+from .helpers.cameras import compose_camera
 from .helpers.constraints import compose_constraints
 
 
@@ -89,7 +90,7 @@ def compose_scene(ir_scene, options=None, logger=StubLogger()):
 
         scene_data = SceneData(address=None, blender_obj=None)
         scene_data.models = [model_set]
-        scene_data.camera = None
+        scene_data.camera = compose_camera(ir_scene.cameras[0], logger) if ir_scene.cameras else None
         scene_data.lights = compose_lights(ir_scene.lights, logger=logger)
         scene_data.fog = None
 
@@ -97,10 +98,13 @@ def compose_scene(ir_scene, options=None, logger=StubLogger()):
         section_names.append('scene_data')
 
         # Bound box — per-frame AABBs across all animation sets
-        bb = _compose_bound_box(model, logger)
-        if bb:
-            root_nodes.append(bb)
-            section_names.append('bound_box')
+        if options.get('include_bound_box', True):
+            bb = _compose_bound_box(model, logger)
+            if bb:
+                root_nodes.append(bb)
+                section_names.append('bound_box')
+        else:
+            logger.info("  Bound box: skipped (disabled in export options)")
 
     logger.info("=== Export Phase 2 complete: %d scene(s) ===", len(root_nodes))
 
