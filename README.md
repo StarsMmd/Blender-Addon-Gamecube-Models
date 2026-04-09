@@ -4,7 +4,7 @@ A Blender addon for importing and exporting GameCube `.dat` models. This addon i
 
 Original implementation provided by Made.
 
-**Supported file extensions:** `.dat`, `.fdat`, `.rdat`, `.pkx`, `.fsys`
+**Supported file extensions:** `.dat`, `.fdat`, `.rdat`, `.pkx`, `.fsys`, `.wzx`, `.cam`
 
 **Target Blender version:** 4.5.7 LTS
 
@@ -16,15 +16,16 @@ This addon uses Blender's extensions system. Compress the contents of this repos
 
 ## What's Working
 
-- Full skeleton import with bone hierarchy, IK, copy location/rotation, track-to, and limit constraints
-- Static mesh import with UV mapping, vertex colors, custom normals, and envelope deformation
-- Bone animation import with keyframe decoding, path/spline animation, and looping
-- Material pipeline with TEV color combiners, pixel engine blending, and texture mapping
-- Material animation import (color, alpha, texture UV) with NLA support
-- Light import (SUN, POINT, SPOT) — toggle with "Import Lights" setting
-- Bone instances (JOBJ_INSTANCE)
+### Import
+- Skeleton, meshes, materials, textures, animations, lights, cameras, constraints
+- Material animations (color, alpha, texture UV) with NLA support
 - [Shiny variant color filter](#shiny-variants) (PKX models)
-- FSYS archive import (multi-model extraction + LZSS decompression)
+- FSYS archive and WZX effect container extraction
+
+### Export
+- Skeleton, meshes, materials, textures, animations, lights, cameras, constraints
+- Supports arbitrary Blender models (GLB/FBX) — automatic coordinate conversion, quaternion-to-Euler, object scale, multi-material mesh splitting, and weight optimization
+- PKX packaging from scratch or injection into existing files
 
 ## Shiny Variants
 
@@ -48,22 +49,15 @@ The shiny filter can also be added to any model manually using the standalone sc
 
 ## Exporting
 
-The exporter writes a Blender scene to a `.dat` or `.pkx` binary. Skeleton and mesh geometry export is functional. Materials, animations, and constraints are not yet implemented. See the [Exporter Setup](documentation/exporter_setup.md) documentation for details.
+The exporter writes a Blender scene to a `.dat` or `.pkx` binary. See the [Exporter Setup](documentation/exporter_setup.md) guide for the full workflow — from scene preparation through export.
+
+For models not imported through this plugin (e.g. GLB/FBX from other games), run `scripts/prepare_for_export.py` first to set up camera, lights, weight optimization, and PKX metadata.
 
 ## Remaining Work
 
-- [ ] Shape animation import
-- [ ] Camera import
-- [ ] Fog import
-- [x] Exporter: Blender scene → IR (skeleton + meshes + materials)
-- [x] Exporter: IR → node trees (skeleton + meshes + materials)
-- [x] Exporter: Materials + textures (CMPR, I8, RGBA8 + all GX formats)
-- [x] Exporter: Bound box section
-- [x] Exporter: Bone animations
-- [x] Exporter: Lights
-- [ ] Exporter: Constraints
-- [ ] Code audit: identify opportunities to simplify and clean up code
-- [ ] Code audit: identify opportunities to reduce algorithmic complexity
+- Shape animation and fog import
+- Particle visualization
+- Export quality tuning for arbitrary models (weight optimization)
 
 ## Code Structure
 
@@ -95,7 +89,7 @@ exporter/
 
 legacy/                    # Pre-refactor importer (available via "Use Legacy" toggle)
 documentation/             # Pipeline docs, API reference, compatibility table, IR spec
-tests/                     # pytest suite (443 tests, no game files required)
+tests/                     # pytest suite (661 tests, no game files required)
 tests/round_trip/          # Round-trip tests with real model files (requires bpy)
 ```
 
