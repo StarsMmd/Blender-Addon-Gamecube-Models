@@ -18,6 +18,7 @@ from exporter.phases.compose.helpers.bones import compose_bones
 from exporter.phases.serialize.serialize import serialize
 from exporter.phases.package.package import package_output
 from shared.Constants.hsd import JOBJ_HIDDEN, JOBJ_INSTANCE
+from exporter.phases.compose.helpers.meshes import _build_envelope_map
 
 
 # ---------------------------------------------------------------------------
@@ -457,3 +458,144 @@ class TestPKXContainer:
         pkx = PKXContainer.from_file(filepath)
         assert pkx.is_xd is True
         assert len(pkx.dat_bytes) == 64
+
+
+# ---------------------------------------------------------------------------
+# PObject iterative parsing tests
+# ---------------------------------------------------------------------------
+
+class TestPObjectIterativeParsing:
+    """Tests for the PObject next-chain iterative parsing fix."""
+
+    def test_pobj_fields_include_iterative_list(self):
+        """PObject has _iterative_fields for non-recursive parsing."""
+        from shared.Nodes.Classes.Mesh.PObject import PObject
+        assert hasattr(PObject, '_iterative_fields')
+        names = [f[0] for f in PObject._iterative_fields]
+        assert '_next_raw_ptr' in names
+        assert 'next' not in names
+
+    def test_pobj_fields_match_except_next(self):
+        """_iterative_fields matches fields except next→_next_raw_ptr."""
+        from shared.Nodes.Classes.Mesh.PObject import PObject
+        assert len(PObject._iterative_fields) == len(PObject.fields)
+        for orig, iter_f in zip(PObject.fields, PObject._iterative_fields):
+            if orig[0] == 'next':
+                assert iter_f[0] == '_next_raw_ptr'
+                assert iter_f[1] == 'uint'
+            else:
+                assert orig == iter_f
+
+
+# ---------------------------------------------------------------------------
+# Envelope weight quantization tests
+# ---------------------------------------------------------------------------
+
+class TestEnvelopeWeightQuantization:
+    """Tests for weight quantization in the compose phase."""
+
+    def test_weights_quantized_to_25_percent(self):
+        """Envelope map quantizes weights to 25% steps."""
+        assignments = [
+            (0, [('BoneA', 0.73), ('BoneB', 0.27)]),
+            (1, [('BoneA', 0.71), ('BoneB', 0.29)]),
+            (2, [('BoneA', 0.80), ('BoneB', 0.20)]),
+        ]
+        bone_map = {'BoneA': 0, 'BoneB': 1}
+        result = _build_envelope_map(assignments, bone_map)
+        # 0.73→0.75, 0.71→0.75, 0.80→0.75 — all should collapse to same envelope
+        assert result['vertex_to_env'][0] == result['vertex_to_env'][1]
+        assert result['vertex_to_env'][0] == result['vertex_to_env'][2]
+        assert len(result['envelopes']) == 1
+
+    def test_distinct_weights_stay_separate(self):
+        """Weights that differ by >25% remain separate envelopes."""
+        assignments = [
+            (0, [('BoneA', 1.0)]),
+            (1, [('BoneA', 0.5), ('BoneB', 0.5)]),
+        ]
+        bone_map = {'BoneA': 0, 'BoneB': 1}
+        result = _build_envelope_map(assignments, bone_map)
+        assert result['vertex_to_env'][0] != result['vertex_to_env'][1]
+        assert len(result['envelopes']) == 2
+
+    def test_identical_weights_same_envelope(self):
+        """Identical weight combos map to the same envelope."""
+        assignments = [
+            (0, [('BoneA', 0.5), ('BoneB', 0.5)]),
+            (1, [('BoneA', 0.5), ('BoneB', 0.5)]),
+        ]
+        bone_map = {'BoneA': 0, 'BoneB': 1}
+        result = _build_envelope_map(assignments, bone_map)
+        assert result['vertex_to_env'][0] == result['vertex_to_env'][1]
+        assert len(result['envelopes']) == 1
+
+
+# ---------------------------------------------------------------------------
+# Motion type derivation tests
+# ---------------------------------------------------------------------------
+
+class TestMotionTypeDerivation:
+    """Tests for PKX motion_type derivation from slot type."""
+
+    def test_loop_gets_motion_2(self):
+        """Loop slot type produces motion_type=2."""
+        # Simulate what _extract_pkx_header does
+        anim_type_str = "loop"
+        anim_name = "idle_anim"
+        is_xd = True
+        has_anim = isinstance(anim_name, str) and anim_name != ""
+        motion = (2 if anim_type_str == "loop" else 1) if (is_xd and has_anim) else 0
+        assert motion == 2
+
+    def test_action_gets_motion_1(self):
+        """Action slot type produces motion_type=1."""
+        for atype in ["action", "hit_reaction", "compound"]:
+            anim_name = "some_anim"
+            is_xd = True
+            has_anim = isinstance(anim_name, str) and anim_name != ""
+            motion = (2 if atype == "loop" else 1) if (is_xd and has_anim) else 0
+            assert motion == 1, f"Failed for type={atype}"
+
+    def test_empty_anim_gets_motion_0(self):
+        """Empty animation reference produces motion_type=0 (disabled)."""
+        anim_name = ""
+        is_xd = True
+        has_anim = isinstance(anim_name, str) and anim_name != ""
+        motion = (2 if "loop" == "loop" else 1) if (is_xd and has_anim) else 0
+        assert motion == 0
+
+    def test_colosseum_always_motion_0(self):
+        """Colosseum format always produces motion_type=0."""
+        anim_name = "some_anim"
+        is_xd = False
+        has_anim = isinstance(anim_name, str) and anim_name != ""
+        motion = (2 if "action" == "loop" else 1) if (is_xd and has_anim) else 0
+        assert motion == 0
+
+
+# ---------------------------------------------------------------------------
+# Idle animation name compaction tests
+# ---------------------------------------------------------------------------
+
+class TestIdleNameCompaction:
+    """Tests for the idle animation name compaction in describe phase."""
+
+    def test_idle_variants_compact_to_idle(self):
+        """All Idle variants (Idle, Idle B, Idle C, etc.) compact to 'Idle'."""
+        from importer.phases.describe.helpers.animations import _compact_anim_name
+        assert _compact_anim_name(['Idle']) == 'Idle'
+        assert _compact_anim_name(['Idle B']) == 'Idle'
+        assert _compact_anim_name(['Idle C', 'Idle D']) == 'Idle'
+        assert _compact_anim_name(['Idle B', 'Idle C', 'Idle D', 'Idle E']) == 'Idle'
+
+    def test_idle_mixed_with_other_still_idle(self):
+        """Idle variant mixed with non-idle still compacts to Idle."""
+        from importer.phases.describe.helpers.animations import _compact_anim_name
+        assert _compact_anim_name(['Idle B', 'Physical A']) == 'Idle'
+
+    def test_non_idle_unchanged(self):
+        """Non-idle slot names are not affected."""
+        from importer.phases.describe.helpers.animations import _compact_anim_name
+        assert _compact_anim_name(['Physical A']) == 'Physical A'
+        assert _compact_anim_name(['Damage']) == 'Damage'

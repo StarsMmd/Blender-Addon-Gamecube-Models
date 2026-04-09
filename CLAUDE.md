@@ -184,11 +184,12 @@ Nodes are cached by file offset (`nodes_cache_by_offset`). Nodes with `is_cachab
 | Exporter pipeline | ✅ Bones + meshes (RIGID/SINGLE_BONE/ENVELOPE, multi-material split) + materials + textures (all GX formats) + bound box + animations (Euler + quaternion) + material animations + lights + cameras + constraints working. Supports arbitrary Blender models (GLB/FBX) with armature object scale + coordinate rotation applied automatically. |
 | Exporter binary round-trip (DATBuilder) | ✅ Functional (0 value mismatches) |
 | Exporter PKX packaging | ✅ Working (from-scratch via PKX metadata OR DAT injection into existing, shiny write-back, trailer preserved) |
-| In-game loading | ✅ Working — all three paths (BNB, NIN, IBI) produce correct geometry + textures in both Blender and in-game simultaneously |
+| In-game loading (re-exported) | ✅ Working — all three paths (BNB, NIN, IBI) produce correct geometry + textures in both Blender and in-game simultaneously |
+| In-game loading (arbitrary models) | ⚠️ Loads without crashing but geometry garbled at aggressive optimization — see "Arbitrary Model Export" section below |
 | IR pipeline | ✅ Default path (legacy available via toggle) |
 | FSYS archive import | ✅ Working (multi-model extraction + LZSS decompression) |
 | Shiny variant filter | ✅ Working (PKX color extraction, live-editable shader node group, per-parameter UI) |
-| Unit tests | ✅ 649 passing (27 texture encoder, 14 DAT serialization/alignment/relocation/vertex-space, 24 PKX header, 24 GPT1 particle, 15 WZX extraction, 2 material animation scale, 18 camera describe, 22 camera animation, 12 camera compose, 4 coordinate conversion, 20 bezier sparsification, 16 light describe, 16 envelope display list splitting) |
+| Unit tests | ✅ 661 passing (27 texture encoder, 14 DAT serialization/alignment/relocation/vertex-space, 24 PKX header, 24 GPT1 particle, 15 WZX extraction, 2 material animation scale, 18 camera describe, 22 camera animation, 12 camera compose, 4 coordinate conversion, 20 bezier sparsification, 16 light describe, 16 envelope display list splitting, 2 PObject iterative parsing, 3 envelope weight quantization, 4 motion type derivation, 3 idle name compaction) |
 | Shader node auto-layout | ✅ Working (topological sort from output→inputs, left-to-right) |
 | Scale inheritance (animation baking) | ⚠️ Partially resolved — hybrid approach, see below |
 
@@ -223,6 +224,43 @@ Nodes are cached by file offset (`nodes_cache_by_offset`). Nodes with `is_cachab
 2. The direct SRT location computation (`delta_pos.rotate(rest_quat_inv)`) may differ from the legacy matrix-based location for some models — compare outputs
 3. For the "unit mismatch" problem on non-uniform bones: explore whether Blender's `inherit_scale='NONE'` mode can be combined with explicit scale compensation in the bake values
 4. The per-frame hierarchy walk for animated parent scales was attempted but the conversion from world matrices to Blender pose-bone space couldn't be solved due to Blender's opaque ALIGNED evaluation. Reverse-engineering `armature.cc`'s `BKE_bone_parent_transform_calc_from_matrices` could enable this.
+
+### Arbitrary Model Export — ⚠️ Experimental
+
+**Status:** Models from external sources (GLB/FBX) can be exported to .dat/.pkx. A Greninja model (Sun/Moon GLB) loads in-game without crashing but geometry is garbled at aggressive optimization levels. Needs tuning.
+
+**What works:**
+- Multi-material meshes auto-split by material slot on export
+- Quaternion rotation fcurves (from GLB) converted to Euler for HSD
+- Armature object scale applied to bone positions, vertex positions, and animation values
+- Armature object rotation (including importer's Y-up matrix_basis) normalized to Z-up before coordinate conversion — no root bone special case
+- SUN light direction derived from object rotation when no TRACK_TO constraint
+- PKX files can be created from scratch (no existing .pkx required)
+- Motion_type derived from slot type (loop→2, active→1, empty→0)
+- Standard 4-light battle setup (ambient + 3 directional SUN)
+
+**Weight optimization pipeline (`prepare_for_export.py`):**
+1. Limit vertex weights to N per vertex (currently 2 for aggressive, 3 for quality)
+2. Quantize weights to 10% steps (matching game model precision)
+3. Compose phase rounds envelope weights to 25% steps for further combo reduction
+
+**Known limitations:**
+- Game models have 15-40 PObjects and 65-430 KB DAT size. Arbitrary models with smooth weight painting produce many more unique weight combinations → more PObjects → larger files
+- The compose phase's triangle partitioning creates more PObjects than `unique_combos / 10` due to boundary vertex duplication
+- Game models are hand-crafted with separate mesh objects per body part, each referencing few bones. Arbitrary models with one large mesh + many bones are inherently harder to optimize
+
+**Key files:**
+- `scripts/prepare_for_export.py` — weight limiting, quantization, texture formats, lights, PKX metadata
+- `exporter/phases/describe_blender/helpers/skeleton.py` — `obj_rotation` pre-transform, `obj_scale` position scaling
+- `exporter/phases/describe_blender/helpers/meshes.py` — multi-material split, vertex/normal coord conversion
+- `exporter/phases/describe_blender/helpers/animations.py` — quaternion support, `loc_scale` for fcurve values
+- `exporter/phases/compose/helpers/meshes.py` — `round(w * 4) / 4` weight quantization in envelope map
+
+**Next steps to investigate:**
+1. Find the right weight limit and quantization level that produces acceptable quality in-game — currently too aggressive (2 weights + 25% quant) causes garbling
+2. Try 3 weights + 10% quantization (game-exact precision) and see if the ~160 PObject / ~1.1 MB result loads cleanly
+3. Explore mesh splitting by body region to reduce per-mesh bone count (the key metric game models optimize for)
+4. Compare envelope list structure between exported and original game models for subtle format differences
 
 ---
 
@@ -341,3 +379,5 @@ The shiny parameters are stored as custom properties on the armature (`dat_pkx_s
 - [ ] Blender particle visualization from IRParticleSystem
 - [x] Envelope matrix index overflow: meshes with >10 unique weight combos are now split into multiple PObjects, each with ≤10 envelopes and its own display list. Greedy best-fit bin-packing minimizes the number of splits.
 - [ ] MIRROR wrap mode round-trip: the importer now implements GX MIRROR via PINGPONG shader math nodes (Blender has no native mirror texture extension). The exporter could detect PINGPONG Math nodes in the texture UV chain to recover MIRROR wrap mode. Currently MIRROR round-trips as CLAMP.
+- [ ] Arbitrary model optimization: find the right weight limit and quantization level for in-game quality. Current aggressive settings (2 weights, 25% quantization) load without crashing but garble geometry. Game models use 10% weight steps — try relaxing to 3 weights + 10% quantization and test if the larger file (~1.1 MB) loads cleanly. The bottleneck is unique weight combinations causing PObject proliferation (each PObject duplicates boundary vertices).
+- [ ] Importer Y-up bone storage: the importer stores Y-up bone data in edit bones with a π/2 X rotation on armature.matrix_basis. This is a shortcut — ideally edit bones should always be in Z-up (Blender native). The exporter handles both cases via `obj_rotation` normalization, but this design creates confusion. Low priority since changing it would affect all existing imported models.
