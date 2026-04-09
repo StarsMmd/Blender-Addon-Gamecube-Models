@@ -177,6 +177,15 @@ Every PKX model requires exactly **1 camera** named `Battle_Camera` for the defa
 
 Camera position, FOV, and clip planes are read directly from Blender's camera settings. Camera target is read from a TRACK_TO constraint pointing at `Battle_Camera_target`.
 
+**Adjusting the camera:**
+
+The preparation script places `Battle_Camera` in front of the model at 2.5× the model's height, aimed at 50% of the model's max height. You may want to adjust this:
+
+1. Select `Battle_Camera_target` in the outliner and move it (**G** key) to the point on the model you want the camera to focus on — typically the chest or center of mass
+2. Select `Battle_Camera` and move it to adjust framing distance. The camera automatically faces the target via the TRACK_TO constraint
+3. Press **Numpad 0** to preview the camera view. Adjust the camera's **Lens** value in the Object Data panel (camera icon) to zoom in/out without moving the camera
+4. In-game, the camera distance is typically 2–3× the model's height
+
 ### Scene lights
 
 The exporter reads all light objects in the scene. Each light becomes a separate LightSet in the DAT file. Colosseum/XD models typically have 1 ambient light + 3 directional (SUN) lights.

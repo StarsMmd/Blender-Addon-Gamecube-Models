@@ -81,13 +81,14 @@ def prepare_camera():
             height = 1.0
             depth = 1.0
 
-        # Camera in front of the model (negative Y), at center height,
-        # pulled back ~3× the model's height for good framing
-        cam_distance = max(height * 3.0, 2.0)
-        cam_pos = (center_x, center_y - cam_distance, center_z)
+        # Target at halfway up the model's max height
+        target_z = max_co[2] * 0.5
 
-        # Target at the model's center
-        target_pos = (center_x, center_y, center_z)
+        # Camera in front of the model (negative Y), at target height,
+        # pulled back ~2.5× the model's height (matches typical game framing)
+        cam_distance = max(height * 2.5, 1.5)
+        cam_pos = (center_x, center_y - cam_distance, target_z)
+        target_pos = (center_x, center_y, target_z)
 
         cam_data = bpy.data.cameras.new(BATTLE_CAMERA_NAME)
         cam_data.type = 'PERSP'
