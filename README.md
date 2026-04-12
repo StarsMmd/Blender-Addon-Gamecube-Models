@@ -31,7 +31,7 @@ Not every Pokemon has shiny parameters — some use a separate model for their s
 
 The exporter writes a Blender scene to a `.dat` or `.pkx` binary. See the [Exporter Setup](documentation/exporter_setup.md) guide for the full workflow — from scene preparation through export.
 
-For models not imported through this plugin (e.g. GLB/FBX from other games), run `scripts/prepare_for_export.py` first to set up camera, lights, weight optimization, and PKX metadata.
+For models not imported through this plugin, run `scripts/prepare_for_export.py` first to set up camera, lights, weight optimization, and PKX metadata.
 
 ## Developer Instructions
 
@@ -139,14 +139,14 @@ See [Round-Trip Test Progress](documentation/round_trip_test_progress.md) for pe
 
 Detailed documentation lives in the `documentation/` folder:
 
-- [**Round-Trip Test Progress**](documentation/round_trip_test_progress.md) — NBN/NIN/IBI/BNB test results per model
+- [**Blender API Usage**](documentation/blender_api_usage.md) — reference for Blender Python API patterns used in the addon
+- [**Compatibility Table**](documentation/compatibility_table.md) — feature support across different games and file types
+- [**Exporter Setup**](documentation/exporter_setup.md) — supported features and usage guide for the exporter (WIP)
 - [**File Formats**](documentation/file_formats.md) — binary format specs for DAT, GX textures, WZX, PKX, and GPT1
 - [**IR Specification**](documentation/ir_specification.md) — the Intermediate Representation dataclass hierarchy and design principles
-- [**Compatibility Table**](documentation/compatibility_table.md) — feature support across different games and file types
-- [**Blender API Usage**](documentation/blender_api_usage.md) — reference for Blender Python API patterns used in the addon
-- [**Shiny Variants**](documentation/shiny_variants.md) — how the game stores shiny color data and how the addon implements it
-- [**Exporter Setup**](documentation/exporter_setup.md) — supported features and usage guide for the exporter (WIP)
+- [**Round-Trip Test Progress**](documentation/round_trip_test_progress.md) — NBN/NIN/IBI/BNB test results per model
 - [**Scripts**](documentation/scripts.md) — standalone Blender scripts and how to run them
+- [**Shiny Variants**](documentation/shiny_variants.md) — how the game stores shiny color data and how the addon implements it
 
 ## Community
 

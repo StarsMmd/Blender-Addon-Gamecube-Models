@@ -1,6 +1,6 @@
 # Exporter Setup
 
-> **Status:** Work in progress — skeleton, mesh (including envelope skinning), material, texture, animation, constraint, light, and camera export functional. Supports both re-exported game models and arbitrary Blender models (GLB/FBX). In-game loading verified for re-exported models (BNB and NIN paths). Arbitrary models load in-game without crashing but need weight optimization tuning for visual quality.
+> **Status:** Work in progress — skeleton, mesh (including envelope skinning), material, texture, animation, constraint, light, and camera export functional. Supports both re-exported game models and arbitrary Blender models. In-game loading verified for re-exported models (BNB and NIN paths). Arbitrary models load in-game without crashing but need weight optimization tuning for visual quality.
 
 The exporter writes a Blender scene to a `.dat` or `.pkx` binary that can be used in Pokemon Colosseum or Pokemon XD: Gale of Darkness. The output is not directly compatible with other games that use `.dat` models (e.g. Super Smash Bros. Melee).
 
@@ -145,7 +145,7 @@ The GameCube has limited memory (~24 MB shared). The preparation script optimize
 
 ## 3. Preparation Script
 
-For models **not** imported through the DAT plugin (i.e. built from scratch or imported from GLB/FBX), run **`scripts/prepare_for_export.py`** from Blender's Scripting panel:
+For models **not** imported through the DAT plugin, run **`scripts/prepare_for_export.py`** from Blender's Scripting panel:
 
 1. Open the Scripting workspace
 2. Open `scripts/prepare_for_export.py`
@@ -254,7 +254,7 @@ After the first script run:
 
 Choose the output file location and set the file extension:
 - **`.dat`** — standalone model file
-- **`.pkx`** — PKX container with game metadata (species ID, animation slots, shiny params). Can be created from scratch when PKX metadata is set via the preparation script. If an existing `.pkx` file is at the output path and no PKX metadata is on the armature, the exporter injects the new model into the existing container.
+- **`.pkx`** — PKX container with game metadata (species ID, animation slots, shiny params). Built from scratch using the PKX metadata set via the preparation script.
 
 ---
 
