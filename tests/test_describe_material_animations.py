@@ -128,4 +128,4 @@ class TestMaterialKeyframeScale:
         from importer.phases.describe.helpers import material_animations as mod
         source = inspect.getsource(mod._describe_material_track)
         # Find the decode_fobjdesc call and verify scale parameter
-        assert 'decode_fobjdesc(fobj, bias=0, scale=1.0)' in source
+        assert 'decode_fobjdesc(fobj, bias=0, scale=1.0' in source

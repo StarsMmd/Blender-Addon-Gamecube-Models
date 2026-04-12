@@ -488,7 +488,7 @@ class PKXHeader:
 XD_POKEMON_ANIM_NAMES = [
     "Idle", "Special A", "Physical A", "Physical B", "Physical C",
     "Physical D", "Special B", "Physical E", "Damage", "Damage B",
-    "Faint", "Idle B", "Special C", "Idle C", "Idle D", "Idle E",
+    "Faint", "Extra 1", "Special C", "Extra 2", "Extra 3", "Extra 4",
     "Take Flight",
 ]
 

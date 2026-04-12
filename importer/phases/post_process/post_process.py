@@ -230,12 +230,12 @@ def _store_pkx_metadata(armature, pkx_header, logger, actions=None):
     _SUB_ANIM_TRIGGERS = {0: "sleep_on", 1: "sleep_off", 2: "extra", 3: "unused"}
     _SUB_ANIM_TYPES = {0: "none", 1: "simple", 2: "targeted"}
 
-    # Body map descriptive names (index → property suffix)
+    # Body map descriptive names (index → property suffix). Only slots 0-7
+    # are surfaced as custom properties; 8-15 are unreferenced by the game
+    # and always written as -1 on export.
     _BODY_MAP_KEYS = [
         "root", "head", "center", "body_3", "neck", "head_top",
-        "limb_a", "limb_b", "secondary_8", "secondary_9",
-        "secondary_10", "secondary_11", "attach_a", "attach_b",
-        "attach_c", "attach_d",
+        "limb_a", "limb_b",
     ]
 
     # --- Preamble ---
@@ -280,7 +280,7 @@ def _store_pkx_metadata(armature, pkx_header, logger, actions=None):
     # --- Body map bones ---
     first_active = h.anim_entries[0] if h.anim_entries else None
     if first_active:
-        for j in range(16):
+        for j in range(len(_BODY_MAP_KEYS)):
             bone_idx = first_active.body_map_bones[j]
             key = "dat_pkx_body_%s" % _BODY_MAP_KEYS[j]
             armature[key] = _bone_name_for_index(bone_list, bone_idx)
@@ -308,9 +308,10 @@ def _store_pkx_metadata(armature, pkx_header, logger, actions=None):
             else:
                 armature[prefix + "_sub_%d_anim" % s] = ""
 
-        # Per-entry body map overrides (only when different from model-level)
-        if first_active and entry.body_map_bones != first_active.body_map_bones:
-            for j in range(16):
+        # Per-entry body map overrides (only when different from model-level,
+        # and only for the game-relevant slots 0-7).
+        if first_active and entry.body_map_bones[:len(_BODY_MAP_KEYS)] != first_active.body_map_bones[:len(_BODY_MAP_KEYS)]:
+            for j in range(len(_BODY_MAP_KEYS)):
                 if entry.body_map_bones[j] != first_active.body_map_bones[j]:
                     bone_name = _bone_name_for_index(bone_list, entry.body_map_bones[j])
                     armature[prefix + "_body_%s" % _BODY_MAP_KEYS[j]] = bone_name

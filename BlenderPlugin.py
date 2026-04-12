@@ -42,6 +42,8 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
                                description='Extract shiny color parameters from PKX files and add a toggleable shiny filter to materials.')
     use_legacy: BoolProperty(default=False, name='Use Legacy Importer',
                             description='Use the old import pipeline instead of the new Intermediate Representation pipeline.')
+    strict_mirror: BoolProperty(default=False, name='Strict Mirror Mode',
+                               description='Refuse to silently heal malformed input. Makes bugs from re-exported models reproducible in Blender.')
 
     filename_ext = ".dat"
     filter_glob: StringProperty(default="*.fdat;*.dat;*.rdat;*.pkx;*.fsys;*.wzx;*.cam", options={'HIDDEN'})
@@ -88,6 +90,7 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
             "import_lights": self.import_lights,
             "import_cameras": self.import_cameras,
             "include_shiny": self.include_shiny,
+            "strict_mirror": self.strict_mirror,
         }
 
         if bpy.ops.object.select_all.poll():
@@ -338,12 +341,13 @@ _SUB_ANIM_TRIGGER_ITEMS = [
     ("extra", "Extra"), ("unused", "Unused"),
 ]
 
-# Property key suffixes for body map bones
+# Property key suffixes for body map bones.
+# Slots 0-7 are the ones the game actually uses at runtime (root, head tracking,
+# particle/effect attachment); slots 8-15 are unreferenced by the XD battle code
+# and always exported as -1 (skip).
 _BODY_MAP_KEYS = [
     "root", "head", "center", "body_3", "neck", "head_top",
-    "limb_a", "limb_b", "secondary_8", "secondary_9",
-    "secondary_10", "secondary_11", "attach_a", "attach_b",
-    "attach_c", "attach_d",
+    "limb_a", "limb_b",
 ]
 
 

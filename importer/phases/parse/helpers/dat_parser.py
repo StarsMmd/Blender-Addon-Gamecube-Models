@@ -58,12 +58,17 @@ class DATParser(BinaryReader):
 							dummy = Dummy(section.root_node, None)
 							dummy.class_name = "Unrecognised: " + section.section_name
 							section.root_node = dummy
+							self.logger.leniency("unrecognised_section",
+							                     "Section '%s' has no registered node type; wrapped in Dummy",
+							                     section.section_name)
 					else:
 						# Legacy path — section resolves its own type
 						section.readNodeTree(self)
 				except Exception as error:
 					traceback.print_exc()
-					self.logger.error("Failed to parse section: %s — %s", section.section_name, error)
+					self.logger.leniency("section_parse_error",
+					                     "Section '%s' raised during parse: %s",
+					                     section.section_name, error)
 					continue
 
 				if self.options.get("print_tree"):

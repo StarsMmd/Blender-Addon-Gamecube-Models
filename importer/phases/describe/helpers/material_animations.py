@@ -56,7 +56,7 @@ def describe_material_animations(model_set, joint_to_bone_index, bones, options,
         name = "%s_MatAnim_%02d" % (name_prefix, i)
         tracks = []
 
-        _walk_parallel(mat_anim_root, root_joint, tracks, joint_to_bone_index, bones, logger, mesh_digits=mesh_digits)
+        _walk_parallel(mat_anim_root, root_joint, tracks, joint_to_bone_index, bones, logger, mesh_digits=mesh_digits, options=options)
 
         if tracks:
             anim_sets.append(SimpleNamespace(name=name, tracks=tracks))
@@ -65,7 +65,7 @@ def describe_material_animations(model_set, joint_to_bone_index, bones, options,
     return anim_sets
 
 
-def _walk_parallel(mat_anim_joint, joint, tracks, jtb, bones, logger, mesh_digits=1):
+def _walk_parallel(mat_anim_joint, joint, tracks, jtb, bones, logger, mesh_digits=1, options=None):
     """Walk MaterialAnimationJoint and Joint trees in parallel."""
     try:
         from .....shared.Nodes.Classes.Mesh.Mesh import Mesh
@@ -95,7 +95,7 @@ def _walk_parallel(mat_anim_joint, joint, tracks, jtb, bones, logger, mesh_digit
             for p in range(pobj_count):
                 idx = pobj_offset + p
                 global_idx = bone.mesh_indices[idx] if idx < len(bone.mesh_indices) else 0
-                track = _describe_material_track(mat_anim, mesh, bone.name, global_idx, logger, mesh_digits=mesh_digits)
+                track = _describe_material_track(mat_anim, mesh, bone.name, global_idx, logger, mesh_digits=mesh_digits, options=options)
                 if track:
                     tracks.append(track)
 
@@ -104,12 +104,12 @@ def _walk_parallel(mat_anim_joint, joint, tracks, jtb, bones, logger, mesh_digit
             mesh = mesh.next
 
     if mat_anim_joint.child and joint.child:
-        _walk_parallel(mat_anim_joint.child, joint.child, tracks, jtb, bones, logger, mesh_digits=mesh_digits)
+        _walk_parallel(mat_anim_joint.child, joint.child, tracks, jtb, bones, logger, mesh_digits=mesh_digits, options=options)
     if mat_anim_joint.next and joint.next:
-        _walk_parallel(mat_anim_joint.next, joint.next, tracks, jtb, bones, logger, mesh_digits=mesh_digits)
+        _walk_parallel(mat_anim_joint.next, joint.next, tracks, jtb, bones, logger, mesh_digits=mesh_digits, options=options)
 
 
-def _describe_material_track(mat_anim, mesh, bone_name, mesh_idx, logger, mesh_digits=1):
+def _describe_material_track(mat_anim, mesh, bone_name, mesh_idx, logger, mesh_digits=1, options=None):
     """Extract one MaterialAnimation into an IRMaterialTrack."""
     aobj = mat_anim.animation
     tex_anim = mat_anim.texture_animation
@@ -137,7 +137,7 @@ def _describe_material_track(mat_anim, mesh, bone_name, mesh_idx, logger, mesh_d
         while fobj:
             field = _MAT_TRACK_MAP.get(fobj.type)
             if field:
-                keyframes = decode_fobjdesc(fobj, bias=0, scale=1.0)
+                keyframes = decode_fobjdesc(fobj, bias=0, scale=1.0, logger=logger, options=options)
                 setattr(track, field, keyframes)
             fobj = fobj.next
 
@@ -156,7 +156,7 @@ def _describe_material_track(mat_anim, mesh, bone_name, mesh_idx, logger, mesh_d
         ta = tex_anim
         while ta:
             static_tex = static_textures.get(ta.id)
-            uv_track = _describe_texture_uv_track(ta, static_tex, logger)
+            uv_track = _describe_texture_uv_track(ta, static_tex, logger, options)
             if uv_track:
                 track.texture_uv_tracks.append(uv_track)
             ta = ta.next
@@ -164,7 +164,7 @@ def _describe_material_track(mat_anim, mesh, bone_name, mesh_idx, logger, mesh_d
     return track
 
 
-def _describe_texture_uv_track(tex_anim, static_texture, logger):
+def _describe_texture_uv_track(tex_anim, static_texture, logger, options=None):
     """Extract one TextureAnimation into IRTextureUVTrack.
 
     Applies V-flip to translation_v keyframes so the IR stores standard
@@ -181,7 +181,7 @@ def _describe_texture_uv_track(tex_anim, static_texture, logger):
     while fobj:
         field = _TEX_UV_MAP.get(fobj.type)
         if field:
-            keyframes = decode_fobjdesc(fobj)
+            keyframes = decode_fobjdesc(fobj, logger=logger, options=options)
             setattr(uv_track, field, keyframes)
         fobj = fobj.next
 

@@ -98,4 +98,11 @@ def build_skeleton(ir_model, context, options, logger=StubLogger(), model_index=
     bpy.ops.object.mode_set(mode='OBJECT')
     bpy.context.view_layer.update()
 
+    # Record any describe-phase leniencies on the armature so users can inspect
+    # what the importer silently healed via the N-panel → Custom Properties.
+    if getattr(logger, "leniency_categories", None):
+        armature["dat_leniencies"] = [
+            "%s:%d" % (k, v) for k, v in sorted(logger.leniency_categories.items())
+        ]
+
     return armature

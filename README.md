@@ -21,6 +21,35 @@ This addon uses Blender's extensions system. Compress the contents of this repos
 - `.pkx` files automatically extract PKX metadata for animation naming and shiny variants
 - `.fsys` archives are unpacked and each contained model is imported separately
 
+### Importer Options
+
+The file-browser sidebar exposes these toggles:
+
+| Toggle | Default | Purpose |
+|---|---|---|
+| **IK Hack** | on | Shrink bones to 1e-3 so Blender's IK solver behaves correctly. |
+| **Write Logs** | on | Write per-import logs to `$TMPDIR/blender_dat_import/<model>/`. Warnings and leniencies always print to the terminal regardless of this setting. |
+| **Setup Workspace** | on | Split the viewport, open an Action Editor, set playback end to frame 60. |
+| **Import Lights** | off | Import `LightSet` nodes as Blender lights (AMBIENT/SUN/POINT/SPOT). |
+| **Import Cameras** | off | Import `CameraSet` nodes as Blender cameras (static + animated). |
+| **Include Shiny Variant** | on | For `.pkx` files, extract shiny color parameters and build a toggleable shader filter. |
+| **Use Legacy Importer** | off | Route through the pre-refactor pipeline instead of the IR pipeline. For comparison only. |
+| **Strict Mirror Mode** | off | Refuse to silently heal malformed input. Use when diagnosing re-exported models — see below. |
+
+#### Strict Mirror Mode
+
+The importer normally heals edge-case data so it renders cleanly in Blender: it rescues near-zero-scale bones using animation keyframes, fabricates white vertex colors when `CLR0` is absent, falls back to rigid skinning when an envelope-typed mesh lacks `PNMTXIDX`, and drops cameras with unknown projection flags. These workarounds mask bugs in re-exported models — a file that crashes or renders garbage in-game often still loads fine here.
+
+Strict Mirror Mode disables that healing for fault classes the game engine cannot tolerate. It raises on:
+
+- Envelope weight chains longer than the game's 10-weight-per-vertex cap
+- Missing `PNMTXIDX` on a mesh whose flags claim envelope skinning
+- Cameras with unknown projection type or missing eye/target positions
+
+and skips near-zero-scale bone rescue so broken skeletons collapse visibly instead of being silently repaired. Use it when a re-exported model looks fine in Blender but misbehaves in-game: the exception message points at the exact PObj address / camera index the game would also choke on.
+
+Leniency warnings print to the terminal with strict mode **off** too — the toggle only controls whether the importer *fails* on them. Each import also writes a `dat_leniencies` list onto the armature as a custom property, so you can inspect healing history in the N-panel → Object Properties → Custom Properties.
+
 ## Shiny Variants
 
 When importing `.pkx` Pokemon models, the addon extracts shiny color parameters from the file header and builds a toggleable shader filter into the imported materials. Select the armature and find the **Shiny Variant** panel in **Properties > Object Properties** to toggle the shiny appearance and edit channel routing and brightness parameters.

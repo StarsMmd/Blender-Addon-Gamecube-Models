@@ -322,4 +322,6 @@ def fix_near_zero_bone_matrices(bones, bone_animations, logger=None):
         bone.normalized_world_matrix = matrix_to_list(normalized_world)
 
         if i in visible_scales and logger:
-            logger.debug("    Bone_%d: corrected with visible_scale=%s", i, visible_scales[i])
+            logger.leniency("near_zero_bone_rescued",
+                            "Bone_%d (%s): rest scale near zero, rescued with visible scale %s",
+                            i, bone.name, visible_scales[i])

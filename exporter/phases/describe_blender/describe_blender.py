@@ -397,17 +397,18 @@ def _extract_pkx_header(armatures, action_name_to_index, logger):
             h.colo_unknown_10 = 5
             h.colo_unknown_14 = arm.get("dat_pkx_particle_orientation", -1)
 
-        # Body map bones (descriptive names)
+        # Body map bones. The game uses 16 slots but only 0-7 are actively
+        # referenced by the XD battle code (root, head tracking, particle/
+        # effect attachment). Slots 8-15 are always written as -1 (skip).
         _BODY_MAP_KEYS = [
             "root", "head", "center", "body_3", "neck", "head_top",
-            "limb_a", "limb_b", "secondary_8", "secondary_9",
-            "secondary_10", "secondary_11", "attach_a", "attach_b",
-            "attach_c", "attach_d",
+            "limb_a", "limb_b",
         ]
         model_body_map = []
-        for j in range(16):
+        for j in range(len(_BODY_MAP_KEYS)):
             name = arm.get("dat_pkx_body_%s" % _BODY_MAP_KEYS[j], "")
             model_body_map.append(bone_name_to_idx.get(name, -1) if name else -1)
+        model_body_map.extend([-1] * (16 - len(_BODY_MAP_KEYS)))
 
         # Animation entries
         anim_count = arm.get("dat_pkx_anim_count", 17)
@@ -444,9 +445,9 @@ def _extract_pkx_header(armatures, action_name_to_index, logger):
             if not subs:
                 subs = [SubAnim(0, 0)]
 
-            # Per-entry body map overrides
+            # Per-entry body map overrides (slots 0-7 only; 8-15 always -1).
             entry_bones = list(model_body_map)
-            for j in range(16):
+            for j in range(len(_BODY_MAP_KEYS)):
                 override_name = arm.get(prefix + "_body_%s" % _BODY_MAP_KEYS[j])
                 if override_name is not None:
                     entry_bones[j] = bone_name_to_idx.get(override_name, -1) if override_name else -1

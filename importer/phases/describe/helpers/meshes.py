@@ -35,7 +35,7 @@ except (ImportError, SystemError):
     from shared.helpers.scale import GC_TO_METERS
 
 
-def describe_meshes(root_joint, bones, joint_to_bone_index, image_cache=None, logger=StubLogger()):
+def describe_meshes(root_joint, bones, joint_to_bone_index, image_cache=None, logger=StubLogger(), options=None):
     """Walk Joint tree, extract geometry from Mesh→PObject chains.
 
     Args:
@@ -44,12 +44,15 @@ def describe_meshes(root_joint, bones, joint_to_bone_index, image_cache=None, lo
         joint_to_bone_index: dict mapping Joint.address → index in bones list.
         image_cache: dict for deduplicating images by (image_id, palette_id).
         logger: Logger instance (defaults to StubLogger).
+        options: import options dict (for strict_mirror); may be None.
 
     Returns:
         list[IRMesh] with geometry data extracted.
     """
     if image_cache is None:
         image_cache = {}
+    if options is None:
+        options = {}
     meshes = []
     mesh_count = [0]
     material_cache = {}  # {mobject.address: IRMaterial} — dedup shared materials
@@ -80,7 +83,7 @@ def describe_meshes(root_joint, bones, joint_to_bone_index, image_cache=None, lo
                 else:
                     from .materials import describe_material
                     t = time.time()
-                    ir_material = describe_material(mesh_node.mobject, image_cache=image_cache)
+                    ir_material = describe_material(mesh_node.mobject, image_cache=image_cache, logger=logger, options=options)
                     logger.debug("    describe_material for DObj 0x%X: %.3fs", mesh_node.address, time.time() - t)
                     material_cache[mob_addr] = ir_material
 
@@ -118,8 +121,11 @@ def describe_meshes(root_joint, bones, joint_to_bone_index, image_cache=None, lo
         orig_face_count = len(faces)
         face_lists_copy, faces = _validate_mesh(face_lists_copy, faces)
         if len(faces) != orig_face_count:
-            logger.debug("  pobj 0x%X mesh#%d: removed %d degenerate faces (%d → %d)",
-                         pobj.address, count, orig_face_count - len(faces), orig_face_count, len(faces))
+            from .strictness import report
+            report(logger, options, "degenerate_faces_pruned",
+                   "PObj 0x%X mesh#%d: removed %d degenerate faces (%d → %d); game would render garbage",
+                   pobj.address, count, orig_face_count - len(faces), orig_face_count, len(faces),
+                   fatal=False)
 
         # Convert vertices to tuples and scale to meters
         verts_out = [tuple(c * GC_TO_METERS for c in v) for v in vertices]
@@ -151,16 +157,30 @@ def describe_meshes(root_joint, bones, joint_to_bone_index, image_cache=None, lo
                 color_layers.append(color_layer)
                 color_layers.append(alpha_layer)
 
-        # Add default white color/alpha layers if CLR0 not present
+        # Add default white color/alpha layers if CLR0 not present.
+        # In strict mirror mode we skip the fabrication entirely so the mesh
+        # renders with missing vertex colours — which in Blender produces the
+        # unlit/black-tinted look the game would display. That's a visible
+        # diagnostic, more useful than either silently healing or aborting.
         has_color_0 = any(cl.name == 'color_0' for cl in color_layers)
         has_alpha_0 = any(cl.name == 'alpha_0' for cl in color_layers)
         total_loops = sum(len(f) for f in faces)
-        if not has_color_0:
+        strict = options.get("strict_mirror") if options else False
+        if not has_color_0 or not has_alpha_0:
+            from .strictness import report
+            report(logger, options, "missing_vertex_colors",
+                   "PObj 0x%X missing CLR0 %s%s; %s (game would render unlit)",
+                   pobj.address,
+                   "color" if not has_color_0 else "",
+                   "+alpha" if (not has_color_0 and not has_alpha_0) else ("alpha" if not has_alpha_0 else ""),
+                   "leaving absent" if strict else "fabricating white",
+                   fatal=False)
+        if not has_color_0 and not strict:
             color_layers.append(IRColorLayer(
                 name='color_0',
                 colors=[(1.0, 1.0, 1.0, 1.0)] * total_loops,
             ))
-        if not has_alpha_0:
+        if not has_alpha_0 and not strict:
             color_layers.append(IRColorLayer(
                 name='alpha_0',
                 colors=[(1.0, 1.0, 1.0, 1.0)] * total_loops,
@@ -169,7 +189,7 @@ def describe_meshes(root_joint, bones, joint_to_bone_index, image_cache=None, lo
         # Extract bone weight info (may deform verts_out and normals in-place for envelopes)
         bone_weights = _extract_bone_weights(
             pobj, joint, bone_index, bones, joint_to_bone_index, faces,
-            verts_out, normals, face_lists_copy, logger
+            verts_out, normals, face_lists_copy, logger, options
         )
 
         # For non-envelope meshes (RIGID, SINGLE_BONE), vertices are in the
@@ -280,7 +300,7 @@ def _extract_color_layers(source, face_list, faces, color_num):
 
 def _extract_bone_weights(pobj, joint, bone_index, bones, joint_to_bone_index, faces,
                           vertices_out, normals=None, validated_face_lists=None,
-                          logger=StubLogger()):
+                          logger=StubLogger(), options=None):
     """Extract bone weight data from PObject property.
 
     For envelope-weighted meshes, also deforms vertices_out and normals
@@ -307,7 +327,7 @@ def _extract_bone_weights(pobj, joint, bone_index, bones, joint_to_bone_index, f
     if pobj_type == POBJ_ENVELOPE:
         return _extract_envelope_weights(
             pobj, joint, bone_index, bones, joint_to_bone_index, faces,
-            vertices_out, normals, validated_face_lists, logger
+            vertices_out, normals, validated_face_lists, logger, options
         )
     elif pobj_type == POBJ_SKIN:
         # Single bone deformation
@@ -399,7 +419,7 @@ def _envelope_coord_system(bone_index, bones):
 
 def _extract_envelope_weights(pobj, joint, bone_index, bones, joint_to_bone_index, faces,
                               vertices_out, normals=None, validated_face_lists=None,
-                              logger=StubLogger()):
+                              logger=StubLogger(), options=None):
     """Extract weighted envelope deformation data, deform vertices and normals."""
     vertex_list = pobj.vertex_list.vertices
     envelope_list = pobj.property
@@ -412,6 +432,10 @@ def _extract_envelope_weights(pobj, joint, bone_index, bones, joint_to_bone_inde
             break
 
     if envelope_vertex_index is None:
+        from .strictness import report
+        report(logger, options, "envelope_no_pnmtxidx",
+               "PObj 0x%X has envelope descriptor bits but no PNMTXIDX attribute; game would deref garbage",
+               pobj.address, fatal=True)
         return IRBoneWeights(type=SkinType.RIGID, bone_name=bones[bone_index].name)
 
     env_source = pobj.sources[envelope_vertex_index]
@@ -446,7 +470,12 @@ def _extract_envelope_weights(pobj, joint, bone_index, bones, joint_to_bone_inde
     # the armature modifier. By using the SRT world matrix consistently,
     # the deformation error matches the edit bone error and they cancel out.
     deform_matrices = []
-    for envelope in envelope_list:
+    for env_idx_iter, envelope in enumerate(envelope_list):
+        if len(envelope.envelopes) > 10:
+            from .strictness import report
+            report(logger, options, "envelope_over_cap",
+                   "PObj 0x%X envelope %d has %d weights (game caps at 10)",
+                   pobj.address, env_idx_iter, len(envelope.envelopes), fatal=True)
         entries = [(entry.weight, entry.joint) for entry in envelope.envelopes]
         zero = [[0] * 4 for _ in range(4)]
         matrix = Matrix(zero)
