@@ -42,18 +42,22 @@ _INTERPOLATION_MAP = {
 }
 
 
-def decode_fobjdesc(fobj, bias=0, scale=1):
+def decode_fobjdesc(fobj, bias=0, scale=1, logger=None, options=None):
     """Decode an HSD compressed keyframe stream into a list of IRKeyframe.
 
     Args:
         fobj: A parsed Frame node with raw_ad, start_frame, frac_value, frac_slope.
         bias: Value offset (added before scaling).
         scale: Value multiplier.
+        logger: Logger for leniency reporting (optional).
+        options: Importer options dict (for strict_mirror); may be None.
 
     Returns:
         list[IRKeyframe] with frame positions, values, interpolation types,
         and pre-computed bezier handle coordinates.
     """
+    if options is None:
+        options = {}
     ad = fobj.raw_ad
     if not ad:
         return []
@@ -96,6 +100,11 @@ def decode_fobjdesc(fobj, bias=0, scale=1):
                 slopes.append((cur_slope, slope))
                 cur_slope = slope
 
+                if opcode not in _INTERPOLATION_MAP and logger is not None:
+                    from .strictness import report
+                    report(logger, options, "keyframe_unknown_opcode",
+                           "Unknown keyframe opcode 0x%X; fell back to CONSTANT (game would crash or glitch)",
+                           opcode, fatal=True)
                 interp = _INTERPOLATION_MAP.get(opcode, Interpolation.CONSTANT)
                 scaled_val = (val + bias) * scale
                 decoded.append((current_frame, scaled_val, interp, opcode))
@@ -159,7 +168,12 @@ _FRAC_TYPE_INFO = {
 
 
 def _read_typed_value(type_flag, frac_bits, ad, cur_pos):
-    """Read a single value from the byte stream based on type encoding."""
+    """Read a single value from the byte stream based on type encoding.
+
+    Unknown type_flag is left as a silent (0, cur_pos) fallback because the
+    caller has no logger; decode_fobjdesc reports the enclosing opcode
+    problem instead, which catches the same malformed-stream case.
+    """
     info = _FRAC_TYPE_INFO.get(type_flag)
     if info is None:
         return 0, cur_pos

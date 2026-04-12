@@ -12,6 +12,8 @@ class StubLogger:
     verbose = False
     warning_count = 0
     error_count = 0
+    leniency_count = 0
+    leniency_categories = {}
     log_path = None
     log_dir = os.path.join(tempfile.gettempdir(), "blender_dat_import", "unknown")
 
@@ -19,6 +21,7 @@ class StubLogger:
     def warning(self, msg, *args): pass
     def info(self, msg, *args): pass
     def debug(self, msg, *args): pass
+    def leniency(self, category, msg, *args): pass
     def close(self): pass
 
 
@@ -49,6 +52,8 @@ class Logger:
         # Counts for summary
         self.warning_count = 0
         self.error_count = 0
+        self.leniency_count = 0
+        self.leniency_categories = {}
 
         # Open log file in temp directory, organized by model name
         self.log_dir = os.path.join(tempfile.gettempdir(), "blender_dat_import", model_name)
@@ -80,6 +85,14 @@ class Logger:
             self._print("DEBUG", msg, args)
         else:
             self._write("DEBUG", msg, args)
+
+    def leniency(self, category, msg, *args):
+        self.leniency_count += 1
+        self.leniency_categories[category] = self.leniency_categories.get(category, 0) + 1
+        self.warning_count += 1
+        # _print is unconditional (not gated by self.verbose), so leniency
+        # output always reaches the terminal — no verbose flag required.
+        self._print("LENIENCY %s" % category, msg, args)
 
     def _print(self, level, msg, args, file=None):
         if args:

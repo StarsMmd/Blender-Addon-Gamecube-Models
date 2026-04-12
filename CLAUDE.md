@@ -189,7 +189,7 @@ Nodes are cached by file offset (`nodes_cache_by_offset`). Nodes with `is_cachab
 | IR pipeline | ✅ Default path (legacy available via toggle) |
 | FSYS archive import | ✅ Working (multi-model extraction + LZSS decompression) |
 | Shiny variant filter | ✅ Working (PKX color extraction, live-editable shader node group, per-parameter UI) |
-| Unit tests | ✅ 661 passing (27 texture encoder, 14 DAT serialization/alignment/relocation/vertex-space, 24 PKX header, 24 GPT1 particle, 15 WZX extraction, 2 material animation scale, 18 camera describe, 22 camera animation, 12 camera compose, 4 coordinate conversion, 20 bezier sparsification, 16 light describe, 16 envelope display list splitting, 2 PObject iterative parsing, 3 envelope weight quantization, 4 motion type derivation, 3 idle name compaction) |
+| Unit tests | ✅ 679 passing (27 texture encoder, 14 DAT serialization/alignment/relocation/vertex-space, 24 PKX header, 24 GPT1 particle, 15 WZX extraction, 2 material animation scale, 18 camera describe, 22 camera animation, 12 camera compose, 4 coordinate conversion, 20 bezier sparsification, 16 light describe, 16 envelope display list splitting, 2 PObject iterative parsing, 3 envelope weight quantization, 4 motion type derivation, 5 idle name compaction, 16 strict mirror mode) |
 | Shader node auto-layout | ✅ Working (topological sort from output→inputs, left-to-right) |
 | Scale inheritance (animation baking) | ⚠️ Partially resolved — hybrid approach, see below |
 

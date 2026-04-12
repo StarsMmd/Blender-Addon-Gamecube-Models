@@ -62,18 +62,28 @@ _WOBJ_TARGET_MAP = {
 }
 
 
-def describe_camera(camera_node, camera_index=0):
+def describe_camera(camera_node, camera_index=0, options=None, logger=None):
     """Convert a Camera node to IRCamera.
 
     Args:
         camera_node: Parsed Camera node (from CameraSet or SceneData).
         camera_index: Index for naming.
+        options: import options dict (for strict_mirror); may be None.
+        logger: Logger instance; defaults to StubLogger.
 
     Returns:
         IRCamera or None if the projection type is unrecognized.
     """
+    if options is None:
+        options = {}
+    if logger is None:
+        logger = StubLogger()
+    from .strictness import report
     projection = _PROJECTION_MAP.get(camera_node.perspective_flags)
     if projection is None:
+        report(logger, options, "camera_unknown_projection",
+               "Camera %d perspective_flags=0x%X not in {PERSPECTIVE=1, FRUSTUM=2, ORTHO=3}",
+               camera_index, camera_node.perspective_flags, fatal=True)
         return None
 
     name = 'Battle_Camera' if camera_index == 0 else 'Camera_%d' % camera_index
@@ -85,6 +95,21 @@ def describe_camera(camera_node, camera_index=0):
     target_position = None
     if camera_node.interest and hasattr(camera_node.interest, 'position') and camera_node.interest.position:
         target_position = tuple(p * GC_TO_METERS for p in camera_node.interest.position)
+
+    if position is None or target_position is None:
+        missing = []
+        if position is None:
+            missing.append("eye")
+        if target_position is None:
+            missing.append("target")
+        report(logger, options, "camera_missing_eye_or_target",
+               "Camera %d missing %s; game's C_MTXLookAt requires both",
+               camera_index, "+".join(missing), fatal=True)
+
+    if abs(camera_node.near) < 1e-6 or camera_node.far <= camera_node.near:
+        report(logger, options, "camera_degenerate_near_far",
+               "Camera %d has degenerate near/far (near=%.4f, far=%.4f)",
+               camera_index, camera_node.near, camera_node.far, fatal=False)
 
     return IRCamera(
         name=name,
@@ -99,7 +124,7 @@ def describe_camera(camera_node, camera_index=0):
     )
 
 
-def describe_camera_animations(camera_set, camera_index=0, logger=StubLogger()):
+def describe_camera_animations(camera_set, camera_index=0, logger=StubLogger(), options=None):
     """Decode CameraAnimation nodes from a CameraSet into IRCameraKeyframes.
 
     Walks the camera_set.animations array, decoding keyframes from:
@@ -132,7 +157,7 @@ def describe_camera_animations(camera_set, camera_index=0, logger=StubLogger()):
             end_frame = getattr(aobj, 'end_frame', 0.0) or 0.0
             flags = getattr(aobj, 'flags', 0) or 0
             loop = bool(flags & AOBJ_ANIM_LOOP)
-            _decode_aobj_tracks(aobj, _COBJ_TRACK_MAP, tracks, logger)
+            _decode_aobj_tracks(aobj, _COBJ_TRACK_MAP, tracks, logger, options)
 
         # Decode eye WObjectAnimation's AOBJ
         eye_wobj_anim = getattr(cam_anim, 'eye_position_animation', None)
@@ -142,7 +167,7 @@ def describe_camera_animations(camera_set, camera_index=0, logger=StubLogger()):
                 # Use eye AOBJ's end_frame if the main AOBJ was missing
                 if end_frame == 0.0:
                     end_frame = getattr(eye_aobj, 'end_frame', 0.0) or 0.0
-                _decode_aobj_tracks(eye_aobj, _WOBJ_EYE_MAP, tracks, logger)
+                _decode_aobj_tracks(eye_aobj, _WOBJ_EYE_MAP, tracks, logger, options)
 
         # Decode interest/target WObjectAnimation's AOBJ
         interest_wobj_anim = getattr(cam_anim, 'interest_animation', None)
@@ -151,7 +176,7 @@ def describe_camera_animations(camera_set, camera_index=0, logger=StubLogger()):
             if interest_aobj:
                 if end_frame == 0.0:
                     end_frame = getattr(interest_aobj, 'end_frame', 0.0) or 0.0
-                _decode_aobj_tracks(interest_aobj, _WOBJ_TARGET_MAP, tracks, logger)
+                _decode_aobj_tracks(interest_aobj, _WOBJ_TARGET_MAP, tracks, logger, options)
 
         if tracks:
             ir_kf = IRCameraKeyframes(
@@ -170,7 +195,7 @@ def describe_camera_animations(camera_set, camera_index=0, logger=StubLogger()):
 _POSITION_FIELDS = {'eye_x', 'eye_y', 'eye_z', 'target_x', 'target_y', 'target_z', 'near', 'far'}
 
 
-def _decode_aobj_tracks(aobj, track_map, tracks, logger):
+def _decode_aobj_tracks(aobj, track_map, tracks, logger, options=None):
     """Walk an AOBJ's Frame chain and decode each track into the tracks dict.
 
     Args:
@@ -178,13 +203,14 @@ def _decode_aobj_tracks(aobj, track_map, tracks, logger):
         track_map: dict mapping fobj.type → IRCameraKeyframes field name.
         tracks: output dict to populate (field_name → list[IRKeyframe]).
         logger: Logger instance.
+        options: Importer options (for strict_mirror).
     """
     fobj = getattr(aobj, 'frame', None)
     while fobj:
         fobj_type = getattr(fobj, 'type', None)
         field_name = track_map.get(fobj_type)
         if field_name is not None:
-            keyframes = decode_fobjdesc(fobj, bias=0, scale=1.0)
+            keyframes = decode_fobjdesc(fobj, bias=0, scale=1.0, logger=logger, options=options)
             if keyframes:
                 # Scale position and distance tracks to meters
                 if field_name in _POSITION_FIELDS:

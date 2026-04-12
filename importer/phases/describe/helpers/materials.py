@@ -31,18 +31,22 @@ except (ImportError, SystemError):
     from shared.Constants.gx import *
 
 
-def describe_material(mobj, image_cache=None):
+def describe_material(mobj, image_cache=None, logger=None, options=None):
     """Extract material data from a MaterialObject node into IRMaterial.
 
     Args:
         mobj: MaterialObject node from parsed node tree.
         image_cache: dict for deduplicating images by (image_id, palette_id).
+        logger: Logger for leniency reporting (optional).
+        options: Importer options dict (for strict_mirror); may be None.
 
     Returns:
         IRMaterial with all fields populated.
     """
     if image_cache is None:
         image_cache = {}
+    if options is None:
+        options = {}
 
     material = mobj.material
     render_mode = mobj.render_mode
@@ -76,7 +80,7 @@ def describe_material(mobj, image_cache=None):
     texture_number = 0
     while texture:
         if render_mode & (1 << (texture_number + 4)):
-            ir_tex = _describe_texture(texture, image_cache)
+            ir_tex = _describe_texture(texture, image_cache, logger, options, mobj.address, texture_number)
             if ir_tex is not None:
                 texture_layers.append(ir_tex)
         texture = texture.next
@@ -114,7 +118,7 @@ def describe_material(mobj, image_cache=None):
     )
 
 
-def _describe_texture(texture, image_cache):
+def _describe_texture(texture, image_cache, logger=None, options=None, mobj_addr=0, texture_number=0):
     """Extract one Texture node into IRTextureLayer."""
     # Get pre-decoded image pixels (decoded during parsing)
     ir_image = None
@@ -131,6 +135,11 @@ def _describe_texture(texture, image_cache):
                 image_cache[cache_key] = ir_image
 
     if ir_image is None:
+        if logger is not None and texture.image:
+            from .strictness import report
+            report(logger, options, "texture_missing_pixels",
+                   "MObj 0x%X texture %d referenced image but decoded_pixels was empty; game would sample garbage/default",
+                   mobj_addr, texture_number, fatal=False)
         return None
 
     # Coordinate type

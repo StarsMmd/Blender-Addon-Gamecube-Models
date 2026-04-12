@@ -581,18 +581,26 @@ class TestMotionTypeDerivation:
 class TestIdleNameCompaction:
     """Tests for the idle animation name compaction in describe phase."""
 
-    def test_idle_variants_compact_to_idle(self):
-        """All Idle variants (Idle, Idle B, Idle C, etc.) compact to 'Idle'."""
+    def test_idle_compacts_to_idle(self):
+        """Exact 'Idle' slot compacts to 'Idle'."""
         from importer.phases.describe.helpers.animations import _compact_anim_name
         assert _compact_anim_name(['Idle']) == 'Idle'
-        assert _compact_anim_name(['Idle B']) == 'Idle'
-        assert _compact_anim_name(['Idle C', 'Idle D']) == 'Idle'
-        assert _compact_anim_name(['Idle B', 'Idle C', 'Idle D', 'Idle E']) == 'Idle'
+
+    def test_idle_mixed_with_extra_still_idle(self):
+        """Slot 0 (Idle) shared with an Extra slot still compacts to Idle."""
+        from importer.phases.describe.helpers.animations import _compact_anim_name
+        assert _compact_anim_name(['Idle', 'Extra 1']) == 'Idle'
+
+    def test_extra_only_keeps_extra_label(self):
+        """Extra slots (11, 13-15) no longer fold into Idle — they are per-Pokemon specials (e.g., Groudon's Seismic Toss animation lives in Extra 2)."""
+        from importer.phases.describe.helpers.animations import _compact_anim_name
+        assert _compact_anim_name(['Extra 1']) == 'Extra 1'
+        assert _compact_anim_name(['Extra 2']) == 'Extra 2'
 
     def test_idle_mixed_with_other_still_idle(self):
-        """Idle variant mixed with non-idle still compacts to Idle."""
+        """Idle mixed with a damaging-move slot still compacts to Idle."""
         from importer.phases.describe.helpers.animations import _compact_anim_name
-        assert _compact_anim_name(['Idle B', 'Physical A']) == 'Idle'
+        assert _compact_anim_name(['Idle', 'Physical A']) == 'Idle'
 
     def test_non_idle_unchanged(self):
         """Non-idle slot names are not affected."""

@@ -90,9 +90,18 @@ def build_material(ir_material, image_cache=None, name='', has_color_animation=F
             else:
                 bump_map = cur_color
         else:
-            # Apply color/alpha blending for textures with appropriate lightmap type
+            # Route texture into the base-color chain only when the lightmap
+            # channel is diffuse-equivalent. HSD uses GX TEV to multiply each
+            # texture against its own lighting term (diffuse-light × diffuse-
+            # texture, specular-light × specular-texture) and sum them; we
+            # have no per-term rasterised light in Blender's Principled BSDF,
+            # so layering a SPECULAR map into Base Color — whether by MIX
+            # (overwrites the diffuse at blend_factor=1.0) or ADD (permanent
+            # over-bright) — misrepresents the game. Drop non-diffuse layers
+            # from the colour chain; they remain in the IR for round-trip
+            # export.
             lmc = tex_layer.lightmap_channel
-            if lmc == LightmapChannel.NONE or lmc in (LightmapChannel.DIFFUSE, LightmapChannel.AMBIENT, LightmapChannel.SPECULAR, LightmapChannel.EXTENSION):
+            if lmc in (LightmapChannel.NONE, LightmapChannel.DIFFUSE, LightmapChannel.AMBIENT):
                 last_color = _apply_blend(nodes, links, last_color, cur_color, cur_alpha, tex_layer.color_blend, tex_layer.blend_factor, is_color=True)
                 last_alpha = _apply_blend(nodes, links, last_alpha, cur_alpha, cur_alpha, tex_layer.alpha_blend, tex_layer.blend_factor, is_color=False)
 

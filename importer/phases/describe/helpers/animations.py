@@ -63,7 +63,7 @@ def describe_bone_animations(model_set, joint_to_bone_index, bones, options, log
         loop = [False]  # mutable for closure
 
         _walk_parallel(anim_joint_root, root_joint, tracks, loop,
-                       joint_to_bone_index, bones, logger)
+                       joint_to_bone_index, bones, logger, options)
 
         semantic = anim_name_map.get(i)
         if semantic:
@@ -186,8 +186,9 @@ def _compact_anim_name(slot_names):
     if not slot_names:
         return 'Unknown'
 
-    # Any Idle variant (Idle, Idle B, Idle C, ...) compacts to just "Idle"
-    if any(n == 'Idle' or n.startswith('Idle ') for n in slot_names):
+    # Idle (slot 0) takes absolute priority — extras may share the idle
+    # animation but get the 'Idle' label when they do.
+    if 'Idle' in slot_names:
         return 'Idle'
 
     # Sub-animations take priority
@@ -237,7 +238,7 @@ def _compact_anim_name(slot_names):
 
 
 def _walk_parallel(anim_joint, joint, tracks, loop_flag,
-                   joint_to_bone_index, bones, logger):
+                   joint_to_bone_index, bones, logger, options=None):
     """Walk AnimationJoint and Joint trees in parallel, decoding keyframes."""
     bone_index = joint_to_bone_index.get(joint.address, 0)
     bone = bones[bone_index]
@@ -246,7 +247,7 @@ def _walk_parallel(anim_joint, joint, tracks, loop_flag,
         aobj = anim_joint.animation
 
         if not (aobj.flags & AOBJ_NO_ANIM):
-            track = _describe_bone_track(aobj, joint, bone, bone_index, bones, logger)
+            track = _describe_bone_track(aobj, joint, bone, bone_index, bones, logger, options)
             if track is not None:
                 tracks.append(track)
                 is_loop = bool(aobj.flags & AOBJ_ANIM_LOOP)
@@ -254,13 +255,13 @@ def _walk_parallel(anim_joint, joint, tracks, loop_flag,
 
     if anim_joint.child and joint.child:
         _walk_parallel(anim_joint.child, joint.child, tracks, loop_flag,
-                       joint_to_bone_index, bones, logger)
+                       joint_to_bone_index, bones, logger, options)
     if anim_joint.next and joint.next:
         _walk_parallel(anim_joint.next, joint.next, tracks, loop_flag,
-                       joint_to_bone_index, bones, logger)
+                       joint_to_bone_index, bones, logger, options)
 
 
-def _describe_bone_track(aobj, joint, bone, bone_index, bones, logger=None):
+def _describe_bone_track(aobj, joint, bone, bone_index, bones, logger=None, options=None):
     """Decode all channels for one bone into an IRBoneTrack."""
     rotation = [[], [], []]  # [X, Y, Z]
     location = [[], [], []]
@@ -270,11 +271,11 @@ def _describe_bone_track(aobj, joint, bone, bone_index, bones, logger=None):
     fobj = aobj.frame
     while fobj:
         if fobj.type == HSD_A_J_PATH:
-            spline_path = _extract_spline_path(aobj, joint, bone, bones, fobj, logger)
+            spline_path = _extract_spline_path(aobj, joint, bone, bones, fobj, logger, options)
 
         elif fobj.type in _CHANNEL_MAP:
             category, component = _CHANNEL_MAP[fobj.type]
-            keyframes = decode_fobjdesc(fobj)
+            keyframes = decode_fobjdesc(fobj, logger=logger, options=options)
 
             if category == 'r':
                 rotation[component] = keyframes
@@ -359,9 +360,9 @@ def _find_visible_scale_in_channels(scale_channels):
     return None
 
 
-def _extract_spline_path(aobj, joint, bone, bones, fobj, logger):
+def _extract_spline_path(aobj, joint, bone, bones, fobj, logger, options=None):
     """Extract spline path data from a PATH animation channel into IRSplinePath."""
-    path_keyframes = decode_fobjdesc(fobj)
+    path_keyframes = decode_fobjdesc(fobj, logger=logger, options=options)
     if not path_keyframes:
         return None
 

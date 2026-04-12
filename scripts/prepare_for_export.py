@@ -191,14 +191,15 @@ def apply_pkx_metadata(armature, format='XD', model_type='POKEMON', species_id=0
         armature[prefix + "_anim_ref"] = ""
 
     # --- Body map bones ---
+    # The game uses 16 slots but only slots 0-7 are actively referenced by the
+    # XD battle code (root, head tracking, particle/effect attachment points).
+    # Slots 8-15 are unreferenced and always exported as -1 (skip).
     bones = list(armature.data.bones)
     root_name = bones[0].name if bones else ""
     armature["dat_pkx_body_root"] = root_name
     armature["dat_pkx_body_head"] = head_bone_name
     armature["dat_pkx_body_center"] = ""
-    for key in ["body_3", "neck", "head_top", "limb_a", "limb_b",
-                "secondary_8", "secondary_9", "secondary_10", "secondary_11",
-                "attach_a", "attach_b", "attach_c", "attach_d"]:
+    for key in ["body_3", "neck", "head_top", "limb_a", "limb_b"]:
         armature["dat_pkx_body_%s" % key] = ""
 
     # --- Animation entries (17 slots) ---
@@ -927,9 +928,9 @@ _BODY_MAP_NAMES = [
 ]
 _XD_POKEMON_ANIM_NAMES = [
     "Idle", "Special A", "Physical A", "Physical B", "Physical C",
-    "Physical D", "Special B", "Physical E", "Damage", "Damage+Faint",
-    "Faint", "Idle B", "Special C", "Physical F", "Physical G",
-    "Physical H", "Idle Loop B",
+    "Physical D", "Special B", "Physical E", "Damage", "Damage B",
+    "Faint", "Extra 1", "Special C", "Extra 2", "Extra 3", "Extra 4",
+    "Take Flight",
 ]
 _XD_TRAINER_ANIM_NAMES = [
     "Idle", "Poké Ball Throw", "Victory", "Battle Intro", "Frustrated",

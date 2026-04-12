@@ -53,7 +53,7 @@ from exporter.phases.compose.compose import compose_scene
 from exporter.phases.serialize.helpers.dat_builder import DATBuilder
 from importer.phases.parse.helpers.dat_parser import DATParser
 from shared.Nodes.Node import Node
-from shared.helpers.logger import StubLogger
+from shared.helpers.logger import StubLogger, Logger
 
 # Register custom bpy properties needed for round-trip tests
 # (normally registered by BlenderPlugin.register())
@@ -88,11 +88,13 @@ def load_model(filepath):
     return dat_bytes, sections
 
 
-def describe_ir(sections, options=None):
+def describe_ir(sections, options=None, logger=None):
     """Run import phase 4 (describe) on parsed sections. Returns IRScene."""
     if options is None:
         options = {}
-    return describe_scene(sections, options)
+    if logger is None:
+        logger = StubLogger()
+    return describe_scene(sections, options, logger=logger)
 
 
 def build_in_blender(ir_scene, options=None):
@@ -196,12 +198,13 @@ def compute_bnb_score(filepath):
 # Scoring: NIN (Node -> IR -> Node)
 # ---------------------------------------------------------------------------
 
-def compute_nin_score(filepath):
+def compute_nin_score(filepath, strict=False, logger=None):
     """Parse a file, describe to IR, compose back to nodes, compare."""
     _, sections = load_model(filepath)
 
     # Describe (phase 4)
-    ir_scene = describe_ir(sections, options={})
+    options = {"strict_mirror": True} if strict else {}
+    ir_scene = describe_ir(sections, options=options, logger=logger)
 
     # Compose (phase 2 export)
     composed_nodes, _ = compose_scene(ir_scene, {'strip_names': True})
@@ -236,7 +239,7 @@ def compute_nin_score(filepath):
 # Scoring: IBI (IR -> Blender -> IR)
 # ---------------------------------------------------------------------------
 
-def compute_ibi_score(filepath):
+def compute_ibi_score(filepath, strict=False, logger=None):
     """Parse through phase 4 to get IR, build in Blender, read back, compare.
 
     Uses category-weighted scoring: each IR category (bones, meshes,
@@ -247,7 +250,10 @@ def compute_ibi_score(filepath):
     clear_blender_scene()
 
     _, sections = load_model(filepath)
-    ir_original = describe_ir(sections, options={"filepath": filepath})
+    options = {"filepath": filepath}
+    if strict:
+        options["strict_mirror"] = True
+    ir_original = describe_ir(sections, options=options, logger=logger)
 
     # Build in Blender (phase 5)
     build_results = build_in_blender(ir_original, options={"filepath": filepath})
@@ -766,10 +772,15 @@ def find_model_files(path):
     return []
 
 
-def run_all_tests(filepath):
+def run_all_tests(filepath, strict=False):
     """Run all round-trip tests on a single model file. Returns dict of scores."""
     name = os.path.splitext(os.path.basename(filepath))[0]
     scores = {'name': name}
+    # One logger per model so leniency counts are isolated. The logger writes
+    # to disk (per shared Logger behavior) and also accumulates counts we can
+    # read after each score is computed.
+    nin_logger = Logger(verbose=False, model_name="%s_strict_gate" % name) if strict else None
+    ibi_logger = Logger(verbose=False, model_name="%s_strict_gate" % name) if strict else None
 
     # NBN
     try:
@@ -795,7 +806,7 @@ def run_all_tests(filepath):
 
     # NIN
     try:
-        pct, err_pct, miss_pct, nin_details = compute_nin_score(filepath)
+        pct, err_pct, miss_pct, nin_details = compute_nin_score(filepath, strict=strict, logger=nin_logger)
         scores['nin'] = pct
         scores['nin_err'] = err_pct
         scores['nin_miss'] = miss_pct
@@ -807,7 +818,7 @@ def run_all_tests(filepath):
 
     # IBI
     try:
-        pct, err_pct, miss_pct, details, categories = compute_ibi_score(filepath)
+        pct, err_pct, miss_pct, details, categories = compute_ibi_score(filepath, strict=strict, logger=ibi_logger)
         scores['ibi'] = pct
         scores['ibi_err'] = err_pct
         scores['ibi_miss'] = miss_pct
@@ -820,6 +831,19 @@ def run_all_tests(filepath):
         import traceback
         scores['ibi_details'] = [traceback.format_exc()]
         scores['ibi_categories'] = {}
+
+    if strict:
+        lenc = 0
+        cats = {}
+        for lg in (nin_logger, ibi_logger):
+            if lg is None:
+                continue
+            lenc += lg.leniency_count
+            for k, v in lg.leniency_categories.items():
+                cats[k] = cats.get(k, 0) + v
+            lg.close()
+        scores['leniency_count'] = lenc
+        scores['leniency_categories'] = cats
 
     return scores
 
@@ -841,14 +865,17 @@ def main():
         sys.exit(1)
 
     verbose = '--verbose' in flags or '-v' in flags
+    strict = '--strict' in flags
 
+    if strict:
+        print("Strict Mirror Mode: leniencies will fail the acceptance gate.")
     print(f"Running round-trip tests on {len(files)} model(s)...\n")
 
     all_scores = []
     for filepath in files:
         name = os.path.splitext(os.path.basename(filepath))[0]
         print(f"  {name}...", end=' ', flush=True)
-        scores = run_all_tests(filepath)
+        scores = run_all_tests(filepath, strict=strict)
         all_scores.append(scores)
 
         parts = []
@@ -888,6 +915,13 @@ def main():
             for detail in scores['ibi_details'][:20]:
                 print(f"    {detail}")
 
+        if strict:
+            lenc = scores.get('leniency_count', 0)
+            cats = scores.get('leniency_categories', {})
+            if lenc:
+                summary = ", ".join(f"{v} {k}" for k, v in sorted(cats.items()))
+                print(f"    STRICT: {lenc} leniencies ({summary})")
+
     # Summary table
     col_w = 18
     print(f"\n{'='*(20 + col_w * 3 + 8 + 4)}")
@@ -910,6 +944,17 @@ def main():
         else:
             row += f" {'ERR':>7}%"
         print(row)
+
+    if strict:
+        total_lenc = sum(s.get('leniency_count', 0) for s in all_scores)
+        failures = [s for s in all_scores if s.get('leniency_count', 0) > 0 or
+                    isinstance(s.get('nin'), str) or isinstance(s.get('ibi'), str)]
+        print()
+        if total_lenc == 0 and not failures:
+            print("Strict mirror gate: PASS — all baseline models produced zero leniencies.")
+        else:
+            print(f"Strict mirror gate: FAIL — {total_lenc} total leniencies across {len(failures)} model(s).")
+            sys.exit(2)
 
 
 if __name__ == '__main__':
