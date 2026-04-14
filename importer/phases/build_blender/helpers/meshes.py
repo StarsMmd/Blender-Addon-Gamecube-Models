@@ -110,8 +110,11 @@ def _build_mesh(ir_mesh, ir_model, armature, image_cache, logger, mesh_idx, mode
             if i < len(bpy_cl.data):
                 bpy_cl.data[i].color = rgba
 
-    # Normals
+    # Normals — flat polygons in Blender 4.1+ ignore custom split normals,
+    # so polygons must be marked smooth before the per-loop normals take effect.
     if ir_mesh.normals:
+        for poly in mesh_data.polygons:
+            poly.use_smooth = True
         mesh_data.normals_split_custom_set(ir_mesh.normals)
 
     # Visibility

@@ -664,7 +664,11 @@ def _build_pixel_engine(ir_mat, nodes, links, last_color, last_alpha, mat):
     if fb is None:
         if ir_mat.is_translucent:
             transparent_shader = True
-            mat.blend_method = 'BLEND'
+            # HASHED matches every other "transparent texture, no specific
+            # blend effect" branch below (ALPHA_BLEND, INVERSE_ALPHA_BLEND,
+            # INVISIBLE). EEVEE's BLEND mode introduces depth-sort artefacts
+            # that look like back-faces showing through.
+            mat.blend_method = 'HASHED'
         return last_color, last_alpha, transparent_shader, alt_blend_mode
 
     effect = fb.effect
