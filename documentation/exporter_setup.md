@@ -62,6 +62,14 @@ What the exporter can and cannot read from your Blender scene.
 | No vertex groups | ✅ Rigid | Bound to parent bone |
 | Armature modifier | ✅ Required | Must be present for skinning |
 
+### Particles (GPT1) — ❌ Not Imported or Exported
+
+Both the import preview and the export pipeline are disabled for GPT1 particles. Re-exported `.pkx` files will not contain the original particle bytecode, textures, or REF IDs. **Keep the original file around** if you need to preserve effects through an edit — the exporter only rewrites the DAT payload + PKX header + shiny params, not the particle trailer.
+
+**Why disabled:** GPT1 carries no generator→bone binding. In the game, each effect resolves a body-map slot literal (0–15) via `ModelSequence::GetPart(slot)` into an actual bone, but that slot literal lives in compiled game code, a WZX move file, or some lookup table we've not yet located. Investigation ruled out the HSD `JOBJ_PTCL` flag (unset on all 15 particle models), `_particleJObjCallback` (never fires for these models), the PKX header body map (just a bone lookup), WZX move files (attack/damage effects only), common.rel unknown indexes, and the DOL data section around `PKXPokemonModels` (only WazaSequence animation tables there). Building a preview at the armature origin ended up more misleading than useful.
+
+**What's still in place:** The parser (`shared/helpers/gpt1.py`), bytecode disassembler/assembler (`shared/helpers/gpt1_commands.py`), IR types (`shared/IR/particles.py`), describe-side decoder, compose helper, and the opcode-spec table are all present and unit-tested. When the binding mechanism is found, the rewrite lives in `importer/phases/build_blender/helpers/particles.py` (build) and `exporter/phases/compose/helpers/particles.py` (compose — just needs to be wired into `compose_scene` and `package_output`).
+
 ### Animations
 
 | Blender feature | Export support | Notes |
@@ -109,7 +117,7 @@ Delete any objects that should not be part of the model:
 
 - **Default Cube** — delete it (`X` key)
 - **Default Light** — delete it (the preparation script adds proper battle lights)
-- **Default Camera** — delete it (the preparation script creates a `Battle_Camera`)
+- **Default Camera** — delete it (the preparation script creates a `Debug_Camera`)
 
 Only armatures and their parented meshes should remain, plus any lights and cameras you intentionally want in the game model.
 
@@ -154,7 +162,7 @@ For models **not** imported through the DAT plugin, run **`scripts/prepare_for_e
 3. Click **Run Script**
 
 The script:
-- Creates a `Battle_Camera` with target empty
+- Creates a `Debug_Camera` with target empty (unused by the game — see Camera section below)
 - Limits vertex bone weights to 2 per vertex and quantizes to 10% steps
 - Sets up all 4 standard battle lights (ambient + 3 directional SUN)
 - Auto-selects GX texture formats based on image content
@@ -171,7 +179,9 @@ These are custom properties the exporter reads from Blender objects. The [prepar
 
 ### Camera
 
-Every PKX model requires exactly **1 camera** named `Battle_Camera`. The preparation script creates one automatically.
+Every PKX model contains **1 camera** named `Debug_Camera`. The preparation script creates one automatically.
+
+**The game ignores this camera.** Both the XD and Colosseum disassemblies show no real consumer of the PKX's embedded camera — battles, summary screen, PC box, and overworld all use hardcoded or bounding-box-derived cameras. The camera section appears to be a SysDolphin-era debug/preview camera preserved by the format. It's still emitted so the DAT structure stays identical to shipped models until a camera-less export is confirmed working in-game (see CLAUDE.md TODO).
 
 | Setting | Value | Notes |
 |---|---|---|
@@ -189,7 +199,7 @@ Every PKX model requires exactly **1 camera** named `Battle_Camera`. The prepara
 | Large | 46-60 | Deoxys, Rayquaza |
 | Very large | 100-300+ | Kairyu, Houou |
 
-**Adjusting the camera:** The script places the camera in front of the model at 2.5× the model's height. Select `Battle_Camera_target` and move it to adjust focus. Select `Battle_Camera` to adjust distance. Press **Numpad 0** to preview.
+**Adjusting the camera:** The script places the camera in front of the model at 2.5× the model's height. Select `Debug_Camera_target` and move it to adjust focus. Select `Debug_Camera` to adjust distance. Press **Numpad 0** to preview. (This camera is useful as an in-Blender preview angle but has no in-game effect.)
 
 ### Lighting
 
@@ -228,7 +238,7 @@ The body map is a per-animation table of bone indices that the game reads at run
 
 **What the game uses it for:**
 
-- **Head tracking / camera targeting** — slot 1 (Head) is the load-bearing slot; the battle camera and critical-hit zoom lock to this bone.
+- **Head tracking / camera targeting** — slot 1 (Head) is the load-bearing slot; the in-game battle camera and critical-hit zoom lock to this bone (the battle camera is a separate engine — not the PKX `Debug_Camera`).
 - **Particle & status effect attachment** — status particles (sleep Z's, confusion stars, burn flames), move VFX anchors, and held-item positions use slots 2–7 (center/jaw, neck, head-top, left/right limb).
 - **Targeting hitboxes** — damage reactions and hit sparks anchor to whichever slot the move script names.
 

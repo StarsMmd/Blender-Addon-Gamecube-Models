@@ -23,13 +23,13 @@ Every Blender Python API call used by this addon, with the Blender version range
 | | | **Properties (bpy.props)** | | |
 | 2.80 | current | `bpy.props.CollectionProperty` | `BlenderPlugin.py` | File list |
 | 2.80 | current | `bpy.props.StringProperty` | `BlenderPlugin.py` | Section name, filter glob |
-| 2.80 | current | `bpy.props.BoolProperty` | `BlenderPlugin.py` | Operator toggles + `dat_pkx_shiny` on Object |
+| 2.80 | current | `bpy.props.BoolProperty` | `BlenderPlugin.py` | Operator toggles + `dat_pkx_shiny`, `dat_gpt1_particles_visible` on Object |
 | 2.80 | current | `bpy.props.IntProperty` | `BlenderPlugin.py` | Max frame |
 | 2.80 | current | `bpy.props.FloatProperty` | `BlenderPlugin.py` | `dat_pkx_shiny_brightness_*` on Object |
 | 2.80 | current | `bpy.props.EnumProperty` | `BlenderPlugin.py` | `dat_pkx_shiny_route_*` on Object |
 | 2.80 | current | `setattr(bpy.types.Object, name, prop)` | `BlenderPlugin.py` | Register shiny properties on Object type |
 | 2.80 | current | `delattr(bpy.types.Object, name)` | `BlenderPlugin.py` | Unregister shiny properties |
-| 2.80 | current | Property `update` callback | `BlenderPlugin.py` | `_on_shiny_toggle_update`, `_on_shiny_param_update` |
+| 2.80 | current | Property `update` callback | `BlenderPlugin.py` | `_on_shiny_toggle_update`, `_on_shiny_param_update`, `_on_particles_visible_update` |
 | | | | | |
 | | | **Custom Properties** | | |
 | 2.80 | current | `object["key"] = value` | `shiny_filter.py`, `post_process.py`, `cameras.py` | `dat_pkx_has_shiny`, `dat_pkx_shiny_*_group`, `dat_pkx_*` metadata, `dat_camera_aspect` |
@@ -47,8 +47,8 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.80 | current | `bpy.context.scene.collection.objects.link(obj)` | `meshes.py`, `skeleton.py`, `lights.py`, `cameras.py` | |
 | 2.80 | current | `bpy.context.view_layer.objects.active = obj` | `skeleton.py`, `exporter/skeleton.py` | |
 | 2.80 | current | `bpy.context.view_layer.update()` | `skeleton.py`, `animations.py` | Force dependency graph update |
-| 2.80 | current | `bpy.context.scene.frame_set(n)` | `post_process.py` | Reset timeline to frame 0 |
-| 2.80 | current | `bpy.context.scene.frame_end = n` | `BlenderPlugin.py` | Workspace setup |
+| 2.80 | current | `bpy.context.scene.frame_set(n)` | `post_process.py` | Reset timeline to scene start frame |
+| 2.80 | current | `bpy.context.scene.frame_start / frame_end = n` | `post_process.py` | Set playback range from active action's frame_range |
 | 2.80 | current | `bpy.context.mode` | `skeleton.py`, `exporter/skeleton.py` | Check current editor mode |
 | 2.80 | current | `context.screen.areas` | `BlenderPlugin.py` | Workspace setup |
 | 3.2 | current | `context.temp_override(area=...)` | `BlenderPlugin.py` | Workspace split |
@@ -120,6 +120,7 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.65 | current | `mesh.validate(verbose, clean_customdata)` | `meshes.py` | |
 | 2.80 | current | `mesh.materials.append(mat)` | `meshes.py` | |
 | 2.74 | current | `mesh.normals_split_custom_set(normals)` | `meshes.py` | |
+| 2.80 | current | `polygon.use_smooth = True` | `meshes.py` (importer build_blender) | Required for custom split normals to take effect; Blender 4.1+ polygons default to flat and silently ignore per-loop normals |
 | 2.80 | current | `mesh.uv_layers.new(name)` | `meshes.py` | |
 | 3.2 | current | `mesh.color_attributes.new(name, type, domain)` | `meshes.py` | FLOAT_COLOR + CORNER; avoids sRGB auto-linearization |
 | | | | | |
@@ -129,9 +130,26 @@ Every Blender Python API call used by this addon, with the Blender version range
 | | | | | |
 | | | **Modifiers** | | |
 | 2.80 | current | `object.modifiers.new(name, 'ARMATURE')` | `meshes.py` | |
+| 2.92 | current | `object.modifiers.new(name, 'NODES')` | `particles.py` (importer build_blender) | Attach GeometryNodes tree to per-generator mesh |
+| 2.92 | current | `modifier.node_group = tree` | `particles.py` (importer build_blender) | Assign GeometryNodeTree to NODES modifier |
+| | | | | |
+| | | **Geometry Nodes** | | |
+| 2.92 | current | `bpy.data.node_groups.new(name, 'GeometryNodeTree')` | `particles.py` (importer build_blender) | Per-generator tree |
+| 2.92 | current | `nodes.new('GeometryNodePoints')` | `particles.py` (importer build_blender) | Initial particle spawn |
+| 3.6 | current | `nodes.new('GeometryNodeSimulationInput')` | `particles.py` (importer build_blender) | Sim zone input |
+| 3.6 | current | `nodes.new('GeometryNodeSimulationOutput')` | `particles.py` (importer build_blender) | Sim zone output |
+| 3.6 | current | `sim_in.pair_with_output(sim_out)` | `particles.py` (importer build_blender) | Pair sim zone endpoints |
+| 3.6 | current | `sim_out.state_items.new(socket_type, name)` | `particles.py` (importer build_blender) | Declare persistent state |
+| 3.0 | current | `nodes.new('GeometryNodeInputSceneTime')` | `particles.py` (importer build_blender) | Drive Age increment |
+| 2.92 | current | `nodes.new('GeometryNodeMeshGrid')` | `particles.py` (importer build_blender) | Billboard quad |
+| 2.92 | current | `nodes.new('GeometryNodeInstanceOnPoints')` | `particles.py` (importer build_blender) | Instance quads on particles |
+| 2.92 | current | `nodes.new('GeometryNodeSetMaterial')` | `particles.py` (importer build_blender) | Assign particle material |
+| 2.80 | current | `nodes.new('NodeFrame')` | `particle_opcodes.py` | One frame per bytecode instruction |
+| 2.80 | current | `frame.use_custom_color = True`, `frame.color = (r,g,b)` | `particle_opcodes.py` | Visual grouping by opcode |
 | | | | | |
 | | | **Material & Shader Nodes** | | |
 | 2.80 | current | `material.use_backface_culling = True` | `meshes.py` | From POBJ cull flags; prevents z-fighting on double-sided geometry |
+| 2.80 | current | `material.blend_method` | `materials.py` (importer build_blender) | EEVEE transparency mode — `'HASHED'` / `'BLEND'` / `'OPAQUE'`. Translucent fallback uses HASHED to avoid EEVEE depth-sort artefacts |
 | 2.80 | current | `material.use_nodes = True` | `materials.py` | |
 | 2.80 | current | `material.node_tree.nodes` / `.links` | `materials.py`, `shiny_filter.py` | |
 | 2.80 | current | `material.node_tree.update_tag()` | `BlenderPlugin.py` | Force material refresh |

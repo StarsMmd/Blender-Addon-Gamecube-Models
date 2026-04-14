@@ -50,6 +50,14 @@ and skips near-zero-scale bone rescue so broken skeletons collapse visibly inste
 
 Leniency warnings print to the terminal with strict mode **off** too — the toggle only controls whether the importer *fails* on them. Each import also writes a `dat_leniencies` list onto the armature as a custom property, so you can inspect healing history in the N-panel → Object Properties → Custom Properties.
 
+## Particles (GPT1)
+
+15 battle models ship with embedded GPT1 particle data — the flame-, gas- and mist-themed Pokémon (Moltres, Articuno, Charmander/Charmeleon/Charizard, Gastly, Magmar, Magcargo, Torkoal, Koffing, Weezing, Vaporeon, plus the three shiny variants `rare_fire`, `rare_freezer`, `rare_lizardon`).
+
+**Particle import and export are both disabled in this release.** The GPT1 parser, disassembler, IR types, and compose-side assembler are all in place and unit-tested, but no Blender objects are created from the data. The blocker is the **generator → bone binding**: we have not been able to locate the table or code path that pairs each generator in a model's GPT1 with the body-map slot it renders from. Our investigation ruled out the HSD `JOBJ_PTCL` flag (unset on all 15 models), `_particleJObjCallback`, the PKX header body map (a bone lookup table, not a binding), WZX move files (carry move/attack effects only), the common.rel index table, and the DOL data section around `PKXPokemonModels`. See [CLAUDE.md](CLAUDE.md#particle-importgpt1) for pointers to what's left to check.
+
+Visualising generators at the armature origin without a correct bone attachment looked misleading in practice (every flame floating in the wrong place), so the import stub logs generator/texture counts on the armature but creates nothing in the scene. Re-exported `.pkx` files drop the GPT1 region — keep the original file around if you need to preserve effects.
+
 ## Shiny Variants
 
 When importing `.pkx` Pokemon models, the addon extracts shiny color parameters from the file header and builds a toggleable shader filter into the imported materials. Select the armature and find the **Shiny Variant** panel in **Properties > Object Properties** to toggle the shiny appearance and edit channel routing and brightness parameters.

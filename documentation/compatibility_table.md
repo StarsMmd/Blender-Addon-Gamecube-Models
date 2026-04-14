@@ -85,7 +85,7 @@ This table tracks every feature in the GameCube SysDolphin `.dat` format and its
 | Lights (SPOT) | ✅ | `IRLight` | ✅ | ❌ | With target + TRACK_TO |
 | Cameras | ✅ Parsed | `IRCamera` (stub) | ❌ | ❌ | |
 | Fog | ✅ Parsed | `IRFog` (stub) | ❌ | ❌ | |
-| Particles | ✅ Parsed | ❌ Needs research | ❌ | ❌ | |
+| Particles (GPT1) | ✅ | `IRParticleSystem` | ⚠️ Stub | ❌ Disabled | 15 models ship GPT1 data; parser, disassembler, IR, assembler, opcode specs all done and unit-tested. `build_particles` is a stub that only records generator/texture counts — the generator→bone binding mechanism has not been found (not in `JOBJ_PTCL`, `_particleJObjCallback`, PKX body map, WZX move files, common.rel indexes, or the nearby DOL data tables). `compose_particles` / `describe_particles` helpers remain available. |
 
 ## Keyframe Encoding
 
