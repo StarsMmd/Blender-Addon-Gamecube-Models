@@ -10,12 +10,10 @@ try:
     from .....shared.Nodes.Classes.Joints.Joint import Joint
     from .....shared.Constants.hsd import JOBJ_INSTANCE
     from .....shared.helpers.logger import StubLogger
-    from .....shared.helpers.scale import METERS_TO_GC
 except (ImportError, SystemError):
     from shared.Nodes.Classes.Joints.Joint import Joint
     from shared.Constants.hsd import JOBJ_INSTANCE
     from shared.helpers.logger import StubLogger
-    from shared.helpers.scale import METERS_TO_GC
 
 
 def compose_bones(bones, logger=StubLogger()):
@@ -38,17 +36,13 @@ def compose_bones(bones, logger=StubLogger()):
         joint = Joint(address=None, blender_obj=None)
         joint.name = bone.name
         joint.flags = bone.flags
-        joint.position = [p * METERS_TO_GC for p in bone.position]
+        joint.position = list(bone.position)
         joint.rotation = list(bone.rotation)
         joint.scale = list(bone.scale)
-        # Scale IBM translation column back to GC units
-        if bone.inverse_bind_matrix:
-            ibm = [list(row) for row in bone.inverse_bind_matrix]
-            for row in range(3):
-                ibm[row][3] *= METERS_TO_GC
-            joint.inverse_bind = ibm
-        else:
-            joint.inverse_bind = bone.inverse_bind_matrix
+        joint.inverse_bind = (
+            [list(row) for row in bone.inverse_bind_matrix]
+            if bone.inverse_bind_matrix is not None else None
+        )
         joint.property = None
         joint.reference = None
         joint.child = None
