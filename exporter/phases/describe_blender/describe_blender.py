@@ -26,6 +26,9 @@ try:
     from .helpers.lights import describe_lights
     from .helpers.cameras import describe_cameras
     from .helpers.constraints import describe_constraints
+    # describe_particles exists but is NOT called — particle export is disabled
+    # pending runtime bone-attachment data that GPT1 does not carry. See
+    # README.md "Particles (GPT1)" for context.
 except (ImportError, SystemError):
     from shared.IR import IRScene, IRModel
     from shared.IR.animation import IRBoneAnimationSet
@@ -75,12 +78,14 @@ def describe_blender_scene(context, options=None, logger=StubLogger()):
             "No armatures in the scene. The scene must contain at least one armature to export."
         )
 
+    _validate_baked_transforms(armatures)
+
     models = []
     for armature in armatures:
         logger.info("  Processing armature '%s'", armature.name)
 
         bones = describe_skeleton(armature, logger=logger)
-        meshes = describe_meshes(armature, bones, logger=logger)
+        meshes, blender_materials = describe_meshes(armature, bones, logger=logger)
 
         # Populate mesh_indices on bones
         for mesh_idx, ir_mesh in enumerate(meshes):
@@ -97,9 +102,18 @@ def describe_blender_scene(context, options=None, logger=StubLogger()):
             if b.mesh_indices:
                 logger.debug("    bone '%s': mesh_indices=%s flags=%#x", b.name, b.mesh_indices, b.flags)
 
-        # Describe animations from Blender actions
+        # Describe animations from Blender actions. When this armature has
+        # PKX metadata with at least one assigned anim slot, restrict the
+        # collected actions to those the PKX actually references — otherwise
+        # unrelated actions in the scene (e.g. unassigned GLB rip anims)
+        # bloat the DAT with keyframe data that the game will never play.
         use_bezier = options.get('sparsify_bezier', True)
-        bone_animations = describe_bone_animations(armature, bones, logger=logger, use_bezier=use_bezier)
+        referenced_actions = _collect_pkx_referenced_actions(armature)
+        bone_animations = describe_bone_animations(
+            armature, bones, logger=logger, use_bezier=use_bezier,
+            referenced_actions=referenced_actions,
+            meshes=meshes, mesh_materials=blender_materials,
+        )
 
         # Describe constraints from pose bones
         ik_c, cl_c, tt_c, cr_c, lr_c, ll_c = describe_constraints(armature, bones, logger=logger)
@@ -142,6 +156,54 @@ def describe_blender_scene(context, options=None, logger=StubLogger()):
                 shiny_params is not None, pkx_header is not None)
     return ir_scene, shiny_params, pkx_header
 
+
+
+def _validate_baked_transforms(armatures):
+    """Reject armatures (and their child meshes) with non-identity matrix_world.
+
+    The exporter's bone path decomposes world matrices into SRT, which loses
+    any shear introduced by combining a non-uniform armature scale with an
+    edit-bone rotation. The vertex path uses a plain matmul that preserves
+    that shear, so the two paths drift apart the further down the chain you
+    go. Baking transforms upstream (scripts/prepare_for_export.py) keeps
+    both paths in the same frame.
+    """
+    children_by_armature = {
+        arm: [obj for obj in bpy.data.objects
+              if obj.parent is arm and obj.type == 'MESH']
+        for arm in armatures
+    }
+    _check_baked_transforms(armatures, children_by_armature)
+
+
+def _check_baked_transforms(armatures, children_by_armature):
+    """Pure helper: reject any armature or listed child mesh whose
+    matrix_world is not identity. Split out from `_validate_baked_transforms`
+    so unit tests can drive it without owning a real `bpy.data.objects`.
+    """
+    bad = []
+    for arm in armatures:
+        if not _is_identity_matrix(arm.matrix_world):
+            bad.append(arm.name)
+        for child in children_by_armature.get(arm, ()):
+            if not _is_identity_matrix(child.matrix_world):
+                bad.append(child.name)
+    if bad:
+        raise ValueError(
+            "Unbaked transforms on: " + ", ".join(bad) + ". "
+            "Run scripts/prepare_for_export.py (or apply Object > Apply > "
+            "All Transforms manually) so every armature and child mesh has "
+            "identity matrix_world before exporting."
+        )
+
+
+def _is_identity_matrix(m, tol=1e-5):
+    for i in range(4):
+        for j in range(4):
+            expected = 1.0 if i == j else 0.0
+            if abs(m[i][j] - expected) > tol:
+                return False
+    return True
 
 
 def _refine_bone_flags(bones, meshes, logger):
@@ -231,6 +293,13 @@ def _refine_bone_flags(bones, meshes, logger):
                 flags |= JOBJ_HIDDEN
                 bone.is_hidden = True
 
+        # SKEL and the mesh-owner flags are mutually exclusive in the
+        # game's format: mesh-carrying bones use ENV_MODEL / HIDDEN with
+        # LIGHTING|OPA; they never also carry SKEL even when they happen
+        # to be deformation targets. Strip SKEL here to match that rule.
+        if i in bones_with_meshes:
+            flags &= ~JOBJ_SKELETON
+
         bone.flags = flags
 
         # Only keep inverse_bind_matrix on skinning target bones
@@ -239,6 +308,41 @@ def _refine_bone_flags(bones, meshes, logger):
 
     logger.debug("  Refined bone flags for %d bones (%d with meshes, %d deformation, %d envelope)",
                  len(bones), len(bones_with_meshes), len(deformation_bones), len(bones_with_envelope))
+
+
+def _collect_pkx_referenced_actions(armature):
+    """Return the set of action names referenced by this armature's PKX slots.
+
+    Walks `dat_pkx_anim_NN_sub_M_anim` (main animation slots) and
+    `dat_pkx_sub_anim_N_anim_ref` (part-anim sub-animations) custom
+    properties. Empty strings are skipped.
+
+    Returns:
+        set[str] of referenced action names, or None when the armature has
+        no PKX metadata at all. An empty set (PKX metadata exists but every
+        slot is unassigned, e.g. scene still being set up) is returned as
+        None so describe_bone_animations falls through to keeping all
+        actions — dropping them silently would lose data during setup.
+    """
+    if armature.get("dat_pkx_format") is None:
+        return None
+
+    refs = set()
+    anim_count = armature.get("dat_pkx_anim_count", 17)
+    for i in range(anim_count):
+        prefix = "dat_pkx_anim_%02d" % i
+        for s in range(3):
+            name = armature.get(prefix + "_sub_%d_anim" % s, "")
+            if isinstance(name, str) and name:
+                refs.add(name)
+    for i in range(4):
+        name = armature.get("dat_pkx_sub_anim_%d_anim_ref" % i, "")
+        if isinstance(name, str) and name:
+            refs.add(name)
+
+    if not refs:
+        return None
+    return refs
 
 
 def _extract_shiny_params(armatures, logger):
@@ -397,18 +501,21 @@ def _extract_pkx_header(armatures, action_name_to_index, logger):
             h.colo_unknown_10 = 5
             h.colo_unknown_14 = arm.get("dat_pkx_particle_orientation", -1)
 
-        # Body map bones. The game uses 16 slots but only 0-7 are actively
-        # referenced by the XD battle code (root, head tracking, particle/
-        # effect attachment). Slots 8-15 are always written as -1 (skip).
+        # Body map bones. All 16 slots are used by the engine:
+        # `ModelSequence::GetPart(slot)` resolves slot 0-15 into a bone via
+        # `anim_entry.body_map_bones[slot]`. Slots 0-7 are well-known body
+        # parts; slots 8-15 are extended attachment points used by particle
+        # generators on effect-themed Pokémon. Preserve whatever was imported.
         _BODY_MAP_KEYS = [
             "root", "head", "center", "body_3", "neck", "head_top",
             "limb_a", "limb_b",
+            "secondary_8", "secondary_9", "secondary_10", "secondary_11",
+            "attach_a", "attach_b", "attach_c", "attach_d",
         ]
         model_body_map = []
         for j in range(len(_BODY_MAP_KEYS)):
             name = arm.get("dat_pkx_body_%s" % _BODY_MAP_KEYS[j], "")
             model_body_map.append(bone_name_to_idx.get(name, -1) if name else -1)
-        model_body_map.extend([-1] * (16 - len(_BODY_MAP_KEYS)))
 
         # Animation entries
         anim_count = arm.get("dat_pkx_anim_count", 17)

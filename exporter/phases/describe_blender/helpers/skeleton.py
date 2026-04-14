@@ -9,7 +9,7 @@ metadata — this works with any well-formed Blender armature.
 """
 import math
 import bpy
-from mathutils import Matrix, Vector
+from mathutils import Matrix
 
 try:
     from .....shared.IR.skeleton import IRBone
@@ -45,25 +45,10 @@ def describe_skeleton(armature, logger=StubLogger()):
     """
     armature_data = armature.data
 
-    # Capture the armature's object rotation and scale before entering
-    # edit mode. Edit bone matrices are in armature-local space which
-    # doesn't include the object transform. We handle rotation and scale
-    # separately:
-    #
-    # ROTATION: baked into edit bone matrices up front. This normalizes
-    # all edit bones to Blender world-space Z-up, so _COORD_ROTATION_INV
-    # works uniformly for all models:
-    #   - .dat re-imports: matrix_basis has π/2 X rotation → converts
-    #     Y-up edit bones to Z-up.
-    #   - GLB/FBX models: typically no rotation → no change.
-    # The rotation cancels for child bones (parent.inv() @ child),
-    # which is the correct behavior for local SRT computation.
-    #
-    # SCALE: applied to each bone's decomposed position AFTER local SRT
-    # extraction. We can't bake scale into the matrices because it would
-    # cancel in parent.inv() @ child, leaving child positions unscaled.
-    obj_rotation = armature.matrix_world.to_3x3().normalized().to_4x4()
-    obj_scale = armature.matrix_world.to_scale()
+    # The armature's matrix_world is required to be identity (validated in
+    # describe_blender_scene). With that guarantee, edit bone matrices are
+    # already in the armature's local frame and the only remaining work
+    # here is the Blender Z-up → GameCube Y-up coord conversion.
 
     # Enter edit mode to read edit bone data
     prev_active = bpy.context.view_layer.objects.active
@@ -98,11 +83,6 @@ def describe_skeleton(armature, logger=StubLogger()):
     bpy.ops.object.mode_set(mode='OBJECT')
     bpy.context.view_layer.objects.active = prev_active
 
-    # Bake the armature's object rotation into edit bone matrices.
-    # After this, all matrices are in Blender world space (Z-up).
-    for data in edit_bone_data:
-        data['matrix'] = obj_rotation @ data['matrix']
-
     # Convert from Blender Z-up to GameCube Y-up via _COORD_ROTATION_INV.
     # For child bones the rotation cancels in parent.inv() @ child.
     # For root bones local = world (no parent to cancel against).
@@ -124,16 +104,13 @@ def describe_skeleton(armature, logger=StubLogger()):
         else:
             gc_local = gc_world
 
-        # Decompose local matrix to SRT
+        # Decompose to SRT. With armature.matrix_world == I and edit bones
+        # being pure rotation+translation, gc_local has no shear and the
+        # decomposition reconstructs gc_local exactly.
         translation, quat, scale = gc_local.decompose()
         euler = quat.to_euler('XYZ')
 
-        # Apply armature object scale to bone positions. Scale can't be
-        # baked into matrices (it cancels in parent.inv() @ child), so we
-        # apply it to the decomposed position.
-        position = (translation.x * obj_scale.x,
-                    translation.y * obj_scale.y,
-                    translation.z * obj_scale.z)
+        position = (translation.x, translation.y, translation.z)
         rotation = (euler.x, euler.y, euler.z)
         scale_tuple = (scale.x, scale.y, scale.z)
 
@@ -165,8 +142,9 @@ def describe_skeleton(armature, logger=StubLogger()):
         # Matrix representations for IR — use SRT-accumulated matrices
         # (native HSD space, no coordinate rotation) to match the importer's
         # world_matrix computation from Joint SRT values.
-        world_list = _matrix_to_list(srt_world)
-        local_list = _matrix_to_list(srt_local)
+        # Each field gets its own list so the compose pre-scale doesn't
+        # double-scale the same underlying list when it walks `world_matrix`
+        # and `normalized_world_matrix` as if they were independent fields.
         identity_list = _matrix_to_list(Matrix.Identity(4))
 
         # Inverse bind matrix: inverse of the bone's SRT-accumulated world
@@ -185,10 +163,10 @@ def describe_skeleton(armature, logger=StubLogger()):
             is_hidden=is_hidden,
             inherit_scale=ScaleInheritance.ALIGNED,
             ik_shrink=False,
-            world_matrix=world_list,
-            local_matrix=local_list,
-            normalized_world_matrix=world_list,
-            normalized_local_matrix=local_list,
+            world_matrix=_matrix_to_list(srt_world),
+            local_matrix=_matrix_to_list(srt_local),
+            normalized_world_matrix=_matrix_to_list(srt_world),
+            normalized_local_matrix=_matrix_to_list(srt_local),
             scale_correction=identity_list,
             accumulated_scale=accumulated_scale,
         )
