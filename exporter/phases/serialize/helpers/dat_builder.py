@@ -47,10 +47,16 @@ class DATBuilder(BinaryWriter):
 
 		# Build the node list via DFS post-order (children before parents).
 		# Uses identity-based dedup to handle shared nodes and None addresses.
+		# Also records which root each node was first reached from so size
+		# accounting can attribute bytes to the owning section.
 		self.node_list = []
+		self.section_ownership = {}  # id(node) -> index into root_nodes
+		self.node_sizes = {}         # id(node) -> data section bytes contributed (populated in build())
 		visited = set()
-		for root_node in root_nodes:
+		for section_index, root_node in enumerate(root_nodes):
+			self._current_section_index = section_index
 			self._dfsPostOrder(root_node, visited)
+		self._current_section_index = None
 
 	def _dfsPostOrder(self, node, visited):
 		"""DFS traversal matching SysDolphin compiler conventions:
@@ -61,6 +67,8 @@ class DATBuilder(BinaryWriter):
 		if node is None or id(node) in visited:
 			return
 		visited.add(id(node))
+		if self._current_section_index is not None:
+			self.section_ownership[id(node)] = self._current_section_index
 
 		if not hasattr(node, 'fields'):
 			self.node_list.append(node)
@@ -136,6 +144,8 @@ class DATBuilder(BinaryWriter):
 		#   2. Allocate the node's struct space
 		self.seek(0, 'end')
 		for node in self.node_list:
+			phase2_start = self._currentRelativeAddress()
+
 			# Write private data immediately before the node struct
 			node.writePrivateData(self)
 
@@ -159,6 +169,10 @@ class DATBuilder(BinaryWriter):
 				# Stub nodes (e.g. RenderAnimation) — clear stale address from parsing
 				# so pointer resolution writes 0 instead of an invalid original address
 				node.address = None
+
+			self.seek(0, 'end')
+			phase2_end = self._currentRelativeAddress()
+			self.node_sizes[id(node)] = phase2_end - phase2_start
 
 		# --- Phase 3: Write node structs at allocated addresses ---
 		for node in self.node_list:

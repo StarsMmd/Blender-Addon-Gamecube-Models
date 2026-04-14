@@ -140,14 +140,20 @@ class TestComposeBones:
         assert joints == []
 
     def test_single_bone(self):
-        """Single bone produces a root Joint with correct fields."""
+        """Single bone produces a root Joint with correct fields.
+
+        compose_bones no longer applies METERS_TO_GC itself — scaling is
+        handled once up front by scale_scene_to_gc_units in compose_scene.
+        This test exercises compose_bones in isolation, so positions pass
+        through unchanged.
+        """
         bones = [_make_bone("Root", position=(1, 2, 3), rotation=(0.1, 0.2, 0.3), scale=(1, 1, 1))]
         root, joints = compose_bones(bones)
 
         assert root is not None
         assert len(joints) == 1
         assert root.name == "Root"
-        assert [round(p, 6) for p in root.position] == [round(1 * G, 6), round(2 * G, 6), round(3 * G, 6)]
+        assert list(root.position) == pytest.approx([1.0, 2.0, 3.0])
         assert list(root.rotation) == pytest.approx([0.1, 0.2, 0.3])
         assert list(root.scale) == [1, 1, 1]
         assert root.child is None
@@ -202,14 +208,18 @@ class TestComposeBones:
         assert root.flags == JOBJ_HIDDEN
 
     def test_inverse_bind_matrix(self):
-        """Inverse bind matrix translation column is scaled to GC units."""
+        """Inverse bind matrix passes through compose_bones unchanged.
+
+        Unit scaling now happens once up front in scale_scene_to_gc_units
+        (called from compose_scene), not in compose_bones. See
+        tests/test_compose_scale.py for the end-to-end scaling contract.
+        """
         ibm = [[1, 0, 0, 5], [0, 1, 0, 10], [0, 0, 1, 15], [0, 0, 0, 1]]
         bones = [_make_bone("Bone", inverse_bind=ibm)]
         root, joints = compose_bones(bones)
-        expected = [[1, 0, 0, 5 * G], [0, 1, 0, 10 * G], [0, 0, 1, 15 * G], [0, 0, 0, 1]]
         for r in range(4):
             for c in range(4):
-                assert abs(root.inverse_bind[r][c] - expected[r][c]) < 1e-6
+                assert abs(root.inverse_bind[r][c] - ibm[r][c]) < 1e-6
 
     def test_instance_bone(self):
         """JOBJ_INSTANCE bone's child points to the target bone."""
@@ -488,28 +498,14 @@ class TestPObjectIterativeParsing:
 
 
 # ---------------------------------------------------------------------------
-# Envelope weight quantization tests
+# Envelope weight dedup tests
 # ---------------------------------------------------------------------------
 
-class TestEnvelopeWeightQuantization:
-    """Tests for weight quantization in the compose phase."""
-
-    def test_weights_quantized_to_25_percent(self):
-        """Envelope map quantizes weights to 25% steps."""
-        assignments = [
-            (0, [('BoneA', 0.73), ('BoneB', 0.27)]),
-            (1, [('BoneA', 0.71), ('BoneB', 0.29)]),
-            (2, [('BoneA', 0.80), ('BoneB', 0.20)]),
-        ]
-        bone_map = {'BoneA': 0, 'BoneB': 1}
-        result = _build_envelope_map(assignments, bone_map)
-        # 0.73→0.75, 0.71→0.75, 0.80→0.75 — all should collapse to same envelope
-        assert result['vertex_to_env'][0] == result['vertex_to_env'][1]
-        assert result['vertex_to_env'][0] == result['vertex_to_env'][2]
-        assert len(result['envelopes']) == 1
+class TestEnvelopeWeightDedup:
+    """Compose dedups envelopes on exact weight match. Weight
+    limiting/quantisation is prepare_for_export.py's job."""
 
     def test_distinct_weights_stay_separate(self):
-        """Weights that differ by >25% remain separate envelopes."""
         assignments = [
             (0, [('BoneA', 1.0)]),
             (1, [('BoneA', 0.5), ('BoneB', 0.5)]),
@@ -520,7 +516,6 @@ class TestEnvelopeWeightQuantization:
         assert len(result['envelopes']) == 2
 
     def test_identical_weights_same_envelope(self):
-        """Identical weight combos map to the same envelope."""
         assignments = [
             (0, [('BoneA', 0.5), ('BoneB', 0.5)]),
             (1, [('BoneA', 0.5), ('BoneB', 0.5)]),
@@ -529,6 +524,18 @@ class TestEnvelopeWeightQuantization:
         result = _build_envelope_map(assignments, bone_map)
         assert result['vertex_to_env'][0] == result['vertex_to_env'][1]
         assert len(result['envelopes']) == 1
+
+    def test_small_float_differences_do_not_dedup(self):
+        # Without the old 25% quantiser, these stay distinct. The prepare
+        # script is expected to snap weights to 10% steps upstream.
+        assignments = [
+            (0, [('BoneA', 0.73), ('BoneB', 0.27)]),
+            (1, [('BoneA', 0.71), ('BoneB', 0.29)]),
+        ]
+        bone_map = {'BoneA': 0, 'BoneB': 1}
+        result = _build_envelope_map(assignments, bone_map)
+        assert result['vertex_to_env'][0] != result['vertex_to_env'][1]
+        assert len(result['envelopes']) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -607,3 +614,75 @@ class TestIdleNameCompaction:
         from importer.phases.describe.helpers.animations import _compact_anim_name
         assert _compact_anim_name(['Physical A']) == 'Physical A'
         assert _compact_anim_name(['Damage']) == 'Damage'
+
+
+class _FakeArmature:
+    """Minimal stand-in for a Blender armature that supports .get()."""
+
+    def __init__(self, props):
+        self._props = dict(props)
+
+    def get(self, key, default=None):
+        return self._props.get(key, default)
+
+
+class TestPKXReferencedActions:
+    """_collect_pkx_referenced_actions drops actions unused by any PKX slot.
+
+    Prevents the DAT from absorbing unrelated Blender actions (e.g. the
+    dozens of named anims bundled with GLB rips) that aren't assigned to
+    any PKX slot and will never be played by the game.
+    """
+
+    def test_returns_none_when_no_pkx_metadata(self):
+        """Pure .dat scenes (no dat_pkx_format) fall through to keep-all."""
+        from exporter.phases.describe_blender.describe_blender import _collect_pkx_referenced_actions
+        arm = _FakeArmature({})
+        assert _collect_pkx_referenced_actions(arm) is None
+
+    def test_returns_none_when_all_slots_empty(self):
+        """PKX metadata present but no slot assigned yet → treat as not-yet-configured, keep all actions."""
+        from exporter.phases.describe_blender.describe_blender import _collect_pkx_referenced_actions
+        props = {"dat_pkx_format": "XD", "dat_pkx_anim_count": 17}
+        for i in range(17):
+            for s in range(3):
+                props["dat_pkx_anim_%02d_sub_%d_anim" % (i, s)] = ""
+        arm = _FakeArmature(props)
+        assert _collect_pkx_referenced_actions(arm) is None
+
+    def test_collects_assigned_main_slots(self):
+        """Main anim-slot sub_N_anim refs are collected."""
+        from exporter.phases.describe_blender.describe_blender import _collect_pkx_referenced_actions
+        props = {
+            "dat_pkx_format": "XD",
+            "dat_pkx_anim_count": 17,
+            "dat_pkx_anim_00_sub_0_anim": "Greninja_Idle",
+            "dat_pkx_anim_01_sub_0_anim": "Greninja_Attack",
+            "dat_pkx_anim_01_sub_1_anim": "Greninja_AttackFollow",
+        }
+        refs = _collect_pkx_referenced_actions(_FakeArmature(props))
+        assert refs == {"Greninja_Idle", "Greninja_Attack", "Greninja_AttackFollow"}
+
+    def test_collects_sub_anim_refs(self):
+        """Part-anim (dat_pkx_sub_anim_N_anim_ref) refs are collected too."""
+        from exporter.phases.describe_blender.describe_blender import _collect_pkx_referenced_actions
+        props = {
+            "dat_pkx_format": "XD",
+            "dat_pkx_anim_00_sub_0_anim": "Idle",
+            "dat_pkx_sub_anim_0_anim_ref": "SleepOnAnim",
+            "dat_pkx_sub_anim_2_anim_ref": "ExtraAnim",
+        }
+        refs = _collect_pkx_referenced_actions(_FakeArmature(props))
+        assert refs == {"Idle", "SleepOnAnim", "ExtraAnim"}
+
+    def test_empty_strings_are_skipped(self):
+        """Unassigned slots (empty string) do not appear in the referenced set."""
+        from exporter.phases.describe_blender.describe_blender import _collect_pkx_referenced_actions
+        props = {
+            "dat_pkx_format": "XD",
+            "dat_pkx_anim_00_sub_0_anim": "Idle",
+            "dat_pkx_anim_00_sub_1_anim": "",
+            "dat_pkx_anim_01_sub_0_anim": "",
+        }
+        refs = _collect_pkx_referenced_actions(_FakeArmature(props))
+        assert refs == {"Idle"}
