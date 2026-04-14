@@ -18,17 +18,16 @@ try:
         GX_VA_TEX0, GX_VA_PNMTXIDX,
         GX_INDEX16, GX_DIRECT, GX_F32, GX_RGBA8,
         GX_POS_XYZ, GX_NRM_XYZ, GX_TEX_ST,
-        GX_DRAW_TRIANGLES,
+        GX_DRAW_TRIANGLES, GX_DRAW_QUADS,
     )
     from .....shared.Constants.hsd import (
         POBJ_CULLFRONT, POBJ_CULLBACK, POBJ_SKIN, POBJ_ENVELOPE,
-        JOBJ_HIDDEN,
+        JOBJ_HIDDEN, JOBJ_SKELETON, JOBJ_SKELETON_ROOT,
     )
     from .....shared.IR.enums import SkinType
     from .....shared.helpers.binary import pack, pack_many
     from .....shared.helpers.math_shim import Matrix, Vector
     from .....shared.helpers.logger import StubLogger
-    from .....shared.helpers.scale import METERS_TO_GC
     from .materials import compose_material
 except (ImportError, SystemError):
     from shared.Nodes.Classes.Mesh.Mesh import Mesh
@@ -41,17 +40,16 @@ except (ImportError, SystemError):
         GX_VA_TEX0, GX_VA_PNMTXIDX,
         GX_INDEX16, GX_DIRECT, GX_F32, GX_RGBA8,
         GX_POS_XYZ, GX_NRM_XYZ, GX_TEX_ST,
-        GX_DRAW_TRIANGLES,
+        GX_DRAW_TRIANGLES, GX_DRAW_QUADS,
     )
     from shared.Constants.hsd import (
         POBJ_CULLFRONT, POBJ_CULLBACK, POBJ_SKIN, POBJ_ENVELOPE,
-        JOBJ_HIDDEN,
+        JOBJ_HIDDEN, JOBJ_SKELETON, JOBJ_SKELETON_ROOT,
     )
     from shared.IR.enums import SkinType
     from shared.helpers.binary import pack, pack_many
     from shared.helpers.math_shim import Matrix, Vector
     from shared.helpers.logger import StubLogger
-    from shared.helpers.scale import METERS_TO_GC
     from exporter.phases.compose.helpers.materials import compose_material
 
 
@@ -101,6 +99,13 @@ def compose_meshes(meshes, joints, bones, logger=StubLogger()):
 
     bone_name_to_index = {bone.name: i for i, bone in enumerate(bones)}
 
+    # Dedup MObject subtrees across DObjects. Keyed on id(ir_material), so
+    # every DObject whose IRMesh references the same IRMaterial instance
+    # (typically produced by describe_blender's material_cache) points at
+    # the same MaterialObject node. The serialize DFS then writes the
+    # MObject + its TObject + Image + pixel data exactly once.
+    mobj_cache = {}
+
     for bone_idx, ir_meshes in meshes_by_bone.items():
         # Group IRMeshes by material identity. Meshes with the same
         # material (by id) share a DObject; each gets its own PObject.
@@ -132,10 +137,16 @@ def compose_meshes(meshes, joints, bones, logger=StubLogger()):
             for i in range(len(pobjs) - 1):
                 pobjs[i].next = pobjs[i + 1]
 
+            mat_key = id(ir_material)
+            mobj = mobj_cache.get(mat_key)
+            if mobj is None:
+                mobj = compose_material(ir_material, logger=logger)
+                mobj_cache[mat_key] = mobj
+
             mesh_node = Mesh(address=None, blender_obj=None)
             mesh_node.name = None
             mesh_node.next = None
-            mesh_node.mobject = compose_material(ir_material, logger=logger)
+            mesh_node.mobject = mobj
             mesh_node.pobject = pobjs[0]
             mesh_nodes.append(mesh_node)
 
@@ -185,7 +196,7 @@ def _build_pobj(ir_mesh, joints, bones, bone_name_to_index, logger):
     # PNMTXIDX — envelope index attribute (only for WEIGHTED meshes)
     envelope_map = None
     if is_envelope:
-        envelope_map = _build_envelope_map(bw.assignments, bone_name_to_index)
+        envelope_map = _build_envelope_map(bw.assignments, bone_name_to_index, logger=logger)
         pnmtx_desc = Vertex(address=None, blender_obj=None)
         pnmtx_desc.attribute = GX_VA_PNMTXIDX
         pnmtx_desc.attribute_type = GX_DIRECT
@@ -206,24 +217,27 @@ def _build_pobj(ir_mesh, joints, bones, bone_name_to_index, logger):
     export_vertices = ir_mesh.vertices
     if is_envelope and bones:
         export_vertices = _undeform_vertices(
-            ir_mesh.vertices, bw.assignments, bones, bone_name_to_index,
+            ir_mesh.vertices, envelope_map, bones, bone_name_to_index,
             ir_mesh.parent_bone_index, logger)
     elif bw and bw.type in (SkinType.SINGLE_BONE, SkinType.RIGID) and bones:
-        # SINGLE_BONE and RIGID: transform from world space to parent bone's
-        # local space. The game applies the parent Joint's world transform
-        # at runtime to position the mesh.
+        # SINGLE_BONE and RIGID: transform from world space to the parent
+        # JObj's local space. The game applies parent_jobj.world at render
+        # time to position the mesh — this must mirror the importer, which
+        # also uses parent_bone_index (not bw.bone_name) for both types.
+        # Using bw.bone_name here would break meshes whose original
+        # attachment bone differs from their single weight target (e.g.
+        # sirnight head extras: parented to bone 107, weighted to bone 71).
         bone_idx = ir_mesh.parent_bone_index
-        if bw.type == SkinType.SINGLE_BONE and bw.bone_name:
-            bone_idx = bone_name_to_index.get(bw.bone_name, bone_idx)
         if bone_idx < len(bones) and bones[bone_idx].world_matrix:
             world_inv = Matrix(bones[bone_idx].world_matrix).inverted()
             export_vertices = [
                 tuple(world_inv @ Vector(v)) for v in ir_mesh.vertices
             ]
 
-    # Scale from meters back to GameCube units
-    gc_vertices = [tuple(c * METERS_TO_GC for c in v) for v in export_vertices]
-    pos_data, pos_buffer = _encode_float3_buffer(gc_vertices)
+
+    # Vertices are already in GC units — the pre-scale pass in compose_scene
+    # converted the whole IRScene from meters to GC units once up front.
+    pos_data, pos_buffer = _encode_float3_buffer(export_vertices)
     pos_desc = _make_vertex_desc(GX_VA_POS, GX_POS_XYZ, GX_F32, stride=12)
     pos_desc.raw_vertex_data = pos_buffer
     vertex_descs.append(pos_desc)
@@ -268,6 +282,17 @@ def _build_pobj(ir_mesh, joints, bones, bone_name_to_index, logger):
         vertex_descs.append(clr_desc)
         vertex_buffers.append(('color', clr_verts, clr_indices))
 
+    # HSDLib parity: normals and vertex colors are mutually exclusive per
+    # PObject on GameCube. Verified across 8 shipped XD/Colo models
+    # (215 PObjects total): zero carry both. Until we implement per-attribute
+    # PObject splitting, warn so the user can decide whether to strip one
+    # attribute in the source scene. See CLAUDE.md TODO.
+    attrs = {d.attribute for d in vertex_descs}
+    if GX_VA_NRM in attrs and (GX_VA_CLR0 in attrs or GX_VA_CLR1 in attrs):
+        logger.warning("      pobj '%s': carries both NRM and CLR — zero game "
+                       "PObjects do this; one attribute will likely be ignored "
+                       "in-game", ir_mesh.name)
+
     # Determine cull flags (shared across all split PObjects)
     cull_flags = POBJ_CULLBACK
     if ir_mesh.cull_front:
@@ -294,6 +319,14 @@ def _build_pobj(ir_mesh, joints, bones, bone_name_to_index, logger):
             envelope_map, joints, bone_name_to_index)
         pobj.flags |= POBJ_ENVELOPE | 0x1  # bit 0 always set alongside ENVELOPE
     elif bw and bw.type == SkinType.SINGLE_BONE and bw.bone_name:
+        # POBJ_SKIN ("singly-bound") — UNVERIFIED PATH. describe_blender
+        # never produces SINGLE_BONE (always WEIGHTED), so this branch only
+        # fires for IRs constructed directly (e.g. importer's POBJ_SKIN
+        # path, which itself is never exercised by any of the 1127 surveyed
+        # game-original models). The vertex inverse-transform above uses
+        # parent_bone_index for round-trip symmetry with the importer, but
+        # that mirrors a likely-incorrect importer convention — see the
+        # matching note in importer/phases/describe/helpers/meshes.py.
         bone_idx = bone_name_to_index.get(bw.bone_name)
         if bone_idx is not None and bone_idx < len(joints):
             pobj.property = joints[bone_idx]
@@ -390,7 +423,7 @@ def _build_split_pobjs(ir_mesh, envelope_map, vertex_descs, vertex_buffers,
 # Envelope (WEIGHTED skinning) helpers
 # ---------------------------------------------------------------------------
 
-def _undeform_vertices(vertices, assignments, bones, bone_name_to_index,
+def _undeform_vertices(vertices, envelope_map, bones, bone_name_to_index,
                        parent_bone_index, logger):
     """Reverse the envelope deformation applied by the describe phase.
 
@@ -398,22 +431,20 @@ def _undeform_vertices(vertices, assignments, bones, bone_name_to_index,
         world_pos = (bone_world @ bone_IBM [@ coord]) @ bind_pos
     This reverses it by computing the same deformation matrices and
     inverting them, matching describe/meshes.py's _extract_envelope_weights.
+
+    Consumes the same `envelope_map` that is written to disk so the stored
+    envelope weights and the un-deform matrix agree vertex-by-vertex. Two
+    vertices sharing an envelope must reverse the same blend; otherwise
+    the runtime re-deforms them with the stored envelope and they land at
+    the wrong world position.
     """
     try:
         from .....shared.Constants.hsd import JOBJ_SKELETON_ROOT
     except (ImportError, SystemError):
         from shared.Constants.hsd import JOBJ_SKELETON_ROOT
 
-    # Build per-vertex envelope index mapping
-    vertex_to_env = {}
-    env_combos = []
-    combo_to_idx = {}
-    for vertex_idx, weight_list in assignments:
-        key = tuple(sorted((name, round(w, 6)) for name, w in weight_list))
-        if key not in combo_to_idx:
-            combo_to_idx[key] = len(env_combos)
-            env_combos.append(weight_list)
-        vertex_to_env[vertex_idx] = combo_to_idx[key]
+    vertex_to_env = envelope_map['vertex_to_env']
+    env_combos = envelope_map['envelopes']
 
     # Compute envelope coordinate system (mirrors describe phase)
     coord = _envelope_coord_system(parent_bone_index, bones, JOBJ_SKELETON_ROOT)
@@ -464,11 +495,16 @@ def _get_invbind_matrix(bone_index, bones):
     return Matrix([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]])
 
 
-def _find_skeleton_bone(bone_index, bones, JOBJ_SKELETON_ROOT):
-    """Find the skeleton root bone for a given bone."""
+def _find_skeleton_bone(bone_index, bones, _unused=None):
+    """Walk up from `bone_index` to the nearest bone with SKELETON or
+    SKELETON_ROOT flag. MUST mirror the importer's describe-side version
+    at importer/phases/describe/helpers/meshes.py:_find_skeleton_bone — if
+    the two disagree, the compose un-deform and import re-deform compute
+    different `coord` matrices and rest-pose vertices round-trip wrong.
+    """
     idx = bone_index
     while idx is not None:
-        if bones[idx].flags & JOBJ_SKELETON_ROOT:
+        if bones[idx].flags & (JOBJ_SKELETON | JOBJ_SKELETON_ROOT):
             return idx
         idx = bones[idx].parent_index
     return None
@@ -500,33 +536,69 @@ def _envelope_coord_system(bone_index, bones, JOBJ_SKELETON_ROOT):
         return (skel_world @ inv_bind).inverted() @ bone_world
 
 
-def _build_envelope_map(assignments, bone_name_to_index):
+def _canonicalize_weights(weight_list):
+    """Renormalise a vertex's weight list.
+
+    Single source of truth consumed by both `_build_envelope_map` (what is
+    written to disk) and `_undeform_vertices` (what the export position
+    reverses). If those two ever drift apart, vertices that collapse into a
+    shared envelope get un-deformed by one blend matrix but re-deformed by
+    a different one at runtime.
+
+    Weight limiting and quantization are the prepare script's job (see
+    scripts/prepare_for_export.py) so the viewport preview matches what
+    ships to the .dat. Compose only renormalises against floating-point
+    drift.
+
+    Returns:
+        (canonical_list, key) where canonical_list is the renormalised
+        `[(bone_name, weight), ...]` (in the original order) and key is
+        the hashable sorted form for dedup.
+    """
+    s = sum(w for _, w in weight_list)
+    if abs(s - 1.0) > 0.001 and s > 0:
+        weight_list = [(name, w / s) for name, w in weight_list]
+    canonical = list(weight_list)
+    key = tuple(sorted(canonical))
+    return canonical, key
+
+
+def _build_envelope_map(assignments, bone_name_to_index, logger=None):
     """Build a mapping from vertex indices to envelope indices.
 
-    Groups vertices by their unique bone weight combination. Each unique
-    combination becomes one EnvelopeList entry.
+    Groups vertices by their unique bone weight combination (after
+    renormalisation). Each unique combination becomes one EnvelopeList
+    entry whose weights are exactly what downstream un-deformation will
+    reverse.
 
     Args:
         assignments: list[(vertex_idx, [(bone_name, weight), ...])]
         bone_name_to_index: dict mapping bone name → index
+        logger: optional Logger for the summary line.
 
     Returns:
         dict with keys:
             'vertex_to_env': {vertex_idx: envelope_index}
-            'envelopes': list of [(bone_name, weight), ...] per unique combo
+            'envelopes': list of canonical [(bone_name, weight), ...] per unique combo
     """
-    combo_to_env = {}  # frozenset of (bone_name, weight) → env index
+    combo_to_env = {}
     envelopes = []
     vertex_to_env = {}
+    normalised = 0
 
     for vertex_idx, weight_list in assignments:
-        # Normalize: sort by bone name, quantize weights to 25% steps
-        # to aggressively collapse near-duplicate combos for GameCube memory
-        key = tuple(sorted((name, round(round(w * 4) / 4, 2)) for name, w in weight_list))
+        pre_sum = sum(w for _, w in weight_list)
+        if abs(pre_sum - 1.0) > 0.001 and pre_sum > 0:
+            normalised += 1
+        canonical, key = _canonicalize_weights(weight_list)
         if key not in combo_to_env:
             combo_to_env[key] = len(envelopes)
-            envelopes.append(weight_list)
+            envelopes.append(canonical)
         vertex_to_env[vertex_idx] = combo_to_env[key]
+
+    if normalised and logger is not None:
+        logger.info("    Renormalised %d vertex envelope(s) that didn't sum to 1.0",
+                    normalised)
 
     return {
         'vertex_to_env': vertex_to_env,
@@ -802,14 +874,21 @@ def _build_split_envelope_map(global_envelope_map, group_envelope_indices,
 
 def _encode_display_list(faces, vertices, vertex_descs, vertex_buffers,
                          pre_triangulated=None):
-    """Encode faces into a GX_DRAW_TRIANGLES display list.
+    """Encode faces into a display list.
 
-    The display list encodes triangulated faces. Each vertex in the DL
-    contains one index per vertex descriptor (position, normal, UV, etc.).
+    Emits GX_DRAW_QUADS for 4-vertex faces and GX_DRAW_TRIANGLES for
+    triangles, so quads in the source mesh round-trip without being
+    split into two triangles (which would double the loop count and
+    perturb shading on flat-quad surfaces). n-gons (>4) are fan-
+    triangulated into the GX_DRAW_TRIANGLES section.
+
+    When `pre_triangulated` is provided, only GX_DRAW_TRIANGLES is
+    emitted — the envelope splitter pre-triangulates so it can pack
+    triangles into ≤10-envelope groups, and we honour that directly.
 
     Args:
-        faces: list[list[int]] — per-face vertex index lists (may be quads).
-               Ignored when pre_triangulated is provided.
+        faces: list[list[int]] — per-face vertex index lists (tris, quads,
+               or n-gons). Ignored when pre_triangulated is provided.
         vertices: list[tuple] — position vertices (for index range).
         vertex_descs: list[Vertex] — vertex attribute descriptors.
         vertex_buffers: list — parallel to vertex_descs.
@@ -820,58 +899,106 @@ def _encode_display_list(faces, vertices, vertex_descs, vertex_buffers,
         bytes — the raw display list, padded to 32-byte alignment.
     """
     if pre_triangulated:
-        triangles, tri_loop_indices = pre_triangulated
+        tris, tri_loops = pre_triangulated
+        # Split-PObj path: emit one GX_DRAW_TRIANGLES block directly.
+        ordered_blocks = [('tri', tris, tri_loops)] if tris else []
     else:
-        triangles, tri_loop_indices = _triangulate_faces(faces)
+        ordered_blocks = _group_faces_for_display_list(faces)
 
-    if not triangles:
+    if not ordered_blocks:
         return b'\x00' * 32
-
-    vertex_count = len(triangles) * 3
 
     buf = bytearray()
 
-    # Opcode: GX_DRAW_TRIANGLES
-    buf.append(GX_DRAW_TRIANGLES)
-    # Vertex count (ushort)
-    buf.extend(pack('ushort', vertex_count))
-
-    # Write vertex indices with GX winding (swap indices 1↔2 to convert
-    # Blender CCW → GX CW). The parser's GX_DRAW_TRIANGLES handler will
-    # swap them back to produce CCW faces on re-import.
-    for tri_idx, tri in enumerate(triangles):
-        loop_idxs = tri_loop_indices[tri_idx]
-        for vi in [0, 2, 1]:
-            pos_index = tri[vi]
-            loop_index = loop_idxs[vi]
-
-            for desc_idx, desc in enumerate(vertex_descs):
-                vbuf = vertex_buffers[desc_idx]
-
-                if desc.attribute == GX_VA_PNMTXIDX:
-                    # Envelope index: vertex_idx → env_idx * 3
-                    # GX hardware has 10 matrix slots (indices 0,3,...,27)
-                    _, env_map = vbuf
-                    env_idx = env_map['vertex_to_env'].get(pos_index, 0)
-                    assert env_idx < 10, (
-                        f"PNMTXIDX {env_idx} >= 10: mesh needs display list "
-                        f"splitting (should have been handled by _build_split_pobjs)")
-                    buf.append(env_idx * 3)
-                elif desc.attribute == GX_VA_POS:
-                    buf.extend(pack('ushort', pos_index))
-                elif isinstance(vbuf, tuple) and len(vbuf) == 3:
-                    # Per-loop attribute (normals, UVs, colors)
-                    _, _, per_loop_indices = vbuf
-                    if loop_index < len(per_loop_indices):
-                        idx = per_loop_indices[loop_index]
-                    else:
-                        idx = 0
-                    buf.extend(pack('ushort', idx))
-                else:
-                    buf.extend(pack('ushort', pos_index))
+    # Emit blocks in face order — contiguous runs of same primitive type
+    # stay batched so mixed-primitive meshes (tri, quad, tri) preserve
+    # their per-loop UV/normal/color buffer order through round-trip.
+    for kind, prims, loop_idx_lists in ordered_blocks:
+        if kind == 'quad':
+            buf.append(GX_DRAW_QUADS)
+            buf.extend(pack('ushort', len(prims) * 4))
+            swap = [3, 2, 1, 0]
+        else:
+            buf.append(GX_DRAW_TRIANGLES)
+            buf.extend(pack('ushort', len(prims) * 3))
+            swap = [0, 2, 1]
+        for p_idx, prim in enumerate(prims):
+            lidxs = loop_idx_lists[p_idx]
+            for vi in swap:
+                _write_dl_vertex(buf, prim[vi], lidxs[vi],
+                                 vertex_descs, vertex_buffers)
 
     # Pad to 32-byte alignment
     while len(buf) % 32 != 0:
         buf.append(0x00)
 
     return bytes(buf)
+
+
+def _group_faces_for_display_list(faces):
+    """Group faces into contiguous runs of same-primitive blocks.
+
+    Returns a list of (kind, prims, loop_idx_lists) tuples where:
+    - kind is 'quad' (4-verts) or 'tri' (3-verts or fan-triangulated n-gons)
+    - prims is list[list[int]] of vertex indices per primitive
+    - loop_idx_lists is list[list[int]] of loop indices per primitive
+
+    Order of the input faces list is preserved. n-gons (>4) are fan-
+    triangulated inline and joined into the surrounding triangle run.
+    """
+    blocks = []
+    current = None
+    loop_idx = 0
+
+    def _append(kind, prim, lidxs):
+        nonlocal current
+        if current is None or current[0] != kind:
+            current = (kind, [], [])
+            blocks.append(current)
+        current[1].append(prim)
+        current[2].append(lidxs)
+
+    for face in faces:
+        base = loop_idx
+        n = len(face)
+        if n == 3:
+            _append('tri', list(face), [base, base + 1, base + 2])
+        elif n == 4:
+            _append('quad', list(face), [base, base + 1, base + 2, base + 3])
+        elif n > 4:
+            for i in range(1, n - 1):
+                _append('tri', [face[0], face[i], face[i + 1]],
+                        [base, base + i, base + i + 1])
+        loop_idx += n
+
+    return blocks
+
+
+def _write_dl_vertex(buf, pos_index, loop_index, vertex_descs, vertex_buffers):
+    """Write one vertex's attribute indices into the display list buffer."""
+    for desc_idx, desc in enumerate(vertex_descs):
+        vbuf = vertex_buffers[desc_idx]
+
+        if desc.attribute == GX_VA_PNMTXIDX:
+            # Envelope index: vertex_idx → env_idx * 3
+            # GX hardware has 10 matrix slots (indices 0,3,...,27)
+            _, env_map = vbuf
+            env_idx = env_map['vertex_to_env'].get(pos_index, 0)
+            assert env_idx < 10, (
+                f"PNMTXIDX {env_idx} >= 10: mesh needs display list "
+                f"splitting (should have been handled by _build_split_pobjs)")
+            buf.append(env_idx * 3)
+        elif desc.attribute == GX_VA_POS:
+            buf.extend(pack('ushort', pos_index))
+        elif isinstance(vbuf, tuple) and len(vbuf) == 3:
+            # Per-loop attribute (normals, UVs, colors)
+            _, _, per_loop_indices = vbuf
+            if loop_index < len(per_loop_indices):
+                idx = per_loop_indices[loop_index]
+            else:
+                idx = 0
+            buf.extend(pack('ushort', idx))
+        else:
+            buf.extend(pack('ushort', pos_index))
+
+
