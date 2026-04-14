@@ -188,6 +188,37 @@ def _find_color_input(nodes):
     return None, None
 
 
+def _has_no_texture_in_color_chain(target_input):
+    """True when no ShaderNodeTexImage is reachable from the shader color input.
+
+    The in-game shiny color swap operates on GX texture swap tables; a
+    material whose TEV chain has no texture sample has nothing to swizzle,
+    and the brightness modulation on a constant-colour chain reads as
+    untouched compared to the saturated re-tint textured materials get.
+    Skip these materials so the shader-side simulation matches.
+
+    An unlinked target input (default-valued Base Color) is also treated
+    as "no texture" — still a pure constant-colour chain.
+    """
+    if not target_input.is_linked:
+        return True
+    visited = set()
+    stack = [target_input]
+    while stack:
+        sock = stack.pop()
+        for link in sock.links:
+            node = link.from_node
+            if id(node) in visited:
+                continue
+            visited.add(id(node))
+            if node.type == 'TEX_IMAGE':
+                return False
+            for inp in node.inputs:
+                if inp.is_linked:
+                    stack.append(inp)
+    return True
+
+
 def _add_driver(factor_input, armature):
     """Add a driver to a mix node's Factor driven by armature.dat_pkx_shiny."""
     factor_input.default_value = 0.0
@@ -247,6 +278,9 @@ def insert_shiny_filter(material, route_group, bright_group, armature):
 
     target_node, target_input = _find_color_input(nodes)
     if target_node is None:
+        return
+
+    if _has_no_texture_in_color_chain(target_input):
         return
 
     _insert_stage(nodes, links, target_node, target_input,
