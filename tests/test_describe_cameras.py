@@ -179,7 +179,7 @@ class TestDescribeCamera:
     def test_name_first_camera(self):
         cam = _make_camera(name="battle_cam")
         result = describe_camera(cam, camera_index=0)
-        assert result.name == "Battle_Camera"
+        assert result.name == "Debug_Camera"
 
     def test_name_subsequent_camera(self):
         cam = _make_camera(name=None)

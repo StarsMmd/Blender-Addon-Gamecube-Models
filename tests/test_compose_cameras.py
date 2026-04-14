@@ -52,14 +52,17 @@ class TestComposeCamera:
         assert result.camera.perspective_flags == COBJ_PROJECTION_ORTHO
 
     def test_position_flows_to_wobject(self):
+        # compose_camera no longer applies METERS_TO_GC — scaling happens
+        # once up front in scale_scene_to_gc_units. See test_compose_scale.py
+        # for the end-to-end scaling contract.
         ir_cam = _make_ir_camera(position=(10.0, 20.0, 30.0))
         result = compose_camera(ir_cam)
-        assert result.camera.position.position == [10.0 * G, 20.0 * G, 30.0 * G]
+        assert result.camera.position.position == [10.0, 20.0, 30.0]
 
     def test_interest_flows_to_wobject(self):
         ir_cam = _make_ir_camera(target_position=(5.0, 6.0, 7.0))
         result = compose_camera(ir_cam)
-        assert result.camera.interest.position == [5.0 * G, 6.0 * G, 7.0 * G]
+        assert result.camera.interest.position == [5.0, 6.0, 7.0]
 
     def test_fov_preserved(self):
         ir_cam = _make_ir_camera(field_of_view=40.0)
@@ -69,8 +72,8 @@ class TestComposeCamera:
     def test_clip_planes(self):
         ir_cam = _make_ir_camera(near=0.5, far=1000.0)
         result = compose_camera(ir_cam)
-        assert abs(result.camera.near - 0.5 * G) < 1e-6
-        assert abs(result.camera.far - 1000.0 * G) < 1e-3
+        assert abs(result.camera.near - 0.5) < 1e-6
+        assert abs(result.camera.far - 1000.0) < 1e-3
 
     def test_roll_preserved(self):
         ir_cam = _make_ir_camera(roll=0.3)
