@@ -6,7 +6,7 @@ any well-formed Blender mesh — no assumptions about naming conventions.
 """
 import math
 import bpy
-from mathutils import Matrix, Vector
+from mathutils import Matrix
 
 try:
     from .....shared.IR.geometry import IRMesh, IRUVLayer, IRColorLayer, IRBoneWeights
@@ -32,18 +32,18 @@ def describe_meshes(armature, bones, logger=StubLogger()):
         logger: Logger instance.
 
     Returns:
-        list[IRMesh] — one per material slot per mesh object.
+        (meshes, blender_materials): two parallel lists of length N. The
+        second list holds the bpy.types.Material (or None) each IRMesh was
+        described from, which the material-animation exporter needs to
+        recover the original `mesh_{idx}_{bone_name}` → material binding
+        that the importer used when writing fcurves onto Blender materials.
     """
     bone_name_to_index = {bone.name: i for i, bone in enumerate(bones)}
-    # Transform vertices and normals from Blender space to IR space (Y-up),
-    # matching what describe_skeleton does for bone matrices.
-    # vertex_transform: includes armature rotation + scale + Z-up→Y-up.
-    # normal_transform: rotation only (normals shouldn't be scaled).
-    obj_transform = armature.matrix_world.copy()
-    obj_transform.translation = Vector((0, 0, 0))
-    obj_rotation = armature.matrix_world.to_3x3().normalized().to_4x4()
-    vertex_transform = _COORD_ROTATION_INV @ obj_transform
-    normal_transform = (_COORD_ROTATION_INV @ obj_rotation).to_3x3()
+    # Transform vertices and normals from Blender Z-up to GameCube Y-up.
+    # The armature's matrix_world is identity (validated upstream by
+    # describe_blender_scene), so no obj_transform is folded in here.
+    vertex_transform = _COORD_ROTATION_INV
+    normal_transform = _COORD_ROTATION_INV.to_3x3()
     meshes = []
 
     # Find all mesh objects parented to this armature, sorted by name.
@@ -55,23 +55,35 @@ def describe_meshes(armature, bones, logger=StubLogger()):
         key=_mesh_sort_key,
     )
 
+    # Caches shared across all submeshes so that multiple mesh objects /
+    # material slots referencing the same Blender material (or image) all
+    # produce the same IRMaterial / IRImage Python instance. This is what
+    # lets compose dedup collapse the whole MObject/TObject/Image subtree
+    # down to one shared instance per material.
+    material_cache = {}
+    image_cache = {}
+
+    blender_materials = []
     for mesh_obj in mesh_objects:
-        ir_meshes = _describe_mesh_object(mesh_obj, bone_name_to_index, bones,
-                                          vertex_transform, normal_transform, logger)
+        ir_meshes, mats = _describe_mesh_object(
+            mesh_obj, bone_name_to_index, bones,
+            vertex_transform, normal_transform, logger,
+            material_cache, image_cache)
         meshes.extend(ir_meshes)
+        blender_materials.extend(mats)
 
     total_verts = sum(len(m.vertices) for m in meshes)
     total_faces = sum(len(m.faces) for m in meshes)
     weighted = sum(1 for m in meshes if m.bone_weights and m.bone_weights.type == SkinType.WEIGHTED)
-    single = sum(1 for m in meshes if m.bone_weights and m.bone_weights.type == SkinType.SINGLE_BONE)
     no_weights = sum(1 for m in meshes if not m.bone_weights)
-    logger.info("  Described %d meshes from armature '%s': %d verts, %d faces (weighted=%d, single_bone=%d, no_weights=%d)",
-                len(meshes), armature.name, total_verts, total_faces, weighted, single, no_weights)
-    return meshes
+    logger.info("  Described %d meshes from armature '%s': %d verts, %d faces (weighted=%d, no_weights=%d)",
+                len(meshes), armature.name, total_verts, total_faces, weighted, no_weights)
+    return meshes, blender_materials
 
 
 def _describe_mesh_object(mesh_obj, bone_name_to_index, bones,
-                          vertex_transform, normal_transform, logger):
+                          vertex_transform, normal_transform, logger,
+                          material_cache=None, image_cache=None):
     """Extract geometry and weight data from a single Blender mesh object.
 
     If the mesh has multiple material slots with faces assigned, it is split
@@ -81,8 +93,8 @@ def _describe_mesh_object(mesh_obj, bone_name_to_index, bones,
     Args:
         mesh_obj: Blender mesh object (bpy.types.Object with mesh data).
         bone_name_to_index: dict mapping bone name → index in IRBone list.
-        vertex_transform: 4x4 Matrix (scale + rotation + coord conversion).
-        normal_transform: 3x3 Matrix (rotation + coord conversion, no scale).
+        vertex_transform: 4x4 Matrix (Z-up → Y-up coord conversion only).
+        normal_transform: 3x3 Matrix (Z-up → Y-up coord conversion only).
         logger: Logger instance.
 
     Returns:
@@ -116,7 +128,7 @@ def _describe_mesh_object(mesh_obj, bone_name_to_index, bones,
 
     # Shared across all sub-meshes
     bone_weights = _extract_bone_weights(mesh_obj, bone_name_to_index)
-    parent_bone_index = _determine_parent_bone(bone_weights, bone_name_to_index, bones)
+    parent_bone_index = _determine_parent_bone(mesh_obj, bone_weights, bone_name_to_index, bones)
     is_hidden = mesh_obj.hide_render
 
     # Determine material slot usage — group polygons by material_index
@@ -134,28 +146,32 @@ def _describe_mesh_object(mesh_obj, bone_name_to_index, bones,
         material_groups = sorted(groups_by_mat.items())
 
     results = []
+    result_materials = []
     for mat_index, poly_indices in material_groups:
         if not poly_indices:
             continue
 
-        ir_mesh = _build_submesh(
+        ir_mesh, blender_mat = _build_submesh(
             mesh_obj.name, mat_index, num_materials,
             all_vertices, all_polys, poly_indices,
             all_uv_data, all_color_data, all_normals,
             bone_weights, parent_bone_index, is_hidden,
             mesh_data.materials, logger,
+            material_cache, image_cache,
         )
         if ir_mesh is not None:
             results.append(ir_mesh)
+            result_materials.append(blender_mat)
 
-    return results
+    return results, result_materials
 
 
 def _build_submesh(mesh_name, mat_index, num_materials,
                    all_vertices, all_polys, poly_indices,
                    all_uv_data, all_color_data, all_normals,
                    bone_weights, parent_bone_index, is_hidden,
-                   materials, logger):
+                   materials, logger,
+                   material_cache=None, image_cache=None):
     """Build an IRMesh from a subset of polygons sharing one material.
 
     Remaps vertex indices and per-loop data so the sub-mesh is self-contained.
@@ -179,7 +195,7 @@ def _build_submesh(mesh_name, mat_index, num_materials,
             loop_indices.append(li)
 
     if not faces:
-        return None
+        return None, None
 
     # Remap per-loop UV data
     uv_layers = []
@@ -216,11 +232,14 @@ def _build_submesh(mesh_name, mat_index, num_materials,
 
     # Material
     ir_material = None
+    blender_mat = None
     cull_back = False
     if materials and mat_index < len(materials) and materials[mat_index]:
         blender_mat = materials[mat_index]
         cull_back = blender_mat.use_backface_culling
-        ir_material = describe_material(blender_mat, logger=logger)
+        ir_material = describe_material(blender_mat, logger=logger,
+                                        cache=material_cache,
+                                        image_cache=image_cache)
 
     # Name: append material index suffix only when the mesh was split
     name = mesh_name if num_materials <= 1 else "%s_%03d" % (mesh_name, mat_index)
@@ -250,7 +269,7 @@ def _build_submesh(mesh_name, mat_index, num_materials,
                  uv_names, clr_names, len(normals) if normals else 'none')
     logger.debug("    weights: type=%s, bone=%s, assignments=%d",
                  weight_type, weight_bone, weight_count)
-    return ir_mesh
+    return ir_mesh, blender_mat
 
 
 def _mesh_sort_key(mesh_obj):
@@ -337,41 +356,30 @@ def _extract_bone_weights(mesh_obj, bone_name_to_index):
     if not assignments:
         return None
 
-    # Classify skinning type
-    referenced_bones = set()
-    all_single = True
-    for _, weight_list in assignments:
-        if len(weight_list) != 1:
-            all_single = False
-        for bone_name, _ in weight_list:
-            referenced_bones.add(bone_name)
-
-    # All vertices reference exactly one bone → SINGLE_BONE
-    if all_single and len(referenced_bones) == 1:
-        bone_name = next(iter(referenced_bones))
-        return IRBoneWeights(
-            type=SkinType.SINGLE_BONE,
-            bone_name=bone_name,
-        )
-
-    # Multiple bones referenced — use WEIGHTED to preserve per-vertex
-    # bone assignments. The compose phase encodes these as EnvelopeList
-    # entries (HSD envelope skinning).
+    # Always emit WEIGHTED (envelope skinning) for vertex-grouped meshes.
+    # The game's POBJ_SKIN format (SINGLE_BONE in the IR) is unused across
+    # the 70+ surveyed Pokémon models — every weighted mesh is envelope,
+    # even single-bone-weight=1.0 cases. Re-classifying to SINGLE_BONE
+    # here would be ambiguous (Blender can't distinguish envelope-of-one
+    # from rigid-skin-to-one) and would change the format on round-trip.
     return IRBoneWeights(
         type=SkinType.WEIGHTED,
         assignments=assignments,
     )
 
 
-def _determine_parent_bone(bone_weights, bone_name_to_index, bones):
+def _determine_parent_bone(mesh_obj, bone_weights, bone_name_to_index, bones):
     """Determine which bone index a mesh should be attached to.
 
-    For SINGLE_BONE: uses the named bone directly.
-    For WEIGHTED: finds the nearest common ancestor of all bones
-    referenced in the weight assignments.
-    Falls back to 0 (root) if no weights exist.
+    Preferred: the mesh object's `parent_bone` field — the importer sets
+    this to preserve the original mesh→bone ownership through the
+    round-trip. Works whether `parent_type` is OBJECT or BONE.
+    Fallback for meshes authored outside our importer:
+    - WEIGHTED: nearest common ancestor of all weighted bones.
+    - Otherwise: 0 (root).
 
     Args:
+        mesh_obj: Blender mesh object.
         bone_weights: IRBoneWeights or None.
         bone_name_to_index: dict mapping bone name → index.
         bones: list[IRBone] for parent chain traversal.
@@ -379,11 +387,13 @@ def _determine_parent_bone(bone_weights, bone_name_to_index, bones):
     Returns:
         int — bone index.
     """
+    if mesh_obj.parent_bone:
+        idx = bone_name_to_index.get(mesh_obj.parent_bone)
+        if idx is not None:
+            return idx
+
     if bone_weights is None:
         return 0
-
-    if bone_weights.type == SkinType.SINGLE_BONE and bone_weights.bone_name:
-        return bone_name_to_index.get(bone_weights.bone_name, 0)
 
     if bone_weights.type == SkinType.WEIGHTED and bone_weights.assignments:
         # Collect all bones referenced in weight assignments

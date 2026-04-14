@@ -154,6 +154,8 @@ class ExportHSD(bpy.types.Operator, ExportHelper):
 
     write_logs: BoolProperty(default=True, name='Write Logs',
                             description='Write export logs to a temp file for debugging.')
+    verbose: BoolProperty(default=False, name='Verbose',
+                         description='Print INFO/DEBUG export progress to the Blender console, including the per-section DAT size breakdown.')
     strip_names: BoolProperty(default=False, name='Strip Node Names',
                              description='Remove bone/node names from the output. Enable for compatibility with models that have empty name fields.')
     include_bound_box: BoolProperty(default=True, name='Include Bound Box',
@@ -171,7 +173,7 @@ class ExportHSD(bpy.types.Operator, ExportHelper):
         model_name = os.path.splitext(os.path.basename(self.filepath))[0] or "export"
 
         if self.write_logs:
-            logger = Logger(model_name=model_name)
+            logger = Logger(verbose=self.verbose, model_name=model_name)
         else:
             logger = StubLogger()
 
@@ -184,7 +186,7 @@ class ExportHSD(bpy.types.Operator, ExportHelper):
         try:
             Exporter.run(context, self.filepath, options, logger=logger)
         except Exception as error:
-            self.report({'ERROR'}, "Export failed: %s" % error)
+            self.report({'WARNING'}, "Export failed: %s" % error)
             logger.error("Export failed: %s", error)
             logger.close()
             return {'CANCELLED'}
@@ -194,7 +196,7 @@ class ExportHSD(bpy.types.Operator, ExportHelper):
 
 
 def _setup_anim_workspace(context):
-    """Split the 3D viewport and open an Action Editor. Set playback end to 60.
+    """Split the 3D viewport and open an Action Editor.
 
     Skips setup if a Dope Sheet / Action Editor is already visible.
     """
@@ -204,8 +206,6 @@ def _setup_anim_workspace(context):
             for space in area.spaces:
                 if space.type == 'DOPESHEET_EDITOR' and space.mode == 'ACTION':
                     return  # Already set up
-
-    context.scene.frame_end = 60
 
     screen = context.screen
     view3d_area = None
@@ -342,12 +342,15 @@ _SUB_ANIM_TRIGGER_ITEMS = [
 ]
 
 # Property key suffixes for body map bones.
-# Slots 0-7 are the ones the game actually uses at runtime (root, head tracking,
-# particle/effect attachment); slots 8-15 are unreferenced by the XD battle code
-# and always exported as -1 (skip).
+# Slots 0-7 are the well-known engine body parts (root, head tracking, etc.).
+# Slots 8-15 are extended slots that carry particle-attachment bones on
+# effect-themed Pokémon; `ModelSequence::GetPart(slot)` resolves any slot
+# 0-15 into the current animation entry's bone index.
 _BODY_MAP_KEYS = [
     "root", "head", "center", "body_3", "neck", "head_top",
     "limb_a", "limb_b",
+    "secondary_8", "secondary_9", "secondary_10", "secondary_11",
+    "attach_a", "attach_b", "attach_c", "attach_d",
 ]
 
 
@@ -406,6 +409,19 @@ class DAT_PT_PKXPanel(bpy.types.Panel):
         col.prop(obj, "dat_pkx_shiny_brightness_r", text="Red")
         col.prop(obj, "dat_pkx_shiny_brightness_g", text="Green")
         col.prop(obj, "dat_pkx_shiny_brightness_b", text="Blue")
+
+        # === Particles (GPT1) ===
+        # Particle visualization is disabled until we identify the
+        # generator→bone binding mechanism — see
+        # importer/phases/build_blender/helpers/particles.py for context.
+        gen_count = obj.get("dat_particle_gen_count", 0)
+        if gen_count:
+            box = layout.box()
+            box.label(text="Particles (GPT1)", icon='PARTICLES')
+            col = box.column(align=True)
+            col.scale_y = 0.8
+            col.label(text=f"{gen_count} generators parsed; not visualised.", icon='INFO')
+            col.label(text="Binding to bones isn't stored in the model.")
 
         # === Flags ===
         box = layout.box()

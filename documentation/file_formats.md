@@ -764,9 +764,11 @@ The shiny filter is a hardware-level color transformation applied globally to AL
 
 The game forces the alpha brightness byte to 0xFF before applying modulation (line 223 in `__ct__13ModelSequenceFUsUlb`). This means shiny brightness ONLY affects RGB — alpha is untouched.
 
-#### No Per-Material Selectivity
+#### Per-Material Selectivity
 
-Both routing and brightness apply to ALL materials uniformly. There is no per-material or per-mesh control in the PKX metadata.
+The PKX metadata has no per-material toggle, but the in-game effect is gated by each material's TEV chain. `GSmodelEnableColorSwap` / `GSmodelEnableModulation` iterate every material and call `_matGSmatObjMakeTExp`, which (a) walks the TEV chain calling `HSD_TExpColorSwap` on each TEV node and (b) appends a brightness modulation TEV stage. The color swap operates on GX texture swap tables (`GXSetTevSwapModeTable`); a material whose TEV chain has no texture sample has nothing to swizzle. The appended brightness TEV stage on a constant-colour chain produces a uniform shift rather than the saturated re-tint textured materials get — so these materials read as untouched in-game.
+
+Our shader-node simulation is more aggressive than the in-game TEV (it multiplies after vertex-colour shading), so we skip insertion on materials whose colour chain has no texture. Phase 6, the standalone `add_shiny_filter` script, and the `prepare_for_export` script all detect this by walking back from the shader's color input: if no `ShaderNodeTexImage` is reachable from that input (including the unlinked / default-valued case), the filter is not inserted. Materials with a real `ShaderNodeTexImage` anywhere in the chain — regardless of whether the colour source is `MATERIAL`, `VERTEX`, or `BOTH` — still get the filter.
 
 #### Brightness Encoding
 

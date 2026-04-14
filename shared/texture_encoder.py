@@ -284,83 +284,125 @@ def encode_cmpr(pixels, width, height):
 
 
 def _encode_dxt1_block(pixels, width, height, block_x, block_y, out, idx):
-    """Encode a single 4x4 DXT1 sub-block at the given position."""
-    # Collect 16 pixels
+    """Encode a single 4x4 DXT1 sub-block at the given position.
+
+    Mirrors the GoD-Tool CMPR encoder:
+    - Dedup colors into RGB565 before picking endpoints, so near-duplicate
+      RGB888 values that quantize to the same 565 value are collapsed.
+    - Pick endpoints by greatest RGB565 distance across unique colors.
+    - Use 3-color + alpha mode (c0 <= c1) when any pixel is transparent;
+      index 3 carries the transparent color.
+    - Uniform blocks fall through naturally: one unique color ⇒ c0 == c1,
+      palette entries 0..2 all equal, every opaque pixel picks index 0.
+      No bit-level c0 += 1 bump, no RGB565 field-boundary corruption.
+    """
     block = []
     for py in range(4):
         for px in range(4):
-            r, g, b, a = _get_pixel(pixels, width, height, block_x + px, block_y + py)
-            block.append((r, g, b, a))
+            block.append(_get_pixel(pixels, width, height,
+                                    block_x + px, block_y + py))
 
-    # Find min/max colors by luminance for endpoint selection
-    min_lum = 999999
-    max_lum = -1
-    min_color = (0, 0, 0)
-    max_color = (0, 0, 0)
+    has_transparency = False
+    unique_rgb565 = []
     for r, g, b, a in block:
-        lum = r * 299 + g * 587 + b * 114
-        if lum < min_lum:
-            min_lum = lum
-            min_color = (r, g, b)
-        if lum > max_lum:
-            max_lum = lum
-            max_color = (r, g, b)
+        if a < 0x80:
+            has_transparency = True
+            continue
+        c = _rgb_to_565(r, g, b)
+        if c not in unique_rgb565:
+            unique_rgb565.append(c)
 
-    # Encode endpoints as RGB565
-    c0 = _rgb_to_565(max_color[0], max_color[1], max_color[2])
-    c1 = _rgb_to_565(min_color[0], min_color[1], min_color[2])
+    # Fully transparent block — emit a null-endpoint sentinel with every
+    # index set to 3 so every pixel decodes transparent.
+    if not unique_rgb565:
+        out[idx] = 0
+        out[idx + 1] = 0
+        out[idx + 2] = 0
+        out[idx + 3] = 0
+        out[idx + 4] = 0xFF
+        out[idx + 5] = 0xFF
+        out[idx + 6] = 0xFF
+        out[idx + 7] = 0xFF
+        return
 
-    # Ensure c0 > c1 for 4-color opaque mode
-    if c0 == c1:
-        if c0 < 0xFFFF:
-            c0 += 1
+    # Pick endpoints by greatest RGB565 distance across unique colors.
+    best_c0 = best_c1 = unique_rgb565[0]
+    if len(unique_rgb565) > 1:
+        greatest = -1
+        for c0 in unique_rgb565:
+            for c1 in unique_rgb565:
+                d = _rgb565_distance(c0, c1)
+                if d > greatest:
+                    greatest = d
+                    best_c0, best_c1 = c0, c1
+
+    # Transparent blocks need c0 <= c1; opaque blocks need c0 > c1.
+    if has_transparency:
+        hex1, hex2 = min(best_c0, best_c1), max(best_c0, best_c1)
+    else:
+        hex1, hex2 = max(best_c0, best_c1), min(best_c0, best_c1)
+
+    pc1 = _decode_rgb565(hex1)
+    pc2 = _decode_rgb565(hex2)
+    palette = [pc1, pc2, (0, 0, 0, 0xFF), (0, 0, 0, 0xFF)]
+    if hex1 > hex2:
+        palette[2] = ((2 * pc1[0] + pc2[0]) // 3,
+                      (2 * pc1[1] + pc2[1]) // 3,
+                      (2 * pc1[2] + pc2[2]) // 3, 0xFF)
+        palette[3] = ((2 * pc2[0] + pc1[0]) // 3,
+                      (2 * pc2[1] + pc1[1]) // 3,
+                      (2 * pc2[2] + pc1[2]) // 3, 0xFF)
+    else:
+        palette[2] = ((pc1[0] + pc2[0]) // 2,
+                      (pc1[1] + pc2[1]) // 2,
+                      (pc1[2] + pc2[2]) // 2, 0xFF)
+        palette[3] = (0, 0, 0, 0)
+
+    # Closest-palette selection (Manhattan on RGB). Transparent pixels
+    # always get index 3.
+    index_bits = 0
+    for r, g, b, a in block:
+        index_bits <<= 2
+        if a < 0x80:
+            index_bits |= 3
         else:
-            c1 -= 1
-    elif c0 < c1:
-        c0, c1 = c1, c0
-        max_color, min_color = min_color, max_color
-
-    # Build 4-color palette
-    palette = [
-        max_color,
-        min_color,
-        (
-            (2 * max_color[0] + min_color[0]) // 3,
-            (2 * max_color[1] + min_color[1]) // 3,
-            (2 * max_color[2] + min_color[2]) // 3,
-        ),
-        (
-            (max_color[0] + 2 * min_color[0]) // 3,
-            (max_color[1] + 2 * min_color[1]) // 3,
-            (max_color[2] + 2 * min_color[2]) // 3,
-        ),
-    ]
-
-    # Write endpoints (big-endian)
-    out[idx] = c0 >> 8
-    out[idx + 1] = c0 & 0xFF
-    out[idx + 2] = c1 >> 8
-    out[idx + 3] = c1 & 0xFF
-
-    # Find closest palette entry for each pixel (2-bit indices)
-    for row in range(4):
-        byte_val = 0
-        for col in range(4):
-            r, g, b, a = block[row * 4 + col]
             best_idx = 0
-            best_dist = 999999
-            for pi, (pr, pg, pb) in enumerate(palette):
-                dist = (r - pr) ** 2 + (g - pg) ** 2 + (b - pb) ** 2
-                if dist < best_dist:
-                    best_dist = dist
-                    best_idx = pi
-            byte_val |= (best_idx << (6 - col * 2))
-        out[idx + 4 + row] = byte_val
+            min_dist = 1 << 30
+            for j, (pr, pg, pb, _pa) in enumerate(palette):
+                d = abs(r - pr) + abs(g - pg) + abs(b - pb)
+                if d < min_dist:
+                    min_dist = d
+                    best_idx = j
+            index_bits |= best_idx
+
+    out[idx] = hex1 >> 8
+    out[idx + 1] = hex1 & 0xFF
+    out[idx + 2] = hex2 >> 8
+    out[idx + 3] = hex2 & 0xFF
+    out[idx + 4] = (index_bits >> 24) & 0xFF
+    out[idx + 5] = (index_bits >> 16) & 0xFF
+    out[idx + 6] = (index_bits >> 8) & 0xFF
+    out[idx + 7] = index_bits & 0xFF
 
 
 def _rgb_to_565(r, g, b):
     """Convert RGB888 to RGB565."""
     return ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3)
+
+
+def _decode_rgb565(raw):
+    """Inverse of _rgb_to_565 — returns (r, g, b, 0xFF) in RGB888."""
+    r = ((raw >> 11) & 0x1F) << 3
+    g = ((raw >> 5) & 0x3F) << 2
+    b = (raw & 0x1F) << 3
+    return r, g, b, 0xFF
+
+
+def _rgb565_distance(c0, c1):
+    """Manhattan distance between two RGB565 values after RGB888 decode."""
+    a = _decode_rgb565(c0)
+    b = _decode_rgb565(c1)
+    return abs(a[0] - b[0]) + abs(a[1] - b[1]) + abs(a[2] - b[2])
 
 
 # ---------------------------------------------------------------------------

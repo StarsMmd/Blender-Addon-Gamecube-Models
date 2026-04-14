@@ -272,6 +272,46 @@ def test_container_gpt1_extraction():
     extracted = pkx.gpt1_data
     assert extracted[:100] == gpt1
 
+def test_body_map_keys_cover_all_16_slots():
+    """All three places that define body-map keys agree on the 16-slot layout."""
+    import pathlib
+    import re
+
+    addon_root = pathlib.Path(__file__).resolve().parent.parent
+    expected_tail = [
+        "secondary_8", "secondary_9", "secondary_10", "secondary_11",
+        "attach_a", "attach_b", "attach_c", "attach_d",
+    ]
+
+    for rel in (
+        'importer/phases/post_process/post_process.py',
+        'exporter/phases/describe_blender/describe_blender.py',
+        'BlenderPlugin.py',
+    ):
+        src = (addon_root / rel).read_text()
+        # Find the _BODY_MAP_KEYS literal and ensure each extended suffix appears.
+        assert 'secondary_8' in src, f'{rel}: missing secondary_8'
+        assert 'attach_d' in src, f'{rel}: missing attach_d'
+        for suffix in expected_tail:
+            assert f'"{suffix}"' in src, f'{rel}: missing "{suffix}"'
+
+
+def test_body_map_extended_slots_survive_header_round_trip():
+    """Slots 8-15 of body_map_bones serialize/parse losslessly."""
+    extended = [0, 66, 60, 5, 65, 67, 66, 66, 96, 112, 95, 111, 21, 42, 2, 113]
+    h = PKXHeader.default_xd(dat_file_size=100000)
+    h.anim_entries[0] = AnimMetadataEntry(
+        anim_type=2, sub_anim_count=1,
+        timing=(1.0, 0.0, 0.0, 0.0),
+        body_map_bones=extended,
+        sub_anims=[SubAnim(2, 0)],
+        terminator=3,
+    )
+    raw = h.to_bytes()
+    h2 = PKXHeader.from_bytes(raw, is_xd=True)
+    assert h2.anim_entries[0].body_map_bones == extended
+
+
 def test_container_shiny_xd_reads_correctly():
     """XD shiny params read from full uint32 routing words."""
     from shared.helpers.pkx import PKXContainer

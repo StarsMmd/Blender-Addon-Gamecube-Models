@@ -28,7 +28,7 @@ except (ImportError, SystemError):
     from shared.helpers.logger import StubLogger
 
 
-def describe_material(blender_mat, logger=StubLogger()):
+def describe_material(blender_mat, logger=StubLogger(), cache=None, image_cache=None):
     """Read a Blender material and produce an IRMaterial.
 
     Extracts properties from the shader node tree, reversing the
@@ -37,12 +37,25 @@ def describe_material(blender_mat, logger=StubLogger()):
     Args:
         blender_mat: bpy.types.Material with use_nodes=True.
         logger: Logger instance.
+        cache: optional dict keyed on id(blender_mat) → IRMaterial. When
+            provided, repeated calls with the same material return the same
+            IRMaterial instance — downstream compose/serialize dedup then
+            collapses all DObjects sharing that material to a single MObject
+            subtree.
+        image_cache: optional dict keyed on id(bpy_image) → IRImage, passed
+            through to texture extraction to share IRImage instances across
+            materials that reuse the same source image.
 
     Returns:
         IRMaterial, or None if the material has no node tree.
     """
     if not blender_mat or not blender_mat.use_nodes:
         return None
+
+    if cache is not None:
+        cached = cache.get(id(blender_mat))
+        if cached is not None:
+            return cached
 
     nodes = blender_mat.node_tree.nodes
     links = blender_mat.node_tree.links
@@ -105,13 +118,16 @@ def describe_material(blender_mat, logger=StubLogger()):
     # Color/alpha source detection
     color_source, alpha_source = _detect_color_sources(nodes, links)
 
-    # Translucency — only set for materials with alpha < 1.0.
-    # Blender's blend_method (HASHED/BLEND) can be set for alpha testing
-    # without the material being truly translucent (RENDER_XLU).
-    is_translucent = alpha < 1.0
-
     # Texture layers
-    texture_layers = _extract_texture_layers(nodes, links, logger)
+    texture_layers = _extract_texture_layers(nodes, links, logger, image_cache)
+
+    # Translucency — true if the material alpha slider is <1.0, OR if any
+    # diffuse texture's image has a transparent pixel (HSDLib parity,
+    # `ModelImporter.cs:1231-1235`: it decodes the texture and scans alpha
+    # to decide XLU/ALPHAMAP_MODULATE). Blender's `blend_method` on its own
+    # is unreliable — GLB rips commonly set OPAQUE even when the texture is
+    # transparent, which would ship an RENDER_XLU-less material.
+    is_translucent = alpha < 1.0 or _has_transparent_texture(texture_layers)
 
     ir_material = IRMaterial(
         diffuse_color=diffuse_color,
@@ -129,6 +145,9 @@ def describe_material(blender_mat, logger=StubLogger()):
 
     logger.debug("    material '%s': diffuse=%s alpha=%.2f shininess=%.1f lighting=%s textures=%d",
                  blender_mat.name, diffuse_color, alpha, shininess, lighting.value, len(texture_layers))
+
+    if cache is not None:
+        cache[id(blender_mat)] = ir_material
 
     return ir_material
 
@@ -195,6 +214,28 @@ def _extract_rgb_node_color(nodes, links, hint):
     return None
 
 
+def _has_transparent_texture(texture_layers):
+    """True if any texture layer's image contains a pixel with alpha < 255.
+
+    Scans IRImage.pixels (stored as RGBA u8) sampling at most ~64K alpha
+    bytes for large textures to keep the check O(64K) worst-case.
+    """
+    if not texture_layers:
+        return False
+    for layer in texture_layers:
+        img = getattr(layer, 'image', None)
+        if img is None or not img.pixels:
+            continue
+        alphas = img.pixels[3::4]
+        if not alphas:
+            continue
+        stride = max(1, len(alphas) // 65536)
+        sample = alphas[::stride] if stride > 1 else alphas
+        if min(sample) < 255:
+            return True
+    return False
+
+
 def _linear_to_srgb_rgba(color):
     """Convert a Blender linear RGBA to sRGB RGBA for IR storage."""
     return (
@@ -232,27 +273,27 @@ def _detect_color_sources(nodes, links):
     return color_source, alpha_source
 
 
-def _extract_texture_layers(nodes, links, logger):
+def _extract_texture_layers(nodes, links, logger, image_cache=None):
     """Extract texture layers from ShaderNodeTexImage nodes."""
     tex_nodes = _find_nodes(nodes, 'ShaderNodeTexImage')
     layers = []
 
     for tex_node in tex_nodes:
-        layer = _describe_texture_node(tex_node, nodes, links, logger)
+        layer = _describe_texture_node(tex_node, nodes, links, logger, image_cache)
         if layer is not None:
             layers.append(layer)
 
     return layers
 
 
-def _describe_texture_node(tex_node, nodes, links, logger):
+def _describe_texture_node(tex_node, nodes, links, logger, image_cache=None):
     """Extract an IRTextureLayer from a ShaderNodeTexImage and its connections."""
     image = tex_node.image
     if image is None:
         return None
 
-    # Extract image pixels
-    ir_image = _extract_image(image)
+    # Extract image pixels (shared across materials when image_cache is provided)
+    ir_image = _extract_image(image, image_cache)
 
     # Determine coord type and UV index
     coord_type = CoordType.UV
@@ -355,6 +396,14 @@ def _describe_texture_node(tex_node, nodes, links, logger):
 def _detect_blend_mode(tex_node, links):
     """Detect the color blend mode and bump flag by tracing the texture's output.
 
+    The importer builds the blend stage as a ShaderNodeMixRGB where:
+      - Color1 (input 1) = previous layer's output
+      - Color2 (input 2) = this texture's Color output
+      - Fac   (input 0) = constant (plain MIX), this tex's Alpha (ALPHA_MASK),
+                          or this tex's Color (RGB_MASK)
+    So ALPHA_MASK and RGB_MASK distinguish themselves from plain MIX by
+    having the texture's own Alpha or Color linked into the Fac socket.
+
     Returns:
         (LayerBlendMode, blend_factor, is_bump)
     """
@@ -369,6 +418,17 @@ def _detect_blend_mode(tex_node, links):
         if link.from_node == tex_node and link.from_socket.name == 'Color':
             target = link.to_node
             if target.bl_idname == 'ShaderNodeMixRGB':
+                # Inspect what feeds the Fac socket — this disambiguates
+                # ALPHA_MASK / RGB_MASK from a plain blend.
+                fac_link = next(
+                    (l for l in links
+                     if l.to_node == target and l.to_socket == target.inputs[0]),
+                    None)
+                if fac_link is not None and fac_link.from_node == tex_node:
+                    if fac_link.from_socket.name == 'Alpha':
+                        return LayerBlendMode.ALPHA_MASK, 1.0, False
+                    if fac_link.from_socket.name == 'Color':
+                        return LayerBlendMode.RGB_MASK, 1.0, False
                 blend_type = blend_type_map.get(target.blend_type, LayerBlendMode.REPLACE)
                 factor = target.inputs[0].default_value
                 return blend_type, factor, False
@@ -380,8 +440,18 @@ def _detect_blend_mode(tex_node, links):
     return LayerBlendMode.REPLACE, 1.0, False
 
 
-def _extract_image(bpy_image):
-    """Extract an IRImage from a Blender image."""
+def _extract_image(bpy_image, cache=None):
+    """Extract an IRImage from a Blender image.
+
+    When cache is provided, the same bpy.types.Image (by id) produces a
+    single shared IRImage instance — downstream compose/serialize dedup
+    then collapses duplicate Image nodes and their pixel data.
+    """
+    if cache is not None:
+        cached = cache.get(id(bpy_image))
+        if cached is not None:
+            return cached
+
     width = bpy_image.size[0]
     height = bpy_image.size[1]
 
@@ -408,7 +478,7 @@ def _extract_image(bpy_image):
     except (ValueError, KeyError):
         pass
 
-    return IRImage(
+    ir_image = IRImage(
         name=bpy_image.name,
         width=width,
         height=height,
@@ -417,3 +487,8 @@ def _extract_image(bpy_image):
         palette_id=0,
         gx_format_override=gx_format,
     )
+
+    if cache is not None:
+        cache[id(bpy_image)] = ir_image
+
+    return ir_image

@@ -20,8 +20,10 @@ import bpy
 
 try:
     from ....shared.IR.enums import ShinyChannel
+    from ....shared.helpers.node_layout import auto_layout, auto_layout_node_group
 except (ImportError, SystemError):
     from shared.IR.enums import ShinyChannel
+    from shared.helpers.node_layout import auto_layout, auto_layout_node_group
 
 # Fixed node group names — independent of armature/model names
 SHINY_ROUTE_GROUP = "DATPlugin_ShinyRoute"
@@ -114,7 +116,7 @@ def _populate_route_group(group, routing):
             links.new(value.outputs[0], combine.inputs[i])
 
     links.new(combine.outputs[0], group_out.inputs[0])
-    _auto_layout_node_group(nodes, links)
+    auto_layout_node_group(nodes, links)
 
 
 def _populate_bright_group(group, brightness):
@@ -169,7 +171,7 @@ def _populate_bright_group(group, brightness):
     links.new(combine.outputs[0], to_linear.inputs[0])
 
     links.new(to_linear.outputs[0], group_out.inputs[0])
-    _auto_layout_node_group(nodes, links)
+    auto_layout_node_group(nodes, links)
 
 
 # ---------------------------------------------------------------------------
@@ -271,6 +273,11 @@ def insert_shiny_filter(material, route_group, bright_group, armature, logger=No
             logger.debug("    Skipped '%s': no color input found", material.name)
         return
 
+    if _has_no_texture_in_color_chain(target_input):
+        if logger:
+            logger.debug("    Skipped '%s': color chain has no texture", material.name)
+        return
+
     # Insert both stages at the shader input
     _insert_stage_at_input(nodes, links, target_node, target_input,
                            route_group, 'shiny_route_shader', 'shiny_route_mix', armature)
@@ -280,7 +287,7 @@ def insert_shiny_filter(material, route_group, bright_group, armature, logger=No
     if logger:
         logger.debug("    Applied shiny to '%s'", material.name)
 
-    _auto_layout(nodes, material.node_tree.links)
+    auto_layout(nodes, material.node_tree.links)
 
 
 def _insert_stage_at_input(nodes, links, target_node, target_input,
@@ -322,6 +329,41 @@ def _insert_stage_at_input(nodes, links, target_node, target_input,
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _has_no_texture_in_color_chain(target_input):
+    """True when no ``ShaderNodeTexImage`` is reachable from ``target_input``.
+
+    The in-game shiny color swap (``GSmodelEnableColorSwap``) operates on GX
+    texture swap tables; a material whose TEV chain has no texture sample
+    has nothing for the swap to swizzle. The appended brightness modulation
+    TEV stage on a constant-colour chain produces a uniform shift rather
+    than the saturated re-tint that defines the visible shiny effect, so
+    the in-game result on these materials reads as untouched. Skip them so
+    our shader-side simulation matches.
+
+    An unlinked ``target_input`` (default-valued Base Color) is also treated
+    as "no texture" — the chain is a pure constant and behaves the same way.
+    """
+    if not target_input.is_linked:
+        return True
+
+    visited = set()
+    stack = [target_input]
+    while stack:
+        sock = stack.pop()
+        for link in sock.links:
+            node = link.from_node
+            if id(node) in visited:
+                continue
+            visited.add(id(node))
+            if node.type == 'TEX_IMAGE':
+                return False
+            for inp in node.inputs:
+                if inp.is_linked:
+                    stack.append(inp)
+
+    return True
+
+
 def _find_color_input(nodes):
     """Find the main color input on the output shader."""
     for node in nodes:
@@ -357,59 +399,3 @@ def _add_shiny_driver(factor_input, armature):
     target.data_path = 'dat_pkx_shiny'
 
 
-def _auto_layout(nodes, links, output_type='OUTPUT_MATERIAL'):
-    """Arrange shader nodes left-to-right via topological sort from output."""
-    NODE_WIDTH = 300
-    NODE_HEIGHT = 200
-
-    output = None
-    for node in nodes:
-        if node.type == output_type:
-            output = node
-            break
-    if output is None:
-        return
-
-    inputs_of = {}
-    for link in links:
-        target = link.to_node
-        source = link.from_node
-        if target not in inputs_of:
-            inputs_of[target] = []
-        if source not in inputs_of[target]:
-            inputs_of[target].append(source)
-
-    column_of = {output: 0}
-    queue = [output]
-    while queue:
-        node = queue.pop(0)
-        col = column_of[node]
-        for source in inputs_of.get(node, []):
-            new_col = col + 1
-            if source not in column_of or column_of[source] < new_col:
-                column_of[source] = new_col
-                queue.append(source)
-
-    max_col = max(column_of.values()) if column_of else 0
-    for node in nodes:
-        if node not in column_of:
-            max_col += 1
-            column_of[node] = max_col
-
-    columns = {}
-    for node, col in column_of.items():
-        columns.setdefault(col, []).append(node)
-
-    for col in columns:
-        columns[col].sort(key=lambda n: n.name)
-
-    max_column = max(columns.keys()) if columns else 0
-    for col, col_nodes in columns.items():
-        x = (max_column - col) * NODE_WIDTH
-        for i, node in enumerate(col_nodes):
-            y = -i * NODE_HEIGHT
-            node.location = (x, y)
-
-
-def _auto_layout_node_group(nodes, links):
-    _auto_layout(nodes, links, output_type='GROUP_OUTPUT')

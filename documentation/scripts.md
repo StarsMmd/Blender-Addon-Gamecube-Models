@@ -47,6 +47,25 @@ After running, use the **Shiny Variant** panel in Object Properties to tweak par
 
 ---
 
+## remove_shiny_filter.py
+
+**Purpose:** Strip every DAT shiny filter node from the file so the filter can be reapplied from scratch (e.g. after updating `add_shiny_filter.py` or the in-plugin shiny code).
+
+**Usage:**
+1. Open the Scripting workspace (or any Text Editor area)
+2. Open `scripts/remove_shiny_filter.py`
+3. Click **Run Script**
+
+**What it does:**
+- Removes the per-material shiny nodes (`shiny_route_shader`, `shiny_route_mix`, `shiny_bright_shader`, `shiny_bright_mix`) from every material in the file
+- Reconnects each removed mix node's "normal path" input to whatever the mix was driving, so the underlying material wiring is restored
+- Removes drivers on the mix Factor inputs first to avoid stale dependencies
+- Deletes the shared `DATPlugin_ShinyRoute` and `DATPlugin_ShinyBright` node groups
+- Leaves the armature's `dat_pkx_shiny*` properties untouched — reapply the filter to use them again
+- Prints a one-line summary of how many nodes/materials/groups were touched
+
+---
+
 ## prepare_for_export.py
 
 **Purpose:** Prepare a Blender scene for Colosseum/XD export. Adds custom properties the exporter needs on cameras, armatures, and lights. Operates on all objects in the scene — no selection required. Only adds properties that don't already exist — not needed on models that were imported through the DAT plugin.
@@ -57,11 +76,12 @@ After running, use the **Shiny Variant** panel in Object Properties to tweak par
 3. Click **Run Script**
 
 **What it does:**
-1. Creates a battle camera with target if none exists, and sets `dat_camera_aspect` on all cameras
-2. Applies default PKX metadata to the selected armature (if it doesn't already have it)
-3. Auto-derives animation timing from action durations for any animation slot that has an action assigned. Uses even splits: action types get 33%/66%/100% for wind-up/hit/duration, loops get full duration, hit reactions get 50%/100%
-4. Auto-selects GX texture formats for textures that don't have one set — analyzes each texture's pixel content and picks the most efficient format (CMPR, I8, C8, etc.). Skips textures that already have a format. The auto-selected format is usually optimal, but you can override it per-texture in the Image Editor's properties if needed
-5. Adds an ambient light if none exists — creates a no-op POINT light with `energy=0` (no visible change in Blender) and `dat_light_type = "AMBIENT"`. The light's color controls scene-level fill lighting in-game. Lower values (darker gray) produce more contrast and deeper shadows; higher values (lighter gray) produce a flatter, softer look. Default is `(76, 76, 76)` — the most common ambient color across Pokémon models
+1. **Bakes loc/rot/scale** on every armature and its child meshes via Blender's `transform_apply`, so each `matrix_world` is identity. The exporter rejects any armature or child mesh whose `matrix_world` is not identity — without this, the bone path's SRT decompose drops shear introduced by non-uniform armature scale, while the vertex path's matmul keeps it, and the two drift apart further down the chain.
+2. Creates a `Debug_Camera` with target if none exists, and sets `dat_camera_aspect` on all cameras (the camera section in a PKX appears to be unused by the game engine — see `exporter_setup.md` Camera section)
+3. Applies default PKX metadata to the selected armature (if it doesn't already have it)
+4. Auto-derives animation timing from action durations for any animation slot that has an action assigned. Uses even splits: action types get 33%/66%/100% for wind-up/hit/duration, loops get full duration, hit reactions get 50%/100%
+5. Auto-selects GX texture formats for textures that don't have one set — analyzes each texture's pixel content and picks the most efficient format (CMPR, I8, C8, etc.). Skips textures that already have a format. The auto-selected format is usually optimal, but you can override it per-texture in the Image Editor's properties if needed
+6. Adds an ambient light if none exists — creates a no-op POINT light with `energy=0` (no visible change in Blender) and `dat_light_type = "AMBIENT"`. The light's color controls scene-level fill lighting in-game. Lower values (darker gray) produce more contrast and deeper shadows; higher values (lighter gray) produce a flatter, softer look. Default is `(76, 76, 76)` — the most common ambient color across Pokémon models
 
 **Tip:** After assigning actions to animation slots in the PKX Metadata panel, run the script again to auto-fill timing values based on the action durations. The script always re-derives timing for any slot with an action assigned.
 

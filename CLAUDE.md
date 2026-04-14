@@ -178,7 +178,8 @@ Nodes are cached by file offset (`nodes_cache_by_offset`). Nodes with `is_cachab
 | Bone constraints (IK, copy loc/rot, track-to, limits) | ✅ Working |
 | Bone instances (JOBJ_INSTANCE) | ✅ Working |
 | Shape animation import | ❌ Stubs only (not implemented in legacy either) |
-| Particle import (GPT1) | ⚠️ Parser + IR representation working, no Blender visualization yet |
+| Particle import (GPT1) | ⚠️ Disabled — `build_particles` is a stub that only records `dat_particle_gen_count`/`dat_particle_tex_count` on the armature. Blocker: cannot find the generator→bone binding. Ruled out: `JOBJ_PTCL` flag (unset on all 15 particle models), `_particleJObjCallback` path, PKX body-map slots (just a bone lookup table), WZX move files (move effects only), common.rel unknown indexes 106/107/116/117/132-135, DOL data section around `PKXPokemonModels` (only WazaSequence animation ID tables there). Remaining leads: script bytecode in `data0`/`data7`, full `fightPokemon*` sweep, raw-read common.rel indexes 132–135. All the plumbing (parser, disassembler, IR, assembler, opcode specs, compose helper) stays in place |
+| Particle export (GPT1) | ❌ Disabled — `compose_particles` is unit-tested for IR→bytes→IR round-trip but not wired into the export pipeline. Re-exported `.pkx` files drop the original GPT1 data. Blocked on the same generator→bone binding question as import |
 | Camera import | ✅ Working (static + animated: position, target, FOV, roll, near/far) |
 | Fog import | ❌ Not supported (no fog data found in tested models) |
 | Exporter pipeline | ✅ Bones + meshes (RIGID/SINGLE_BONE/ENVELOPE, multi-material split) + materials + textures (all GX formats) + bound box + animations (Euler + quaternion) + material animations + lights + cameras + constraints working. Supports arbitrary Blender models (GLB/FBX) with armature object scale + coordinate rotation applied automatically. |
@@ -189,7 +190,7 @@ Nodes are cached by file offset (`nodes_cache_by_offset`). Nodes with `is_cachab
 | IR pipeline | ✅ Default path (legacy available via toggle) |
 | FSYS archive import | ✅ Working (multi-model extraction + LZSS decompression) |
 | Shiny variant filter | ✅ Working (PKX color extraction, live-editable shader node group, per-parameter UI) |
-| Unit tests | ✅ 679 passing (27 texture encoder, 14 DAT serialization/alignment/relocation/vertex-space, 24 PKX header, 24 GPT1 particle, 15 WZX extraction, 2 material animation scale, 18 camera describe, 22 camera animation, 12 camera compose, 4 coordinate conversion, 20 bezier sparsification, 16 light describe, 16 envelope display list splitting, 2 PObject iterative parsing, 3 envelope weight quantization, 4 motion type derivation, 5 idle name compaction, 16 strict mirror mode) |
+| Unit tests | ✅ 846 passing (35 texture encoder (incl. 5 uniform-block yellow regression + 3 transparency/greatest-range quality upgrades), 14 DAT serialization/alignment/relocation/vertex-space, 26 PKX header (incl. 2 body-map slot 8-15 tests), 24 GPT1 particle, 22 GPT1 assembler, 10 GPT1 opcode specs, 8 compose_particles, 15 WZX extraction, 2 material animation scale, 18 camera describe, 22 camera animation, 12 camera compose, 4 coordinate conversion, 20 bezier sparsification, 16 light describe, 16 envelope display list splitting, 2 PObject iterative parsing, 3 envelope weight dedup, 4 motion type derivation, 5 idle name compaction, 5 PKX referenced action filter, 16 strict mirror mode, 3 compose material dedup, 3 mesh-bone SKEL exclusion, 21 compose pre-scale, 9 material-anim export, 5 bone-anim frame range, 5 compose TextureAnimation (incl. multi-frame eye-blink V-flip), 7 compose material-anim DObj alignment (incl. empty MA placeholders on non-animated mesh-bones and bone-with-no-DObjs None guard), 4 blend-mode detection (ALPHA_MASK/RGB_MASK via fac-socket origin), 3 compose pre-scale matrix aliasing, 3 mesh→bone parent round-trip, 7 compose quad-primitive DL encoding, 1 SINGLE_BONE inverse uses parent_bone, 11 compose envelope consistency (undeform ↔ stored envelope round-trip, minor-weight preservation) + 4 compose-importer skel-bone-search parity (Greninja GLB regression: both sides must match SKELETON\|SKELETON_ROOT), 12 unbaked-transform validation + 7 vertex-weight-count validation (rejects non-identity armature/mesh matrix_world and >4 bone influences per vertex before any decompose path runs), 2 build-mesh smooth-shading (importer marks polygons use_smooth=True when ir_mesh.normals is set, otherwise Blender 4.1+ ignores custom split normals — Greninja tongue/scarf flat-shading regression), 2 build-pixel-engine HASHED fallback (translucent materials with no explicit fragment_blending now use HASHED instead of BLEND, avoiding EEVEE depth-sort artefacts that look like back-faces showing through)) |
 | Shader node auto-layout | ✅ Working (topological sort from output→inputs, left-to-right) |
 | Scale inheritance (animation baking) | ⚠️ Partially resolved — hybrid approach, see below |
 
@@ -232,17 +233,17 @@ Nodes are cached by file offset (`nodes_cache_by_offset`). Nodes with `is_cachab
 **What works:**
 - Multi-material meshes auto-split by material slot on export
 - Quaternion rotation fcurves (from GLB) converted to Euler for HSD
-- Armature object scale applied to bone positions, vertex positions, and animation values
-- Armature object rotation (including importer's Y-up matrix_basis) normalized to Z-up before coordinate conversion — no root bone special case
+- Armature loc/rot/scale baked into geometry by `bake_transforms()` in `prepare_for_export.py`; the exporter rejects any armature or child mesh with non-identity `matrix_world` so the bone (decompose) and vertex (matmul) paths stay in the same frame
 - SUN light direction derived from object rotation when no TRACK_TO constraint
 - PKX files can be created from scratch (no existing .pkx required)
 - Motion_type derived from slot type (loop→2, active→1, empty→0)
 - Standard 4-light battle setup (ambient + 3 directional SUN)
 
 **Weight optimization pipeline (`prepare_for_export.py`):**
-1. Limit vertex weights to N per vertex (currently 2 for aggressive, 3 for quality)
+1. Limit vertex weights to `MAX_WEIGHTS_PER_VERTEX` per vertex (currently 3, game's hardware cap is 4)
 2. Quantize weights to 10% steps (matching game model precision)
-3. Compose phase rounds envelope weights to 25% steps for further combo reduction
+
+Weight limiting and quantisation are the prepare script's job — compose only renormalises against floating-point drift so the viewport preview of weights in Blender matches what ships to the .dat. `exporter/phases/pre_process/pre_process.py:_validate_vertex_weight_count` rejects any vertex with more than 4 non-zero weights (hardware envelope limit).
 
 **Known limitations:**
 - Game models have 15-40 PObjects and 65-430 KB DAT size. Arbitrary models with smooth weight painting produce many more unique weight combinations → more PObjects → larger files
@@ -250,15 +251,17 @@ Nodes are cached by file offset (`nodes_cache_by_offset`). Nodes with `is_cachab
 - Game models are hand-crafted with separate mesh objects per body part, each referencing few bones. Arbitrary models with one large mesh + many bones are inherently harder to optimize
 
 **Key files:**
-- `scripts/prepare_for_export.py` — weight limiting, quantization, texture formats, lights, PKX metadata
-- `exporter/phases/describe_blender/helpers/skeleton.py` — `obj_rotation` pre-transform, `obj_scale` position scaling
+- `scripts/prepare_for_export.py` — `bake_transforms()` (must run first), weight limiting, quantization, texture formats, lights, PKX metadata
+- `exporter/phases/pre_process/pre_process.py` — `_validate_vertex_weight_count` rejects >4 influences per vertex
+- `exporter/phases/describe_blender/describe_blender.py` — `_validate_baked_transforms` rejects unbaked armatures/meshes
+- `exporter/phases/describe_blender/helpers/skeleton.py` — coord conversion only (no obj_transform; armature is identity)
 - `exporter/phases/describe_blender/helpers/meshes.py` — multi-material split, vertex/normal coord conversion
 - `exporter/phases/describe_blender/helpers/animations.py` — quaternion support, `loc_scale` for fcurve values
-- `exporter/phases/compose/helpers/meshes.py` — `round(w * 4) / 4` weight quantization in envelope map
+- `exporter/phases/compose/helpers/meshes.py` — envelope map uses weights as-is (only renormalises)
 
 **Next steps to investigate:**
-1. Find the right weight limit and quantization level that produces acceptable quality in-game — currently too aggressive (2 weights + 25% quant) causes garbling
-2. Try 3 weights + 10% quantization (game-exact precision) and see if the ~160 PObject / ~1.1 MB result loads cleanly
+1. Current setting: 3 weights + 10% quantisation in the prepare script, no compose-phase quantisation. Validate in-game.
+2. If quality is still off, try tuning `MAX_WEIGHTS_PER_VERTEX` (up to 4) or the quantisation step in the prepare script alone — compose trusts whatever the viewport shows.
 3. Explore mesh splitting by body region to reduce per-mesh bone count (the key metric game models optimize for)
 4. Compare envelope list structure between exported and original game models for subtle format differences
 
@@ -307,6 +310,16 @@ Available XD models: D6_out_all, M1_out, M3_out.
 
 The exporter requires certain Blender objects to follow naming conventions so it can distinguish model features during export. The importer must apply the same naming conventions when creating Blender objects, ensuring round-trip fidelity.
 
+**Particles (GPT1):**
+- `Particles_{model_name}` — Empty, default parent of generator meshes at the armature origin.
+- `Particles_{model_name}_G{NN}` — Mesh per generator. Header fields (`gen_type`, `lifetime`, `max_particles`, `flags`, `params`) on object custom props (`flags` is reinterpreted from uint32 to signed int32 for Blender's ID storage). Carries a `dat_gpt1_attach_slot` Enum (`NONE` or `0`-`15`); setting it reparents the mesh to `armature` / `parent_bone = body_map_bones[slot]`. Default is `NONE` (armature origin) — the correct generator→slot mapping is not derivable from the model.
+- `DATPlugin_Particles_{model_name}_G{NN}` — GeometryNodeTree. Contains per-instruction `NodeFrame`s plus a behavioral sub-graph.
+- `gpt1_{MNEMONIC}_i{NNN}` — NodeFrame per bytecode instruction. `label` is JSON-encoded args; custom props `age_threshold`, `mnemonic`, `instr_index`.
+- `DATPlugin_ParticleAtlas_{model_name}_G{NN}` — Texture atlas image. Custom props `gpt1_tex_widths`, `gpt1_tex_heights`, `gpt1_tex_formats`.
+- `DATPlugin_ParticleMat_{model_name}_G{NN}` — Material assigned to the generator mesh, references the atlas.
+
+**PKX body map (shared 16-slot key list):** `root, head, center, body_3, neck, head_top, limb_a, limb_b, secondary_8, secondary_9, secondary_10, secondary_11, attach_a, attach_b, attach_c, attach_d` — surfaced as `dat_pkx_body_<suffix>` on the armature. Slot indices 0-7 are well-known body parts (game accesses them via `GSmodelCenterNull`/head-tracking/etc.); slots 8-15 are extended attachment points used by particle generators. All three code locations that reference this key list (`importer/phases/post_process/post_process.py`, `exporter/phases/describe_blender/describe_blender.py`, `BlenderPlugin.py`) must stay in sync.
+
 _(Conventions will be documented here as they are established for each feature.)_
 
 ---
@@ -353,7 +366,20 @@ The shiny parameters are stored as custom properties on the armature (`dat_pkx_s
 ## Coding Conventions
 
 - **Logger parameter:** Functions default to `StubLogger()`, never `None`. Always use `logger.info()`/`logger.debug()` instead of `print()` — logger output is written to log files on disk that persist after import and can be read directly for investigation. `print()` only goes to the Blender console which is transient.
-- **Imports:** Phase files **must** use try/except for Blender (relative) vs pytest (absolute) imports. Blender cannot resolve bare `from shared.` imports — only relative imports like `from .....shared.` work inside the addon package. Always put the relative import first in the `try` block, with the absolute fallback in `except (ImportError, SystemError)`. This applies to **every** import from `shared/`, including imports inside nested functions.
+- **Imports (READ THIS — the exporter keeps crashing on this):** Inside the addon package (`importer/`, `exporter/`, `shared/` when importing from sibling modules) **every** `from shared.…` / `from exporter.…` / `from importer.…` import **must** be wrapped in a try/except with the relative import first and the absolute import as the fallback. Blender loads this folder as a package, so bare absolute imports (`from shared.helpers.logger import …`) raise `ModuleNotFoundError` at runtime even though they work under pytest. Pytest only resolves the absolute form, so the relative form alone breaks the test suite. The required shape is:
+
+  ```python
+  try:
+      from .....shared.helpers.logger import StubLogger   # relative — for Blender
+  except (ImportError, SystemError):
+      from shared.helpers.logger import StubLogger         # absolute — for pytest
+  ```
+
+  Rules:
+  - **Applies everywhere**, including deferred imports inside functions and inside `except` blocks — not only module-level imports.
+  - Count the dots: each `.` climbs one package level. A helper at `exporter/phases/describe_blender/helpers/animations.py` needs `.....shared.` (five dots) to reach `shared/`.
+  - Never shortcut with a plain `from shared.…` at module scope — it's the single most common cause of exporter crashes when loaded as an addon.
+  - When in doubt, mirror the import block of a neighbouring file in the same directory.
 - **Binary reads/writes:** Use `shared/helpers/binary.py` helpers with descriptive type names (`read('uint', data, offset)`, `pack('float', value)`, `pack_many('uchar', r, g, b, a)`) instead of raw `struct.pack`/`struct.unpack` with format codes. For keyframe data that uses native byte order, use `read_native`/`pack_native`.
 - **Errors:** Use `ValueError("descriptive message")` instead of custom exception classes. Only `ModelBuildError` (in build phase) carries structured data.
 - **No bpy in shared/:** All Blender-specific code lives in `importer/phases/build_blender/`.
@@ -374,9 +400,13 @@ The shiny parameters are stored as custom properties on the armature (`dat_pkx_s
 - [x] Shiny filter: split into separate routing and brightness shaders. The routing shader (channel swizzle) only applies to texture colors, not vertex colors. The brightness shader applies to the final result after vertex color multiplication.
 - [x] Ambient lighting: per-material stored in Emission node (`dat_ambient_emission`, strength=0 by default). Scene-level `LOBJ_AMBIENT` lights imported as no-op POINT light with `dat_light_type = "AMBIENT"` and `energy = 0`. Sorted first (LightSet[0]) on export.
 - [x] Bone inverse_bind_matrix: computed as `srt_world.inverted()` — the inverse of the SRT-accumulated world matrix (no coordinate rotation). Only set on skinning target bones, cleared on others.
-- [ ] GPT1 particle export (compose + serialize phases) — validate import first
-- [ ] Blender particle visualization from IRParticleSystem
+- [x] GPT1 particle export (compose + serialize phases) — Phase 1 of 19 core opcodes done; see exporter_setup.md Particles section
+- [x] Blender particle visualization from IRParticleSystem — Simulation Nodes scene layout, one mesh + GeometryNodeTree per generator
+- [ ] GPT1 Phase 2 opcodes: trails (`SET_TRAIL`), sub-emitters (`SPAWN_*`, `SPAWN_*_REF`), material-color animation (`MAT_COLOR`, `AMB_COLOR`), texture interpolation, callbacks. Currently raise `ValueError` on import
+- [ ] GPT1 behavioral simulation: current node tree shows static particles; add Age-driven timeline switches for PrimCol/Scale/Rotation so the viewport matches in-game visuals
 - [x] Envelope matrix index overflow: meshes with >10 unique weight combos are now split into multiple PObjects, each with ≤10 envelopes and its own display list. Greedy best-fit bin-packing minimizes the number of splits.
 - [ ] MIRROR wrap mode round-trip: the importer now implements GX MIRROR via PINGPONG shader math nodes (Blender has no native mirror texture extension). The exporter could detect PINGPONG Math nodes in the texture UV chain to recover MIRROR wrap mode. Currently MIRROR round-trips as CLAMP.
-- [ ] Arbitrary model optimization: find the right weight limit and quantization level for in-game quality. Current aggressive settings (2 weights, 25% quantization) load without crashing but garble geometry. Game models use 10% weight steps — try relaxing to 3 weights + 10% quantization and test if the larger file (~1.1 MB) loads cleanly. The bottleneck is unique weight combinations causing PObject proliferation (each PObject duplicates boundary vertices).
+- [ ] Arbitrary model optimization: current settings are 3 weights + 10% quantisation in the prepare script, compose no longer re-quantises. Validate in-game; if quality is still off, the knob to tune is `MAX_WEIGHTS_PER_VERTEX` (up to the 4-weight hardware cap) or the 10% quant step — both live in `scripts/prepare_for_export.py`. Pre-process enforces the 4-influence cap via `_validate_vertex_weight_count`. The bottleneck is still unique weight combinations causing PObject proliferation (each PObject duplicates boundary vertices).
 - [ ] Importer Y-up bone storage: the importer stores Y-up bone data in edit bones with a π/2 X rotation on armature.matrix_basis. This is a shortcut — ideally edit bones should always be in Z-up (Blender native). The exporter handles both cases via `obj_rotation` normalization, but this design creates confusion. Low priority since changing it would affect all existing imported models.
+- [ ] `bake_transforms` armature translation drop: `scripts/prepare_for_export.py:_apply_world_to_data` calls `arm.data.transform(world)` to bake the armature object's `matrix_world` into bone head/tail. In Blender 4.5 this applies rotation and scale correctly but silently drops the translation column, so a rig moved off-origin in object mode ends up with the mesh at the moved-to position and the bones still at their pre-move position. Workaround: position the rig at world origin before running the prepare script. Fix paths to evaluate: (a) replace the armature branch with `bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)` — canonical, also handles child meshes; (b) keep `Armature.transform()` and add a small edit-mode pass that adds `world.to_translation()` to every `EditBone.head/tail`.
+- [ ] Confirm whether the PKX camera is actually needed. Both XD and Colosseum disassemblies show no consumer of a Pokémon model PKX's embedded camera — `scene_data` cameras are only read out of floor/waza/effect archives, never out of a Pokémon model. The importer currently names it `Debug_Camera` and the exporter still emits it for format fidelity. Once re-exported models load consistently in-game, try building a PKX with the camera section omitted (skip the camera root section in compose/serialize). If the model still loads and renders correctly, remove the camera path from the importer and exporter entirely — it's dead format overhead.

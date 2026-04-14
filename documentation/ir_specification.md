@@ -433,3 +433,34 @@ class IRFog:
 ```
 
 No fog data found in tested models. Stub retained for future use.
+
+## Particles (GPT1)
+
+```python
+@dataclass
+class IRParticleSystem:
+    generators: list[IRParticleGenerator]
+    textures: list[IRParticleTexture]
+    ref_ids: list[int]               # Generator ID lookup
+
+@dataclass
+class IRParticleGenerator:
+    index: int
+    gen_type: int
+    lifetime: int                    # Frame duration
+    max_particles: int
+    flags: int
+    params: tuple[float, ...]        # 12-float generator header params
+    instructions: list[ParticleInstruction]   # Decoded bytecode
+
+@dataclass
+class IRParticleTexture:
+    format: int                      # GX format ID
+    width: int
+    height: int
+    pixels: bytes                    # Decoded RGBA u8, bottom-to-top
+```
+
+- `instructions` hold decoded opcodes (not raw bytecode bytes) so the compose phase re-emits bytecode from semantic args via `shared.helpers.gpt1_commands.assemble()`.
+- No raw-bytecode fallback field exists — every opcode must map to a `ParticleInstruction` the assembler knows. Unsupported opcodes cause the describe phase to raise `ValueError`.
+- Phase 5 turns each generator into a Blender mesh with a GeometryNodes modifier; see [exporter_setup.md](exporter_setup.md#particles-gpt1) for the scene layout and opcode coverage.

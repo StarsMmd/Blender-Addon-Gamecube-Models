@@ -25,6 +25,9 @@ from .helpers.material_animations import compose_material_animations
 from .helpers.lights import compose_lights
 from .helpers.cameras import compose_camera
 from .helpers.constraints import compose_constraints
+from .helpers.scale import scale_scene_to_gc_units
+# compose_particles exists but is NOT wired into the export pipeline — see
+# the README "Particles (GPT1)" section for why export is disabled.
 
 
 def compose_scene(ir_scene, options=None, logger=StubLogger()):
@@ -43,6 +46,12 @@ def compose_scene(ir_scene, options=None, logger=StubLogger()):
         options = {}
 
     logger.info("=== Export Phase 2: Compose ===")
+
+    # One-shot meters → GC units conversion. Everything downstream
+    # (bones, meshes, animations, bound box, cameras, lights) reads the
+    # IR after this call and therefore operates in GC units uniformly —
+    # no helper needs to remember to apply METERS_TO_GC of its own.
+    scale_scene_to_gc_units(ir_scene)
 
     root_nodes = []
     section_names = []
@@ -77,7 +86,7 @@ def compose_scene(ir_scene, options=None, logger=StubLogger()):
             mat_roots = []
             for anim_set in model.bone_animations:
                 if anim_set.material_tracks:
-                    root = compose_material_animations(anim_set, model.bones, logger)
+                    root = compose_material_animations(anim_set, model.bones, model.meshes, logger)
                     if root:
                         mat_roots.append(root)
             mat_anim_roots = mat_roots if mat_roots else None
@@ -171,7 +180,12 @@ def _compose_bound_box(model, logger):
     if not frame_counts:
         frame_counts = [1]
 
-    # Build AABB data — one identical AABB per frame across all sets
+    # TODO: game originals animate the AABB per-frame (e.g. sirnight ships
+    # 545 distinct AABBs across 569 frames). We currently replicate one
+    # static rest-pose AABB across every frame of every anim set — correct
+    # in scale now that the pre-pass runs, but still coarse for culling.
+    # Per-frame AABBs require sampling each animation's pose at frame F
+    # and transforming mesh vertices through the skeleton.
     total_frames = sum(frame_counts)
     aabb_bytes = struct.pack('>ffffff', min_x, min_y, min_z, max_x, max_y, max_z)
     raw_data = aabb_bytes * total_frames

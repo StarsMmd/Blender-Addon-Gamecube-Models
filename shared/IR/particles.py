@@ -26,7 +26,6 @@ class IRParticleGenerator:
     flags: int = 0          # Generator flags
     params: tuple = ()      # 12 float parameters from generator header
     instructions: list = field(default_factory=list)  # list[ParticleInstruction]
-    command_bytes: bytes = b''  # Raw bytecode (preserved for round-trip)
 
 
 @dataclass
@@ -38,4 +37,3 @@ class IRParticleSystem:
     generators: list = field(default_factory=list)   # list[IRParticleGenerator]
     textures: list = field(default_factory=list)      # list[IRParticleTexture]
     ref_ids: list = field(default_factory=list)        # list[int] — generator ID lookup
-    raw_gpt1: bytes = b''  # Original GPT1 bytes (for round-trip preservation)

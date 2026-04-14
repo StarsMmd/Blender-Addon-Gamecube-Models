@@ -17,7 +17,6 @@ try:
     )
     from .....shared.IR.enums import LightType
     from .....shared.helpers.logger import StubLogger
-    from .....shared.helpers.scale import METERS_TO_GC
 except (ImportError, SystemError):
     from shared.Nodes.Classes.Light.Light import Light
     from shared.Nodes.Classes.Light.LightSet import LightSet
@@ -31,7 +30,6 @@ except (ImportError, SystemError):
     )
     from shared.IR.enums import LightType
     from shared.helpers.logger import StubLogger
-    from shared.helpers.scale import METERS_TO_GC
 
 
 _TYPE_TO_FLAG = {
@@ -130,10 +128,14 @@ def _compose_light(ir_light, logger):
 
 
 def _make_wobject(position):
-    """Create a WObject with a position vec3, scaled to GC units."""
+    """Create a WObject with a position vec3.
+
+    IRLight positions are already in GC units by the time compose runs
+    (see `scale.py:scale_scene_to_gc_units`), so no local scaling is needed.
+    """
     wobj = WObject(address=None, blender_obj=None)
     wobj.name = None
-    wobj.position = [p * METERS_TO_GC for p in position] if position else [0.0, 0.0, 0.0]
+    wobj.position = list(position) if position else [0.0, 0.0, 0.0]
     wobj.render = None
     return wobj
 

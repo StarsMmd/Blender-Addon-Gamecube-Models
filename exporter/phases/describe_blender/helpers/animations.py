@@ -14,34 +14,57 @@ try:
     from .....shared.IR.enums import Interpolation
     from .....shared.helpers.math_shim import compile_srt_matrix
     from .....shared.helpers.logger import StubLogger
+    from .material_animations import (
+        describe_material_animations_for_action,
+        build_material_lookup_from_meshes,
+    )
 except (ImportError, SystemError):
     from shared.IR.animation import IRBoneAnimationSet, IRBoneTrack, IRKeyframe
     from shared.IR.enums import Interpolation
     from shared.helpers.math_shim import compile_srt_matrix
     from shared.helpers.logger import StubLogger
+    from exporter.phases.describe_blender.helpers.material_animations import (
+        describe_material_animations_for_action,
+        build_material_lookup_from_meshes,
+    )
 
 
-def describe_bone_animations(armature, bones, logger=StubLogger(), use_bezier=True):
+def describe_bone_animations(armature, bones, logger=StubLogger(), use_bezier=True,
+                              referenced_actions=None,
+                              meshes=None, mesh_materials=None):
     """Read Blender Actions and produce IRBoneAnimationSet list.
 
     Finds all actions associated with the armature, samples each
     frame-by-frame, unbakes from Blender pose space to HSD SRT values,
-    and applies sparsification to reduce keyframe count.
+    and applies sparsification to reduce keyframe count. Also scans each
+    action for material animation fcurves (diffuse RGB/alpha + texture UV)
+    and attaches them as `material_tracks` on the resulting IRBoneAnimationSet.
 
     Args:
         armature: Blender armature object.
         bones: list[IRBone] from describe_skeleton.
         logger: Logger instance.
+        referenced_actions: optional set[str] of action names referenced by
+            PKX anim slots. When provided, unreferenced actions are skipped
+            so they don't bloat the exported DAT. Pass None to collect every
+            eligible action (pure .dat export, or scene without PKX metadata).
+        meshes / mesh_materials: parallel lists from describe_meshes. Used to
+            rebuild the material_mesh_name lookup that the importer keyed
+            fcurves by. Pass both as None to disable material-anim readback
+            (e.g. armature-only test fixtures).
 
     Returns:
         list[IRBoneAnimationSet]
     """
-    # The bone rest data used for unbaking includes the armature's object
-    # scale (baked into bone matrices by describe_skeleton). Blender fcurve
-    # location values are in the original unscaled bone-local space, so we
-    # need to scale them to match. Use uniform scale (average of axes).
-    obj_scale = armature.matrix_world.to_scale()
-    loc_scale = (obj_scale.x + obj_scale.y + obj_scale.z) / 3.0
+    # The armature's object transform is baked uniformly into every bone's
+    # rest matrix by describe_skeleton — both rotation and scale. pose_bone
+    # fcurves are already stored in bone-local space (unaffected by the
+    # armature's object transform), so when we unbake them against the rest
+    # `local_matrix` they compose correctly without any obj-scale adjustment.
+    # The previous uniform-average `loc_scale` multiplier was a workaround
+    # for the older skeleton asymmetry; it's wrong for non-uniform armature
+    # scale and is no longer needed now that the skeleton bakes the full
+    # obj transform via matrix multiplication.
     # Find actions associated with this armature
     armature_prefix = armature.name.split('_skeleton_')[0] if '_skeleton_' in armature.name else armature.name
     actions = []
@@ -54,6 +77,17 @@ def describe_bone_animations(armature, bones, logger=StubLogger(), use_bezier=Tr
                     actions.append(action)
                     break
 
+    # Drop actions not referenced by any PKX anim slot. Keeps the DAT from
+    # absorbing unrelated bone-fcurve actions that happen to live in the
+    # same .blend (common with GLB rips that import dozens of animations).
+    if referenced_actions:
+        before = len(actions)
+        actions = [a for a in actions if a.name in referenced_actions]
+        dropped = before - len(actions)
+        if dropped:
+            logger.info("  PKX references %d action(s); dropped %d unreferenced action(s)",
+                        len(referenced_actions), dropped)
+
     if not actions:
         return []
 
@@ -61,11 +95,24 @@ def describe_bone_animations(armature, bones, logger=StubLogger(), use_bezier=Tr
     bone_data = _build_bone_data(bones)
     bone_name_to_index = {b.name: i for i, b in enumerate(bones)}
 
+    # Build the material_mesh_name lookup once for all actions. Empty when
+    # describe_meshes wasn't passed in.
+    mat_lookup = (
+        build_material_lookup_from_meshes(meshes, mesh_materials, bones)
+        if meshes is not None and mesh_materials is not None else {})
+
     anim_sets = []
     for action in actions:
-        anim_set = _describe_action(action, bones, bone_data, bone_name_to_index, logger, use_bezier, loc_scale)
-        if anim_set is not None:
-            anim_sets.append(anim_set)
+        anim_set = _describe_action(action, bones, bone_data, bone_name_to_index, logger, use_bezier)
+        if anim_set is None:
+            continue
+        if mat_lookup:
+            anim_set.material_tracks = describe_material_animations_for_action(
+                action, mat_lookup, logger=logger)
+            if anim_set.material_tracks:
+                logger.debug("    action '%s': %d material tracks",
+                             action.name, len(anim_set.material_tracks))
+        anim_sets.append(anim_set)
 
     logger.info("  Described %d animation set(s) from armature '%s'",
                 len(anim_sets), armature.name)
@@ -108,7 +155,35 @@ def _build_bone_data(bones):
     return data
 
 
-def _describe_action(action, bones, bone_data, bone_name_to_index, logger, use_bezier=True, loc_scale=1.0):
+def _bone_fcurves_frame_range(bone_fcurves):
+    """Compute (frame_start, frame_end, end_frame) from the bone fcurves only.
+
+    `action.frame_range` spans every slot in a slotted Action, so material-
+    animation fcurves (UV translation, diffuse color) on a separate MATERIAL
+    slot can stretch it past the bones' real keyframe span. Using that
+    range would pad every bone with flat keyframes out to whatever the
+    longest material track reaches.
+
+    Returns None when no keyframes are present.
+    """
+    min_frame = None
+    max_frame = None
+    for channels in bone_fcurves.values():
+        for ch_fcs in channels.values():
+            for fc in ch_fcs.values():
+                for kp in fc.keyframe_points:
+                    f = kp.co[0]
+                    min_frame = f if min_frame is None else min(min_frame, f)
+                    max_frame = f if max_frame is None else max(max_frame, f)
+    if min_frame is None:
+        return None
+    frame_start = int(min_frame)
+    frame_end = int(max_frame)
+    end_frame = max(1, frame_end - frame_start)
+    return frame_start, frame_end, end_frame
+
+
+def _describe_action(action, bones, bone_data, bone_name_to_index, logger, use_bezier=True):
     """Convert a single Blender Action to an IRBoneAnimationSet."""
 
     # Group fcurves by bone name
@@ -129,10 +204,10 @@ def _describe_action(action, bones, bone_data, bone_name_to_index, logger, use_b
     if not bone_fcurves:
         return None
 
-    # Determine frame range
-    frame_start = int(action.frame_range[0])
-    frame_end = int(action.frame_range[1])
-    end_frame = max(1, frame_end - frame_start)
+    frame_range = _bone_fcurves_frame_range(bone_fcurves)
+    if frame_range is None:
+        return None
+    frame_start, frame_end, end_frame = frame_range
 
     tracks = []
     for bone_name, channels in bone_fcurves.items():
@@ -142,7 +217,7 @@ def _describe_action(action, bones, bone_data, bone_name_to_index, logger, use_b
 
         track = _unbake_bone_track(
             bone_name, bone_idx, channels, bone_data, bones,
-            frame_start, frame_end, end_frame, logger, use_bezier, loc_scale)
+            frame_start, frame_end, end_frame, logger, use_bezier)
         if track is not None:
             tracks.append(track)
 
@@ -163,7 +238,7 @@ def _describe_action(action, bones, bone_data, bone_name_to_index, logger, use_b
 
 
 def _unbake_bone_track(bone_name, bone_idx, channels, bone_data, bones,
-                       frame_start, frame_end, end_frame, logger, use_bezier=True, loc_scale=1.0):
+                       frame_start, frame_end, end_frame, logger, use_bezier=True):
     """Unbake Blender pose-space fcurves to HSD SRT keyframes for one bone."""
     bd = bone_data[bone_idx]
     parent_idx = bd['parent_index']
@@ -200,7 +275,7 @@ def _unbake_bone_track(bone_name, bone_idx, channels, bone_data, bones,
 
         for i in range(3):
             if i in loc_fcs:
-                blender_loc[i] = loc_fcs[i].evaluate(frame) * loc_scale
+                blender_loc[i] = loc_fcs[i].evaluate(frame)
             if i in scl_fcs:
                 blender_scl[i] = scl_fcs[i].evaluate(frame)
 

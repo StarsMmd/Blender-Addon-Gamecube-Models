@@ -101,7 +101,7 @@ def build_material(ir_material, image_cache=None, name='', has_color_animation=F
             # from the colour chain; they remain in the IR for round-trip
             # export.
             lmc = tex_layer.lightmap_channel
-            if lmc in (LightmapChannel.NONE, LightmapChannel.DIFFUSE, LightmapChannel.AMBIENT):
+            if lmc in (LightmapChannel.NONE, LightmapChannel.DIFFUSE, LightmapChannel.AMBIENT, LightmapChannel.EXTENSION):
                 last_color = _apply_blend(nodes, links, last_color, cur_color, cur_alpha, tex_layer.color_blend, tex_layer.blend_factor, is_color=True)
                 last_alpha = _apply_blend(nodes, links, last_alpha, cur_alpha, cur_alpha, tex_layer.alpha_blend, tex_layer.blend_factor, is_color=False)
 
@@ -664,7 +664,11 @@ def _build_pixel_engine(ir_mat, nodes, links, last_color, last_alpha, mat):
     if fb is None:
         if ir_mat.is_translucent:
             transparent_shader = True
-            mat.blend_method = 'BLEND'
+            # HASHED matches every other "transparent texture, no specific
+            # blend effect" branch below (ALPHA_BLEND, INVERSE_ALPHA_BLEND,
+            # INVISIBLE). EEVEE's BLEND mode introduces depth-sort artefacts
+            # that look like back-faces showing through.
+            mat.blend_method = 'HASHED'
         return last_color, last_alpha, transparent_shader, alt_blend_mode
 
     effect = fb.effect

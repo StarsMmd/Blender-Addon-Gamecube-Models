@@ -86,7 +86,12 @@ def describe_camera(camera_node, camera_index=0, options=None, logger=None):
                camera_index, camera_node.perspective_flags, fatal=True)
         return None
 
-    name = 'Battle_Camera' if camera_index == 0 else 'Camera_%d' % camera_index
+    # XD/Colosseum ignore the PKX camera in every real game context (battles,
+    # summary screen, PC box, overworld) — both disassemblies only read
+    # scene_data cameras out of floor/waza/effect archives, never out of a
+    # Pokémon model PKX. Name it "Debug_Camera" to reflect that it's most
+    # likely a SysDolphin-era debug/preview camera preserved by the format.
+    name = 'Debug_Camera' if camera_index == 0 else 'Camera_%d' % camera_index
 
     position = None
     if camera_node.position and hasattr(camera_node.position, 'position'):

@@ -5,14 +5,22 @@ exporting. It ensures all objects in the scene have the custom properties
 the exporter expects.
 
 The script operates on all objects in the scene — no selection required:
-  1. Creates a Battle_Camera if none exists
-  2. Limits vertex bone weights to 3 per vertex (GameCube constraint)
-  3. Splits oversized meshes by body region if >25 estimated PObjects
-  4. Applies default PKX metadata to all armatures that don't have it
-  5. Auto-derives animation timing from action durations
-  6. Auto-selects GX texture formats for all armature textures
-  7. Inserts shiny filter nodes into all materials (identity defaults, toggle off)
-  8. Creates standard battle lighting (1 ambient + 3 directional)
+  1. Bakes loc/rot/scale on all armatures and their child meshes so
+     `matrix_world` is identity. The exporter rejects unbaked transforms
+     because the SRT decomposition of bone matrices loses any shear that
+     a non-uniform armature scale combined with edit-bone rotation would
+     introduce, drifting bones away from mesh vertices the further you
+     walk down the bone chain.
+  2. Creates a Debug_Camera if none exists (the PKX camera appears to be
+     unused by the game engine; kept for format fidelity pending a confirmed
+     camera-less export test — see CLAUDE.md TODO)
+  3. Limits vertex bone weights to 3 per vertex (GameCube constraint)
+  4. Splits oversized meshes by body region if >25 estimated PObjects
+  5. Applies default PKX metadata to all armatures that don't have it
+  6. Auto-derives animation timing from action durations
+  7. Auto-selects GX texture formats for all armature textures
+  8. Inserts shiny filter nodes into all materials (identity defaults, toggle off)
+  9. Creates standard battle lighting (1 ambient + 3 directional)
 
 After running, the scene can be exported via File > Export > Gamecube model (.dat).
 
@@ -25,11 +33,327 @@ import math
 
 
 # ---------------------------------------------------------------------------
-# Battle camera
+# Bake transforms
 # ---------------------------------------------------------------------------
+#
+# The exporter requires every armature and every mesh parented to one to
+# have identity `matrix_world`. Without this, `describe_skeleton` ends up
+# decomposing a sheared root-bone world matrix into SRT, silently dropping
+# the shear, while `describe_meshes` keeps the same shear baked into vertex
+# coordinates via a plain matmul. The two paths then disagree about where
+# every bone-skinned vertex sits — small near the root, growing the deeper
+# the bone chain goes. Baking transforms upfront via Blender's own
+# `transform_apply` removes the asymmetry at its source.
 
-BATTLE_CAMERA_NAME = "Battle_Camera"
-BATTLE_CAMERA_TARGET = "Battle_Camera_target"
+def _is_identity_matrix(m, tol=1e-5):
+    """Mirrors the export-side validator's tolerance check so a successful
+    bake here cannot fail validation there."""
+    for i in range(4):
+        for j in range(4):
+            expected = 1.0 if i == j else 0.0
+            if abs(m[i][j] - expected) > tol:
+                return False
+    return True
+
+
+def _apply_world_to_data(obj, world):
+    """Bake `world` into obj's data (vertex coords for meshes, bone
+    head/tail/roll for armatures). Resolves multi-user data by copying
+    the datablock first. Does not touch obj.matrix_basis.
+
+    Both `Mesh.transform()` and `Armature.transform()` are direct data-
+    level operations — they don't go through bpy.ops, don't require the
+    object to be selected/active/visible, and don't need any particular
+    context. Critically for armatures, `Armature.transform()` correctly
+    scales bone lengths along with head positions; the previous
+    edit-mode `bone.matrix = world @ bone.matrix` approach left lengths
+    unchanged, which collapsed the whole skeleton into a tiny region
+    (Greninja's 0.01 scale piled all 100+ bones on top of each other,
+    visible as "a couple of giant bones").
+
+    Returns True if data was mutated, False if obj has no applicable data.
+    """
+    if obj.type == 'MESH':
+        if obj.data is None:
+            return False
+        if obj.data.users > 1:
+            obj.data = obj.data.copy()
+        obj.data.transform(world)
+        return True
+    elif obj.type == 'ARMATURE':
+        if obj.data is None:
+            return False
+        if obj.data.users > 1:
+            obj.data = obj.data.copy()
+        obj.data.transform(world)
+        return True
+    return False
+
+
+def _ensure_bone_marker_object():
+    """Create (or reuse) a 1 cm octahedron object used as the
+    `custom_shape` for every pose bone post-bake. Mirrors the default
+    OCTAHEDRAL bone display look ("diamondy" shape) but at a fixed 1×1×1
+    cm size that does not scale with bone length. The mesh isn't linked
+    into any collection — it just needs to exist as a datablock for
+    `pose_bone.custom_shape` to reference. Reused across runs by name."""
+    name = 'DATPlugin_BoneMarker'
+    obj = bpy.data.objects.get(name)
+    if obj is not None:
+        return obj
+    mesh = bpy.data.meshes.get(name)
+    if mesh is None or not mesh.vertices:
+        if mesh is None:
+            mesh = bpy.data.meshes.new(name)
+        # Regular octahedron: 6 vertices on the ±X / ±Y / ±Z axes,
+        # 8 triangular faces forming a diamond. Total bbox is 1×1×1 cm.
+        s = 0.005
+        verts = [
+            ( s, 0, 0), (-s, 0, 0),
+            (0,  s, 0), (0, -s, 0),
+            (0, 0,  s), (0, 0, -s),
+        ]
+        faces = [
+            (0, 2, 4), (0, 4, 3), (0, 3, 5), (0, 5, 2),
+            (1, 4, 2), (1, 3, 4), (1, 5, 3), (1, 2, 5),
+        ]
+        mesh.from_pydata(verts, [], faces)
+        mesh.update()
+    return bpy.data.objects.new(name, mesh)
+
+
+def _collect_armature_actions(arm):
+    """Actions that this armature's animation_data references — active +
+    every NLA strip's action. We only scale fcurves on these, not on
+    every action in bpy.data.actions, so a second armature's actions
+    don't get over-scaled when its scale factor differs."""
+    if not arm.animation_data:
+        return set()
+    actions = set()
+    if arm.animation_data.action:
+        actions.add(arm.animation_data.action)
+    for tr in arm.animation_data.nla_tracks:
+        for st in tr.strips:
+            if st.action:
+                actions.add(st.action)
+    return actions
+
+
+def bake_transforms():
+    """Bake loc/rot/scale on every armature and its child meshes so each
+    `matrix_world` is identity.
+
+    The naive approach (apply world matrix to data, set matrix_basis to I)
+    is *almost* right but breaks animations in two non-obvious ways:
+
+      1. `Armature.transform()` while the action is evaluating leaves the
+         pose-matrix cache stale — even after view_layer.update(), pose
+         evaluation reads the old rest matrix and produces wildly wrong
+         bone positions (Greninja: pose-bone Waist ended up at world Y=94
+         instead of Y=0.06). Fix: mute the action and reset all pose-bone
+         TRS to identity *before* baking, restore *after*.
+
+      2. PoseBone.location values are in bone-local rest-frame coordinates.
+         Pre-bake, the bone's rest frame is scaled by the armature's world
+         scale (e.g. 0.01 for Greninja); a pose-loc of 50 means 0.5 m of
+         world translation. Post-bake the rest frame has scale 1.0; the
+         same 50 now means 50 m. Fix: multiply every pose.bones[].location
+         fcurve keyframe by the armature's pre-bake scale factor. Pose
+         rotations and scales are dimensionless and need no adjustment.
+
+    Also handles per-view-layer hidden objects (`hide_get() == True`) by
+    temporarily unhiding them, since several Blender ops — and even
+    `Armature.transform()` in some contexts — silently no-op on objects
+    that aren't `visible_get()`.
+
+    Returns the number of objects baked.
+    """
+    from mathutils import Matrix as _Matrix
+    import re
+
+    armatures = [obj for obj in bpy.data.objects if obj.type == 'ARMATURE']
+    if not armatures:
+        return 0
+
+    # ------------------------------------------------------------------
+    # Step 0: snapshot animation + visibility state, then neutralise it.
+    # ------------------------------------------------------------------
+    saved_anim = []     # one entry per armature
+    saved_hide = []     # (obj, was_hidden_per_view_layer)
+    for arm in armatures:
+        ad = arm.animation_data
+        anim_snapshot = {
+            'arm': arm,
+            'scale': arm.matrix_world.to_scale().x,  # uniform scale assumed
+            'actions': _collect_armature_actions(arm),
+            'action': ad.action if ad else None,
+            'use_nla': ad.use_nla if ad else None,
+            'pose': [
+                (pb.name,
+                 pb.location.copy(),
+                 pb.rotation_quaternion.copy(),
+                 pb.rotation_euler.copy(),
+                 pb.rotation_axis_angle[:],
+                 pb.scale.copy())
+                for pb in arm.pose.bones
+            ],
+        }
+        saved_anim.append(anim_snapshot)
+        # Mute the animation source of pose evaluation
+        if ad:
+            ad.action = None
+            ad.use_nla = False
+        for pb in arm.pose.bones:
+            pb.location = (0, 0, 0)
+            pb.rotation_quaternion = (1, 0, 0, 0)
+            pb.rotation_euler = (0, 0, 0)
+            pb.rotation_axis_angle = (0, 0, 1, 0)
+            pb.scale = (1, 1, 1)
+
+    # Force-unhide every relevant object so silent visibility-gated no-ops
+    # can't bite us. We restore at the end.
+    for arm in armatures:
+        if arm.hide_get():
+            saved_hide.append((arm, True))
+            arm.hide_set(False)
+        for obj in bpy.data.objects:
+            if obj.parent is arm and obj.type == 'MESH' and obj.hide_get():
+                saved_hide.append((obj, True))
+                obj.hide_set(False)
+
+    bpy.context.view_layer.update()
+
+    # ------------------------------------------------------------------
+    # Step 1: capture world matrices BEFORE mutation. matrix_world is
+    # cached and re-reading it after a sibling object is baked returns
+    # half-stale values.
+    # ------------------------------------------------------------------
+    targets = []
+    for arm in armatures:
+        targets.append((arm, arm.matrix_world.copy()))
+        for obj in bpy.data.objects:
+            if obj.parent is arm and obj.type == 'MESH':
+                targets.append((obj, obj.matrix_world.copy()))
+
+    # ------------------------------------------------------------------
+    # Step 2: bake each target using its captured world.
+    # ------------------------------------------------------------------
+    baked = 0
+    identity = _Matrix.Identity(4)
+    for obj, world in targets:
+        if _is_identity_matrix(world):
+            obj.matrix_basis = identity
+            if obj.parent is not None:
+                obj.matrix_parent_inverse = identity
+            continue
+        if not _apply_world_to_data(obj, world):
+            continue
+        obj.matrix_basis = identity
+        if obj.parent is not None:
+            obj.matrix_parent_inverse = identity
+        baked += 1
+
+    # ------------------------------------------------------------------
+    # Step 2b: replace each bone's display with a 1 cm cube custom shape.
+    # OCTAHEDRAL/BBONE/STICK all extend the bone display along its full
+    # head→tail length — for Greninja's 95 cm Origin bone that's a 95 cm-
+    # tall display element, visually dominant over the 1.7 m mesh. A
+    # custom_shape with use_custom_shape_bone_size=False renders a fixed-
+    # size cube at each joint regardless of bone length, restoring the
+    # tidy "tiny markers" look the pre-bake 0.01-scale armature gave by
+    # accident.
+    bone_marker = _ensure_bone_marker_object()
+    for arm in armatures:
+        for pb in arm.pose.bones:
+            pb.custom_shape = bone_marker
+            # `use_custom_shape_bone_size` defaults to False in Blender 4.x
+            # (shape NOT scaled by bone length). Set explicitly anyway in
+            # case a future Blender flips the default.
+            pb.use_custom_shape_bone_size = False
+            pb.custom_shape_scale_xyz = (1.0, 1.0, 1.0)
+
+    # ------------------------------------------------------------------
+    # Step 3: scale every pose.bones[...].location fcurve by the
+    # armature's pre-bake world scale. Pose rotations and scales need no
+    # adjustment (they're dimensionless).
+    # ------------------------------------------------------------------
+    loc_re = re.compile(r'^pose\.bones\[".*"\]\.location$')
+    for snap in saved_anim:
+        s = snap['scale']
+        if abs(s - 1.0) < 1e-6:
+            continue  # armature was already at unit scale, nothing to do
+        for action in snap['actions']:
+            for fc in action.fcurves:
+                if not loc_re.match(fc.data_path):
+                    continue
+                for kp in fc.keyframe_points:
+                    kp.co.y *= s
+                    kp.handle_left.y *= s
+                    kp.handle_right.y *= s
+        # Also scale the snapshotted pose-loc values we'll restore below
+        snap['pose'] = [
+            (name, (loc[0]*s, loc[1]*s, loc[2]*s), quat, eul, aa, scl)
+            for (name, loc, quat, eul, aa, scl) in snap['pose']
+        ]
+
+    # ------------------------------------------------------------------
+    # Step 4: restore animation + pose state.
+    # ------------------------------------------------------------------
+    for snap in saved_anim:
+        arm = snap['arm']
+        ad = arm.animation_data
+        if ad:
+            ad.action = snap['action']
+            if snap['use_nla'] is not None:
+                ad.use_nla = snap['use_nla']
+        for (name, loc, quat, eul, aa, scl) in snap['pose']:
+            pb = arm.pose.bones.get(name)
+            if pb is None:
+                continue
+            pb.location = loc
+            pb.rotation_quaternion = quat
+            pb.rotation_euler = eul
+            pb.rotation_axis_angle = aa
+            pb.scale = scl
+
+    # Restore visibility
+    for obj, _was_hidden in saved_hide:
+        obj.hide_set(True)
+
+    bpy.context.view_layer.update()
+
+    # ------------------------------------------------------------------
+    # Step 5: verify.
+    # ------------------------------------------------------------------
+    offenders = [
+        obj.name for obj, _ in targets
+        if not _is_identity_matrix(obj.matrix_world)
+    ]
+    if offenders:
+        raise RuntimeError(
+            "Failed to bake transforms to identity on: "
+            + ", ".join(offenders) + ". The object's data may be linked "
+            "from another .blend, or its data is None. Open the offending "
+            "object in the Outliner to investigate."
+        )
+
+    return baked
+
+
+# ---------------------------------------------------------------------------
+# Debug camera
+# ---------------------------------------------------------------------------
+#
+# Both the XD and Colosseum disassemblies show no real consumer of the PKX
+# model's embedded camera — battles, summary screens, PC box, and overworld
+# all use hardcoded or bounding-box-derived cameras. The camera section is
+# most likely a SysDolphin-era debug/preview camera that the format
+# preserves but the game ignores. We still emit one to keep the DAT
+# structure identical to official models until a camera-less export is
+# confirmed working in-game.
+
+DEBUG_CAMERA_NAME = "Debug_Camera"
+DEBUG_CAMERA_TARGET = "Debug_Camera_target"
 
 
 def _model_display_size():
@@ -51,14 +375,14 @@ def _model_display_size():
 
 
 def prepare_camera():
-    """Create a default battle camera if none exists, and set aspect on all cameras.
+    """Create a default debug camera if none exists, and set aspect on all cameras.
 
     Returns the number of cameras created (0 or 1).
     """
     created = 0
 
-    # Create Battle_Camera if it doesn't exist
-    if bpy.data.objects.get(BATTLE_CAMERA_NAME) is None:
+    # Create Debug_Camera if it doesn't exist
+    if bpy.data.objects.get(DEBUG_CAMERA_NAME) is None:
         # Compute model bounding box to position camera intelligently
         from mathutils import Vector
         min_co = [float('inf')] * 3
@@ -92,19 +416,19 @@ def prepare_camera():
         cam_pos = (center_x, center_y - cam_distance, target_z)
         target_pos = (center_x, center_y, target_z)
 
-        cam_data = bpy.data.cameras.new(BATTLE_CAMERA_NAME)
+        cam_data = bpy.data.cameras.new(DEBUG_CAMERA_NAME)
         cam_data.type = 'PERSP'
         cam_data.lens = 37.5       # ~27° vertical FOV (most common across all PKX models)
         cam_data.clip_start = 0.01
         cam_data.clip_end = 3277.0
 
-        cam_obj = bpy.data.objects.new(BATTLE_CAMERA_NAME, cam_data)
+        cam_obj = bpy.data.objects.new(DEBUG_CAMERA_NAME, cam_data)
         cam_obj.location = cam_pos
         cam_obj["dat_camera_aspect"] = 1.18
         bpy.context.scene.collection.objects.link(cam_obj)
 
         # Create target empty at model center
-        target = bpy.data.objects.new(BATTLE_CAMERA_TARGET, None)
+        target = bpy.data.objects.new(DEBUG_CAMERA_TARGET, None)
         target.empty_display_type = 'PLAIN_AXES'
         target.empty_display_size = _model_display_size()
         target.location = target_pos
@@ -117,7 +441,7 @@ def prepare_camera():
         track.up_axis = 'UP_Y'
 
         created = 1
-        print("  Created '%s' in front of model, targeting center" % BATTLE_CAMERA_NAME)
+        print("  Created '%s' in front of model, targeting center" % DEBUG_CAMERA_NAME)
         print("    Position: (%.2f, %.2f, %.2f)" % cam_pos)
         print("    Target: (%.2f, %.2f, %.2f)" % target_pos)
         print("    Lens: 37.5mm (~27° FOV), aspect: 1.18")
@@ -503,6 +827,38 @@ def _shiny_find_color_input(nodes):
     return None, None
 
 
+def _shiny_no_texture_in_color_chain(target_input):
+    """True when no ShaderNodeTexImage is reachable from the shader color input.
+
+    The in-game shiny color swap operates on GX texture swap tables; without
+    a texture sample in the chain there is nothing to swizzle, and the
+    brightness modulation on a constant-colour chain reads as untouched
+    compared to the saturated re-tint textured materials get. Materials
+    matching this shape are skipped so the shader-side simulation matches
+    the in-game behaviour.
+
+    An unlinked target input (default-valued Base Color) is also treated
+    as "no texture" — still a pure constant-colour chain.
+    """
+    if not target_input.is_linked:
+        return True
+    visited = set()
+    stack = [target_input]
+    while stack:
+        sock = stack.pop()
+        for link in sock.links:
+            node = link.from_node
+            if id(node) in visited:
+                continue
+            visited.add(id(node))
+            if node.type == 'TEX_IMAGE':
+                return False
+            for inp in node.inputs:
+                if inp.is_linked:
+                    stack.append(inp)
+    return True
+
+
 def _shiny_insert_stage(nodes, links, target_node, target_input,
                         node_group, group_name, mix_name, armature):
     """Insert a shiny stage between a source and a shader input."""
@@ -579,6 +935,8 @@ def prepare_shiny_filter(armature):
             target_node, target_input = _shiny_find_color_input(nodes)
             if target_node is None:
                 continue
+            if _shiny_no_texture_in_color_chain(target_input):
+                continue
             links = mat.node_tree.links
             _shiny_insert_stage(nodes, links, target_node, target_input,
                                 route_group, 'shiny_route_shader', 'shiny_route_mix', armature)
@@ -605,7 +963,15 @@ def _srgb_to_linear(c):
 # Mesh weight limiting and splitting
 # ---------------------------------------------------------------------------
 
-MAX_WEIGHTS_PER_VERTEX = 2
+MAX_WEIGHTS_PER_VERTEX = 3
+
+# Opt-in knob (HSDLib parity, `POBJ_Generator.ClampWeight`). When True, any
+# vertex weight below 0.1 is removed and its slack redistributed to the
+# dominant bone before quantization — prevents GLB-rip long-tail weight
+# distributions from collapsing to sum<1.0 after 10% rounding. Leave False
+# to preserve exact game-model round-trips; flip to True when testing
+# arbitrary rips that exhibit shrunken / floating vertices.
+REDISTRIBUTE_SUB_0_1_WEIGHTS = False
 
 
 def prepare_mesh_weights(armature):
@@ -651,6 +1017,28 @@ def prepare_mesh_weights(armature):
             total_limited += affected
             print("    %s: limited %d vertices to %d weights" %
                   (mesh_obj.name, affected, MAX_WEIGHTS_PER_VERTEX))
+
+        # Step 2a: Drop sub-0.1 weights and redistribute their slack to the
+        # dominant bone of each vertex (opt-in, HSDLib ClampWeight parity).
+        if REDISTRIBUTE_SUB_0_1_WEIGHTS:
+            redistributed = 0
+            for v in mesh_obj.data.vertices:
+                bone_groups = [g for g in v.groups
+                               if g.group < len(mesh_obj.vertex_groups)
+                               and mesh_obj.vertex_groups[g.group].name in bone_names
+                               and g.weight > 0.0]
+                small = [g for g in bone_groups if g.weight < 0.1]
+                if not small or len(small) == len(bone_groups):
+                    continue
+                slack = sum(g.weight for g in small)
+                dominant = max(bone_groups, key=lambda g: g.weight)
+                for g in small:
+                    g.weight = 0.0
+                dominant.weight = min(1.0, dominant.weight + slack)
+                redistributed += 1
+            if redistributed:
+                print("    %s: redistributed sub-0.1 weights on %d vertices" %
+                      (mesh_obj.name, redistributed))
 
         # Step 2: Quantize weights to 10% steps
         bpy.ops.object.mode_set(mode='WEIGHT_PAINT')
@@ -1183,10 +1571,31 @@ if __name__ == "__main__" or True:
     # 0. Register panel + properties if the addon isn't loaded
     _register_pkx_panel()
 
-    # 1. Camera
+    # 1. Bake loc/rot/scale on armatures + child meshes. Must run before
+    #    anything else so subsequent prep + the exporter itself see clean
+    #    identity matrix_world on every relevant object.
+    baked = bake_transforms()
+    if baked:
+        print("  Baked transforms on %d object(s) [direct data mutation]" % baked)
+        # Sanity-print a sample bone + vertex magnitude so the user can
+        # eyeball whether bones and meshes ended up at the same scale.
+        # If they're orders of magnitude apart, the loaded script version
+        # is wrong (Text Editor caches the buffer; click Text > Reload).
+        for arm in (o for o in bpy.data.objects if o.type == 'ARMATURE'):
+            child = next((o for o in bpy.data.objects
+                          if o.parent is arm and o.type == 'MESH' and o.data and o.data.vertices),
+                         None)
+            if child is None:
+                continue
+            longest = max((b.length for b in arm.data.bones), default=0.0)
+            v = max((v.co.length for v in child.data.vertices), default=0.0)
+            print("    %s: longest bone = %.3f, max mesh vertex = %.3f"
+                  % (arm.name, longest, v))
+
+    # 2. Camera
     cam_created = prepare_camera()
     if not cam_created:
-        print("  Battle camera already exists")
+        print("  Debug camera already exists")
 
     # 2-4. Per-armature steps: PKX metadata, timing, texture formats
     armatures = [obj for obj in bpy.data.objects if obj.type == 'ARMATURE']

@@ -21,7 +21,6 @@ try:
     )
     from .....shared.IR.enums import CameraProjection
     from .....shared.helpers.logger import StubLogger
-    from .....shared.helpers.scale import METERS_TO_GC
 except (ImportError, SystemError):
     from shared.Nodes.Classes.Camera.Camera import Camera
     from shared.Nodes.Classes.Camera.CameraSet import CameraSet
@@ -40,7 +39,6 @@ except (ImportError, SystemError):
     )
     from shared.IR.enums import CameraProjection
     from shared.helpers.logger import StubLogger
-    from shared.helpers.scale import METERS_TO_GC
 
 # Reuse the keyframe encoding logic from bone animations
 from .animations import _encode_channel
@@ -72,12 +70,13 @@ def compose_camera(ir_camera, logger=StubLogger()):
         ir_camera.projection, COBJ_PROJECTION_PERSPECTIVE)
     camera.viewport = [0, 640, 0, 480]
     camera.scissor = [0, 640, 0, 480]
-    camera.position = _make_wobject(ir_camera.position, scale=METERS_TO_GC)
-    camera.interest = _make_wobject(ir_camera.target_position, scale=METERS_TO_GC)
+    # IRCamera is already in GC units (see scale.py:scale_scene_to_gc_units).
+    camera.position = _make_wobject(ir_camera.position)
+    camera.interest = _make_wobject(ir_camera.target_position)
     camera.roll = ir_camera.roll
     camera.up_vector = None
-    camera.near = ir_camera.near * METERS_TO_GC
-    camera.far = ir_camera.far * METERS_TO_GC
+    camera.near = ir_camera.near
+    camera.far = ir_camera.far
     camera.field_of_view = ir_camera.field_of_view
     camera.aspect = ir_camera.aspect
 
@@ -129,29 +128,14 @@ def _compose_single_camera_animation(anim, logger):
     """
     cam_anim = CameraAnimation(address=None, blender_obj=None)
 
-    # Scale position/distance keyframes from meters back to GC units
-    def _scale_kfs(kfs):
-        if not kfs:
-            return kfs
-        try:
-            from .....shared.IR.animation import IRKeyframe
-        except (ImportError, SystemError):
-            from shared.IR.animation import IRKeyframe
-        return [IRKeyframe(
-            frame=kf.frame, value=kf.value * METERS_TO_GC,
-            interpolation=kf.interpolation,
-            handle_left=(kf.handle_left[0], kf.handle_left[1] * METERS_TO_GC) if kf.handle_left else None,
-            handle_right=(kf.handle_right[0], kf.handle_right[1] * METERS_TO_GC) if kf.handle_right else None,
-            slope_in=kf.slope_in * METERS_TO_GC if kf.slope_in is not None else None,
-            slope_out=kf.slope_out * METERS_TO_GC if kf.slope_out is not None else None,
-        ) for kf in kfs]
-
-    # Build CObj AOBJ for FOV/roll/near/far
+    # IRCameraKeyframes are already in GC units (see
+    # scale.py:scale_scene_to_gc_units which scales eye_*, target_*,
+    # near, and far channels). FOV and roll are angles — untouched.
     cobj_channels = [
         (anim.fov, HSD_A_C_FOVY),
         (anim.roll, HSD_A_C_ROLL),
-        (_scale_kfs(anim.near), HSD_A_C_NEAR),
-        (_scale_kfs(anim.far), HSD_A_C_FAR),
+        (anim.near, HSD_A_C_NEAR),
+        (anim.far, HSD_A_C_FAR),
     ]
 
     cobj_frames = _build_frame_chain(cobj_channels)
@@ -165,20 +149,18 @@ def _compose_single_camera_animation(anim, logger):
     else:
         cam_anim.animation = None
 
-    # Build eye position WObjectAnimation (scaled to GC)
     eye_channels = [
-        (_scale_kfs(anim.eye_x), HSD_A_W_TRAX),
-        (_scale_kfs(anim.eye_y), HSD_A_W_TRAY),
-        (_scale_kfs(anim.eye_z), HSD_A_W_TRAZ),
+        (anim.eye_x, HSD_A_W_TRAX),
+        (anim.eye_y, HSD_A_W_TRAY),
+        (anim.eye_z, HSD_A_W_TRAZ),
     ]
     cam_anim.eye_position_animation = _build_wobject_animation(
         eye_channels, anim.end_frame, anim.loop)
 
-    # Build target/interest WObjectAnimation (scaled to GC)
     target_channels = [
-        (_scale_kfs(anim.target_x), HSD_A_W_TRAX),
-        (_scale_kfs(anim.target_y), HSD_A_W_TRAY),
-        (_scale_kfs(anim.target_z), HSD_A_W_TRAZ),
+        (anim.target_x, HSD_A_W_TRAX),
+        (anim.target_y, HSD_A_W_TRAY),
+        (anim.target_z, HSD_A_W_TRAZ),
     ]
     cam_anim.interest_animation = _build_wobject_animation(
         target_channels, anim.end_frame, anim.loop)
@@ -238,10 +220,10 @@ def _build_frame_chain(channels):
     return frames[0] if frames else None
 
 
-def _make_wobject(position, scale=1.0):
-    """Create a WObject with a position vec3, optionally scaled."""
+def _make_wobject(position):
+    """Create a WObject with a position vec3 in GC units."""
     wobj = WObject(address=None, blender_obj=None)
     wobj.name = None
-    wobj.position = [p * scale for p in position] if position else [0.0, 0.0, 0.0]
+    wobj.position = list(position) if position else [0.0, 0.0, 0.0]
     wobj.render = None
     return wobj
