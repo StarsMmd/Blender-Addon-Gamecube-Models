@@ -101,7 +101,7 @@ def build_material(ir_material, image_cache=None, name='', has_color_animation=F
             # from the colour chain; they remain in the IR for round-trip
             # export.
             lmc = tex_layer.lightmap_channel
-            if lmc in (LightmapChannel.NONE, LightmapChannel.DIFFUSE, LightmapChannel.AMBIENT):
+            if lmc in (LightmapChannel.NONE, LightmapChannel.DIFFUSE, LightmapChannel.AMBIENT, LightmapChannel.EXTENSION):
                 last_color = _apply_blend(nodes, links, last_color, cur_color, cur_alpha, tex_layer.color_blend, tex_layer.blend_factor, is_color=True)
                 last_alpha = _apply_blend(nodes, links, last_alpha, cur_alpha, cur_alpha, tex_layer.alpha_blend, tex_layer.blend_factor, is_color=False)
 
