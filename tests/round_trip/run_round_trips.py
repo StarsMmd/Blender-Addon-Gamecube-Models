@@ -101,8 +101,13 @@ def build_in_blender(ir_scene, options=None):
     """Run import phase 5 (build_blender). Returns build_results."""
     if options is None:
         options = {"filepath": "test_model"}
-    # Enable all optional features for round-trip testing
+    # Enable all optional features for round-trip testing. Without
+    # import_cameras=True, build_blender skips the camera build entirely
+    # (default False) and the IBI camera category scores 0%(0/100) — not
+    # because readback is broken, but because no cameras ever entered
+    # the scene to read back.
     options.setdefault("import_lights", True)
+    options.setdefault("import_cameras", True)
     return build_blender_scene(ir_scene, bpy.context, options)
 
 

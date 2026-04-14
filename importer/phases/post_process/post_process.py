@@ -34,6 +34,7 @@ def post_process(armature_names, shiny_params=None, options=None, logger=StubLog
     logger.info("  Options: %s", options)
 
     include_shiny = True if options is None else options.get("include_shiny", True)
+    selected_actions = []
 
     if build_results:
         # New pipeline path: use actions directly from Phase 5
@@ -43,7 +44,9 @@ def post_process(armature_names, shiny_params=None, options=None, logger=StubLog
             mat_slot_indices = result['mat_slot_indices']
 
             logger.info("  Post-processing armature: %s (%d actions)", armature.name, len(actions))
-            _select_first_action(armature, actions, mat_slot_indices, pkx_header=pkx_header)
+            active = _select_first_action(armature, actions, mat_slot_indices, pkx_header=pkx_header)
+            if active is not None:
+                selected_actions.append(active)
 
             if include_shiny and shiny_params is not None:
                 _apply_shiny(armature, shiny_params, logger)
@@ -60,7 +63,9 @@ def post_process(armature_names, shiny_params=None, options=None, logger=StubLog
 
             actions = _find_actions(armature)
             mat_slot_indices = _find_material_slot_indices(armature, actions)
-            _select_first_action(armature, actions, mat_slot_indices)
+            active = _select_first_action(armature, actions, mat_slot_indices)
+            if active is not None:
+                selected_actions.append(active)
 
             if include_shiny and shiny_params is not None:
                 _apply_shiny(armature, shiny_params, logger)
@@ -68,7 +73,15 @@ def post_process(armature_names, shiny_params=None, options=None, logger=StubLog
             if pkx_header is not None:
                 _store_pkx_metadata(armature, pkx_header, logger, actions=actions)
 
-    bpy.context.scene.frame_set(0)
+    scene = bpy.context.scene
+    if selected_actions:
+        start = min(int(a.frame_range[0]) for a in selected_actions)
+        end = max(int(a.frame_range[1]) for a in selected_actions)
+        scene.frame_start = start
+        scene.frame_end = end
+        logger.info("  Scene frame range set to %d-%d from %d action(s)",
+                    start, end, len(selected_actions))
+    scene.frame_set(scene.frame_start)
     logger.info("=== Phase 6 complete ===")
 
 
@@ -116,7 +129,7 @@ def _select_first_action(armature, actions, mat_slot_indices, pkx_header=None):
     otherwise falls back to the first action with '_Idle' in the name.
     """
     if not armature.animation_data or not actions:
-        return
+        return None
 
     active_action = None
 
@@ -147,6 +160,8 @@ def _select_first_action(armature, actions, mat_slot_indices, pkx_header=None):
 
     if mat_slot_indices:
         _register_action_sync_handler(armature, mat_slot_indices)
+
+    return active_action
 
 
 def _apply_shiny(armature, shiny_params, logger):
@@ -230,12 +245,19 @@ def _store_pkx_metadata(armature, pkx_header, logger, actions=None):
     _SUB_ANIM_TRIGGERS = {0: "sleep_on", 1: "sleep_off", 2: "extra", 3: "unused"}
     _SUB_ANIM_TYPES = {0: "none", 1: "simple", 2: "targeted"}
 
-    # Body map descriptive names (index → property suffix). Only slots 0-7
-    # are surfaced as custom properties; 8-15 are unreferenced by the game
-    # and always written as -1 on export.
+    # Body map descriptive names (index → property suffix). Slots 0-7 are
+    # the well-known engine body parts; slots 8-15 are extended slots used
+    # for particle-generator attachment on effect-themed Pokémon (Moltres,
+    # Ghastly, Articuno, Vaporeon…). See `ModelSequence::GetPart` in the XD
+    # disassembly — every particle-attach path resolves a slot 0-15 into
+    # `anim_entry.body_map_bones[slot]`. Callers pass the slot literal from
+    # game code, so we can't map generators to slots automatically, but we
+    # surface the bones so the user can reattach generator meshes.
     _BODY_MAP_KEYS = [
         "root", "head", "center", "body_3", "neck", "head_top",
         "limb_a", "limb_b",
+        "secondary_8", "secondary_9", "secondary_10", "secondary_11",
+        "attach_a", "attach_b", "attach_c", "attach_d",
     ]
 
     # --- Preamble ---
