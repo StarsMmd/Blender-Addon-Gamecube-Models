@@ -119,8 +119,19 @@ def _build_mesh(ir_mesh, ir_model, armature, image_cache, logger, mesh_idx, mode
         mesh_object.hide_render = True
         mesh_object.hide_set(True)
 
-    # Parent to armature
+    # Parent to the armature, but also record the owning bone name via
+    # Blender's `parent_bone` field so mesh→bone ownership survives the
+    # round-trip (read back by the exporter's _determine_parent_bone).
+    # Leaving `parent_type='OBJECT'` means the bone name is recorded but
+    # doesn't drive any transform — the armature modifier handles
+    # deformation from vertex groups as before. Switching to
+    # `parent_type='BONE'` would double-transform verts weighted to the
+    # same bone.
     mesh_object.parent = armature
+    if ir_mesh.parent_bone_index < len(ir_model.bones):
+        bone_name = ir_model.bones[ir_mesh.parent_bone_index].name
+        if bone_name and bone_name in armature.data.bones:
+            mesh_object.parent_bone = bone_name
 
     # Build material from IR (reuse cached material if available)
     if cached_material is not None:
