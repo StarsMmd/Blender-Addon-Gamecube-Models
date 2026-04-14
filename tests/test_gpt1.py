@@ -306,4 +306,3 @@ def test_describe_particles_integration():
     assert result.ref_ids == [1, 2, 3]
     assert len(result.generators[0].instructions) > 0
     assert result.generators[0].instructions[0].mnemonic == "SCALE"
-    assert result.raw_gpt1 == data

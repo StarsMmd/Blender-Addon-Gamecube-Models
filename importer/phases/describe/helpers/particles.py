@@ -51,7 +51,6 @@ def describe_particles(gpt1_data, logger=StubLogger()):
             flags=gen.flags,
             params=gen.params,
             instructions=instructions,
-            command_bytes=gen.command_bytes,
         )
         ir_generators.append(ir_gen)
         logger.debug("    Generator %d: type=%d, lifetime=%d, max_particles=%d, %d instructions",
@@ -79,7 +78,6 @@ def describe_particles(gpt1_data, logger=StubLogger()):
         generators=ir_generators,
         textures=ir_textures,
         ref_ids=list(gpt1.ref_ids),
-        raw_gpt1=bytes(gpt1_data),
     )
 
 
