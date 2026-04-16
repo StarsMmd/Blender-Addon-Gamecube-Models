@@ -44,8 +44,15 @@ class Exporter:
         # Pre-process — Validate output path and scene
         pre_process(context, filepath, options, logger)
 
+        # Extension tells Phase 1 whether to drop the prep-script's
+        # auto-generated preview lights/camera — we only strip those when
+        # writing a bare .dat. A .pkx export keeps them for self-containment.
+        output_ext = filepath.rsplit('.', 1)[-1].lower() if '.' in filepath else ''
+
         # Phase 1 — Describe Blender Scene: Blender context → IRScene
-        ir_scene, shiny_params, pkx_header = describe_blender_scene(context, options, logger)
+        ir_scene, shiny_params, pkx_header = describe_blender_scene(
+            context, options, logger, output_ext=output_ext,
+        )
 
         # Phase 2 — Compose: IRScene → node trees
         root_nodes, section_names = compose_scene(ir_scene, options, logger)

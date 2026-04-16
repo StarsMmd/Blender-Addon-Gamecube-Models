@@ -46,7 +46,7 @@ except (ImportError, SystemError):
     from exporter.phases.describe_blender.helpers.constraints import describe_constraints
 
 
-def describe_blender_scene(context, options=None, logger=StubLogger()):
+def describe_blender_scene(context, options=None, logger=StubLogger(), output_ext=''):
     """Read the active Blender scene and produce an IRScene.
 
     Exports the entire Blender scene. Each armature becomes one IRModel
@@ -57,6 +57,9 @@ def describe_blender_scene(context, options=None, logger=StubLogger()):
         context: Blender context with active scene.
         options: dict of exporter options.
         logger: Logger instance.
+        output_ext: Target file extension (e.g. 'dat', 'pkx'). When 'dat',
+            the prep-script's auto-generated preview lights and debug camera
+            are dropped so bare .dat exports stay lean.
 
     Returns:
         (IRScene, ShinyParams | None) — the scene description and optional
@@ -133,8 +136,9 @@ def describe_blender_scene(context, options=None, logger=StubLogger()):
         models.append(model)
 
     # Describe lights and cameras from the Blender scene
-    ir_lights = describe_lights(context, logger=logger)
-    ir_cameras = describe_cameras(context, logger=logger)
+    skip_prep_auto = (output_ext == 'dat')
+    ir_lights = describe_lights(context, logger=logger, skip_prep_auto=skip_prep_auto)
+    ir_cameras = describe_cameras(context, logger=logger, skip_prep_auto=skip_prep_auto)
 
     ir_scene = IRScene(models=models, lights=ir_lights, cameras=ir_cameras)
 
