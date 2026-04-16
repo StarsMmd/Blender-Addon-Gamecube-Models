@@ -165,7 +165,7 @@ The script:
 - Creates a `Debug_Camera` with target empty (unused by the game, kept for format parity)
 - Limits vertex bone weights to 3 per vertex and quantizes to 10% steps
 - Sets up all 4 standard battle lights (ambient + 3 directional SUN)
-- Auto-selects GX texture formats based on image content
+- Downscales any texture larger than 512×512 proportionally (UVs are in normalized [0, 1] space in Blender so no UV remapping is needed), then auto-selects GX texture formats based on image content
 - Applies stub PKX metadata (species ID, animation slots, shiny params, body map)
 - Inserts shiny filter preview nodes into all materials
 

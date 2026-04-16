@@ -18,7 +18,8 @@ The script operates on all objects in the scene — no selection required:
   4. Splits oversized meshes by body region if >25 estimated PObjects
   5. Applies default PKX metadata to all armatures that don't have it
   6. Auto-derives animation timing from action durations
-  7. Auto-selects GX texture formats for all armature textures
+  7. Downscales textures larger than 512×512 proportionally, then
+     auto-selects GX texture formats for all armature textures
   8. Inserts shiny filter nodes into all materials (identity defaults, toggle off)
   9. Creates standard battle lighting (1 ambient + 3 directional)
 
@@ -496,14 +497,15 @@ def apply_pkx_metadata(armature, format='XD', model_type='POKEMON', species_id=0
     armature["dat_pkx_flag_no_root_anim"] = False
     armature["dat_pkx_flag_bit7"] = False
 
-    # Shiny registered properties — set identity defaults
+    # Shiny registered properties — cyclic RGB swap (R→G→B→R) with a warm
+    # brightness boost, so fresh exports ship with a visible shiny variant.
     armature.dat_pkx_shiny = False
-    armature.dat_pkx_shiny_route_r = '0'
-    armature.dat_pkx_shiny_route_g = '1'
-    armature.dat_pkx_shiny_route_b = '2'
+    armature.dat_pkx_shiny_route_r = '2'
+    armature.dat_pkx_shiny_route_g = '0'
+    armature.dat_pkx_shiny_route_b = '1'
     armature.dat_pkx_shiny_route_a = '3'
-    armature.dat_pkx_shiny_brightness_r = 0.0
-    armature.dat_pkx_shiny_brightness_g = 0.0
+    armature.dat_pkx_shiny_brightness_r = 0.2
+    armature.dat_pkx_shiny_brightness_g = 0.2
     armature.dat_pkx_shiny_brightness_b = 0.0
 
     # --- Sub-animations (all inactive) ---
@@ -608,6 +610,55 @@ def derive_timing(armature):
         updated += 1
 
     return updated
+
+
+# ---------------------------------------------------------------------------
+# Texture sizing
+# ---------------------------------------------------------------------------
+
+MAX_TEXTURE_DIM = 512
+
+
+def prepare_texture_sizes(armature):
+    """Downscale any texture larger than MAX_TEXTURE_DIM on either axis.
+
+    Scales proportionally so the larger dimension becomes MAX_TEXTURE_DIM.
+    UVs are in normalized [0, 1] space in Blender, so no UV remap is needed.
+
+    Returns the number of images that were rescaled.
+    """
+    images_seen = set()
+    count = 0
+
+    for child in armature.children:
+        if child.type != 'MESH':
+            continue
+        for slot in child.material_slots:
+            if not slot.material or not slot.material.use_nodes:
+                continue
+            for node in slot.material.node_tree.nodes:
+                if node.bl_idname != 'ShaderNodeTexImage' or not node.image:
+                    continue
+                img = node.image
+                if img.name in images_seen:
+                    continue
+                images_seen.add(img.name)
+
+                w, h = img.size[0], img.size[1]
+                if w <= MAX_TEXTURE_DIM and h <= MAX_TEXTURE_DIM:
+                    continue
+                if w == 0 or h == 0:
+                    continue
+
+                ratio = min(MAX_TEXTURE_DIM / w, MAX_TEXTURE_DIM / h)
+                new_w = max(1, int(w * ratio))
+                new_h = max(1, int(h * ratio))
+                img.scale(new_w, new_h)
+                count += 1
+                print("    %s: %dx%d -> %dx%d" %
+                      (img.name, w, h, new_w, new_h))
+
+    return count
 
 
 # ---------------------------------------------------------------------------
@@ -1592,10 +1643,12 @@ if __name__ == "__main__" or True:
             print("    %s: longest bone = %.3f, max mesh vertex = %.3f"
                   % (arm.name, longest, v))
 
-    # 2. Camera
-    cam_created = prepare_camera()
-    if not cam_created:
-        print("  Debug camera already exists")
+    # 2. Camera — disabled: both XD and Colosseum disassemblies show no
+    # consumer of the PKX camera. Keep prepare_camera() available until a
+    # camera-less PKX export is confirmed in-game.
+    # cam_created = prepare_camera()
+    # if not cam_created:
+    #     print("  Debug camera already exists")
 
     # 2-4. Per-armature steps: PKX metadata, timing, texture formats
     armatures = [obj for obj in bpy.data.objects if obj.type == 'ARMATURE']
@@ -1620,6 +1673,11 @@ if __name__ == "__main__" or True:
         timing_count = derive_timing(arm)
         if timing_count:
             print("  Derived timing for %d animation slot(s) on '%s'" % (timing_count, arm.name))
+
+        # Texture sizes (downscale >512 before format analysis)
+        size_count = prepare_texture_sizes(arm)
+        if size_count:
+            print("  Downscaled %d texture(s) on '%s'" % (size_count, arm.name))
 
         # Texture formats
         fmt_count = prepare_texture_formats(arm)

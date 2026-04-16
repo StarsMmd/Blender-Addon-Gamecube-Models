@@ -27,7 +27,9 @@ from exporter.phases.describe_blender.describe_blender import (
     _is_identity_matrix,
 )
 from exporter.phases.pre_process.pre_process import (
+    MAX_TEXTURE_DIM,
     MAX_VERTEX_WEIGHTS,
+    _check_texture_sizes,
     _check_vertex_weight_count,
 )
 
@@ -141,6 +143,39 @@ class TestCheckVertexWeightCount:
 
     def test_constant_matches_envelope_hardware_limit(self):
         assert MAX_VERTEX_WEIGHTS == 4
+
+
+class TestCheckTextureSizes:
+    def test_at_cap_ok(self):
+        _check_texture_sizes([('Body.png', 512, 512)])
+
+    def test_under_cap_ok(self):
+        _check_texture_sizes([('Eye.png', 128, 64), ('Body.png', 256, 256)])
+
+    def test_over_cap_width_rejected(self):
+        with pytest.raises(ValueError, match="exceed GameCube cap"):
+            _check_texture_sizes([('Body.png', 1024, 512)])
+
+    def test_over_cap_height_rejected(self):
+        with pytest.raises(ValueError, match="exceed GameCube cap"):
+            _check_texture_sizes([('Body.png', 512, 1024)])
+
+    def test_error_mentions_prepare_script(self):
+        with pytest.raises(ValueError, match="prepare_for_export"):
+            _check_texture_sizes([('Body.png', 2048, 2048)])
+
+    def test_sample_offender_in_error(self):
+        with pytest.raises(ValueError, match=r"Hair\.png \(1024x1024\)"):
+            _check_texture_sizes([
+                ('Body.png', 256, 256),
+                ('Hair.png', 1024, 1024),
+            ])
+
+    def test_empty_list_ok(self):
+        _check_texture_sizes([])
+
+    def test_constant_matches_documented_cap(self):
+        assert MAX_TEXTURE_DIM == 512
 
 
 class TestIsIdentityMatrix:

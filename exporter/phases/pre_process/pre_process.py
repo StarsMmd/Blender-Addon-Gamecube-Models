@@ -12,6 +12,7 @@ except (ImportError, SystemError):
 
 
 MAX_VERTEX_WEIGHTS = 4
+MAX_TEXTURE_DIM = 512
 
 
 def pre_process(context, filepath, options=None, logger=StubLogger()):
@@ -34,6 +35,7 @@ def pre_process(context, filepath, options=None, logger=StubLogger()):
     _validate_output_path(filepath, logger)
     _validate_scene(context, logger)
     _validate_vertex_weight_count(context, logger)
+    _validate_texture_sizes(context, logger)
 
     logger.info("=== Export Pre-Process complete ===")
 
@@ -119,4 +121,58 @@ def _check_vertex_weight_count(meshes_by_armature):
             f"Vertex weight count exceeds GameCube envelope limit of "
             f"{MAX_VERTEX_WEIGHTS}. Run scripts/prepare_for_export.py "
             f"first (tune MAX_WEIGHTS_PER_VERTEX). Sample offenders: {sample}"
+        )
+
+
+def _validate_texture_sizes(context, logger):
+    """Reject any texture with a dimension above MAX_TEXTURE_DIM.
+
+    GameCube RAM and TMEM budgets can't absorb arbitrarily-large textures
+    from GLB/FBX rips. The prepare_for_export.py script downscales images
+    above the cap; this check guards against running the exporter on a
+    scene where that step was skipped.
+    """
+    try:
+        import bpy
+    except ImportError:
+        bpy = None
+    scene = getattr(context, 'scene', None)
+    objects = list(scene.objects) if scene is not None else (
+        list(bpy.data.objects) if bpy is not None else []
+    )
+
+    seen = set()
+    images = []
+    for obj in objects:
+        if getattr(obj, 'type', None) != 'MESH':
+            continue
+        for slot in getattr(obj, 'material_slots', []):
+            mat = getattr(slot, 'material', None)
+            if mat is None or not getattr(mat, 'use_nodes', False):
+                continue
+            for node in mat.node_tree.nodes:
+                if node.bl_idname != 'ShaderNodeTexImage' or not node.image:
+                    continue
+                img = node.image
+                if img.name in seen:
+                    continue
+                seen.add(img.name)
+                images.append((img.name, img.size[0], img.size[1]))
+
+    _check_texture_sizes(images)
+    logger.info("  Texture sizes OK (max %dx%d)", MAX_TEXTURE_DIM, MAX_TEXTURE_DIM)
+
+
+def _check_texture_sizes(images):
+    offenders = [
+        (name, w, h) for name, w, h in images
+        if w > MAX_TEXTURE_DIM or h > MAX_TEXTURE_DIM
+    ]
+    if offenders:
+        sample = "; ".join(f"{n} ({w}x{h})" for n, w, h in offenders[:5])
+        raise ValueError(
+            f"Texture dimensions exceed GameCube cap of "
+            f"{MAX_TEXTURE_DIM}x{MAX_TEXTURE_DIM}. Run "
+            f"scripts/prepare_for_export.py first to downscale. "
+            f"Sample offenders: {sample}"
         )
