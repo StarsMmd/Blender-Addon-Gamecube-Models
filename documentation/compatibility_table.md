@@ -16,7 +16,7 @@ This table tracks every feature in the GameCube SysDolphin `.dat` format and its
 |---------|---------------------|--------------------|--------------------|--------|-------|
 | Skeleton / Bone hierarchy | ✅ | `IRBone` | ✅ | ✅ | Arbitrary armatures supported |
 | Bone transforms (SRT) | ✅ | `IRBone` matrices | ✅ | ✅ | Armature object scale applied |
-| Bone flags (hidden) | ✅ | `IRBone.is_hidden` | ✅ | ❌ | |
+| Bone flags (hidden) | ✅ | `IRBone.is_hidden` | ✅ | ✅ | Reads `bone.hide` and auto-hides bones whose meshes are all hidden |
 | Bone flags (billboard) | ✅ | `IRBone.flags` | ❌ | ❌ | Parsed but not applied |
 | Meshes (tris, quads, tri-strips) | ✅ | `IRMesh` | ✅ | ✅ | Multi-material meshes split by material slot |
 | UV coordinates (up to 8 layers) | ✅ | `IRUVLayer` | ✅ | ✅ | Per-material UV remapping on split |
