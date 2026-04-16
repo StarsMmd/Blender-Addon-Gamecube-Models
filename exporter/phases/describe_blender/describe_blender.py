@@ -10,6 +10,7 @@ Also extracts shiny filter parameters from armature custom properties
 if present, for writing back into PKX headers during packaging.
 """
 import bpy
+import os
 
 try:
     from ....shared.IR import IRScene, IRModel
@@ -134,6 +135,8 @@ def describe_blender_scene(context, options=None, logger=StubLogger(), output_ex
             limit_location_constraints=ll_c,
         )
         models.append(model)
+
+        _maybe_dump_diagnostic(armature, bones, bone_animations, logger)
 
     # Describe lights and cameras from the Blender scene
     skip_prep_auto = (output_ext == 'dat')
@@ -584,3 +587,147 @@ def _extract_pkx_header(armatures, action_name_to_index, logger):
         return h
 
     return None
+
+
+def _maybe_dump_diagnostic(armature, bones, bone_animations, logger):
+    """Temporary diagnostic dump (gated by env vars) for the skinning
+    base-pose drift investigation. See /Users/stars/.claude/plans/
+    kind-meandering-toucan.md Step 2.
+
+    Activate by setting:
+        DAT_DUMP_BONES   comma-separated bone-name substrings (e.g. "hand_L,foot_R")
+        DAT_DUMP_PATH    absolute file path to write the dump to
+        DAT_DUMP_FRAME   (optional) frame number to sample pose bones at
+                         (default: scene.frame_current)
+        DAT_DUMP_ACTION  (optional) action name to evaluate for the frame
+                         (default: whatever action is on the armature)
+
+    Writes rest SRT / IBM / world / accumulated_scale / inherit_scale for
+    each matched bone AND every ancestor up to root, plus the Blender
+    pose_bone.matrix (armature-space) and the animated IR SRT for the
+    requested frame.
+    """
+    needles = os.environ.get('DAT_DUMP_BONES', '').strip()
+    path = os.environ.get('DAT_DUMP_PATH', '').strip()
+    if not needles or not path:
+        return
+
+    needle_list = [n.strip() for n in needles.split(',') if n.strip()]
+    matched = set()
+    for i, bone in enumerate(bones):
+        if any(n in bone.name for n in needle_list):
+            matched.add(i)
+    if not matched:
+        logger.info("  [diagnostic] no bones match DAT_DUMP_BONES=%s", needles)
+        return
+
+    # Add every ancestor of each matched bone so the full parent chain
+    # is in the dump — world composition is what we need to analyse.
+    to_dump = set(matched)
+    for i in list(matched):
+        p = bones[i].parent_index
+        while p is not None:
+            to_dump.add(p)
+            p = bones[p].parent_index
+    ordered = sorted(to_dump)
+
+    try:
+        frame = int(os.environ.get('DAT_DUMP_FRAME', '').strip() or
+                    str(bpy.context.scene.frame_current))
+    except ValueError:
+        frame = bpy.context.scene.frame_current
+
+    action_name = os.environ.get('DAT_DUMP_ACTION', '').strip()
+    active_action = None
+    ad = armature.animation_data
+    if action_name:
+        active_action = bpy.data.actions.get(action_name)
+    elif ad and ad.action:
+        active_action = ad.action
+
+    # Sample Blender pose-bone matrices at the requested frame.
+    pose_matrices = {}
+    pose_srt = {}
+    if active_action is not None and ad is not None:
+        saved = ad.action
+        saved_frame = bpy.context.scene.frame_current
+        try:
+            ad.action = active_action
+            bpy.context.scene.frame_set(frame)
+            for i in ordered:
+                pb = armature.pose.bones.get(bones[i].name)
+                if pb is None:
+                    continue
+                pose_matrices[i] = [list(row) for row in pb.matrix]
+                # pose-space SRT (bone-local) — what the game would get
+                # if it read anim keyframes directly
+                loc = pb.location
+                rot = pb.rotation_quaternion
+                scl = pb.scale
+                pose_srt[i] = (
+                    (loc.x, loc.y, loc.z),
+                    (rot.w, rot.x, rot.y, rot.z),
+                    (scl.x, scl.y, scl.z),
+                )
+        finally:
+            ad.action = saved
+            bpy.context.scene.frame_set(saved_frame)
+
+    # Map IR animation channels to (bone_index, channel) -> value at frame.
+    # IR animations store per-track keyframes; pulling the evaluated value
+    # at an arbitrary frame requires keyframe interpolation, which is
+    # harder than letting Blender evaluate pb.matrix above. Just log which
+    # bones have animation tracks so we can cross-check.
+    bones_with_tracks = {}
+    for anim_set in bone_animations:
+        for track in anim_set.tracks:
+            bones_with_tracks.setdefault(anim_set.name, set()).add(track.bone_index)
+
+    lines = []
+    lines.append("=== DAT skinning diagnostic dump ===")
+    lines.append("armature: %s" % armature.name)
+    lines.append("frame: %d  action: %s" % (frame, active_action.name if active_action else "<none>"))
+    lines.append("needles: %s" % needles)
+    lines.append("bones dumped (matched + ancestors): %d" % len(ordered))
+    lines.append("")
+
+    def _mfmt(m):
+        return "[" + ", ".join(
+            "(" + ", ".join("%+.6f" % v for v in row) + ")"
+            for row in m
+        ) + "]"
+
+    for i in ordered:
+        b = bones[i]
+        lines.append("--- bone[%d] '%s' ---" % (i, b.name))
+        lines.append("  parent_index: %s" % b.parent_index)
+        lines.append("  flags: 0x%x  hidden: %s  inherit_scale: %s" %
+                     (b.flags, b.is_hidden, b.inherit_scale))
+        lines.append("  rest position: (%+.6f, %+.6f, %+.6f)" % b.position)
+        lines.append("  rest rotation: (%+.6f, %+.6f, %+.6f)" % b.rotation)
+        lines.append("  rest scale:    (%+.6f, %+.6f, %+.6f)" % b.scale)
+        lines.append("  accumulated_scale: (%+.6f, %+.6f, %+.6f)" % b.accumulated_scale)
+        if b.world_matrix:
+            lines.append("  world_matrix: %s" % _mfmt(b.world_matrix))
+        if b.inverse_bind_matrix:
+            lines.append("  inverse_bind: %s" % _mfmt(b.inverse_bind_matrix))
+        else:
+            lines.append("  inverse_bind: None")
+        if i in pose_matrices:
+            lines.append("  pose.matrix (armature-space @ f%d): %s" %
+                         (frame, _mfmt(pose_matrices[i])))
+            ploc, pquat, pscl = pose_srt[i]
+            lines.append("  pose.location (bone-local): (%+.6f, %+.6f, %+.6f)" % ploc)
+            lines.append("  pose.rotation_quaternion:   (%+.6f, %+.6f, %+.6f, %+.6f)" % pquat)
+            lines.append("  pose.scale:                 (%+.6f, %+.6f, %+.6f)" % pscl)
+        tracks_here = [an for an, bs in bones_with_tracks.items() if i in bs]
+        if tracks_here:
+            lines.append("  has anim tracks in: %s" % ", ".join(tracks_here))
+        lines.append("")
+
+    try:
+        with open(path, 'a') as f:
+            f.write("\n".join(lines) + "\n")
+        logger.info("  [diagnostic] wrote dump for %d bones to %s", len(ordered), path)
+    except OSError as e:
+        logger.info("  [diagnostic] failed to write %s: %s", path, e)
