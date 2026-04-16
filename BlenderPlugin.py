@@ -586,15 +586,15 @@ _dat_props = [
     )),
     ('dat_pkx_shiny_route_r', EnumProperty(
         name="Route R", description="Which source color channel feeds the Red output",
-        items=_SHINY_CHANNEL_ITEMS, default='0', update=_on_shiny_param_update,
+        items=_SHINY_CHANNEL_ITEMS, default='2', update=_on_shiny_param_update,
     )),
     ('dat_pkx_shiny_route_g', EnumProperty(
         name="Route G", description="Which source color channel feeds the Green output",
-        items=_SHINY_CHANNEL_ITEMS, default='1', update=_on_shiny_param_update,
+        items=_SHINY_CHANNEL_ITEMS, default='0', update=_on_shiny_param_update,
     )),
     ('dat_pkx_shiny_route_b', EnumProperty(
         name="Route B", description="Which source color channel feeds the Blue output",
-        items=_SHINY_CHANNEL_ITEMS, default='2', update=_on_shiny_param_update,
+        items=_SHINY_CHANNEL_ITEMS, default='1', update=_on_shiny_param_update,
     )),
     ('dat_pkx_shiny_route_a', EnumProperty(
         name="Route A", description="Which source color channel feeds the Alpha output",
@@ -602,11 +602,11 @@ _dat_props = [
     )),
     ('dat_pkx_shiny_brightness_r', FloatProperty(
         name="Brightness R", description="Red brightness: -1 = black, 0 = unchanged, 1 = 2× bright",
-        default=0.0, min=-1.0, max=1.0, step=1, precision=3, update=_on_shiny_param_update,
+        default=0.2, min=-1.0, max=1.0, step=1, precision=3, update=_on_shiny_param_update,
     )),
     ('dat_pkx_shiny_brightness_g', FloatProperty(
         name="Brightness G", description="Green brightness: -1 = black, 0 = unchanged, 1 = 2× bright",
-        default=0.0, min=-1.0, max=1.0, step=1, precision=3, update=_on_shiny_param_update,
+        default=0.2, min=-1.0, max=1.0, step=1, precision=3, update=_on_shiny_param_update,
     )),
     ('dat_pkx_shiny_brightness_b', FloatProperty(
         name="Brightness B", description="Blue brightness: -1 = black, 0 = unchanged, 1 = 2× bright. Alpha brightness is forced to maximum by the game",
