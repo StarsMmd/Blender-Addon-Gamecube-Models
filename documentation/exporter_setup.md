@@ -1,19 +1,19 @@
 # Exporter Setup
 
-> **Status:** Work in progress — skeleton, mesh (including envelope skinning), material, texture, animation, constraint, light, and camera export functional. Supports both re-exported game models and arbitrary Blender models. In-game loading verified for re-exported models (BNB and NIN paths). Arbitrary models load in-game without crashing but need weight optimization tuning for visual quality.
+> **Status:** The exporter creates functional models that are compatible with Pokemon Colosseum and XD, but output is currently buggy, inaccurate, and in rare cases crashes the game.
 
 The exporter writes a Blender scene to a `.dat` or `.pkx` binary that can be used in Pokemon Colosseum or Pokemon XD: Gale of Darkness. The output is not directly compatible with other games that use `.dat` models (e.g. Super Smash Bros. Melee).
 
-**Important:** The exporter exports the **entire Blender scene**, not just selected objects. All armatures, their parented meshes, lights, and cameras in the scene are included in the output.
+**Important:** The exporter exports the **entire Blender scene**, not just selected objects. All armatures, their parented meshes, lights, and cameras in the scene are included in the output (hidden cameras are skipped; hidden meshes are included and remain hidden in-game).
 
 ---
 
 ## Quick Start
 
 1. [**Check compatibility**](#1-feature-compatibility) — confirm the exporter supports the Blender features your scene uses.
-2. [**Scale and prepare the scene**](#2-scene-preparation--model-scale) — delete unwanted objects, scale your model to the correct size.
+2. [**Prepare the scene**](#2-scene-preparation) — delete unwanted objects, scale and rotate the model.
 3. [**Run the preparation script**](#3-preparation-script) — run `scripts/prepare_for_export.py` to set up camera, lights, weights, textures, and PKX metadata.
-4. [**Edit export properties**](#4-export-properties) — assign animations to PKX slots, adjust camera, set species ID.
+4. [**Edit export properties**](#4-export-properties) — assign animations to PKX slots, adjust camera, set metadata.
 5. [**Run the script again**](#5-refine-and-re-run) — re-run to auto-derive animation timing from your slot assignments.
 6. [**Export**](#6-export) — File > Export > Gamecube model (.dat or .pkx).
 
@@ -57,18 +57,17 @@ What the exporter can and cannot read from your Blender scene.
 
 | Blender feature | Export support | Notes |
 |---|---|---|
-| Vertex groups (multi-bone) | ✅ Envelope | The preparation script limits to 2 influences and quantizes to 10% steps |
+| Vertex groups (multi-bone) | ✅ Envelope | The preparation script limits to 3 influences and quantizes to 10% steps |
 | Vertex groups (single bone) | ✅ Single-bone | All verts in one group |
 | No vertex groups | ✅ Rigid | Bound to parent bone |
 | Armature modifier | ✅ Required | Must be present for skinning |
 
-### Particles (GPT1) — ❌ Not Imported or Exported
+### Particles (GPT1)
 
-Both the import preview and the export pipeline are disabled for GPT1 particles. Re-exported `.pkx` files will not contain the original particle bytecode, textures, or REF IDs. **Keep the original file around** if you need to preserve effects through an edit — the exporter only rewrites the DAT payload + PKX header + shiny params, not the particle trailer.
-
-**Why disabled:** GPT1 carries no generator→bone binding. In the game, each effect resolves a body-map slot literal (0–15) via `ModelSequence::GetPart(slot)` into an actual bone, but that slot literal lives in compiled game code, a WZX move file, or some lookup table we've not yet located. Investigation ruled out the HSD `JOBJ_PTCL` flag (unset on all 15 particle models), `_particleJObjCallback` (never fires for these models), the PKX header body map (just a bone lookup), WZX move files (attack/damage effects only), common.rel unknown indexes, and the DOL data section around `PKXPokemonModels` (only WazaSequence animation tables there). Building a preview at the armature origin ended up more misleading than useful.
-
-**What's still in place:** The parser (`shared/helpers/gpt1.py`), bytecode disassembler/assembler (`shared/helpers/gpt1_commands.py`), IR types (`shared/IR/particles.py`), describe-side decoder, compose helper, and the opcode-spec table are all present and unit-tested. When the binding mechanism is found, the rewrite lives in `importer/phases/build_blender/helpers/particles.py` (build) and `exporter/phases/compose/helpers/particles.py` (compose — just needs to be wired into `compose_scene` and `package_output`).
+| Blender feature | Export support | Notes |
+|---|---|---|
+| Existing GPT1 particles | ⚠️ Preserved | Only for models originally imported from the game via the DAT plugin. The particle data round-trips through the `.pkx` file but can't be viewed or edited in Blender. |
+| New particle data | ❌ Not yet | Authoring particles from scratch in Blender is not supported. |
 
 ### Animations
 
@@ -109,7 +108,7 @@ Both the import preview and the export pipeline are disabled for GPT1 particles.
 
 ---
 
-## 2. Scene Preparation & Model Scale
+## 2. Scene Preparation
 
 ### Clean up the scene
 
@@ -121,9 +120,7 @@ Delete any objects that should not be part of the model:
 
 Only armatures and their parented meshes should remain, plus any lights and cameras you intentionally want in the game model.
 
-For GLB/FBX rips of stylized-face characters (modern Pokémon, Splatoon, Fire Emblem, Xenoblade, and similar), see [Eye-mask meshes on stylized-face model rips](#eye-mask-meshes-on-stylized-face-model-rips) under Notes — these rips usually need one editing step before the scene is truly clean.
-
-**Overworld / standalone `.dat` models:** Delete or hide all lights after running the preparation script. Overworld models don't include their own lighting — it comes from the map scene. Hidden lights and cameras are automatically skipped by the exporter.
+For GLB/FBX rips of stylized-face characters (modern Pokémon, Splatoon, Fire Emblem, Xenoblade, and similar), see [Eye-mask meshes on stylized-face model rips](#eye-mask-meshes-on-stylized-face-model-rips) under Notes.
 
 ### Scale the model
 
@@ -135,21 +132,24 @@ The plugin uses real-world meters (matching Blender's default 1 unit = 1 meter).
 4. Scale the model so its **Z dimension** (height) matches the official height in meters
 5. To scale: select the armature, press **S**, type the scale factor, press **Enter**
 
-**Do not apply the scale** (`Ctrl+A`) — the exporter reads the armature's object scale and applies it automatically to bone positions, vertex positions, and animation values.
-
 **Notes:**
-- For serpentine/elongated Pokémon (e.g. Gyarados, Rayquaza), the official "height" is body length — use the **Y dimension** instead of Z
+- For serpentine/elongated Pokémon (e.g. Gyarados, Rayquaza, Furret), the official "height" is body length — use the **Y dimension** instead of Z. Bear in mind that these official lengths are measured with the Pokémon **fully straightened out**, so for a rest pose that is curled, coiled, or twisted (which is often what the model ships with) you'll need to use judgement about how long the straightened form would be.
 - Models imported from the game are already in meters but may not match official heights exactly
-- For a visual reference, try importing an existing game model of a similar-sized Pokémon and comparing side by side
+- If you need a visual reference, you can temporarily import an existing game model of a similar-sized Pokémon and compare side by side — **make sure to fully delete the reference model before continuing**
 
 ### GameCube constraints
 
-The GameCube has limited memory (~24 MB shared). The preparation script optimizes models automatically, but manual optimization gives better results:
+Because the GameCube has limited RAM, the [preparation script](#3-preparation-script) automatically applies some optimisations:
 
-- **Bone weights:** The script limits to **2 influences per vertex** and quantizes to **10% steps** (matching game model precision). For higher quality, manually paint weights with discrete values (0.1, 0.2, ..., 1.0). Fewer unique weight combinations = smaller exported file.
-- **Mesh splitting:** For best results, **split your model into separate body parts** (head, torso, arms, legs) before running the script. Game models use 12-20 separate mesh objects, each referencing only a few bones. This is the single most effective optimization.
-- **Polygon count:** Up to ~10,000 faces is fine (Dark Lugia has 10,266). The poly count is rarely the bottleneck — bone weight complexity is.
-- **Target file size:** Game Pokémon models range from 65-430 KB. Aim for under 500 KB.
+- Bone weights limited to **3 influences per vertex**
+- Weights quantised to **10% steps**
+
+**If the model doesn't work in-game, try these manual optimisations:**
+
+- **Mesh splitting:** split your model into separate body parts (head, torso, arms, legs) before running the script. Splitting by body region reduces per-mesh complexity and is the single most effective optimisation.
+- **Polygon reduction:** try bringing the total face count **below ~15,000** faces. The upper boundary hasn't been properly tested, so higher counts may still work.
+
+**Target file size:** game Pokémon models range from 65–430 KB; aim for under 500 KB.
 
 ---
 
@@ -162,11 +162,11 @@ For models **not** imported through the DAT plugin, run **`scripts/prepare_for_e
 3. Click **Run Script**
 
 The script:
-- Creates a `Debug_Camera` with target empty (unused by the game — see Camera section below)
-- Limits vertex bone weights to 2 per vertex and quantizes to 10% steps
+- Creates a `Debug_Camera` with target empty (unused by the game, kept for format parity)
+- Limits vertex bone weights to 3 per vertex and quantizes to 10% steps
 - Sets up all 4 standard battle lights (ambient + 3 directional SUN)
 - Auto-selects GX texture formats based on image content
-- Applies default PKX metadata (species ID, animation slots, shiny params, body map)
+- Applies stub PKX metadata (species ID, animation slots, shiny params, body map)
 - Inserts shiny filter preview nodes into all materials
 
 Models imported through the DAT plugin already have these properties set.
@@ -176,30 +176,6 @@ Models imported through the DAT plugin already have these properties set.
 ## 4. Export Properties
 
 These are custom properties the exporter reads from Blender objects. The [preparation script](#3-preparation-script) sets defaults for all of them.
-
-### Camera
-
-Every PKX model contains **1 camera** named `Debug_Camera`. The preparation script creates one automatically.
-
-**The game ignores this camera.** Both the XD and Colosseum disassemblies show no real consumer of the PKX's embedded camera — battles, summary screen, PC box, and overworld all use hardcoded or bounding-box-derived cameras. The camera section appears to be a SysDolphin-era debug/preview camera preserved by the format. It's still emitted so the DAT structure stays identical to shipped models until a camera-less export is confirmed working in-game (see CLAUDE.md TODO).
-
-| Setting | Value | Notes |
-|---|---|---|
-| Type | Perspective | Orthographic is not used by battle models |
-| `dat_camera_aspect` | `1.18` | Standard battle viewport ratio |
-| Near clip | `0.1` | |
-| Far clip | `32768.0` | |
-
-**FOV (lens)** varies by model size:
-
-| Model size | Lens (mm) | Examples |
-|---|---|---|
-| Small | 24-34 | Eevee, Roselia |
-| Medium | 37.5 | Most Pokémon (default) |
-| Large | 46-60 | Deoxys, Rayquaza |
-| Very large | 100-300+ | Kairyu, Houou |
-
-**Adjusting the camera:** The script places the camera in front of the model at 2.5× the model's height. Select `Debug_Camera_target` and move it to adjust focus. Select `Debug_Camera` to adjust distance. Press **Numpad 0** to preview. (This camera is useful as an in-Blender preview angle but has no in-game effect.)
 
 ### Lighting
 
