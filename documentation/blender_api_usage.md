@@ -47,7 +47,8 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.80 | current | `bpy.context.scene.collection.objects.link(obj)` | `meshes.py`, `skeleton.py`, `lights.py`, `cameras.py` | |
 | 2.80 | current | `bpy.context.view_layer.objects.active = obj` | `skeleton.py`, `exporter/skeleton.py` | |
 | 2.80 | current | `bpy.context.view_layer.update()` | `skeleton.py`, `animations.py` | Force dependency graph update |
-| 2.80 | current | `bpy.context.scene.frame_set(n)` | `post_process.py` | Reset timeline to scene start frame |
+| 2.80 | current | `bpy.context.scene.frame_set(n)` | `post_process.py`, `exporter/describe_blender.py` | Reset timeline / sample animations at frame |
+| 2.80 | current | `bpy.context.scene.frame_current` | `exporter/describe_blender.py` | Save/restore frame while sampling |
 | 2.80 | current | `bpy.context.scene.frame_start / frame_end = n` | `post_process.py` | Set playback range from active action's frame_range |
 | 2.80 | current | `bpy.context.mode` | `skeleton.py`, `exporter/skeleton.py` | Check current editor mode |
 | 2.80 | current | `context.screen.areas` | `BlenderPlugin.py` | Workspace setup |
@@ -57,6 +58,14 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.80 | current | `bpy.ops.object.mode_set(mode=...)` | `skeleton.py`, `animations.py`, `constraints.py`, `exporter/skeleton.py`, `exporter/constraints.py` | EDIT/OBJECT/POSE mode switching |
 | 2.80 | current | `bpy.ops.object.select_all(action='DESELECT')` | `BlenderPlugin.py`, `exporter/skeleton.py` | |
 | 2.80 | current | `bpy.ops.screen.area_split(direction, factor)` | `BlenderPlugin.py` | Workspace setup |
+| 2.80 | current | `bpy.ops.object.transform_apply(location, rotation, scale)` | `prepare_for_export.py` | Bake armature + child mesh world transforms into data |
+| 2.80 | current | `bpy.ops.object.vertex_group_limit_total(limit=n)` | `prepare_for_export.py` | Cap per-vertex influences at hardware limit |
+| 2.80 | current | `bpy.ops.object.vertex_group_normalize_all()` | `prepare_for_export.py` | Renormalize weights after limiting/quantising |
+| 2.80 | current | `bpy.ops.mesh.select_all(action='SELECT')` | `prepare_for_export.py` | Select for separate-by-loose-parts |
+| 2.80 | current | `bpy.ops.mesh.separate(type='LOOSE')` | `prepare_for_export.py` | Split multi-material meshes |
+| 2.80 | current | `bpy.context.selected_objects` | `prepare_for_export.py` | Iterate newly separated meshes |
+| 2.80 | current | `bpy.context.active_object` | `set_texture_formats.py`, `add_shiny_filter.py`, `add_ambient_lighting.py` | Script entry point — active armature |
+| 2.80 | current | `bpy.data.node_groups.remove(group)` | `remove_shiny_filter.py` | Delete shared shiny node groups |
 | | | | | |
 | | | **Object Data Creation** | | |
 | 2.80 | current | `bpy.data.armatures.new(name)` | `skeleton.py` | |

@@ -66,7 +66,7 @@ What the exporter can and cannot read from your Blender scene.
 
 | Blender feature | Export support | Notes |
 |---|---|---|
-| Existing GPT1 particles | ⚠️ Preserved | Only for models originally imported from the game via the DAT plugin. The particle data round-trips through the `.pkx` file but can't be viewed or edited in Blender. |
+| Existing GPT1 particles | ❌ Dropped | `compose_particles` is unit-tested but not wired into the export pipeline — re-exported `.pkx` files lose their GPT1 data. Blocked on finding the generator→bone binding on the import side. |
 | New particle data | ❌ Not yet | Authoring particles from scratch in Blender is not supported. |
 
 ### Animations
@@ -78,7 +78,7 @@ What the exporter can and cannot read from your Blender scene.
 | Texture UV scroll/scale | ✅ Exported | Animated texture offset and scale |
 | NLA strips | ✅ Read | Actions referenced by NLA are exported |
 | Shape key actions | ❌ Not yet | |
-| Camera animations | ❌ Not yet | Static camera only |
+| Camera animations | ✅ Exported | Position, target, FOV, roll, near/far |
 | Drivers | ❌ Ignored | Bake to keyframes first |
 
 ### Materials
@@ -87,12 +87,46 @@ What the exporter can and cannot read from your Blender scene.
 |---|---|---|
 | Principled BSDF base color | ✅ Exported | Diffuse color |
 | Principled BSDF specular tint | ✅ Exported | Reverse-mapped to absolute specular color |
-| Principled BSDF alpha | ✅ Exported | Material transparency |
+| Principled BSDF alpha | ❌ Ignored | See [Material translucency (unsupported)](#material-translucency-unsupported) below |
 | Image textures | ✅ Exported | All GX formats; auto-selected or set via `dat_gx_format` |
+| Texture alpha channel | ⚠️ Partial | Image is encoded faithfully (including alpha), but materials are not flagged as alpha-blended — see note below |
 | `dat_ambient_emission` node | ✅ Exported | Per-material ambient color |
 | Shiny filter nodes | ⏭️ Skipped | See [Shiny Filter](#shiny-filter) in notes |
 | Procedural textures | ❌ Ignored | Bake to image first |
 | Node groups (custom) | ❌ Ignored | Only named nodes recognized by the exporter are read |
+
+#### Material translucency (unsupported)
+
+The XD runtime does support a translucent render pass (pass 1, masked by
+`JOBJ_XLU | JOBJ_TEXEDGE`), and the battle dispatcher invokes it for every
+model. In practice every material we've tried to route into that pass
+rendered as fully invisible in-game — our best-characterised case was
+Greninja's pink scarf, which vanished for the entire battle pipeline
+across every variant that marked it translucent (including a
+previously-known-working reference export). Flipping the same material
+back to opaque restored visibility immediately, with the scarf's
+anti-aliased silhouette pixels simply ignored.
+
+Until somebody can identify the extra ingredient those translucent-pass
+materials need in the game's expectations, the exporter treats material
+translucency as **unsupported**. Every `IRMaterial` ships with
+`is_translucent = False` regardless of:
+
+- the Principled BSDF `Alpha` slider value,
+- whether `Alpha` is linked to the texture's alpha channel,
+- any sub-opaque pixels in the texture image.
+
+Image alpha data is still encoded into the exported texture (so you can
+keep genuine alpha-test cutouts like the ring around an iris), but the
+**material** around that texture always renders as a fully opaque surface.
+No alpha blending, no alpha-test discard, no XLU bit.
+
+**Prepare your model assuming every material is fully opaque.** Silhouette
+features that currently rely on a translucent fringe (e.g. feathery edges,
+wispy fabric) need to be authored as hard-edged geometry instead. Small
+anti-aliased fringes on an otherwise-opaque material will be ignored —
+they don't break the export, but they also don't produce any visible
+softening.
 
 ### Constraints
 

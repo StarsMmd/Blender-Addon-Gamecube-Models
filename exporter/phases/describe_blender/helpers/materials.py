@@ -121,13 +121,18 @@ def describe_material(blender_mat, logger=StubLogger(), cache=None, image_cache=
     # Texture layers
     texture_layers = _extract_texture_layers(nodes, links, logger, image_cache)
 
-    # Translucency — true if the material alpha slider is <1.0, OR if any
-    # diffuse texture's image has a transparent pixel (HSDLib parity,
-    # `ModelImporter.cs:1231-1235`: it decodes the texture and scans alpha
-    # to decide XLU/ALPHAMAP_MODULATE). Blender's `blend_method` on its own
-    # is unreliable — GLB rips commonly set OPAQUE even when the texture is
-    # transparent, which would ship an RENDER_XLU-less material.
-    is_translucent = alpha < 1.0 or _has_transparent_texture(texture_layers)
+    # Translucency is treated as an UNSUPPORTED feature — the XD battle
+    # render pipeline does invoke render pass 1 (XLU), but the materials
+    # flagged into that pass never rendered correctly in our in-game tests
+    # (Greninja scarf was invisible in every variant that marked it
+    # translucent, including a previously working reference export).
+    # Flipping the same scarf material to opaque restored it immediately.
+    # We therefore always describe materials as fully opaque regardless of
+    # Blender's alpha slider or the texture's alpha channel. Textures can
+    # still carry alpha for alpha-test cutouts (e.g. iris holes) — that's a
+    # texture-format concern, not a material-render-mode concern.
+    # See documentation/exporter_setup.md "Material translucency (unsupported)".
+    is_translucent = False
 
     ir_material = IRMaterial(
         diffuse_color=diffuse_color,
@@ -212,28 +217,6 @@ def _extract_rgb_node_color(nodes, links, hint):
         return _linear_to_srgb_rgba(val)
 
     return None
-
-
-def _has_transparent_texture(texture_layers):
-    """True if any texture layer's image contains a pixel with alpha < 255.
-
-    Scans IRImage.pixels (stored as RGBA u8) sampling at most ~64K alpha
-    bytes for large textures to keep the check O(64K) worst-case.
-    """
-    if not texture_layers:
-        return False
-    for layer in texture_layers:
-        img = getattr(layer, 'image', None)
-        if img is None or not img.pixels:
-            continue
-        alphas = img.pixels[3::4]
-        if not alphas:
-            continue
-        stride = max(1, len(alphas) // 65536)
-        sample = alphas[::stride] if stride > 1 else alphas
-        if min(sample) < 255:
-            return True
-    return False
 
 
 def _linear_to_srgb_rgba(color):

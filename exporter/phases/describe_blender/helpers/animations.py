@@ -88,6 +88,16 @@ def describe_bone_animations(armature, bones, logger=StubLogger(), use_bezier=Tr
             logger.info("  PKX references %d action(s); dropped %d unreferenced action(s)",
                         len(referenced_actions), dropped)
 
+    # Reorder actions so DAT animation indices match PKX slot order. The PKX
+    # header's anim_entries[i].sub_anims[j].anim_index is a DAT index; when
+    # slot 0 references action "foo", the game expects "foo" at DAT[0]. If
+    # actions are kept in bpy.data.actions order (effectively alphabetical),
+    # slot 0 ends up pointing at whichever action sorts first (e.g.
+    # basic_anim_0) regardless of what the slot is supposed to play.
+    slot_order = _collect_slot_ordered_action_names(armature)
+    if slot_order:
+        actions = _reorder_actions_by_slot(actions, slot_order)
+
     if not actions:
         return []
 
@@ -117,6 +127,60 @@ def describe_bone_animations(armature, bones, logger=StubLogger(), use_bezier=Tr
     logger.info("  Described %d animation set(s) from armature '%s'",
                 len(anim_sets), armature.name)
     return anim_sets
+
+
+def _collect_slot_ordered_action_names(armature):
+    """Return action names in PKX-slot order, or None when no PKX metadata.
+
+    Walks `dat_pkx_anim_NN_sub_M_anim` slot properties in order. Each unique
+    action name appears in the returned list at the position of its first
+    slot reference. Also picks up `dat_pkx_sub_anim_N_anim_ref` (part-anim
+    references) after the main slots so those actions also get exported.
+    """
+    if armature.get("dat_pkx_format") is None:
+        return None
+
+    ordered = []
+    seen = set()
+
+    anim_count = armature.get("dat_pkx_anim_count", 17)
+    for i in range(anim_count):
+        prefix = "dat_pkx_anim_%02d" % i
+        for s in range(3):
+            name = armature.get(prefix + "_sub_%d_anim" % s, "")
+            if isinstance(name, str) and name and name not in seen:
+                seen.add(name)
+                ordered.append(name)
+
+    for i in range(4):
+        name = armature.get("dat_pkx_sub_anim_%d_anim_ref" % i, "")
+        if isinstance(name, str) and name and name not in seen:
+            seen.add(name)
+            ordered.append(name)
+
+    return ordered or None
+
+
+def _reorder_actions_by_slot(actions, slot_order):
+    """Reorder actions so those mentioned in `slot_order` come first, in order.
+
+    Actions present in the scene but not referenced by any slot stay at the end
+    in their original (alphabetical) order, so they still get exported — useful
+    during iterative setup when not every slot is wired up yet.
+    """
+    by_name = {a.name: a for a in actions}
+    ordered = []
+    seen = set()
+    for name in slot_order:
+        a = by_name.get(name)
+        if a is not None and a.name not in seen:
+            ordered.append(a)
+            seen.add(a.name)
+    for a in actions:
+        if a.name not in seen:
+            ordered.append(a)
+            seen.add(a.name)
+    return ordered
 
 
 def _build_bone_data(bones):

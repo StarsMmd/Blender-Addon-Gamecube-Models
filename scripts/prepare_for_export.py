@@ -475,6 +475,25 @@ def _find_head_bone(armature):
     return ""
 
 
+def _first_bone_action_name(armature):
+    """Name of the first action whose fcurves drive this armature's pose bones,
+    or `""` when the rig has no actions yet.
+
+    Matches the exporter's own action-discovery logic in
+    `describe_bone_animations` so the slot default lines up with what will
+    actually get exported as DAT[0] under slot-ordered enumeration.
+    """
+    prefix = armature.name.split('_skeleton_')[0] if '_skeleton_' in armature.name else armature.name
+    for action in bpy.data.actions:
+        if action.name.startswith(prefix + '_'):
+            return action.name
+        if action.id_root == 'OBJECT':
+            for fc in action.fcurves:
+                if fc.data_path.startswith('pose.bones['):
+                    return action.name
+    return ""
+
+
 def apply_pkx_metadata(armature, format='XD', model_type='POKEMON', species_id=0):
     """Apply default PKX metadata to an armature."""
     is_xd = (format == 'XD')
@@ -535,12 +554,23 @@ def apply_pkx_metadata(armature, format='XD', model_type='POKEMON', species_id=0
     # Slot types: 0=idle(loop), 8=damage(hit), 9=damageB(compound), 10=faint(hit), rest=action
     _SLOT_TYPES = {0: "loop", 8: "hit_reaction", 9: "compound", 10: "hit_reaction"}
 
+    # Point every slot at a single default action so every state resolves
+    # to the same DAT animation. With the exporter's slot-ordered
+    # enumeration this action becomes DAT[0] and every slot's anim_index
+    # lands at 0 — the game plays the same animation in every state, which
+    # is a sane baseline for arbitrary models that don't yet have per-slot
+    # actions authored. When no actions exist yet (fresh rig), leave the
+    # slot empty so the UI shows it unassigned.
+    default_action = _first_bone_action_name(armature)
+
     for i in range(anim_count):
         prefix = "dat_pkx_anim_%02d" % i
         anim_type = _SLOT_TYPES.get(i, "action")
 
         armature[prefix + "_type"] = anim_type
-        armature[prefix + "_sub_0_anim"] = ""
+        armature[prefix + "_sub_0_anim"] = default_action
+        if anim_type == "compound":
+            armature[prefix + "_sub_1_anim"] = default_action
         armature[prefix + "_sub_count"] = 2 if anim_type == "compound" else 1
         armature[prefix + "_damage_flags"] = 0
         armature[prefix + "_terminator"] = 3 if is_xd else 1

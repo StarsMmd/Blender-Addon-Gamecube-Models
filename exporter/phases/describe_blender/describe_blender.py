@@ -224,12 +224,18 @@ def _refine_bone_flags(bones, meshes, logger):
         SKELETON        — bones with inverse_bind_matrix (deformation bones)
         ENVELOPE_MODEL  — bones that own envelope-weighted meshes
         LIGHTING        — bones that own any mesh (mesh rendering uses lighting)
-        OPA             — bones that own opaque meshes
+        OPA             — bones that own a mesh (every mesh ships opaque —
+                          material translucency is an unsupported feature in
+                          the exporter; see documentation/exporter_setup.md)
         HIDDEN          — already set during skeleton describe from edit_bone.hide
-        ROOT_OPA        — root-level bones in a chain that contains opaque meshes
+        ROOT_OPA        — propagated to every ancestor of a mesh-owning bone
+                          so the runtime's render dispatcher descends into the
+                          subtree during pass 0.
         (none) / 0x0    — leaf bones with no mesh attachment and no deformation role
     """
-    # Determine which bones own meshes and what kind
+    # Determine which bones own meshes and what kind. Translucency is
+    # deliberately not tracked — IRMaterial.is_translucent is always False
+    # on the export side, so every mesh-owning bone gets JOBJ_OPA only.
     bones_with_meshes = set()
     bones_with_envelope = set()
     for ir_mesh in meshes:
@@ -258,14 +264,13 @@ def _refine_bone_flags(bones, meshes, logger):
                     if idx is not None:
                         deformation_bones.add(idx)
 
-    # Find which bones are at the root of a subtree containing meshes
-    has_mesh_descendant = set()
-    # Walk bottom-up: if a bone has meshes or a child with meshes, mark it
+    # Walk bottom-up: ancestors of any mesh-owning bone get ROOT_OPA so
+    # the runtime's pass-0 dispatcher descends into the subtree.
+    opa_descendant = set(bones_with_meshes)
     for i in range(len(bones) - 1, -1, -1):
-        if i in bones_with_meshes:
-            has_mesh_descendant.add(i)
-        if i in has_mesh_descendant and bones[i].parent_index is not None:
-            has_mesh_descendant.add(bones[i].parent_index)
+        pi = bones[i].parent_index
+        if pi is not None and i in opa_descendant:
+            opa_descendant.add(pi)
 
     for i, bone in enumerate(bones):
         flags = 0
@@ -278,16 +283,18 @@ def _refine_bone_flags(bones, meshes, logger):
         if i in deformation_bones:
             flags |= JOBJ_SKELETON
 
-        # Bone owns mesh(es)
+        # Bone owns mesh(es). Every mesh ships opaque — material
+        # translucency is unsupported (see class docstring). Bones holding
+        # envelope-skinned meshes also need ENVELOPE_MODEL for the
+        # runtime's palette setup.
         if i in bones_with_meshes:
             flags |= JOBJ_LIGHTING | JOBJ_OPA
             if i in bones_with_envelope:
                 flags |= JOBJ_ENVELOPE_MODEL
 
-        # ROOT_OPA: set on all bones in the hierarchy above mesh-owning bones.
-        # In HSD, this marks the entire skeleton chain that participates in
-        # rendering — from root down through all ancestors of mesh bones.
-        if i in has_mesh_descendant:
+        # ROOT_OPA: propagate up the chain so the runtime's render
+        # dispatcher descends into this subtree during pass 0.
+        if i in opa_descendant:
             flags |= JOBJ_ROOT_OPA
 
         # HIDDEN: set if the bone is hidden in Blender (edit_bone.hide),

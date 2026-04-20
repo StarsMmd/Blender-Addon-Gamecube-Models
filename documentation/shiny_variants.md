@@ -1,8 +1,29 @@
 # Shiny Variants
 
-## Background
+## What a Shiny Is
 
-Every Pokemon has a "shiny" variant with an alternate color palette. In Pokemon Colosseum and XD: Gale of Darkness, a few prominent Pokemon (e.g. legendaries and starters) have entirely separate models for their shiny forms. However, the majority use a color filter stored in the PKX file header that transforms the base model's textures into the shiny appearance at runtime.
+Every Pokémon has a rare alternate-colour form called a "shiny". Red Charizards become black, green Bulbasaurs become yellow, and so on. In most games the shiny form is just a second texture, but Pokémon Colosseum and XD can't afford to ship two copies of every model — the GameCube's 24 MB of RAM is too tight.
+
+## How Colo/XD Fake It
+
+Instead of a second texture, the game stores a tiny **recipe** inside each model file that tells the renderer how to warp the regular colours into shiny colours on the fly. The recipe has two parts:
+
+1. **Channel swap** — "wherever the texture is red, show blue instead" (and any other combination of the four colour channels). This is how a red Charizard becomes a black Charizard with a single rule.
+2. **Brightness tweak** — "make red a bit dimmer, make green a bit brighter". This fine-tunes the swap result so, e.g., a green Venusaur shiny lands on the right shade of yellow.
+
+When you press the shiny toggle in-game, these two steps run on every pixel of every texture the model uses. The original texture file never changes — only the way it's displayed.
+
+A handful of the flashiest Pokémon (legendaries, starters) ship with a **separate shiny model** instead of a recipe, because the recipe can't produce their iconic colour palettes. The addon detects those by looking for a "do-nothing" recipe (swap each channel to itself, brightness unchanged) and skips the filter for those models.
+
+## How the Plugin Mirrors It in Blender
+
+In Blender, the addon recreates the same two-stage warp using shader nodes so what you see in the viewport matches what the game would render. The recipe values are exposed as properties on the armature, so you can tweak them live — flip a channel, nudge a brightness slider, and the whole model updates in real time. Toggling "Enable" in the Shiny Variant panel switches the armature between its regular and shiny appearance without touching the textures themselves.
+
+The filter is purely a viewport preview — it's not part of the actual model data. When you re-export, the recipe gets written back into the PKX header unchanged, and the shader nodes are skipped.
+
+---
+
+# Technical Reference
 
 ## How the Game Stores Shiny Data
 

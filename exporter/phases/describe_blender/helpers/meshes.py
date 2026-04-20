@@ -107,12 +107,12 @@ def _describe_mesh_object(mesh_obj, bone_name_to_index, bones,
     all_vertices = [tuple(vertex_transform @ v.co) for v in mesh_data.vertices]
     if not all_vertices:
         logger.debug("  Skipping mesh '%s': no vertices", mesh_obj.name)
-        return []
+        return [], []
 
     all_polys = list(mesh_data.polygons)
     if not all_polys:
         logger.debug("  Skipping mesh '%s': no faces", mesh_obj.name)
-        return []
+        return [], []
 
     # Read all per-loop data once
     all_uv_data = []
