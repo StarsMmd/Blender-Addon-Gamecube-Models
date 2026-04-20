@@ -1055,6 +1055,48 @@ MAX_WEIGHTS_PER_VERTEX = 3
 REDISTRIBUTE_SUB_0_1_WEIGHTS = False
 
 
+def join_armature_child_meshes(armature):
+    """Collapse every mesh object parented to `armature` into a single
+    mesh. The compose phase splits the result back into PObjects by
+    material and by the 10-unique-weight-combo palette cap, so joining
+    doesn't lose any information — but it lets compose pack far fewer
+    PObjects than it would if each Blender mesh were processed
+    independently (each mesh contributes at least one PObject per
+    material slot regardless of how few verts it holds).
+
+    Empirically on Greninja-from-GLB: 120 separate meshes produced ~450
+    PObjects pre-optimisation, whereas the same geometry joined into one
+    mesh produced ~20 PObjects — well under the ~240 matrix-palette-pool
+    ceiling that crashes battle on load.
+
+    No-op when the armature already has ≤ 1 child mesh.
+
+    Returns the name of the joined mesh, or None when nothing was joined.
+    """
+    mesh_objs = [o for o in bpy.data.objects
+                 if o.type == 'MESH' and o.parent is armature]
+    if len(mesh_objs) < 2:
+        return None
+
+    # Blender's join op keeps the active object's data and merges the rest
+    # in. Pick the first mesh alphabetically for deterministic output.
+    mesh_objs.sort(key=lambda o: o.name)
+    target = mesh_objs[0]
+
+    # bpy.ops.object.join needs an OBJECT-mode context with all meshes
+    # selected and the target active. Clear any edit/pose mode from the
+    # armature first.
+    if bpy.context.mode != 'OBJECT':
+        bpy.ops.object.mode_set(mode='OBJECT')
+    bpy.ops.object.select_all(action='DESELECT')
+    for m in mesh_objs:
+        m.select_set(True)
+    bpy.context.view_layer.objects.active = target
+
+    bpy.ops.object.join()
+    return target.name
+
+
 def prepare_mesh_weights(armature):
     """Optimize mesh weights for GameCube export.
 
@@ -1686,6 +1728,14 @@ if __name__ == "__main__" or True:
         print("  No armatures in scene (PKX/timing/texture steps skipped)")
 
     for arm in armatures:
+        # Join every armature-child mesh into one — drops PObject count
+        # dramatically by letting compose pack weight-combos across the
+        # whole model instead of per mesh object. See
+        # documentation/exporter_setup.md "PObject count ceiling".
+        joined = join_armature_child_meshes(arm)
+        if joined:
+            print("  Joined all child meshes on '%s' -> '%s'" % (arm.name, joined))
+
         # Mesh weight limiting and splitting (before other steps)
         limited, split = prepare_mesh_weights(arm)
         if limited:

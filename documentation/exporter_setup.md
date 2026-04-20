@@ -175,6 +175,7 @@ The plugin uses real-world meters (matching Blender's default 1 unit = 1 meter).
 
 Because the GameCube has limited RAM, the [preparation script](#3-preparation-script) automatically applies some optimisations:
 
+- **All child meshes of each armature are joined into a single mesh.** The compose phase splits PObjects back out by material and by the 10-unique-weight-combo cap, so no data is lost — but joining lets compose pack weight-combos across the whole model instead of per mesh object. Without this step, every mesh object contributes at least one PObject per material slot, which is the dominant cause of PObject-count-driven crashes on arbitrary GLB/FBX rips. The runtime blows a matrix-palette pool somewhere around 240 PObjects; joining typically keeps an arbitrary-model export under 200.
 - Bone weights limited to **3 influences per vertex**
 - Weights quantised to **10% steps**
 

@@ -239,19 +239,20 @@ Nodes are cached by file offset (`nodes_cache_by_offset`). Nodes with `is_cachab
 - Motion_type derived from slot type (loop→2, active→1, empty→0)
 - Standard 4-light battle setup (ambient + 3 directional SUN)
 
-**Weight optimization pipeline (`prepare_for_export.py`):**
-1. Limit vertex weights to `MAX_WEIGHTS_PER_VERTEX` per vertex (currently 3, game's hardware cap is 4)
-2. Quantize weights to 10% steps (matching game model precision)
+**Mesh + weight optimization pipeline (`prepare_for_export.py`):**
+1. `join_armature_child_meshes()` collapses every child mesh of the armature into one mesh object. Safe because compose splits PObjects back out by material + weight-combo palette cap regardless; joining just lets compose pack weight-combos across the whole model instead of independently per mesh object. Empirically dropped Greninja-from-GLB from ~450 PObjects to ~150 with no other changes.
+2. `prepare_mesh_weights()` limits vertex weights to `MAX_WEIGHTS_PER_VERTEX` per vertex (currently 3, game's hardware cap is 4) and quantises to 10% steps (matching game model precision).
 
 Weight limiting and quantisation are the prepare script's job — compose only renormalises against floating-point drift so the viewport preview of weights in Blender matches what ships to the .dat. `exporter/phases/pre_process/pre_process.py:_validate_vertex_weight_count` rejects any vertex with more than 4 non-zero weights (hardware envelope limit).
 
+**PObject count ceiling:** the XD runtime crashes on battle load somewhere around 240 PObjects (matrix-palette pool exhaustion — `HSD_ObjAlloc` returns NULL, next dereference hits garbage). Empirically 236 (Desktop Greninja) works; 247/271 crash. The join-then-weight-opt default keeps Greninja-from-GLB at ~150 PObjects, well below the ceiling. Models with higher per-vertex weight diversity may need the extra k-means palette-clustering pass that lives in `/tmp/export_greninja_cluster.py` as a template.
+
 **Known limitations:**
-- Game models have 15-40 PObjects and 65-430 KB DAT size. Arbitrary models with smooth weight painting produce many more unique weight combinations → more PObjects → larger files
-- The compose phase's triangle partitioning creates more PObjects than `unique_combos / 10` due to boundary vertex duplication
-- Game models are hand-crafted with separate mesh objects per body part, each referencing few bones. Arbitrary models with one large mesh + many bones are inherently harder to optimize
+- Game models have 15-40 PObjects and 65-430 KB DAT size. Arbitrary models with smooth weight painting produce many more unique weight combinations → more PObjects → larger files, even with the auto-join.
+- The compose phase's triangle partitioning creates more PObjects than `unique_combos / 10` due to boundary vertex duplication.
 
 **Key files:**
-- `scripts/prepare_for_export.py` — `bake_transforms()` (must run first), weight limiting, quantization, texture formats, lights, PKX metadata
+- `scripts/prepare_for_export.py` — `bake_transforms()` (must run first), `join_armature_child_meshes()`, weight limiting, quantization, texture formats, lights, PKX metadata
 - `exporter/phases/pre_process/pre_process.py` — `_validate_vertex_weight_count` rejects >4 influences per vertex
 - `exporter/phases/describe_blender/describe_blender.py` — `_validate_baked_transforms` rejects unbaked armatures/meshes
 - `exporter/phases/describe_blender/helpers/skeleton.py` — coord conversion only (no obj_transform; armature is identity)
