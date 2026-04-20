@@ -656,12 +656,12 @@ class TestPKXReferencedActions:
         props = {
             "dat_pkx_format": "XD",
             "dat_pkx_anim_count": 17,
-            "dat_pkx_anim_00_sub_0_anim": "Greninja_Idle",
-            "dat_pkx_anim_01_sub_0_anim": "Greninja_Attack",
-            "dat_pkx_anim_01_sub_1_anim": "Greninja_AttackFollow",
+            "dat_pkx_anim_00_sub_0_anim": "Idle",
+            "dat_pkx_anim_01_sub_0_anim": "Attack",
+            "dat_pkx_anim_01_sub_1_anim": "AttackFollow",
         }
         refs = _collect_pkx_referenced_actions(_FakeArmature(props))
-        assert refs == {"Greninja_Idle", "Greninja_Attack", "Greninja_AttackFollow"}
+        assert refs == {"Idle", "Attack", "AttackFollow"}
 
     def test_collects_sub_anim_refs(self):
         """Part-anim (dat_pkx_sub_anim_N_anim_ref) refs are collected too."""

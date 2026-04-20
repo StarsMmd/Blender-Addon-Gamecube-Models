@@ -134,13 +134,13 @@ class TestRefineBoneFlags:
 
     # --- Translucency-is-unsupported regression tests ---
     #
-    # We tried routing materials with alpha<1.0 or sub-opaque textures into
-    # JOBJ_XLU (translucent pass). Disassembly confirmed the runtime
-    # invokes that pass in battle, yet the Greninja scarf only rendered
-    # once we forced its material BACK to fully opaque. Translucency is
-    # treated as an unsupported feature on the export side — materials
-    # always ship opaque regardless of Blender's alpha channel or the
-    # texture's alpha. See documentation/exporter_setup.md.
+    # Material translucency is treated as an unsupported feature on the
+    # export side — every `IRMaterial` ships opaque regardless of the
+    # Blender alpha channel or the texture's alpha. `_refine_bone_flags`
+    # must therefore always emit JOBJ_OPA / JOBJ_ROOT_OPA and never
+    # JOBJ_XLU, even on a mesh whose `IRMaterial.is_translucent` claims
+    # otherwise (as a backstop against future describe-phase regressions).
+    # See documentation/implementation_notes.md for the rationale.
 
     def test_bone_owning_material_marked_translucent_still_gets_opa(self):
         # If describe_blender ever regressed and set is_translucent=True

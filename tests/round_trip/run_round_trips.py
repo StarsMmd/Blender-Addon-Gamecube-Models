@@ -9,7 +9,7 @@ Usage:
     python3 tests/round_trip/run_round_trips.py <model_file_or_directory>
 
     # Single file
-    python3 tests/round_trip/run_round_trips.py ~/models/nukenin.pkx
+    python3 tests/round_trip/run_round_trips.py ~/models/model.pkx
 
     # All models in a directory
     python3 tests/round_trip/run_round_trips.py ~/models/

@@ -283,15 +283,14 @@ def _build_pobj(ir_mesh, joints, bones, bone_name_to_index, logger):
         vertex_buffers.append(('color', clr_verts, clr_indices))
 
     # HSDLib parity: normals and vertex colors are mutually exclusive per
-    # PObject on GameCube. Verified across 8 shipped XD/Colo models
-    # (215 PObjects total): zero carry both. Until we implement per-attribute
-    # PObject splitting, warn so the user can decide whether to strip one
-    # attribute in the source scene. See CLAUDE.md TODO.
+    # PObject on GameCube. No shipped game PObject in the corpus carries
+    # both. Until we implement per-attribute PObject splitting, warn so
+    # the user can decide whether to strip one attribute in the source.
     attrs = {d.attribute for d in vertex_descs}
     if GX_VA_NRM in attrs and (GX_VA_CLR0 in attrs or GX_VA_CLR1 in attrs):
-        logger.warning("      pobj '%s': carries both NRM and CLR — zero game "
-                       "PObjects do this; one attribute will likely be ignored "
-                       "in-game", ir_mesh.name)
+        logger.warning("      pobj '%s': carries both NRM and CLR — no shipped "
+                       "game PObjects do this; one attribute will likely be "
+                       "ignored at render time", ir_mesh.name)
 
     # Determine cull flags (shared across all split PObjects)
     cull_flags = POBJ_CULLBACK

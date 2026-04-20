@@ -15,10 +15,10 @@ class TestResolveType:
         assert _resolve_type('scene_camera') == 'CameraSet'
 
     def test_joint(self):
-        assert _resolve_type('nukenin_joint') == 'Joint'
+        assert _resolve_type('model_joint') == 'Joint'
 
     def test_matanim_joint(self):
-        assert _resolve_type('nukenin_matanim_joint') == 'MaterialAnimationJoint'
+        assert _resolve_type('model_matanim_joint') == 'MaterialAnimationJoint'
 
     def test_shapeanim_joint(self):
         assert _resolve_type('some_shapeanim_joint') == 'ShapeAnimationJoint'

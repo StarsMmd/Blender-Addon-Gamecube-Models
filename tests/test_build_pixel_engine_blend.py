@@ -2,9 +2,9 @@
 the importer must set blend_method='HASHED', not 'BLEND'.
 
 Background: EEVEE's BLEND mode introduces depth-sort artefacts that look
-like back-faces showing through (the Greninja tongue/scarf "weird culling"
-reported on 2026-04-13 round-trip). Every other transparent branch in
-_build_pixel_engine maps to HASHED — only the fb=None fallback was wrong.
+like back-faces showing through a translucent material. Every other
+transparent branch in _build_pixel_engine maps to HASHED — only the
+fb=None fallback used to route to BLEND.
 """
 from unittest.mock import MagicMock
 

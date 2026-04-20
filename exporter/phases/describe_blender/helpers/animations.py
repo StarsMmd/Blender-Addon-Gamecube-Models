@@ -92,8 +92,8 @@ def describe_bone_animations(armature, bones, logger=StubLogger(), use_bezier=Tr
     # header's anim_entries[i].sub_anims[j].anim_index is a DAT index; when
     # slot 0 references action "foo", the game expects "foo" at DAT[0]. If
     # actions are kept in bpy.data.actions order (effectively alphabetical),
-    # slot 0 ends up pointing at whichever action sorts first (e.g.
-    # basic_anim_0) regardless of what the slot is supposed to play.
+    # slot 0 ends up pointing at whichever action sorts first regardless of
+    # what the slot is supposed to play.
     slot_order = _collect_slot_ordered_action_names(armature)
     if slot_order:
         actions = _reorder_actions_by_slot(actions, slot_order)

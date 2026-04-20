@@ -3,10 +3,9 @@ their polygons marked use_smooth=True.
 
 Background: in Blender 4.1+, polygons default to use_smooth=False (flat).
 Flat-shaded polygons silently ignore custom split normals set via
-mesh_data.normals_split_custom_set(). Before this fix, importing any model
-with per-vertex normals produced a flat-shaded mesh that looked faceted —
-most visible on smooth, high-density geometry like the Greninja
-tongue/scarf reported on 2026-04-13.
+mesh_data.normals_split_custom_set(). Without this fix, importing any
+model with per-vertex normals produces a flat-shaded mesh that looks
+faceted — most visible on smooth, high-density geometry.
 """
 from unittest.mock import MagicMock, patch
 

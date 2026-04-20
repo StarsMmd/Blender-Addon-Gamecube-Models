@@ -332,10 +332,9 @@ def _extract_bone_weights(pobj, joint, bone_index, bones, joint_to_bone_index, f
     elif pobj_type == POBJ_SKIN:
         # POBJ_SKIN ("singly-bound") — UNVERIFIED PATH.
         #
-        # Surveyed every game-original PKX in GoD-Tool (1127 models across
-        # XD + Colosseum, nukenin excluded since ours is a re-export) and
-        # found zero PObjs with this flag set. So this branch never fires
-        # for any in-game asset, and we have no test model to validate it.
+        # A corpus survey of shipped game PKXs (both XD and Colosseum)
+        # found zero PObjs with this flag set, so this branch has never
+        # fired on real assets and we have no test model to validate it.
         #
         # The vertex transform on line ~199 (`parent_world @ vert`) treats
         # SINGLE_BONE the same as RIGID, but that's almost certainly wrong:

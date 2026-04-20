@@ -121,17 +121,12 @@ def describe_material(blender_mat, logger=StubLogger(), cache=None, image_cache=
     # Texture layers
     texture_layers = _extract_texture_layers(nodes, links, logger, image_cache)
 
-    # Translucency is treated as an UNSUPPORTED feature — the XD battle
-    # render pipeline does invoke render pass 1 (XLU), but the materials
-    # flagged into that pass never rendered correctly in our in-game tests
-    # (Greninja scarf was invisible in every variant that marked it
-    # translucent, including a previously working reference export).
-    # Flipping the same scarf material to opaque restored it immediately.
-    # We therefore always describe materials as fully opaque regardless of
-    # Blender's alpha slider or the texture's alpha channel. Textures can
-    # still carry alpha for alpha-test cutouts (e.g. iris holes) — that's a
-    # texture-format concern, not a material-render-mode concern.
-    # See documentation/exporter_setup.md "Material translucency (unsupported)".
+    # Translucency is treated as an UNSUPPORTED feature — materials always
+    # ship opaque regardless of the BSDF alpha slider or the texture's
+    # alpha channel. Textures can still carry alpha for alpha-test cutouts
+    # (that's a texture-format concern, not a material-render-mode one).
+    # See documentation/implementation_notes.md (Material translucency is
+    # unsupported) for the rationale.
     is_translucent = False
 
     ir_material = IRMaterial(

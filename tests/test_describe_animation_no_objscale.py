@@ -5,8 +5,8 @@ Earlier, `describe_bone_animations` multiplied every location fcurve by
 the skeleton applying scale component-wise to bone rest positions.
 
 Once the skeleton bakes the full `obj_transform` uniformly via matrix
-multiplication (the Greninja fix), the rest matrices already contain the
-armature's rotation AND scale correctly. Blender stores pose-bone fcurves
+multiplication, the rest matrices already contain the armature's rotation
+AND scale correctly. Blender stores pose-bone fcurves
 in bone-local space — unaffected by the armature's object transform — so
 unbaking them against the new rest matrices should pass them through
 UNSCALED. The old uniform-average workaround would have silently damaged

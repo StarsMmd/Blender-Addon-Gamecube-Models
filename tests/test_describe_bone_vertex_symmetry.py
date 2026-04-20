@@ -2,17 +2,17 @@
 
 `_validate_baked_transforms` is the first thing `describe_blender_scene`
 runs. It guarantees every armature and child mesh has identity
-matrix_world before any decompose/recompose path runs on the bones —
-which is what made Greninja's mesh drift away from its skeleton further
-down the chain (root non-uniform scale + rotation produced a sheared
-root world matrix; SRT decompose dropped the shear; vertex matmul kept
-it; the two paths disagreed by exactly that shear, scaled by the bone's
-distance from the root).
+matrix_world before any decompose/recompose path runs on the bones. A
+non-uniform scale combined with rotation on the armature produces a
+sheared root world matrix; SRT decomposition of that matrix drops the
+shear while direct vertex matmul keeps it, so the bone and vertex
+transform paths disagree by exactly that shear, scaled by each bone's
+distance from the root.
 
 Pre-baking via the prep script eliminates the asymmetry at its source.
 This test pins the rejection at the validation boundary so a future
 regression in the prep script (or a user who skips it) gets a loud,
-specific error instead of a silently garbled in-game model.
+specific error instead of silently garbled output.
 """
 import math
 

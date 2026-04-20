@@ -132,3 +132,6 @@ test_model
 test models/
 .DS_Store
 .claude
+
+# Personal session notes (tracked locally, not shared)
+CLAUDE.md

@@ -97,20 +97,8 @@ What the exporter can and cannot read from your Blender scene.
 
 #### Material translucency (unsupported)
 
-The XD runtime does support a translucent render pass (pass 1, masked by
-`JOBJ_XLU | JOBJ_TEXEDGE`), and the battle dispatcher invokes it for every
-model. In practice every material we've tried to route into that pass
-rendered as fully invisible in-game — our best-characterised case was
-Greninja's pink scarf, which vanished for the entire battle pipeline
-across every variant that marked it translucent (including a
-previously-known-working reference export). Flipping the same material
-back to opaque restored visibility immediately, with the scarf's
-anti-aliased silhouette pixels simply ignored.
-
-Until somebody can identify the extra ingredient those translucent-pass
-materials need in the game's expectations, the exporter treats material
-translucency as **unsupported**. Every `IRMaterial` ships with
-`is_translucent = False` regardless of:
+Material translucency is treated as an **unsupported** feature on the
+export side. Every `IRMaterial` ships opaque regardless of:
 
 - the Principled BSDF `Alpha` slider value,
 - whether `Alpha` is linked to the texture's alpha channel,
@@ -122,11 +110,14 @@ keep genuine alpha-test cutouts like the ring around an iris), but the
 No alpha blending, no alpha-test discard, no XLU bit.
 
 **Prepare your model assuming every material is fully opaque.** Silhouette
-features that currently rely on a translucent fringe (e.g. feathery edges,
-wispy fabric) need to be authored as hard-edged geometry instead. Small
-anti-aliased fringes on an otherwise-opaque material will be ignored —
-they don't break the export, but they also don't produce any visible
-softening.
+features that would normally rely on a translucent fringe (feathery
+edges, wispy fabric) need to be authored as hard-edged geometry instead.
+Small anti-aliased fringes on an otherwise-opaque material will be
+ignored — they don't break the export, but they also don't produce any
+visible softening.
+
+See [implementation_notes.md](implementation_notes.md) for the rationale
+and the empirical findings that led to this policy.
 
 ### Constraints
 

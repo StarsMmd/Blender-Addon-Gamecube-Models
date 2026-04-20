@@ -12,8 +12,8 @@ The script operates on all objects in the scene — no selection required:
      introduce, drifting bones away from mesh vertices the further you
      walk down the bone chain.
   2. Creates a Debug_Camera if none exists (the PKX camera appears to be
-     unused by the game engine; kept for format fidelity pending a confirmed
-     camera-less export test — see CLAUDE.md TODO)
+     unused by the game engine; kept for format fidelity pending a
+     confirmed camera-less export test)
   3. Limits vertex bone weights to 3 per vertex (GameCube constraint)
   4. Splits oversized meshes by body region if >25 estimated PObjects
   5. Applies default PKX metadata to all armatures that don't have it
@@ -66,11 +66,10 @@ def _apply_world_to_data(obj, world):
     level operations — they don't go through bpy.ops, don't require the
     object to be selected/active/visible, and don't need any particular
     context. Critically for armatures, `Armature.transform()` correctly
-    scales bone lengths along with head positions; the previous
-    edit-mode `bone.matrix = world @ bone.matrix` approach left lengths
-    unchanged, which collapsed the whole skeleton into a tiny region
-    (Greninja's 0.01 scale piled all 100+ bones on top of each other,
-    visible as "a couple of giant bones").
+    scales bone lengths along with head positions; the alternative
+    edit-mode `bone.matrix = world @ bone.matrix` approach leaves lengths
+    unchanged, which on a small-scale rig collapses the whole skeleton
+    into a tiny region.
 
     Returns True if data was mutated, False if obj has no applicable data.
     """
@@ -150,17 +149,16 @@ def bake_transforms():
       1. `Armature.transform()` while the action is evaluating leaves the
          pose-matrix cache stale — even after view_layer.update(), pose
          evaluation reads the old rest matrix and produces wildly wrong
-         bone positions (Greninja: pose-bone Waist ended up at world Y=94
-         instead of Y=0.06). Fix: mute the action and reset all pose-bone
-         TRS to identity *before* baking, restore *after*.
+         bone positions. Fix: mute the action and reset all pose-bone TRS
+         to identity *before* baking, restore *after*.
 
       2. PoseBone.location values are in bone-local rest-frame coordinates.
          Pre-bake, the bone's rest frame is scaled by the armature's world
-         scale (e.g. 0.01 for Greninja); a pose-loc of 50 means 0.5 m of
-         world translation. Post-bake the rest frame has scale 1.0; the
-         same 50 now means 50 m. Fix: multiply every pose.bones[].location
-         fcurve keyframe by the armature's pre-bake scale factor. Pose
-         rotations and scales are dimensionless and need no adjustment.
+         scale; a pose-loc of 50 on a scale-0.01 rig means 0.5 m of world
+         translation. Post-bake the rest frame has scale 1.0; the same 50
+         now means 50 m. Fix: multiply every pose.bones[].location fcurve
+         keyframe by the armature's pre-bake scale factor. Pose rotations
+         and scales are dimensionless and need no adjustment.
 
     Also handles per-view-layer hidden objects (`hide_get() == True`) by
     temporarily unhiding them, since several Blender ops — and even
@@ -257,12 +255,10 @@ def bake_transforms():
     # ------------------------------------------------------------------
     # Step 2b: replace each bone's display with a 1 cm cube custom shape.
     # OCTAHEDRAL/BBONE/STICK all extend the bone display along its full
-    # head→tail length — for Greninja's 95 cm Origin bone that's a 95 cm-
-    # tall display element, visually dominant over the 1.7 m mesh. A
-    # custom_shape with use_custom_shape_bone_size=False renders a fixed-
-    # size cube at each joint regardless of bone length, restoring the
-    # tidy "tiny markers" look the pre-bake 0.01-scale armature gave by
-    # accident.
+    # head→tail length — on a rig with long root bones the display element
+    # becomes visually dominant over the mesh itself. A custom_shape with
+    # use_custom_shape_bone_size=False renders a fixed-size cube at each
+    # joint regardless of bone length, giving a consistent marker display.
     bone_marker = _ensure_bone_marker_object()
     for arm in armatures:
         for pb in arm.pose.bones:
@@ -351,7 +347,7 @@ def bake_transforms():
 # most likely a SysDolphin-era debug/preview camera that the format
 # preserves but the game ignores. We still emit one to keep the DAT
 # structure identical to official models until a camera-less export is
-# confirmed working in-game.
+# confirmed non-breaking.
 
 DEBUG_CAMERA_NAME = "Debug_Camera"
 DEBUG_CAMERA_TARGET = "Debug_Camera_target"
@@ -1064,11 +1060,6 @@ def join_armature_child_meshes(armature):
     independently (each mesh contributes at least one PObject per
     material slot regardless of how few verts it holds).
 
-    Empirically on Greninja-from-GLB: 120 separate meshes produced ~450
-    PObjects pre-optimisation, whereas the same geometry joined into one
-    mesh produced ~20 PObjects — well under the ~240 matrix-palette-pool
-    ceiling that crashes battle on load.
-
     No-op when the armature already has ≤ 1 child mesh.
 
     Returns the name of the joined mesh, or None when nothing was joined.
@@ -1717,7 +1708,7 @@ if __name__ == "__main__" or True:
 
     # 2. Camera — disabled: both XD and Colosseum disassemblies show no
     # consumer of the PKX camera. Keep prepare_camera() available until a
-    # camera-less PKX export is confirmed in-game.
+    # camera-less PKX export is confirmed non-breaking.
     # cam_created = prepare_camera()
     # if not cam_created:
     #     print("  Debug camera already exists")
@@ -1728,10 +1719,8 @@ if __name__ == "__main__" or True:
         print("  No armatures in scene (PKX/timing/texture steps skipped)")
 
     for arm in armatures:
-        # Join every armature-child mesh into one — drops PObject count
-        # dramatically by letting compose pack weight-combos across the
-        # whole model instead of per mesh object. See
-        # documentation/exporter_setup.md "PObject count ceiling".
+        # Join every armature-child mesh into one so compose can pack
+        # weight-combos across the whole model instead of per mesh object.
         joined = join_armature_child_meshes(arm)
         if joined:
             print("  Joined all child meshes on '%s' -> '%s'" % (arm.name, joined))

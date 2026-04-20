@@ -631,9 +631,9 @@ class _StubLink:
 class TestDetectBlendMode:
     """Regression: `_detect_blend_mode` must distinguish ALPHA_MASK and
     RGB_MASK from a plain MIX by inspecting the MixRGB Fac input's origin.
-    Sirnight's eye material round-tripped as TEX_COLORMAP_BLEND instead of
-    TEX_COLORMAP_ALPHA_MASK, producing a white face in Blender and a missing
-    mesh in-game.
+    A material that should export as TEX_COLORMAP_ALPHA_MASK but instead
+    round-trips as TEX_COLORMAP_BLEND produces a white face in Blender
+    and a missing render target.
     """
 
     def _setup(self, fac_source_socket_name=None):
