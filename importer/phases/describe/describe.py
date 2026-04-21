@@ -135,6 +135,27 @@ def describe_scene(sections, options, logger=StubLogger()):
         bones, joint_to_bone_index = describe_bones(root_joint, options, logger=logger)
         logger.info("  Bones: %d (%.3fs)", len(bones), time.time() - t1)
 
+        t3 = time.time()
+        bone_anims = describe_bone_animations(model_set, joint_to_bone_index, bones, options, logger, model_name=model_name)
+        logger.info("  Animations: %d sets (%.3fs)", len(bone_anims), time.time() - t3)
+
+        # Rebind near-zero-rest bones *before* mesh vertices get baked into
+        # world space. describe_meshes transforms bone-local vertices via
+        # bones[i].world_matrix, so it has to run after the world matrices
+        # are rebound — otherwise mesh verts stay at pre-rebind positions
+        # while bones move to post-rebind positions, breaking skinning.
+        if not options.get("strict_mirror"):
+            from .helpers.bones import fix_near_zero_bone_matrices
+            fix_near_zero_bone_matrices(bones, bone_anims, logger)
+        else:
+            near_zero_count = sum(
+                1 for b in bones if any(abs(b.scale[c]) < 0.001 for c in range(3))
+            )
+            if near_zero_count:
+                logger.leniency("near_zero_bone_not_rescued",
+                                "%d bones have near-zero rest scale; not rescued in strict mode",
+                                near_zero_count)
+
         t2 = time.time()
         meshes = describe_meshes(root_joint, bones, joint_to_bone_index, logger=logger, options=options)
         logger.info("  Meshes: %d (%.3fs)", len(meshes), time.time() - t2)
@@ -172,10 +193,6 @@ def describe_scene(sections, options, logger=StubLogger()):
                     logger.debug("    fragment: effect=%s, src=%s, dst=%s",
                                  fb.effect.value, fb.source_factor.value, fb.dest_factor.value)
 
-        t3 = time.time()
-        bone_anims = describe_bone_animations(model_set, joint_to_bone_index, bones, options, logger, model_name=model_name)
-        logger.info("  Animations: %d sets (%.3fs)", len(bone_anims), time.time() - t3)
-
         t4 = time.time()
         ik_c, cl_c, tt_c, cr_c, lr_c, ll_c = describe_constraints(root_joint, bones, joint_to_bone_index)
         total_c = len(ik_c) + len(cl_c) + len(tt_c) + len(cr_c) + len(lr_c) + len(ll_c)
@@ -205,21 +222,6 @@ def describe_scene(sections, options, logger=StubLogger()):
                 logger.leniency("material_anim_placeholder",
                                 "Created placeholder bone anim '%s' for unpaired material anim '%s' (%d tracks)",
                                 placeholder_name, mat_anim_set.name, len(mat_anim_set.tracks))
-
-        # Fix world matrices for bones with near-zero rest scale.
-        # Must run after both bones and animations are described, so that
-        # visible scales from animation keyframes are available.
-        if not options.get("strict_mirror"):
-            from .helpers.bones import fix_near_zero_bone_matrices
-            fix_near_zero_bone_matrices(bones, bone_anims, logger)
-        else:
-            near_zero_count = sum(
-                1 for b in bones if any(abs(b.scale[c]) < 0.001 for c in range(3))
-            )
-            if near_zero_count:
-                logger.leniency("near_zero_bone_not_rescued",
-                                "%d bones have near-zero rest scale; not rescued in strict mode",
-                                near_zero_count)
 
         ir_model = IRModel(
             name=model_name,
