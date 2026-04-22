@@ -50,7 +50,6 @@ def _make_br_mesh(**overrides):
         vertices=[(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)],
         faces=[[0, 1, 2], [0, 2, 3]],
         normals=None,
-        material_name="placeholder_mat",
     )
     defaults.update(overrides)
     return BRMesh(**defaults)
@@ -75,7 +74,7 @@ def test_polygons_marked_smooth_when_normals_present():
         bpy_mock.data.objects.new.return_value = mesh_obj
         bpy_mock.data.materials.new.return_value = MagicMock()
 
-        _build_mesh(br_mesh, armature, image_cache={}, logger=MagicMock(), mesh_idx=0)
+        _build_mesh(br_mesh, armature, logger=MagicMock(), mesh_idx=0)
 
     assert all(p.use_smooth is True for p in mesh_data.polygons), (
         "Every polygon should be marked smooth when normals are present"
@@ -102,7 +101,7 @@ def test_polygons_left_flat_when_no_normals():
         bpy_mock.data.objects.new.return_value = mesh_obj
         bpy_mock.data.materials.new.return_value = MagicMock()
 
-        _build_mesh(br_mesh, armature, image_cache={}, logger=MagicMock(), mesh_idx=0)
+        _build_mesh(br_mesh, armature, logger=MagicMock(), mesh_idx=0)
 
     assert all(p.use_smooth is False for p in mesh_data.polygons), (
         "Polygons should remain flat when no normals are provided"

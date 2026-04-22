@@ -2,36 +2,75 @@
 
 Pure — no bpy, no side effects. Flattens IR's three SkinType variants into
 a uniform BRVertexGroup list, expands JOBJ_INSTANCE bones into per-mesh
-BRMeshInstance entries, and pre-computes the mesh_key strings that link
-material-animation tracks to their target meshes.
+BRMeshInstance entries, and — together with plan_materials_for_meshes —
+dedups IRMaterial references into a shared BRMaterial list so identical
+(material, cull_front, cull_back) triples get one bpy material.
 """
 try:
     from .....shared.BR.meshes import (
         BRMesh, BRMeshInstance, BRUVLayer, BRColorLayer, BRVertexGroup,
     )
     from .....shared.IR.enums import SkinType
+    from .materials import plan_material
 except (ImportError, SystemError):
     from shared.BR.meshes import (
         BRMesh, BRMeshInstance, BRUVLayer, BRColorLayer, BRVertexGroup,
     )
     from shared.IR.enums import SkinType
+    from importer.phases.plan.helpers.materials import plan_material
 
 
 def plan_meshes(ir_model):
     """Convert IRModel's meshes + instance bones into BR form.
 
     Returns:
-        (list[BRMesh], list[BRMeshInstance]).
+        (br_meshes, br_instances, br_materials).
+        br_meshes: list[BRMesh] — each ``material_index`` points into br_materials.
+        br_instances: list[BRMeshInstance].
+        br_materials: list[BRMaterial] — deduped shader graphs.
     """
-    meshes_with_color_anim = _collect_color_animated_mesh_keys(ir_model)
+    mesh_keys_with_color_anim = _collect_color_animated_mesh_keys(ir_model)
     model_name = ir_model.name or "Model"
     mesh_digits = len(str(max(len(ir_model.meshes) - 1, 0)))
 
-    br_meshes = []
+    # First pass: build mesh keys + figure out which materials need a
+    # DiffuseColor node (true if any mesh using that material has color anim).
+    mesh_rows = []
+    color_anim_by_material_key = {}
     for i, ir_mesh in enumerate(ir_model.meshes):
         parent_bone_name = _lookup_parent_bone_name(ir_mesh.parent_bone_index, ir_model.bones)
         mesh_key = _make_mesh_key(i, mesh_digits, parent_bone_name)
+        has_color_anim = mesh_key in mesh_keys_with_color_anim
+        material_key = _material_dedup_key(ir_mesh)
+        if material_key is not None and has_color_anim:
+            color_anim_by_material_key[material_key] = True
+        mesh_rows.append((i, ir_mesh, parent_bone_name, mesh_key, material_key))
 
+    # Second pass: dedup materials. For each unique material_key, call
+    # plan_material once. Build index map so meshes can reference their
+    # material by index.
+    br_materials = []
+    material_index_by_key = {}
+    for i, ir_mesh, _parent_name, _mesh_key, material_key in mesh_rows:
+        if material_key is None:
+            continue
+        if material_key in material_index_by_key:
+            continue
+        has_color_anim = color_anim_by_material_key.get(material_key, False)
+        br_materials.append(plan_material(
+            ir_mesh.material,
+            name='%s_mat_%d' % (model_name, i),
+            has_color_animation=has_color_anim,
+            cull_front=ir_mesh.cull_front,
+            cull_back=ir_mesh.cull_back,
+            dedup_key=material_key,
+        ))
+        material_index_by_key[material_key] = len(br_materials) - 1
+
+    # Third pass: emit BRMesh per IRMesh, pointing at the deduped material.
+    br_meshes = []
+    for i, ir_mesh, parent_bone_name, mesh_key, material_key in mesh_rows:
+        material_index = material_index_by_key.get(material_key) if material_key else None
         br_meshes.append(BRMesh(
             name='%s_mesh_%s' % (model_name, ir_mesh.name),
             mesh_key=mesh_key,
@@ -49,32 +88,22 @@ def plan_meshes(ir_model):
             vertex_groups=plan_vertex_groups(ir_mesh),
             parent_bone_name=parent_bone_name,
             is_hidden=ir_mesh.is_hidden,
-            has_color_animation=mesh_key in meshes_with_color_anim,
             shape_keys=list(ir_mesh.shape_keys) if ir_mesh.shape_keys else [],
-            material=ir_mesh.material,
-            material_name='%s_mat_%d' % (model_name, i),
-            material_cull_front=ir_mesh.cull_front,
-            material_cull_back=ir_mesh.cull_back,
+            material_index=material_index,
         ))
 
     br_instances = plan_mesh_instances(ir_model)
-    return br_meshes, br_instances
+    return br_meshes, br_instances, br_materials
 
 
 def plan_vertex_groups(ir_mesh):
-    """Flatten the three IR SkinType variants into a single BRVertexGroup list.
-
-    - WEIGHTED: group per referenced bone, assignments collected from
-      per-vertex weight lists.
-    - SINGLE_BONE / RIGID: one group with every vertex weighted 1.0 to the
-      named bone.
-    """
+    """Flatten the three IR SkinType variants into a single BRVertexGroup list."""
     bw = ir_mesh.bone_weights
     if bw is None:
         return []
 
     if bw.type == SkinType.WEIGHTED and bw.assignments:
-        groups = {}  # bone_name → list[(vertex_idx, weight)]
+        groups = {}
         for vertex_idx, weight_list in bw.assignments:
             for bone_name, weight in weight_list:
                 groups.setdefault(bone_name, []).append((vertex_idx, weight))
@@ -91,12 +120,7 @@ def plan_vertex_groups(ir_mesh):
 
 
 def plan_mesh_instances(ir_model):
-    """Expand JOBJ_INSTANCE bones into per-mesh BRMeshInstance entries.
-
-    For each bone with ``instance_child_bone_index`` set, clone every mesh
-    owned by the referenced source bone (via ``parent_bone_index``) and
-    attach it at the current bone with the current bone's world matrix.
-    """
+    """Expand JOBJ_INSTANCE bones into BRMeshInstance entries."""
     meshes_by_source_bone = {}
     for mesh_index, ir_mesh in enumerate(ir_model.meshes):
         meshes_by_source_bone.setdefault(ir_mesh.parent_bone_index, []).append(mesh_index)
@@ -114,14 +138,14 @@ def plan_mesh_instances(ir_model):
     return instances
 
 
-def _collect_color_animated_mesh_keys(ir_model):
-    """Mesh keys whose diffuse RGB channels have any animation keyframes.
+def _material_dedup_key(ir_mesh):
+    """Dedup key: (id(ir_material), cull_front, cull_back). None if no material."""
+    if ir_mesh.material is None:
+        return None
+    return (id(ir_mesh.material), ir_mesh.cull_front, ir_mesh.cull_back)
 
-    Material animations target nodes by name, so the material builder needs
-    to create a DiffuseColor node even for vertex-only unlit materials when
-    color animation is present. Pre-computing this here keeps the build
-    phase from having to re-scan animations.
-    """
+
+def _collect_color_animated_mesh_keys(ir_model):
     keys = set()
     for anim_set in (ir_model.bone_animations or []):
         for mat_track in anim_set.material_tracks:

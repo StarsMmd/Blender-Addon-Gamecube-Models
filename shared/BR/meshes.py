@@ -39,16 +39,11 @@ class BRMesh:
     vertex_groups: list[BRVertexGroup] = field(default_factory=list)
     parent_bone_name: str | None = None  # records mesh → bone ownership
     is_hidden: bool = False
-    has_color_animation: bool = False  # drives material DiffuseColor node creation
     shape_keys: list[object] = field(default_factory=list)  # IRShapeKey pass-through
 
-    # Material fields — opaque pass-through until the Plan-phase materials
-    # stage lands. `material` currently holds an IRMaterial instance (or None);
-    # the stage 4 migration will replace it with a BRMaterial + node graph spec.
-    material: object = None
-    material_name: str = ''
-    material_cull_front: bool = False
-    material_cull_back: bool = False
+    # Index into BRModel.materials, or None for a placeholder material.
+    # Build phase resolves: identical material_index → same bpy material.
+    material_index: int | None = None
 
 
 @dataclass

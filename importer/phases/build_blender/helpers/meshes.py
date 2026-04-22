@@ -18,28 +18,25 @@ def build_meshes(br_model, armature, context, logger=StubLogger()):
     """Create Blender meshes, vertex groups, armature modifiers, and instance
     copies from a BRModel. Returns a material_lookup dict keyed by mesh_key.
 
-    Material node graphs are built on demand from BRMesh.material (still an
-    IRMaterial until the materials stage lands); the result is cached by
-    (material identity, cull flags) so duplicate meshes don't re-build.
+    Materials are built once per BRModel.materials entry and reused across
+    every BRMesh that references the same material_index.
     """
     image_cache = {}
     material_lookup = {}
-    built_material_cache = {}  # {(id(material), cull_front, cull_back): bpy.types.Material}
+
+    from .materials import build_material
+    bpy_materials = [
+        build_material(br_material, image_cache=image_cache)
+        for br_material in br_model.materials
+    ]
 
     mesh_objects = []
     for i, br_mesh in enumerate(br_model.meshes):
-        cached_mat = None
-        if br_mesh.material is not None:
-            cache_key = (id(br_mesh.material), br_mesh.material_cull_front, br_mesh.material_cull_back)
-            cached_mat = built_material_cache.get(cache_key)
-
-        mesh_obj, mat = _build_mesh(br_mesh, armature, image_cache, logger, i, cached_material=cached_mat)
+        mat = bpy_materials[br_mesh.material_index] if br_mesh.material_index is not None else None
+        mesh_obj = _build_mesh(br_mesh, armature, logger, i, material=mat)
         mesh_objects.append(mesh_obj)
 
-        if mat:
-            if br_mesh.material is not None:
-                cache_key = (id(br_mesh.material), br_mesh.material_cull_front, br_mesh.material_cull_back)
-                built_material_cache.setdefault(cache_key, mat)
+        if mat is not None:
             material_lookup[br_mesh.mesh_key] = mat
             logger.debug("  material_lookup['%s'] = '%s'", br_mesh.mesh_key, mat.name)
 
@@ -52,13 +49,13 @@ def build_meshes(br_model, armature, context, logger=StubLogger()):
         bpy.context.scene.collection.objects.link(copy)
         instance_count += 1
 
-    logger.info("  Created %d mesh objects, %d instances, %d cached images",
-                len(br_model.meshes), instance_count, len(image_cache))
+    logger.info("  Created %d mesh objects, %d instances, %d cached images, %d materials",
+                len(br_model.meshes), instance_count, len(image_cache), len(bpy_materials))
 
     return material_lookup
 
 
-def _build_mesh(br_mesh, armature, image_cache, logger, mesh_idx, cached_material=None):
+def _build_mesh(br_mesh, armature, logger, mesh_idx, material=None):
     """Create one Blender mesh object from a BRMesh."""
     mesh_data = bpy.data.meshes.new(br_mesh.name)
     mesh_object = bpy.data.objects.new(br_mesh.name, mesh_data)
@@ -100,8 +97,10 @@ def _build_mesh(br_mesh, armature, image_cache, logger, mesh_idx, cached_materia
     if br_mesh.parent_bone_name and br_mesh.parent_bone_name in armature.data.bones:
         mesh_object.parent_bone = br_mesh.parent_bone_name
 
-    mat = _resolve_material(br_mesh, image_cache, logger, mesh_idx, cached_material)
-    mesh_data.materials.append(mat)
+    if material is None:
+        material = bpy.data.materials.new(name=br_mesh.name + '_mat')
+        logger.debug("  mesh[%d] '%s': placeholder material", mesh_idx, br_mesh.name)
+    mesh_data.materials.append(material)
 
     uv_names = [uv.name for uv in mesh_data.uv_layers]
     clr_names = [ca.name for ca in mesh_data.color_attributes]
@@ -115,39 +114,7 @@ def _build_mesh(br_mesh, armature, image_cache, logger, mesh_idx, cached_materia
     mesh_data.update(calc_edges=True, calc_edges_loose=False)
     mesh_data.validate(verbose=False, clean_customdata=False)
 
-    return mesh_object, mat
-
-
-def _resolve_material(br_mesh, image_cache, logger, mesh_idx, cached_material):
-    """Fetch or build the Blender material for this mesh.
-
-    BRMesh.material is still an IRMaterial pass-through (stage 4 will swap
-    it for a BRMaterial); build_material() is invoked directly here.
-    """
-    if cached_material is not None:
-        logger.debug("  mesh[%d] '%s': reusing material '%s'",
-                     mesh_idx, br_mesh.name, cached_material.name)
-        return cached_material
-
-    if br_mesh.material is not None:
-        from .materials import build_material
-        mat = build_material(
-            br_mesh.material,
-            image_cache=image_cache,
-            name=br_mesh.material_name,
-            has_color_animation=br_mesh.has_color_animation,
-        )
-        logger.debug("  mesh[%d] '%s': material '%s' with %d textures",
-                     mesh_idx, br_mesh.name, mat.name, len(br_mesh.material.texture_layers))
-        # GameCube POBJ cull flags — CULL_BACK shows front faces, CULL_FRONT
-        # shows back faces, both = invisible, neither = double-sided.
-        if br_mesh.material_cull_front or br_mesh.material_cull_back:
-            mat.use_backface_culling = True
-        return mat
-
-    mat = bpy.data.materials.new(name=br_mesh.material_name or 'placeholder_mat')
-    logger.debug("  mesh[%d] '%s': placeholder material (no material)", mesh_idx, br_mesh.name)
-    return mat
+    return mesh_object
 
 
 def _apply_vertex_groups(vertex_groups, mesh_object):

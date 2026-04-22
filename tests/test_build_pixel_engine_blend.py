@@ -1,18 +1,18 @@
-"""Regression: when ir_mat.is_translucent and fragment_blending is None,
-the importer must set blend_method='HASHED', not 'BLEND'.
+"""Regression: translucent materials with no fragment_blending must map to
+blend_method='HASHED', not 'BLEND'.
 
 Background: EEVEE's BLEND mode introduces depth-sort artefacts that look
 like back-faces showing through a translucent material. Every other
-transparent branch in _build_pixel_engine maps to HASHED — only the
-fb=None fallback used to route to BLEND.
+transparent branch in the pixel-engine planner routes to HASHED — only
+the ``fragment_blending=None`` fallback used to route to BLEND. The
+Plan-phase migration keeps the same mapping; this test exercises it.
 """
 from unittest.mock import MagicMock
 
-from importer.phases.build_blender.helpers.materials import _build_pixel_engine
+from importer.phases.plan.helpers.materials import _plan_pixel_engine, BRGraphBuilder
 
 
 def _make_ir_mat(is_translucent, fragment_blending=None):
-    """Minimal stub IRMaterial for the pixel-engine call."""
     ir_mat = MagicMock()
     ir_mat.is_translucent = is_translucent
     ir_mat.fragment_blending = fragment_blending
@@ -21,33 +21,27 @@ def _make_ir_mat(is_translucent, fragment_blending=None):
 
 def test_translucent_with_no_fragment_blending_uses_hashed():
     ir_mat = _make_ir_mat(is_translucent=True, fragment_blending=None)
-    mat = MagicMock()
-    mat.blend_method = 'OPAQUE'
+    g = BRGraphBuilder()
 
-    _, _, transparent_shader, alt = _build_pixel_engine(
-        ir_mat, nodes=MagicMock(), links=MagicMock(),
-        last_color=MagicMock(), last_alpha=MagicMock(), mat=mat,
+    _, _, transparent, alt, blend_method = _plan_pixel_engine(
+        g, ir_mat, ('c', 0), ('a', 0),
     )
 
-    assert mat.blend_method == 'HASHED', (
-        "Translucent material with no explicit fragment_blending must "
-        "use HASHED to avoid EEVEE depth-sort artefacts"
+    assert blend_method == 'HASHED', (
+        "Translucent material with no fragment_blending must map to HASHED"
     )
-    assert transparent_shader is True
+    assert transparent is True
     assert alt == 'NOTHING'
 
 
 def test_opaque_with_no_fragment_blending_leaves_blend_method_alone():
     ir_mat = _make_ir_mat(is_translucent=False, fragment_blending=None)
-    mat = MagicMock()
-    mat.blend_method = 'OPAQUE'
+    g = BRGraphBuilder()
 
-    _, _, transparent_shader, alt = _build_pixel_engine(
-        ir_mat, nodes=MagicMock(), links=MagicMock(),
-        last_color=MagicMock(), last_alpha=MagicMock(), mat=mat,
+    _, _, transparent, alt, blend_method = _plan_pixel_engine(
+        g, ir_mat, ('c', 0), ('a', 0),
     )
 
-    assert mat.blend_method == 'OPAQUE', (
-        "Opaque material with no fragment_blending must not be touched"
-    )
-    assert transparent_shader is False
+    assert blend_method is None, "Opaque materials should leave blend_method as default"
+    assert transparent is False
+    assert alt == 'NOTHING'

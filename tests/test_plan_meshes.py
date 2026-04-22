@@ -143,7 +143,7 @@ class TestPlanMeshes:
             bones=[_make_bone("Root")],
             meshes=[_make_mesh("body", parent_bone_index=0)],
         )
-        br_meshes, br_instances = plan_meshes(ir)
+        br_meshes, br_instances, br_materials = plan_meshes(ir)
         assert len(br_meshes) == 1
         assert isinstance(br_meshes[0], BRMesh)
         m = br_meshes[0]
@@ -151,8 +151,9 @@ class TestPlanMeshes:
         assert m.mesh_key == 'mesh_0_Root'
         assert m.parent_bone_name == 'Root'
         assert m.is_hidden is False
-        assert m.has_color_animation is False
+        assert m.material_index is None  # no IR material was supplied
         assert br_instances == []
+        assert br_materials == []
 
     def test_mesh_key_uses_zero_padded_index(self):
         """Mesh keys must sort stably — width driven by total count."""
@@ -161,7 +162,7 @@ class TestPlanMeshes:
             bones=[_make_bone("Root")],
             meshes=[_make_mesh(f"m{i}", parent_bone_index=0) for i in range(12)],
         )
-        br_meshes, _ = plan_meshes(ir)
+        br_meshes, _, _ = plan_meshes(ir)
         # 12 meshes → indices need 2 digits
         assert br_meshes[0].mesh_key == 'mesh_00_Root'
         assert br_meshes[9].mesh_key == 'mesh_09_Root'
@@ -173,62 +174,20 @@ class TestPlanMeshes:
             bones=[_make_bone("Root")],
             meshes=[_make_mesh("orphan", parent_bone_index=99)],
         )
-        br_meshes, _ = plan_meshes(ir)
+        br_meshes, _, _ = plan_meshes(ir)
         assert br_meshes[0].parent_bone_name is None
         assert br_meshes[0].mesh_key == 'mesh_0_unknown'
 
-    def test_color_animation_flag_set_for_animated_meshes(self):
-        """Meshes whose material-track has any diffuse RGB keyframe get
-        has_color_animation=True so the material builder adds a DiffuseColor node."""
-        mesh_key = 'mesh_0_Root'
-        mat_track = IRMaterialTrack(
-            material_mesh_name=mesh_key,
-            diffuse_r=[IRKeyframe(frame=0, value=0.5, interpolation=Interpolation.LINEAR)],
-        )
-        anim_set = IRBoneAnimationSet(name="A", tracks=[], material_tracks=[mat_track])
+    def test_meshes_without_material_get_none_index(self):
+        """Meshes with no IR material → ``material_index=None``, no BRMaterials."""
         ir = IRModel(
             name="rig",
             bones=[_make_bone("Root")],
             meshes=[_make_mesh("body", parent_bone_index=0)],
-            bone_animations=[anim_set],
         )
-        br_meshes, _ = plan_meshes(ir)
-        assert br_meshes[0].has_color_animation is True
-
-    def test_color_animation_flag_not_set_for_non_color_material_tracks(self):
-        """Material tracks without any diffuse RGB channels don't trigger it."""
-        mesh_key = 'mesh_0_Root'
-        mat_track = IRMaterialTrack(
-            material_mesh_name=mesh_key,
-            alpha=[IRKeyframe(frame=0, value=0.5, interpolation=Interpolation.LINEAR)],
-        )
-        anim_set = IRBoneAnimationSet(name="A", tracks=[], material_tracks=[mat_track])
-        ir = IRModel(
-            name="rig",
-            bones=[_make_bone("Root")],
-            meshes=[_make_mesh("body", parent_bone_index=0)],
-            bone_animations=[anim_set],
-        )
-        br_meshes, _ = plan_meshes(ir)
-        assert br_meshes[0].has_color_animation is False
-
-    def test_material_passed_through_opaquely(self):
-        """Until Plan-phase materials stage, IRMaterial passes through BR unchanged."""
-        class DummyMat:
-            pass
-
-        mat = DummyMat()
-        ir = IRModel(
-            name="rig",
-            bones=[_make_bone("Root")],
-            meshes=[_make_mesh("body", parent_bone_index=0, material=mat,
-                               cull_front=True, cull_back=False)],
-        )
-        br_meshes, _ = plan_meshes(ir)
-        assert br_meshes[0].material is mat
-        assert br_meshes[0].material_cull_front is True
-        assert br_meshes[0].material_cull_back is False
-        assert br_meshes[0].material_name == 'rig_mat_0'
+        br_meshes, _, br_materials = plan_meshes(ir)
+        assert br_meshes[0].material_index is None
+        assert br_materials == []
 
     def test_uv_and_color_layers_copied(self):
         ir = IRModel(
@@ -241,7 +200,7 @@ class TestPlanMeshes:
                 color_layers=[IRColorLayer(name='Col', colors=[(1, 0, 0, 1)])],
             )],
         )
-        br_meshes, _ = plan_meshes(ir)
+        br_meshes, _, _ = plan_meshes(ir)
         assert len(br_meshes[0].uv_layers) == 1
         assert br_meshes[0].uv_layers[0].name == 'UVMap'
         assert br_meshes[0].uv_layers[0].uvs == [(0.0, 0.0), (1.0, 1.0)]
