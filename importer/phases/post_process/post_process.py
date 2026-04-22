@@ -211,138 +211,134 @@ def _apply_shiny(armature, shiny_params, logger):
         logger.info("  Inserted shiny filter into %d material(s) on %s", count, armature.name)
 
 
-def _store_pkx_metadata(armature, pkx_header, logger, actions=None):
-    """Store PKX header fields as custom properties on the armature.
+_ANIM_TYPE_NAMES = {2: "loop", 3: "hit_reaction", 4: "action", 5: "compound"}
+_SUB_ANIM_TRIGGERS = {0: "sleep_on", 1: "sleep_off", 2: "extra", 3: "unused"}
+_SUB_ANIM_TYPES = {0: "none", 1: "simple", 2: "targeted"}
 
-    Uses dat_pkx_* naming convention. Bone indices are resolved to bone names
-    using the armature's bone list. Animation indices are resolved to action
-    names when the actions list is available.
+# Body map descriptive names (index → property suffix). Slots 0-7 are the
+# engine body parts; slots 8-15 are extended attachment slots used by
+# particle generators. See `ModelSequence::GetPart` in the XD disassembly.
+_BODY_MAP_KEYS = [
+    "root", "head", "center", "body_3", "neck", "head_top",
+    "limb_a", "limb_b",
+    "secondary_8", "secondary_9", "secondary_10", "secondary_11",
+    "attach_a", "attach_b", "attach_c", "attach_d",
+]
+
+
+def _derive_pkx_custom_props(pkx_header, actions=None, bone_names=None):
+    """Derive the dat_pkx_* property dict for a PKX header. Pure: no bpy.
 
     Args:
-        armature: The Blender armature object.
         pkx_header: PKXHeader instance from extract phase.
-        logger: Logger instance.
-        actions: list of Blender Actions in DAT animation order (from Phase 5).
+        actions: optional sequence of objects with a `.name` attribute, in
+            DAT animation order. Used to resolve animation indices to action
+            names. Indices not covered yield "".
+        bone_names: optional sequence of strings, the armature's bone names
+            in DAT bone order. Used to resolve bone indices. None or out-of-
+            range indices yield "".
+
+    Returns:
+        dict[str, value] of all properties to be written to the armature.
     """
-    try:
-        from ....shared.helpers.pkx_header import BODY_MAP_NAMES
-    except (ImportError, SystemError):
-        from shared.helpers.pkx_header import BODY_MAP_NAMES
-
     h = pkx_header
+    bone_list = list(bone_names) if bone_names else []
 
-    # Build DAT animation index → action name mapping
-    _index_to_action = {}
+    index_to_action = {}
     if actions:
         for idx, action in enumerate(actions):
-            _index_to_action[idx] = action.name
+            index_to_action[idx] = action.name
 
-    def _action_name_for_index(anim_idx):
-        """Resolve a DAT animation index to an action name, or empty string."""
-        return _index_to_action.get(anim_idx, "")
+    def _action_name(anim_idx):
+        return index_to_action.get(anim_idx, "")
 
-    _ANIM_TYPE_NAMES = {2: "loop", 3: "hit_reaction", 4: "action", 5: "compound"}
-    _SUB_ANIM_TRIGGERS = {0: "sleep_on", 1: "sleep_off", 2: "extra", 3: "unused"}
-    _SUB_ANIM_TYPES = {0: "none", 1: "simple", 2: "targeted"}
+    def _bone_name(idx):
+        if idx < 0 or idx >= len(bone_list):
+            return ""
+        return bone_list[idx]
 
-    # Body map descriptive names (index → property suffix). Slots 0-7 are
-    # the well-known engine body parts; slots 8-15 are extended slots used
-    # for particle-generator attachment on effect-themed Pokémon (Moltres,
-    # Ghastly, Articuno, Vaporeon…). See `ModelSequence::GetPart` in the XD
-    # disassembly — every particle-attach path resolves a slot 0-15 into
-    # `anim_entry.body_map_bones[slot]`. Callers pass the slot literal from
-    # game code, so we can't map generators to slots automatically, but we
-    # surface the bones so the user can reattach generator meshes.
-    _BODY_MAP_KEYS = [
-        "root", "head", "center", "body_3", "neck", "head_top",
-        "limb_a", "limb_b",
-        "secondary_8", "secondary_9", "secondary_10", "secondary_11",
-        "attach_a", "attach_b", "attach_c", "attach_d",
-    ]
+    props = {}
 
-    # --- Preamble ---
-    armature["dat_pkx_format"] = "XD" if h.is_xd else "COLOSSEUM"
-    armature["dat_pkx_species_id"] = h.species_id
-    armature["dat_pkx_particle_orientation"] = h.particle_orientation
-    armature["dat_pkx_distortion_param"] = h.distortion_param
-    armature["dat_pkx_distortion_type"] = h.distortion_type
-    armature["dat_pkx_model_type"] = "TRAINER" if h.species_id == 0 and h.particle_orientation == 0 else "POKEMON"
+    # Preamble
+    props["dat_pkx_format"] = "XD" if h.is_xd else "COLOSSEUM"
+    props["dat_pkx_species_id"] = h.species_id
+    props["dat_pkx_particle_orientation"] = h.particle_orientation
+    props["dat_pkx_distortion_param"] = h.distortion_param
+    props["dat_pkx_distortion_type"] = h.distortion_type
+    props["dat_pkx_model_type"] = "TRAINER" if h.species_id == 0 and h.particle_orientation == 0 else "POKEMON"
 
-    # Flags as individual booleans
-    armature["dat_pkx_flag_flying"] = bool(h.flags & 0x01)
-    armature["dat_pkx_flag_skip_frac_frames"] = bool(h.flags & 0x04)
-    armature["dat_pkx_flag_no_root_anim"] = bool(h.flags & 0x40)
-    armature["dat_pkx_flag_bit7"] = bool(h.flags & 0x80)
+    props["dat_pkx_flag_flying"] = bool(h.flags & 0x01)
+    props["dat_pkx_flag_skip_frac_frames"] = bool(h.flags & 0x04)
+    props["dat_pkx_flag_no_root_anim"] = bool(h.flags & 0x40)
+    props["dat_pkx_flag_bit7"] = bool(h.flags & 0x80)
 
-    # Head bone (resolved to name)
-    bones = armature.data.bones
-    bone_list = list(bones)
-    armature["dat_pkx_head_bone"] = _bone_name_for_index(bone_list, h.head_bone_index)
+    props["dat_pkx_head_bone"] = _bone_name(h.head_bone_index)
 
-    # --- Sub-animations (was "part_anim_data") ---
+    # Sub-animations
     if h.is_xd:
         for i, pad in enumerate(h.part_anim_data):
             prefix = "dat_pkx_sub_anim_%d" % i
-            armature[prefix + "_type"] = _SUB_ANIM_TYPES.get(pad.has_data, "unknown")
-            armature[prefix + "_trigger"] = _SUB_ANIM_TRIGGERS.get(i, "unknown")
-            armature[prefix + "_anim_ref"] = _action_name_for_index(pad.anim_index_ref) if pad.has_data > 0 else ""
+            props[prefix + "_type"] = _SUB_ANIM_TYPES.get(pad.has_data, "unknown")
+            props[prefix + "_trigger"] = _SUB_ANIM_TRIGGERS.get(i, "unknown")
+            props[prefix + "_anim_ref"] = _action_name(pad.anim_index_ref) if pad.has_data > 0 else ""
             if pad.has_data == 2:
-                # Targeted: store bone names (filter out 0xFF)
                 bone_indices = [b for b in pad.bone_config if b != 0xFF]
-                bone_names = [_bone_name_for_index(bone_list, idx) for idx in bone_indices]
-                armature[prefix + "_bones"] = ', '.join(bone_names) if bone_names else ""
+                names = [_bone_name(idx) for idx in bone_indices]
+                props[prefix + "_bones"] = ', '.join(names) if names else ""
     else:
         for i in range(3):
             prefix = "dat_pkx_sub_anim_%d" % i
             ref = h.colo_part_anim_refs[i]
-            armature[prefix + "_type"] = "simple" if ref >= 0 else "none"
-            armature[prefix + "_trigger"] = _SUB_ANIM_TRIGGERS.get(i, "unknown")
-            armature[prefix + "_anim_ref"] = _action_name_for_index(ref) if ref >= 0 else ""
+            props[prefix + "_type"] = "simple" if ref >= 0 else "none"
+            props[prefix + "_trigger"] = _SUB_ANIM_TRIGGERS.get(i, "unknown")
+            props[prefix + "_anim_ref"] = _action_name(ref) if ref >= 0 else ""
 
-    # --- Body map bones ---
+    # Body map bones
     first_active = h.anim_entries[0] if h.anim_entries else None
     if first_active:
         for j in range(len(_BODY_MAP_KEYS)):
-            bone_idx = first_active.body_map_bones[j]
-            key = "dat_pkx_body_%s" % _BODY_MAP_KEYS[j]
-            armature[key] = _bone_name_for_index(bone_list, bone_idx)
+            props["dat_pkx_body_%s" % _BODY_MAP_KEYS[j]] = _bone_name(first_active.body_map_bones[j])
 
-    # --- Animation entries ---
-    armature["dat_pkx_anim_count"] = len(h.anim_entries)
+    # Animation entries
+    props["dat_pkx_anim_count"] = len(h.anim_entries)
     for i, entry in enumerate(h.anim_entries):
         prefix = "dat_pkx_anim_%02d" % i
-        armature[prefix + "_type"] = _ANIM_TYPE_NAMES.get(entry.anim_type, str(entry.anim_type))
-        armature[prefix + "_sub_count"] = entry.sub_anim_count
-        armature[prefix + "_damage_flags"] = _clamp_int32(entry.damage_flags)
-        armature[prefix + "_timing_1"] = entry.timing[0]
-        armature[prefix + "_timing_2"] = entry.timing[1]
-        armature[prefix + "_timing_3"] = entry.timing[2]
-        armature[prefix + "_timing_4"] = entry.timing[3]
-        armature[prefix + "_terminator"] = _clamp_int32(entry.terminator)
+        props[prefix + "_type"] = _ANIM_TYPE_NAMES.get(entry.anim_type, str(entry.anim_type))
+        props[prefix + "_sub_count"] = entry.sub_anim_count
+        props[prefix + "_damage_flags"] = _clamp_int32(entry.damage_flags)
+        props[prefix + "_timing_1"] = entry.timing[0]
+        props[prefix + "_timing_2"] = entry.timing[1]
+        props[prefix + "_timing_3"] = entry.timing[2]
+        props[prefix + "_timing_4"] = entry.timing[3]
+        props[prefix + "_terminator"] = _clamp_int32(entry.terminator)
 
         for s in range(min(len(entry.sub_anims), 3)):
             sub = entry.sub_anims[s]
-            # motion_type is derived at export from slot type + action presence;
-            # not stored as a custom property. Use it here only to decide which
-            # sub-anims get action name resolution.
             if sub.motion_type > 0:
-                armature[prefix + "_sub_%d_anim" % s] = _action_name_for_index(sub.anim_index)
+                props[prefix + "_sub_%d_anim" % s] = _action_name(sub.anim_index)
             else:
-                armature[prefix + "_sub_%d_anim" % s] = ""
+                props[prefix + "_sub_%d_anim" % s] = ""
 
-        # Per-entry body map overrides (only when different from model-level,
-        # and only for the game-relevant slots 0-7).
         if first_active and entry.body_map_bones[:len(_BODY_MAP_KEYS)] != first_active.body_map_bones[:len(_BODY_MAP_KEYS)]:
             for j in range(len(_BODY_MAP_KEYS)):
                 if entry.body_map_bones[j] != first_active.body_map_bones[j]:
-                    bone_name = _bone_name_for_index(bone_list, entry.body_map_bones[j])
-                    armature[prefix + "_body_%s" % _BODY_MAP_KEYS[j]] = bone_name
+                    props[prefix + "_body_%s" % _BODY_MAP_KEYS[j]] = _bone_name(entry.body_map_bones[j])
 
-    # --- Property descriptions ---
+    return props
+
+
+def _store_pkx_metadata(armature, pkx_header, logger, actions=None):
+    """Store PKX header fields as custom properties on the armature."""
+    bone_names = [b.name for b in armature.data.bones]
+    props = _derive_pkx_custom_props(pkx_header, actions=actions, bone_names=bone_names)
+    for key, value in props.items():
+        armature[key] = value
+
     _add_property_descriptions(armature)
 
     logger.info("  Stored PKX metadata on %s: format=%s, species=%d, %d anim entries",
-                armature.name, armature["dat_pkx_format"], h.species_id, len(h.anim_entries))
+                armature.name, armature["dat_pkx_format"], pkx_header.species_id,
+                len(pkx_header.anim_entries))
 
 
 def _add_property_descriptions(armature):
