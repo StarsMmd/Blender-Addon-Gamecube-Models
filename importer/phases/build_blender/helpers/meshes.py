@@ -1,222 +1,164 @@
-"""Build Blender mesh objects from IRModel.meshes."""
+"""Build Blender mesh objects from a BR model.
+
+Pure bpy executor — geometry, UV/color layers, vertex groups, instance
+copies, and parent-bone ownership all come pre-decided from the Plan phase.
+Material node-graph construction is still invoked from IR here; it will
+move into BR during the Plan-phase materials stage.
+"""
 import bpy
 from mathutils import Matrix, Vector
 
 try:
-    from .....shared.IR.enums import SkinType
-    from .....shared.helpers.logger import StubLogger
+    from ....shared.helpers.logger import StubLogger
 except (ImportError, SystemError):
-    from shared.IR.enums import SkinType
     from shared.helpers.logger import StubLogger
 
 
-def build_meshes(ir_model, armature, context, options, logger=StubLogger()):
-    """Create Blender meshes with materials, weights, and armature modifier.
+def build_meshes(br_model, armature, context, logger=StubLogger()):
+    """Create Blender meshes, vertex groups, armature modifiers, and instance
+    copies from a BRModel. Returns a material_lookup dict keyed by mesh_key.
 
-    Args:
-        ir_model: IRModel with meshes and bones populated.
-        armature: The Blender armature object (from build_skeleton).
-        context: Blender context.
-        options: dict of importer options.
-        logger: Logger instance (defaults to StubLogger).
+    Material node graphs are built on demand from BRMesh.material (still an
+    IRMaterial until the materials stage lands); the result is cached by
+    (material identity, cull flags) so duplicate meshes don't re-build.
     """
-    model_name = ir_model.name or "Model"
     image_cache = {}
-    material_lookup = {}  # {mesh_name: bpy.types.Material} for material animations
-    mesh_objects_by_bone = {}  # {bone_index: [mesh_objects]}
-    built_material_cache = {}  # {(id(ir_material), cull_front, cull_back): bpy.types.Material}
+    material_lookup = {}
+    built_material_cache = {}  # {(id(material), cull_front, cull_back): bpy.types.Material}
 
-    # Pre-scan: which meshes have diffuse color animation keyframes?
-    # Material animations target nodes by name, so the material builder must
-    # create a DiffuseColor node when color animation exists — even for
-    # vertex-only unlit materials that normally wouldn't need one.
-    meshes_with_color_anim = set()
-    for anim_set in (ir_model.bone_animations or []):
-        for mat_track in anim_set.material_tracks:
-            if mat_track.diffuse_r or mat_track.diffuse_g or mat_track.diffuse_b:
-                meshes_with_color_anim.add(mat_track.material_mesh_name)
-
-    for i, ir_mesh in enumerate(ir_model.meshes):
-        # Reuse previously built Blender material if same IR material + cull flags
+    mesh_objects = []
+    for i, br_mesh in enumerate(br_model.meshes):
         cached_mat = None
-        if ir_mesh.material is not None:
-            cache_key = (id(ir_mesh.material), ir_mesh.cull_front, ir_mesh.cull_back)
+        if br_mesh.material is not None:
+            cache_key = (id(br_mesh.material), br_mesh.material_cull_front, br_mesh.material_cull_back)
             cached_mat = built_material_cache.get(cache_key)
 
-        bone_name = ir_model.bones[ir_mesh.parent_bone_index].name if ir_mesh.parent_bone_index < len(ir_model.bones) else 'unknown'
-        mesh_digits = len(str(max(len(ir_model.meshes) - 1, 0)))
-        mesh_key = "mesh_%s_%s" % (str(i).zfill(mesh_digits), bone_name)
-        has_color_anim = mesh_key in meshes_with_color_anim
+        mesh_obj, mat = _build_mesh(br_mesh, armature, image_cache, logger, i, cached_material=cached_mat)
+        mesh_objects.append(mesh_obj)
 
-        mesh_obj, mat = _build_mesh(ir_mesh, ir_model, armature, image_cache, logger, i, model_name,
-                                    cached_material=cached_mat, has_color_animation=has_color_anim)
-        if mesh_obj:
-            bone_idx = ir_mesh.parent_bone_index
-            mesh_objects_by_bone.setdefault(bone_idx, []).append(mesh_obj)
         if mat:
-            if ir_mesh.material is not None:
-                cache_key = (id(ir_mesh.material), ir_mesh.cull_front, ir_mesh.cull_back)
-                if cache_key not in built_material_cache:
-                    built_material_cache[cache_key] = mat
+            if br_mesh.material is not None:
+                cache_key = (id(br_mesh.material), br_mesh.material_cull_front, br_mesh.material_cull_back)
+                built_material_cache.setdefault(cache_key, mat)
+            material_lookup[br_mesh.mesh_key] = mat
+            logger.debug("  material_lookup['%s'] = '%s'", br_mesh.mesh_key, mat.name)
 
-            material_lookup[mesh_key] = mat
-            logger.debug("  material_lookup['%s'] = '%s'", mesh_key, mat.name)
-
-    # Copy meshes for instance bones (JOBJ_INSTANCE)
     instance_count = 0
-    for bone in ir_model.bones:
-        if bone.instance_child_bone_index is not None:
-            child_meshes = mesh_objects_by_bone.get(bone.instance_child_bone_index, [])
-            for original in child_meshes:
-                copy = original.copy()
-                copy.parent = armature
-                copy.matrix_local = Matrix(bone.world_matrix)
-                bpy.context.scene.collection.objects.link(copy)
-                instance_count += 1
+    for instance in br_model.mesh_instances:
+        original = mesh_objects[instance.source_mesh_index]
+        copy = original.copy()
+        copy.parent = armature
+        copy.matrix_local = Matrix(instance.matrix_local)
+        bpy.context.scene.collection.objects.link(copy)
+        instance_count += 1
 
     logger.info("  Created %d mesh objects, %d instances, %d cached images",
-                len(ir_model.meshes), instance_count, len(image_cache))
+                len(br_model.meshes), instance_count, len(image_cache))
 
     return material_lookup
 
 
-def _build_mesh(ir_mesh, ir_model, armature, image_cache, logger, mesh_idx, model_name="Model", cached_material=None, has_color_animation=False):
-    """Create a single Blender mesh object from an IRMesh."""
-    # Create mesh data
-    mesh_name = '%s_mesh_%s' % (model_name, ir_mesh.name)
-    mesh_data = bpy.data.meshes.new(mesh_name)
-    mesh_object = bpy.data.objects.new(mesh_name, mesh_data)
+def _build_mesh(br_mesh, armature, image_cache, logger, mesh_idx, cached_material=None):
+    """Create one Blender mesh object from a BRMesh."""
+    mesh_data = bpy.data.meshes.new(br_mesh.name)
+    mesh_object = bpy.data.objects.new(br_mesh.name, mesh_data)
     mesh_object.location = Vector((0, 0, 0))
 
     bpy.context.scene.collection.objects.link(mesh_object)
 
-    # Create geometry
-    mesh_data.from_pydata(ir_mesh.vertices, [], ir_mesh.faces)
+    mesh_data.from_pydata(br_mesh.vertices, [], br_mesh.faces)
 
-    # UV layers
-    for uv_layer in ir_mesh.uv_layers:
+    for uv_layer in br_mesh.uv_layers:
         bpy_uv = mesh_data.uv_layers.new(name=uv_layer.name)
         for i, (u, v) in enumerate(uv_layer.uvs):
             if i < len(bpy_uv.data):
                 bpy_uv.data[i].uv = (u, v)
 
-    # Color layers — use FLOAT_COLOR so Blender doesn't auto-linearize.
-    # IR stores sRGB values matching the game's gamma-space rendering;
-    # FLOAT_COLOR passes them through to the shader as-is.
-    for color_layer in ir_mesh.color_layers:
+    # FLOAT_COLOR so Blender doesn't auto-linearize — the IR stores sRGB
+    # values matching the game's gamma-space rendering.
+    for color_layer in br_mesh.color_layers:
         bpy_cl = mesh_data.color_attributes.new(
             name=color_layer.name, type='FLOAT_COLOR', domain='CORNER')
         for i, rgba in enumerate(color_layer.colors):
             if i < len(bpy_cl.data):
                 bpy_cl.data[i].color = rgba
 
-    # Normals — flat polygons in Blender 4.1+ ignore custom split normals,
-    # so polygons must be marked smooth before the per-loop normals take effect.
-    if ir_mesh.normals:
+    # Blender 4.1+: flat polygons ignore custom split normals, so the
+    # polygons must be marked smooth before per-loop normals take effect.
+    if br_mesh.normals:
         for poly in mesh_data.polygons:
             poly.use_smooth = True
-        mesh_data.normals_split_custom_set(ir_mesh.normals)
+        mesh_data.normals_split_custom_set(br_mesh.normals)
 
-    # Visibility
-    if ir_mesh.is_hidden:
+    if br_mesh.is_hidden:
         mesh_object.hide_render = True
         mesh_object.hide_set(True)
 
-    # Parent to the armature, but also record the owning bone name via
-    # Blender's `parent_bone` field so mesh→bone ownership survives the
-    # round-trip (read back by the exporter's _determine_parent_bone).
-    # Leaving `parent_type='OBJECT'` means the bone name is recorded but
-    # doesn't drive any transform — the armature modifier handles
-    # deformation from vertex groups as before. Switching to
-    # `parent_type='BONE'` would double-transform verts weighted to the
-    # same bone.
+    # Parent to the armature but record bone ownership via parent_bone
+    # (no transform effect — the armature modifier drives deformation).
     mesh_object.parent = armature
-    if ir_mesh.parent_bone_index < len(ir_model.bones):
-        bone_name = ir_model.bones[ir_mesh.parent_bone_index].name
-        if bone_name and bone_name in armature.data.bones:
-            mesh_object.parent_bone = bone_name
+    if br_mesh.parent_bone_name and br_mesh.parent_bone_name in armature.data.bones:
+        mesh_object.parent_bone = br_mesh.parent_bone_name
 
-    # Build material from IR (reuse cached material if available)
-    if cached_material is not None:
-        mat = cached_material
-        logger.debug("  mesh[%d] '%s': reusing material '%s'", mesh_idx, ir_mesh.name, mat.name)
-    elif ir_mesh.material is not None:
-        from .materials import build_material
-        mat_name = '%s_mat_%d' % (model_name, mesh_idx)
-        mat = build_material(ir_mesh.material, image_cache=image_cache, name=mat_name,
-                             has_color_animation=has_color_animation)
-        logger.debug("  mesh[%d] '%s': material '%s' with %d textures",
-                     mesh_idx, ir_mesh.name, mat.name, len(ir_mesh.material.texture_layers))
-        # Backface culling — GameCube POBJ cull flags control which face sides are visible.
-        # CULL_BACK (default) = only front faces, CULL_FRONT = only back faces,
-        # both = nothing visible, neither = double-sided.
-        # This prevents z-fighting on double-layered geometry (e.g. skirt inner/outer surfaces).
-        if ir_mesh.cull_front or ir_mesh.cull_back:
-            mat.use_backface_culling = True
-    else:
-        mat = bpy.data.materials.new(name='%s_mat_%d' % (model_name, mesh_idx))
-        logger.debug("  mesh[%d] '%s': placeholder material (no IR material)", mesh_idx, ir_mesh.name)
-
+    mat = _resolve_material(br_mesh, image_cache, logger, mesh_idx, cached_material)
     mesh_data.materials.append(mat)
 
-    # Log UV layer info
     uv_names = [uv.name for uv in mesh_data.uv_layers]
     clr_names = [ca.name for ca in mesh_data.color_attributes]
     logger.debug("  mesh[%d] '%s': uv_layers=%s, color_attributes=%s, verts=%d, faces=%d",
-                 mesh_idx, ir_mesh.name, uv_names, clr_names,
+                 mesh_idx, br_mesh.name, uv_names, clr_names,
                  len(mesh_data.vertices), len(mesh_data.polygons))
 
-    # Bone weights
-    _apply_bone_weights(ir_mesh, ir_model, mesh_object, armature, logger, mesh_idx)
+    _apply_vertex_groups(br_mesh.vertex_groups, mesh_object)
+    _add_armature_modifier(mesh_object, armature)
 
-    # Finalize
     mesh_data.update(calc_edges=True, calc_edges_loose=False)
     mesh_data.validate(verbose=False, clean_customdata=False)
 
     return mesh_object, mat
 
 
-def _apply_bone_weights(ir_mesh, ir_model, mesh_object, armature, logger, mesh_idx):
-    """Apply bone weights and armature modifier from IRBoneWeights."""
-    bw = ir_mesh.bone_weights
-    if bw is None:
-        return
+def _resolve_material(br_mesh, image_cache, logger, mesh_idx, cached_material):
+    """Fetch or build the Blender material for this mesh.
 
-    if bw.type == SkinType.WEIGHTED and bw.assignments:
-        # Create vertex groups for each bone referenced
-        joint_groups = {}
-        for vertex_idx, weight_list in bw.assignments:
-            for bone_name, weight in weight_list:
-                if bone_name not in joint_groups:
-                    group = mesh_object.vertex_groups.new(name=bone_name)
-                    joint_groups[bone_name] = group
+    BRMesh.material is still an IRMaterial pass-through (stage 4 will swap
+    it for a BRMaterial); build_material() is invoked directly here.
+    """
+    if cached_material is not None:
+        logger.debug("  mesh[%d] '%s': reusing material '%s'",
+                     mesh_idx, br_mesh.name, cached_material.name)
+        return cached_material
 
-        # Assign weights
-        for vertex_idx, weight_list in bw.assignments:
-            for bone_name, weight in weight_list:
-                joint_groups[bone_name].add([vertex_idx], weight, 'REPLACE')
+    if br_mesh.material is not None:
+        from .materials import build_material
+        mat = build_material(
+            br_mesh.material,
+            image_cache=image_cache,
+            name=br_mesh.material_name,
+            has_color_animation=br_mesh.has_color_animation,
+        )
+        logger.debug("  mesh[%d] '%s': material '%s' with %d textures",
+                     mesh_idx, br_mesh.name, mat.name, len(br_mesh.material.texture_layers))
+        # GameCube POBJ cull flags — CULL_BACK shows front faces, CULL_FRONT
+        # shows back faces, both = invisible, neither = double-sided.
+        if br_mesh.material_cull_front or br_mesh.material_cull_back:
+            mat.use_backface_culling = True
+        return mat
 
-        logger.debug("  mesh[%d] weights: WEIGHTED, %d assignments, %d groups: %s",
-                     mesh_idx, len(bw.assignments), len(joint_groups), sorted(joint_groups.keys()))
+    mat = bpy.data.materials.new(name=br_mesh.material_name or 'placeholder_mat')
+    logger.debug("  mesh[%d] '%s': placeholder material (no material)", mesh_idx, br_mesh.name)
+    return mat
 
-    elif bw.type == SkinType.SINGLE_BONE and bw.bone_name:
-        group = mesh_object.vertex_groups.new(name=bw.bone_name)
-        all_verts = [v.index for v in mesh_object.data.vertices]
-        group.add(all_verts, 1.0, 'REPLACE')
-        logger.debug("  mesh[%d] weights: SINGLE_BONE '%s'", mesh_idx, bw.bone_name)
 
-    elif bw.type == SkinType.RIGID and bw.bone_name:
-        # Rigid: attach all vertices to parent bone.
-        # IR stores all vertices in world space (describe phase transforms
-        # bone-local → world). Do NOT set matrix_local here — the vertices
-        # are already positioned correctly in world space, and setting
-        # matrix_local to the bone's world matrix would double-transform them.
-        group = mesh_object.vertex_groups.new(name=bw.bone_name)
-        all_verts = [v.index for v in mesh_object.data.vertices]
-        group.add(all_verts, 1.0, 'REPLACE')
-        logger.debug("  mesh[%d] weights: RIGID '%s'", mesh_idx, bw.bone_name)
+def _apply_vertex_groups(vertex_groups, mesh_object):
+    """Create Blender vertex groups and assign weights from a BRVertexGroup list."""
+    for vg in vertex_groups:
+        group = mesh_object.vertex_groups.new(name=vg.name)
+        for vertex_index, weight in vg.assignments:
+            group.add([vertex_index], weight, 'REPLACE')
 
-    # Armature modifier
+
+def _add_armature_modifier(mesh_object, armature):
     mod = mesh_object.modifiers.new('Skinmod', 'ARMATURE')
     mod.object = armature
     mod.use_bone_envelopes = False

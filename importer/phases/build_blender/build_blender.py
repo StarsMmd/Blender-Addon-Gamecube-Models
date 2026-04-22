@@ -13,14 +13,21 @@ except (ImportError, SystemError):
     from shared.helpers.logger import StubLogger
 
 
-def build_blender_scene(ir_scene, context, options, logger=StubLogger()):
-    """Consumes an IRScene and creates Blender objects via bpy API.
+def build_blender_scene(ir_scene, context, options, logger=StubLogger(), br_scene=None):
+    """Consumes a BR scene + IR scene and creates Blender objects via bpy API.
+
+    Stage-1 migration: BR is consulted for the armature; meshes, materials,
+    actions, etc. still come from IR and will migrate to BR in later stages.
+    ``br_scene`` may be None for compatibility while callers are updated.
 
     Args:
         ir_scene: IRScene dataclass hierarchy
         context: Blender context
         options: dict of importer options
         logger: Logger instance (defaults to StubLogger)
+        br_scene: BRScene dataclass (Plan-phase output). Required for models
+            that should be planned; falls back to IR-only skeleton build if
+            absent.
 
     Returns:
         list of dicts, one per model, with keys:
@@ -36,9 +43,15 @@ def build_blender_scene(ir_scene, context, options, logger=StubLogger()):
         logger.info("Building model: %s (%d bones, %d meshes)",
                     ir_model.name, len(ir_model.bones), len(ir_model.meshes))
 
-        armature = build_skeleton(ir_model, context, options, logger=logger, model_index=model_idx)
+        if br_scene is None or model_idx >= len(br_scene.models):
+            raise ValueError(
+                "build_blender_scene requires a BR scene with an entry for every model; "
+                "missing BR for model index %d" % model_idx
+            )
+        br_model = br_scene.models[model_idx]
+        armature = build_skeleton(br_model.armature, context, logger=logger)
 
-        material_lookup = build_meshes(ir_model, armature, context, options, logger=logger)
+        material_lookup = build_meshes(br_model, armature, context, logger=logger)
 
         reset_pose(armature)
 
