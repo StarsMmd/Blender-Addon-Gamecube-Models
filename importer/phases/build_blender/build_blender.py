@@ -57,10 +57,12 @@ def build_blender_scene(ir_scene, context, options, logger=StubLogger(), br_scen
 
         actions = []
         mat_slot_indices = {}
-        if ir_model.bone_animations:
-            logger.info("  Building %d animation set(s)", len(ir_model.bone_animations))
+        if br_model.actions:
+            logger.info("  Building %d animation set(s)", len(br_model.actions))
             actions, mat_slot_indices = build_bone_animations(
-                ir_model, armature, options, logger=logger, material_lookup=material_lookup)
+                br_model.actions, armature, options, logger=logger,
+                material_lookup=material_lookup,
+            )
 
         build_constraints(ir_model, armature, logger)
 
