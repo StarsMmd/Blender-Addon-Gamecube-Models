@@ -261,9 +261,24 @@ def _walk_parallel(anim_joint, joint, tracks, loop_flag,
                        joint_to_bone_index, bones, logger, options)
 
 
-def _describe_bone_track(aobj, joint, bone, bone_index, bones, logger=None, options=None):
-    """Decode all channels for one bone into an IRBoneTrack."""
-    rotation = [[], [], []]  # [X, Y, Z]
+def _decode_bone_channels(aobj, joint=None, bone=None, bones=None,
+                          logger=None, options=None):
+    """Walk the Fobj chain on `aobj` and decode keyframes per channel.
+
+    Pure: returns the decoded channel data without composing the rest matrix
+    or constructing an IRBoneTrack. Translation keyframes are scaled from GC
+    units to meters here so callers see consistent units.
+
+    `joint`, `bone`, and `bones` are only consulted when an HSD_A_J_PATH
+    channel is present (spline path needs the bone hierarchy for world
+    positioning); they may be None for plain SRT-only tracks.
+
+    Returns:
+        (rotation, location, scale, spline_path) where rotation/location/scale
+        are each a length-3 list of IRKeyframe lists (X, Y, Z), and
+        spline_path is an IRSplinePath or None.
+    """
+    rotation = [[], [], []]
     location = [[], [], []]
     scale = [[], [], []]
     spline_path = None
@@ -271,7 +286,8 @@ def _describe_bone_track(aobj, joint, bone, bone_index, bones, logger=None, opti
     fobj = aobj.frame
     while fobj:
         if fobj.type == HSD_A_J_PATH:
-            spline_path = _extract_spline_path(aobj, joint, bone, bones, fobj, logger, options)
+            if joint is not None and bone is not None and bones is not None:
+                spline_path = _extract_spline_path(aobj, joint, bone, bones, fobj, logger, options)
 
         elif fobj.type in _CHANNEL_MAP:
             category, component = _CHANNEL_MAP[fobj.type]
@@ -280,7 +296,6 @@ def _describe_bone_track(aobj, joint, bone, bone_index, bones, logger=None, opti
             if category == 'r':
                 rotation[component] = keyframes
             elif category == 'l':
-                # Scale translation keyframes to meters
                 for kf in keyframes:
                     kf.value *= GC_TO_METERS
                     if kf.handle_left is not None:
@@ -296,6 +311,15 @@ def _describe_bone_track(aobj, joint, bone, bone_index, bones, logger=None, opti
                 scale[component] = keyframes
 
         fobj = fobj.next
+
+    return rotation, location, scale, spline_path
+
+
+def _describe_bone_track(aobj, joint, bone, bone_index, bones, logger=None, options=None):
+    """Decode all channels for one bone into an IRBoneTrack."""
+    rotation, location, scale, spline_path = _decode_bone_channels(
+        aobj, joint, bone, bones, logger=logger, options=options,
+    )
 
     if spline_path and logger:
         logger.info("  PATH bone '%s' (idx=%d): %d param kf, %d control pts (type=%d)",
