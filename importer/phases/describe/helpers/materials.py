@@ -32,16 +32,10 @@ except (ImportError, SystemError):
 
 
 def describe_material(mobj, image_cache=None, logger=None, options=None):
-    """Extract material data from a MaterialObject node into IRMaterial.
+    """Extract material data from a MaterialObject node into an IRMaterial.
 
-    Args:
-        mobj: MaterialObject node from parsed node tree.
-        image_cache: dict for deduplicating images by (image_id, palette_id).
-        logger: Logger for leniency reporting (optional).
-        options: Importer options dict (for strict_mirror); may be None.
-
-    Returns:
-        IRMaterial with all fields populated.
+    In: mobj (MaterialObject, parsed); image_cache (dict|None, keyed by (image_id, palette_id), shared across calls); logger (Logger|None); options (dict|None, uses 'strict_mirror').
+    Out: IRMaterial with diffuse/ambient/specular colors (sRGB [0,1]), texture layers, and optional FragmentBlending.
     """
     if image_cache is None:
         image_cache = {}
@@ -119,7 +113,11 @@ def describe_material(mobj, image_cache=None, logger=None, options=None):
 
 
 def _describe_texture(texture, image_cache, logger=None, options=None, mobj_addr=0, texture_number=0):
-    """Extract one Texture node into IRTextureLayer."""
+    """Extract one Texture node into an IRTextureLayer with V-flipped translation.
+
+    In: texture (Texture, parsed); image_cache (dict, mutated as cache); logger (Logger|None); options (dict|None); mobj_addr (int, owning MObj address for diagnostics); texture_number (int, ≥0).
+    Out: IRTextureLayer|None — None if image pixels are missing.
+    """
     # Get pre-decoded image pixels (decoded during parsing)
     ir_image = None
     if texture.image:
@@ -229,19 +227,19 @@ _GX_FORMAT_ID_TO_ENUM = {
 
 
 def _gx_format_id_to_enum(format_id):
-    """Convert a GX texture format ID to GXTextureFormat enum."""
+    """Convert a GX texture format ID to a GXTextureFormat enum value.
+
+    In: format_id (int, 0x0..0xE).
+    Out: GXTextureFormat — GXTextureFormat.AUTO if id unrecognized.
+    """
     return _GX_FORMAT_ID_TO_ENUM.get(format_id, GXTextureFormat.AUTO)
 
 
 def _build_ir_image(texture):
-    """Build an IRImage from a Texture node's pre-decoded pixel data.
+    """Build an IRImage from a Texture node's pre-decoded RGBA pixel buffer.
 
-    Texture.decoded_pixels is set during Phase 3 (parsing) by
-    Image.decodeFromRawData(). The data is already cropped and
-    vertically flipped (bottom-to-top, matching Blender convention).
-
-    Stores raw u8 bytes in IRImage.pixels — the float conversion
-    happens in Phase 5A when assigning to bpy.data.images.pixels.
+    In: texture (Texture, parsed; needs .image and .decoded_pixels).
+    Out: IRImage|None — None if image_node missing or decoded_pixels empty; pixels stored as raw u8 bytes.
     """
     image_node = texture.image
     pixel_data = getattr(texture, 'decoded_pixels', None)
@@ -267,7 +265,11 @@ def _build_ir_image(texture):
 
 
 def _describe_tev(tev):
-    """Extract TEV combiner settings into ColorCombiner."""
+    """Extract TEV combiner settings into a ColorCombiner with optional color/alpha stages.
+
+    In: tev (TextureTEV node, parsed).
+    Out: ColorCombiner|None — None if neither color nor alpha stage is active.
+    """
     color_stage = None
     alpha_stage = None
 
@@ -305,6 +307,11 @@ def _describe_tev(tev):
 
 
 def _map_color_source(diffuse_flags, render_diffuse):
+    """Map RENDER_DIFFUSE_* bit flags to a ColorSource enum.
+
+    In: diffuse_flags (int, masked RENDER_DIFFUSE_BITS); render_diffuse (bool, RENDER_DIFFUSE bit set).
+    Out: ColorSource (MATERIAL/VERTEX/BOTH).
+    """
     if render_diffuse:
         if diffuse_flags == RENDER_DIFFUSE_VTX:
             return ColorSource.VERTEX
@@ -320,6 +327,11 @@ def _map_color_source(diffuse_flags, render_diffuse):
 
 
 def _map_alpha_source(alpha_flags, render_diffuse):
+    """Map RENDER_ALPHA_* bit flags to a ColorSource enum.
+
+    In: alpha_flags (int, masked RENDER_ALPHA_BITS); render_diffuse (bool, accepted but unused).
+    Out: ColorSource (MATERIAL/VERTEX/BOTH).
+    """
     if alpha_flags == RENDER_ALPHA_MAT:
         return ColorSource.MATERIAL
     elif alpha_flags == RENDER_ALPHA_VTX:
@@ -330,12 +342,22 @@ def _map_alpha_source(alpha_flags, render_diffuse):
 
 
 def _map_coord_type(coord_mask):
+    """Map a TEX_COORD_* mask to a CoordType enum.
+
+    In: coord_mask (int).
+    Out: CoordType (REFLECTION or UV).
+    """
     if coord_mask == TEX_COORD_REFLECTION:
         return CoordType.REFLECTION
     return CoordType.UV
 
 
 def _map_wrap_mode(gx_wrap):
+    """Map a GX wrap mode constant to a WrapMode enum.
+
+    In: gx_wrap (int, GX_CLAMP/GX_MIRROR/GX_REPEAT).
+    Out: WrapMode (CLAMP/MIRROR/REPEAT).
+    """
     if gx_wrap == GX_CLAMP:
         return WrapMode.CLAMP
     elif gx_wrap == GX_MIRROR:
@@ -344,6 +366,11 @@ def _map_wrap_mode(gx_wrap):
 
 
 def _map_interpolation(gx_filter):
+    """Map a GX min-filter constant to a TextureInterpolation enum.
+
+    In: gx_filter (int, GX_NEAR/GX_LINEAR/GX_*_MIP_*).
+    Out: TextureInterpolation (CLOSEST/LINEAR/CUBIC); LINEAR fallback for unknown values.
+    """
     mapping = {
         GX_NEAR: TextureInterpolation.CLOSEST,
         GX_LINEAR: TextureInterpolation.LINEAR,
@@ -356,6 +383,11 @@ def _map_interpolation(gx_filter):
 
 
 def _map_color_blend(colormap):
+    """Map a TEX_COLORMAP_* constant to a LayerBlendMode enum.
+
+    In: colormap (int, masked TEX_COLORMAP_MASK).
+    Out: LayerBlendMode; NONE fallback for unknown values.
+    """
     mapping = {
         TEX_COLORMAP_NONE: LayerBlendMode.NONE,
         TEX_COLORMAP_PASS: LayerBlendMode.PASS,
@@ -371,6 +403,11 @@ def _map_color_blend(colormap):
 
 
 def _map_alpha_blend(alphamap):
+    """Map a TEX_ALPHAMAP_* constant to a LayerBlendMode enum.
+
+    In: alphamap (int, masked TEX_ALPHAMAP_MASK).
+    Out: LayerBlendMode; NONE fallback for unknown values.
+    """
     mapping = {
         TEX_ALPHAMAP_NONE: LayerBlendMode.NONE,
         TEX_ALPHAMAP_PASS: LayerBlendMode.PASS,
@@ -385,6 +422,11 @@ def _map_alpha_blend(alphamap):
 
 
 def _map_lightmap_channel(lightmap):
+    """Map a TEX_LIGHTMAP_* mask to a LightmapChannel enum.
+
+    In: lightmap (int, masked TEX_LIGHTMAP_MASK; multiple bits possible, first match wins).
+    Out: LightmapChannel (NONE/DIFFUSE/SPECULAR/AMBIENT/EXTENSION).
+    """
     if lightmap & TEX_LIGHTMAP_DIFFUSE:
         return LightmapChannel.DIFFUSE
     elif lightmap & TEX_LIGHTMAP_SPECULAR:
@@ -397,7 +439,11 @@ def _map_lightmap_channel(lightmap):
 
 
 def _resolve_blend_effect(pe):
-    """Map pixel engine type + factors to an OutputBlendEffect."""
+    """Map pixel engine type + source/dest factors to an OutputBlendEffect enum.
+
+    In: pe (PixelEngineData node, parsed; needs .type, .source_factor, .destination_factor, .logic_op).
+    Out: OutputBlendEffect (e.g. OPAQUE/ALPHA_BLEND/ADDITIVE/MULTIPLY/CUSTOM).
+    """
     if pe.type == GX_BM_NONE:
         return OutputBlendEffect.OPAQUE
     elif pe.type == GX_BM_BLEND:
@@ -441,6 +487,11 @@ def _resolve_blend_effect(pe):
 
 
 def _map_blend_factor(gx_factor):
+    """Map a GX_BL_* blend-factor constant to a BlendFactor enum.
+
+    In: gx_factor (int).
+    Out: BlendFactor; ZERO fallback for unknown values.
+    """
     mapping = {
         GX_BL_ZERO: BlendFactor.ZERO,
         GX_BL_ONE: BlendFactor.ONE,
@@ -458,6 +509,11 @@ def _map_blend_factor(gx_factor):
 # --- TEV input mapping ---
 
 def _map_tev_color_input(flag, tev):
+    """Map a GX TEV color-input flag to a CombinerInput dataclass.
+
+    In: flag (int, GX_CC_* or TOBJ_TEV_CC_*); tev (TextureTEV node, source for KONST/TEV color values).
+    Out: CombinerInput with source/channel/value populated.
+    """
     if flag == GX_CC_ZERO:
         return CombinerInput(source=CombinerInputSource.ZERO)
     elif flag == GX_CC_ONE:
@@ -499,6 +555,11 @@ def _map_tev_color_input(flag, tev):
 
 
 def _map_tev_alpha_input(flag, tev):
+    """Map a GX TEV alpha-input flag to a CombinerInput dataclass.
+
+    In: flag (int, GX_CA_* or TOBJ_TEV_CA_*); tev (TextureTEV node).
+    Out: CombinerInput with source/channel/value populated.
+    """
     if flag == GX_CA_ZERO:
         return CombinerInput(source=CombinerInputSource.ZERO)
     elif flag == GX_CA_TEXA:
@@ -525,9 +586,10 @@ def _map_tev_alpha_input(flag, tev):
 
 
 def _tev_color_value(color_obj):
-    """Extract RGBA tuple from a TEV color register object.
+    """Extract an RGBA tuple from a TEV color register object.
 
-    Values are already normalized [0-1] by TextureTEV.loadFromBinary().
+    In: color_obj (object, has .red/.green/.blue/.alpha in [0,1] floats; may lack attrs).
+    Out: tuple[float,float,float,float] in [0,1]; (0,0,0,1) fallback if attrs missing.
     """
     if hasattr(color_obj, 'red'):
         return (color_obj.red, color_obj.green,
@@ -536,6 +598,11 @@ def _tev_color_value(color_obj):
 
 
 def _map_tev_bias(bias):
+    """Map a GX TEV bias constant to a CombinerBias enum.
+
+    In: bias (int, GX_TB_*).
+    Out: CombinerBias (ZERO/PLUS_HALF/MINUS_HALF).
+    """
     if bias == GX_TB_ADDHALF:
         return CombinerBias.PLUS_HALF
     elif bias == GX_TB_SUBHALF:
@@ -544,6 +611,11 @@ def _map_tev_bias(bias):
 
 
 def _map_tev_scale(scale):
+    """Map a GX TEV scale constant to a CombinerScale enum.
+
+    In: scale (int, GX_CS_*).
+    Out: CombinerScale (SCALE_1/SCALE_2/SCALE_4/SCALE_HALF).
+    """
     mapping = {
         GX_CS_SCALE_1: CombinerScale.SCALE_1,
         GX_CS_SCALE_2: CombinerScale.SCALE_2,

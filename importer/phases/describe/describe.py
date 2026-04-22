@@ -38,18 +38,10 @@ from .helpers.material_animations import describe_material_animations
 
 
 def describe_scene(sections, options, logger=StubLogger()):
-    """Converts parsed node tree sections into an IRScene.
+    """Convert parsed node tree sections into a fully populated IRScene.
 
-    Routes sections to models/lights/cameras/fogs (matching ModelBuilder.__init__),
-    then describes each model's bones and meshes as Intermediate Representation dataclasses.
-
-    Args:
-        sections: list of SectionInfo from DATParser.parseSections()
-        options: dict of importer options
-        logger: Logger instance for output (defaults to StubLogger)
-
-    Returns:
-        IRScene with models populated. Lights/cameras/fogs are stubs for now.
+    In: sections (list[SectionInfo], from Phase 3); options (dict, importer options including 'filepath', 'pkx_header', 'strict_mirror'); logger (Logger, defaults to StubLogger).
+    Out: IRScene, with models/lights/cameras populated (no bpy state touched).
     """
 
     logger.info("=== Phase 4: Describe Scene ===")

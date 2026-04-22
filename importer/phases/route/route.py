@@ -23,15 +23,10 @@ _DEFAULT_RULES = [
 
 
 def route_sections(dat_bytes, user_overrides=None, logger=StubLogger()):
-    """Map section names to node types from raw DAT bytes.
+    """Map each DAT section name to a node type name using default rules + overrides.
 
-    Args:
-        dat_bytes: Raw DAT binary (no container header).
-        user_overrides: Optional dict of {section_name: node_type} overrides.
-        logger: Logger instance.
-
-    Returns:
-        dict of {section_name: node_type_name} for all sections.
+    In: dat_bytes (bytes, raw DAT, no container header); user_overrides (dict[str,str]|None, exact name→type overrides); logger (Logger, defaults to StubLogger).
+    Out: dict[str, str], section_name → node_type_name (e.g. 'Joint', 'SceneData', 'Dummy' fallback).
     """
     section_names = _read_section_names(dat_bytes)
 
@@ -51,7 +46,11 @@ def route_sections(dat_bytes, user_overrides=None, logger=StubLogger()):
 
 
 def _resolve_type(section_name):
-    """Resolve a section name to a node type using default rules."""
+    """Resolve a section name to a node type using the default rules table.
+
+    In: section_name (str, any).
+    Out: str, node type name (falls back to 'Dummy' if no rule matches).
+    """
     lower = section_name.lower()
     for mode, pattern, node_type in _DEFAULT_RULES:
         if mode == 'exact' and lower == pattern:
@@ -62,10 +61,10 @@ def _resolve_type(section_name):
 
 
 def _read_section_names(dat_bytes):
-    """Read section name strings from the DAT binary.
+    """Read section name strings from the DAT archive header + section info table.
 
-    Parses the archive header to find the section info table,
-    then reads the name strings.
+    In: dat_bytes (bytes, raw DAT; <32 bytes returns empty).
+    Out: list[str], one name per public+external section, in archive order.
     """
     if len(dat_bytes) < 32:
         return []

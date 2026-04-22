@@ -31,18 +31,10 @@ _CHANNEL_MAP = {
 
 
 def describe_bone_animations(model_set, joint_to_bone_index, bones, options, logger=StubLogger(), model_name=None):
-    """Walk AnimationJoint trees and produce IRBoneAnimationSet list.
+    """Walk AnimationJoint trees parallel to the Joint tree and emit one set per animation.
 
-    Args:
-        model_set: Parsed model set with animated_joints list.
-        joint_to_bone_index: dict mapping Joint.address → bone index.
-        bones: list[IRBone] from describe_bones().
-        options: importer options dict.
-        logger: Logger instance.
-        model_name: Name to use for animation naming (defaults to root joint name).
-
-    Returns:
-        list[IRBoneAnimationSet] with decoded keyframes per bone per channel.
+    In: model_set (ModelSet-like, parsed); joint_to_bone_index (dict[int,int], joint address→bone index); bones (list[IRBone]); options (dict, may contain 'pkx_header'); logger (Logger); model_name (str|None, used as name prefix).
+    Out: list[IRBoneAnimationSet], one per animated_joint, names deduplicated and zero-padded.
     """
     animated_joints = getattr(model_set, 'animated_joints', None) or []
     root_joint = model_set.root_joint
@@ -97,7 +89,11 @@ def describe_bone_animations(model_set, joint_to_bone_index, bones, options, log
 
 
 def _is_static_pose(tracks):
-    """Return True if every keyframe channel in the tracks holds a constant value."""
+    """Return True if every keyframe channel in the tracks holds a constant value.
+
+    In: tracks (list[IRBoneTrack]).
+    Out: bool, True iff no channel has any keyframe diverging from its first by >1e-6.
+    """
     for track in tracks:
         for kf_list in (track.rotation, track.location, track.scale):
             if kf_list is None:
@@ -112,12 +108,10 @@ def _is_static_pose(tracks):
 
 
 def _build_anim_name_map(pkx_header):
-    """Build a map of animation index → semantic name from PKX metadata.
+    """Build animation index → semantic name map from PKX header slot entries.
 
-    Uses the animation slot entries and sub-animation references to produce
-    compact, human-readable names for each DAT animation index.
-
-    Returns dict[int, str] or empty dict if no PKX header.
+    In: pkx_header (PKXHeader|None, parsed PKX metadata).
+    Out: dict[int, str], animation index → compact semantic name (empty dict if no header).
     """
     if pkx_header is None:
         return {}
@@ -173,15 +167,10 @@ def _build_anim_name_map(pkx_header):
 
 
 def _compact_anim_name(slot_names):
-    """Generate a compact animation name from a list of slot names.
+    """Compact a list of slot names into one short label using priority rules.
 
-    Rules:
-    - "Idle" (slot 0) takes absolute priority — always just "Idle"
-    - Sub-animations keep their prefix: "Sub SleepOnPose"
-    - Physical-only → "Physical", Special-only → "Special", mix → "Attack"
-    - Non-attack slots appended after (except regularly defaulting ones like Take Flight)
-    - Damage + Faint sharing → "Faint"
-    - Deduplication happens upstream after all names are generated
+    In: slot_names (list[str], may be empty; PKX slot labels like 'Idle', 'Physical', 'Sub Extra').
+    Out: str, single combined name (e.g. 'Idle', 'Attack', 'Faint', 'Sub Extra', 'Unknown' if empty).
     """
     if not slot_names:
         return 'Unknown'
@@ -239,7 +228,11 @@ def _compact_anim_name(slot_names):
 
 def _walk_parallel(anim_joint, joint, tracks, loop_flag,
                    joint_to_bone_index, bones, logger, options=None):
-    """Walk AnimationJoint and Joint trees in parallel, decoding keyframes."""
+    """Walk AnimationJoint and Joint trees in parallel, appending an IRBoneTrack per animated bone.
+
+    In: anim_joint (AnimationJoint); joint (Joint, tree-aligned with anim_joint); tracks (list[IRBoneTrack], appended in-place); loop_flag (list[bool] of length 1, mutable closure flag); joint_to_bone_index (dict[int,int]); bones (list[IRBone]); logger (Logger); options (dict|None).
+    Out: None — mutates `tracks` and `loop_flag` in place.
+    """
     bone_index = joint_to_bone_index.get(joint.address, 0)
     bone = bones[bone_index]
 
@@ -263,20 +256,10 @@ def _walk_parallel(anim_joint, joint, tracks, loop_flag,
 
 def _decode_bone_channels(aobj, joint=None, bone=None, bones=None,
                           logger=None, options=None):
-    """Walk the Fobj chain on `aobj` and decode keyframes per channel.
+    """Walk the Fobj chain on `aobj` and decode keyframes per SRT/PATH channel.
 
-    Pure: returns the decoded channel data without composing the rest matrix
-    or constructing an IRBoneTrack. Translation keyframes are scaled from GC
-    units to meters here so callers see consistent units.
-
-    `joint`, `bone`, and `bones` are only consulted when an HSD_A_J_PATH
-    channel is present (spline path needs the bone hierarchy for world
-    positioning); they may be None for plain SRT-only tracks.
-
-    Returns:
-        (rotation, location, scale, spline_path) where rotation/location/scale
-        are each a length-3 list of IRKeyframe lists (X, Y, Z), and
-        spline_path is an IRSplinePath or None.
+    In: aobj (Animation node, parsed); joint (Joint|None, only used for PATH); bone (IRBone|None, only used for PATH); bones (list[IRBone]|None); logger (Logger|None); options (dict|None).
+    Out: tuple (rotation, location, scale, spline_path) — rotation/location/scale are each length-3 lists of IRKeyframe lists [X,Y,Z] (location in meters), spline_path is IRSplinePath|None.
     """
     rotation = [[], [], []]
     location = [[], [], []]
@@ -316,7 +299,11 @@ def _decode_bone_channels(aobj, joint=None, bone=None, bones=None,
 
 
 def _describe_bone_track(aobj, joint, bone, bone_index, bones, logger=None, options=None):
-    """Decode all channels for one bone into an IRBoneTrack."""
+    """Decode all channels for one bone into an IRBoneTrack with rest-pose data attached.
+
+    In: aobj (Animation node); joint (Joint, parsed); bone (IRBone); bone_index (int, ≥0); bones (list[IRBone]); logger (Logger|None); options (dict|None).
+    Out: IRBoneTrack with rotation/location/scale channels, rest_local_matrix (meters), and optional spline_path.
+    """
     rotation, location, scale, spline_path = _decode_bone_channels(
         aobj, joint, bone, bones, logger=logger, options=options,
     )
@@ -364,13 +351,10 @@ def _describe_bone_track(aobj, joint, bone, bone_index, bones, logger=None, opti
 
 
 def _find_visible_scale_in_channels(scale_channels):
-    """Find a non-zero scale from animation keyframes for a near-zero rest bone.
+    """Find a non-zero per-axis scale from animation keyframes (for near-zero rest bones).
 
-    Args:
-        scale_channels: list of 3 keyframe lists [X, Y, Z] for scale.
-
-    Returns:
-        (sx, sy, sz) tuple if a visible scale was found, else None.
+    In: scale_channels (list of 3 lists[IRKeyframe], one per axis [X,Y,Z]).
+    Out: tuple[float,float,float]|None — first non-zero (|v|≥0.001) value per axis, or None if any axis has none.
     """
     nz = 0.001
     best = [None, None, None]
@@ -385,7 +369,11 @@ def _find_visible_scale_in_channels(scale_channels):
 
 
 def _extract_spline_path(aobj, joint, bone, bones, fobj, logger, options=None):
-    """Extract spline path data from a PATH animation channel into IRSplinePath."""
+    """Extract spline path data from an HSD_A_J_PATH channel into an IRSplinePath.
+
+    In: aobj (Animation node, has .joint→spline joint); joint (Joint); bone (IRBone); bones (list[IRBone]); fobj (Frame node, the PATH channel); logger (Logger); options (dict|None).
+    Out: IRSplinePath with control points in meters, parameter keyframes, curve type, and world matrix; or None if data missing.
+    """
     path_keyframes = decode_fobjdesc(fobj, logger=logger, options=options)
     if not path_keyframes:
         return None

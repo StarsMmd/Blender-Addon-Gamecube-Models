@@ -63,16 +63,10 @@ _WOBJ_TARGET_MAP = {
 
 
 def describe_camera(camera_node, camera_index=0, options=None, logger=None):
-    """Convert a Camera node to IRCamera.
+    """Convert a parsed Camera node to an IRCamera with positions in meters.
 
-    Args:
-        camera_node: Parsed Camera node (from CameraSet or SceneData).
-        camera_index: Index for naming.
-        options: import options dict (for strict_mirror); may be None.
-        logger: Logger instance; defaults to StubLogger.
-
-    Returns:
-        IRCamera or None if the projection type is unrecognized.
+    In: camera_node (Camera, parsed); camera_index (int, ≥0, used for naming); options (dict|None, uses 'strict_mirror'); logger (Logger|None).
+    Out: IRCamera with projection/position/target/fov/near/far set; None if projection unrecognized.
     """
     if options is None:
         options = {}
@@ -132,18 +126,8 @@ def describe_camera(camera_node, camera_index=0, options=None, logger=None):
 def describe_camera_animations(camera_set, camera_index=0, logger=StubLogger(), options=None):
     """Decode CameraAnimation nodes from a CameraSet into IRCameraKeyframes.
 
-    Walks the camera_set.animations array, decoding keyframes from:
-    - The CameraAnimation's own AOBJ (FOV, roll, near, far, and optionally eye/target)
-    - The eye_position_animation WObjectAnimation's AOBJ (eye XYZ)
-    - The interest_animation WObjectAnimation's AOBJ (target XYZ)
-
-    Args:
-        camera_set: Parsed CameraSet node with .animations array.
-        camera_index: Index for naming.
-        logger: Logger instance.
-
-    Returns:
-        list[IRCameraKeyframes]
+    In: camera_set (CameraSet, parsed, with .animations); camera_index (int, ≥0, for naming); logger (Logger); options (dict|None).
+    Out: list[IRCameraKeyframes], one per CameraAnimation that produced any tracks (positions in meters).
     """
     animations = getattr(camera_set, 'animations', None)
     if not animations:
@@ -201,14 +185,10 @@ _POSITION_FIELDS = {'eye_x', 'eye_y', 'eye_z', 'target_x', 'target_y', 'target_z
 
 
 def _decode_aobj_tracks(aobj, track_map, tracks, logger, options=None):
-    """Walk an AOBJ's Frame chain and decode each track into the tracks dict.
+    """Walk an AOBJ's Frame chain and decode each known track into the tracks dict.
 
-    Args:
-        aobj: Animation node with .frame linked list.
-        track_map: dict mapping fobj.type → IRCameraKeyframes field name.
-        tracks: output dict to populate (field_name → list[IRKeyframe]).
-        logger: Logger instance.
-        options: Importer options (for strict_mirror).
+    In: aobj (Animation node, .frame linked list); track_map (dict[int,str], fobj.type→field name); tracks (dict[str, list[IRKeyframe]], populated in place; position fields scaled to meters); logger (Logger); options (dict|None).
+    Out: None — mutates `tracks` in place.
     """
     fobj = getattr(aobj, 'frame', None)
     while fobj:

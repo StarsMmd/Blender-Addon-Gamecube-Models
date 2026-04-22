@@ -19,22 +19,19 @@ _P = 2
 
 
 def is_lzss(data, offset=0):
-    """Check if data at offset starts with the LZSS magic."""
+    """Check if data at offset starts with the LZSS magic.
+
+    In: data (bytes); offset (int, non-negative byte offset, default 0).
+    Out: bool, True iff data[offset:offset+4] == b'LZSS'.
+    """
     return data[offset:offset + 4] == LZSS_MAGIC
 
 
 def decompress_lzss(data, offset=0):
     """Decompress LZSS data starting at the given offset.
 
-    Args:
-        data: bytes containing the LZSS header + compressed payload.
-        offset: byte offset to the LZSS header within data.
-
-    Returns:
-        bytes: The decompressed data.
-
-    Raises:
-        ValueError: If the magic bytes don't match.
+    In: data (bytes, contains LZSS header + payload); offset (int, non-negative offset of the LZSS header).
+    Out: bytes, decompressed payload; raises ValueError on bad magic.
     """
     if not is_lzss(data, offset):
         raise ValueError("LZSS magic not found at offset 0x%X" % offset)

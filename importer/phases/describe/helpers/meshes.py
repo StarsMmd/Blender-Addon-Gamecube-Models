@@ -36,18 +36,10 @@ except (ImportError, SystemError):
 
 
 def describe_meshes(root_joint, bones, joint_to_bone_index, image_cache=None, logger=StubLogger(), options=None):
-    """Walk Joint tree, extract geometry from Mesh→PObject chains.
+    """Walk a Joint tree and extract geometry from Mesh→PObject chains as IRMeshes.
 
-    Args:
-        root_joint: Root Joint node from the parsed node tree.
-        bones: list[IRBone] from describe_bones().
-        joint_to_bone_index: dict mapping Joint.address → index in bones list.
-        image_cache: dict for deduplicating images by (image_id, palette_id).
-        logger: Logger instance (defaults to StubLogger).
-        options: import options dict (for strict_mirror); may be None.
-
-    Returns:
-        list[IRMesh] with geometry data extracted.
+    In: root_joint (Joint, parsed); bones (list[IRBone], mutated to add mesh_indices); joint_to_bone_index (dict[int,int]); image_cache (dict|None); logger (Logger); options (dict|None).
+    Out: list[IRMesh] in tree-walk order, vertices in meters, world-space for rigid/single-bone weights.
     """
     if image_cache is None:
         image_cache = {}
@@ -73,7 +65,11 @@ def describe_meshes(root_joint, bones, joint_to_bone_index, image_cache=None, lo
 
 def _walk_joints(joint, bones, joint_to_bone_index, options, image_cache, logger,
                  meshes, material_cache):
-    """Walk the Joint tree, dispatching mesh chains to _walk_mesh_chain."""
+    """Walk the Joint tree, dispatching Mesh chains to _walk_mesh_chain.
+
+    In: joint (Joint, recursed); bones (list[IRBone]); joint_to_bone_index (dict[int,int]); options (dict); image_cache (dict); logger (Logger); meshes (list[IRMesh], appended in place); material_cache (dict[int, IRMaterial]).
+    Out: None — mutates `meshes` and `bones[*].mesh_indices`.
+    """
     bone_index = joint_to_bone_index.get(joint.address, 0)
 
     if joint.property is not None and hasattr(joint.property, 'pobject'):
@@ -94,7 +90,11 @@ def _walk_joints(joint, bones, joint_to_bone_index, options, image_cache, logger
 def _walk_mesh_chain(mesh_node, joint, bone_index,
                      bones, joint_to_bone_index, options, image_cache, logger,
                      meshes, material_cache):
-    """Walk the Mesh (DObject) linked list, appending IRMeshes to `meshes`."""
+    """Walk a Mesh (DObject) linked list, appending one IRMesh per PObj.
+
+    In: mesh_node (Mesh, head of list); joint (Joint, owning); bone_index (int, ≥0); bones (list[IRBone]); joint_to_bone_index (dict[int,int]); options (dict); image_cache (dict); logger (Logger); meshes (list[IRMesh], appended); material_cache (dict[int,IRMaterial]).
+    Out: None — mutates `meshes`, `bones[*].mesh_indices`, and `material_cache`.
+    """
     import time
     while mesh_node:
         # Describe the material for this DObject (cached by mobject address)
@@ -133,7 +133,11 @@ def _walk_mesh_chain(mesh_node, joint, bone_index,
 def _describe_pobj(pobj, joint, bone_index, count,
                    bones, joint_to_bone_index, options, image_cache, logger,
                    ir_material=None):
-    """Extract geometry from a single PObject into an IRMesh."""
+    """Extract geometry from a single PObject into an IRMesh.
+
+    In: pobj (PObject, parsed); joint (Joint, owning); bone_index (int, ≥0); count (int, current IRMesh count for naming); bones (list[IRBone]); joint_to_bone_index (dict[int,int]); options (dict); image_cache (dict); logger (Logger); ir_material (IRMaterial|None).
+    Out: IRMesh|None — None if PObj has no position attribute.
+    """
     vertex_list = pobj.vertex_list.vertices
 
     pos_idx = None
@@ -249,7 +253,11 @@ def _describe_pobj(pobj, joint, bone_index, count,
 
 
 def _validate_mesh(face_lists, faces):
-    """Remove faces with repeated vertices (degenerate tri-strip artifacts)."""
+    """Remove faces with repeated vertices (degenerate tri-strip artifacts).
+
+    In: face_lists (list[list[list[int]]], one per attribute, each a list of faces); faces (list[list[int]], position face list).
+    Out: tuple (pruned_face_lists, pruned_faces) with degenerate entries dropped in lockstep.
+    """
     pruned_faces = []
     pruned_face_lists = [[] for _ in range(len(face_lists))]
     for face_id, face in enumerate(faces):
@@ -262,11 +270,10 @@ def _validate_mesh(face_lists, faces):
 
 
 def _extract_uv_layer(source, face_list, faces, tex_index):
-    """Extract UV coordinates with V-flip, per-loop order.
+    """Extract per-loop UV coordinates with V-flip into an IRUVLayer.
 
-    Iterates over faces (position face list) for polygon structure,
-    using face_list (UV attribute face list) for source index lookup.
-    This matches how Blender loops correspond to polygon vertices.
+    In: source (sequence of (u,v) pairs, the UV source); face_list (list[list[int]], UV attr face indices); faces (list[list[int]], position faces, defines loop order); tex_index (int, ≥0, layer name suffix).
+    Out: IRUVLayer with .uvs in standard bottom-left origin.
     """
     uvs = []
     for face_id, face in enumerate(faces):
@@ -279,7 +286,11 @@ def _extract_uv_layer(source, face_list, faces, tex_index):
 
 
 def _extract_normals(source, face_list, faces, is_nbt=False):
-    """Extract per-loop normals as normalized tuples."""
+    """Extract per-loop normals as unit-length 3-tuples.
+
+    In: source (sequence of normal vectors or NBT triples); face_list (list[list[int]]); faces (list[list[int]]); is_nbt (bool, True drops binormal/tangent).
+    Out: list[tuple[float,float,float]], one per loop, normalized.
+    """
     normals = []
     for face_id, face in enumerate(faces):
         attr_face = face_list[face_id] if face_id < len(face_list) else face
@@ -296,7 +307,11 @@ def _extract_normals(source, face_list, faces, is_nbt=False):
 
 
 def _extract_color_layers(source, face_list, faces, color_num):
-    """Extract color and alpha layers from vertex color data."""
+    """Extract per-loop color and alpha layers from a vertex color attribute.
+
+    In: source (sequence of color objects with .red/.green/.blue/.alpha 0..255); face_list (list[list[int]]); faces (list[list[int]]); color_num (str, '0' or '1', layer name suffix).
+    Out: tuple (color_layer, alpha_layer) — both IRColorLayer with values in [0,1].
+    """
     colors = []
     alphas = []
     for face_id, face in enumerate(faces):
@@ -319,19 +334,10 @@ def _extract_color_layers(source, face_list, faces, color_num):
 def _extract_bone_weights(pobj, joint, bone_index, bones, joint_to_bone_index, faces,
                           vertices_out, normals=None, validated_face_lists=None,
                           logger=StubLogger(), options=None):
-    """Extract bone weight data from PObject property.
+    """Extract bone weight data from a PObject; envelope path also deforms vertices/normals.
 
-    For envelope-weighted meshes, also deforms vertices_out and normals
-    in-place using the envelope matrices (matching legacy Mesh.apply_bone_weights).
-
-    Args:
-        vertices_out: mutable list of vertex positions — may be modified in-place
-                      for envelope deformation.
-        normals: mutable list of per-loop normals — may be modified in-place
-                 for envelope normal transformation.
-        validated_face_lists: face lists with degenerate faces removed (must be
-                             used for envelope index lookup to stay in sync with
-                             the validated position faces).
+    In: pobj (PObject, parsed); joint (Joint); bone_index (int, ≥0); bones (list[IRBone]); joint_to_bone_index (dict[int,int]); faces (list[list[int]]); vertices_out (list[tuple], mutated for envelope); normals (list[tuple]|None, mutated); validated_face_lists (list[list[list[int]]]|None); logger (Logger); options (dict|None).
+    Out: IRBoneWeights (RIGID/SINGLE_BONE/WEIGHTED).
     """
     if pobj.property is None:
         # Rigid: attached to parent bone
@@ -380,7 +386,11 @@ def _extract_bone_weights(pobj, joint, bone_index, bones, joint_to_bone_index, f
 # --- Envelope helper functions (ported from legacy Mesh.py) ---
 
 def _find_skeleton_bone(bone_index, bones):
-    """Walk up the parent chain to find the first bone with SKELETON or SKELETON_ROOT flag."""
+    """Walk up the parent chain to find the first SKELETON or SKELETON_ROOT bone.
+
+    In: bone_index (int, ≥0, starting bone); bones (list[IRBone]).
+    Out: int|None — bone index of the matching ancestor, or None if no parent has the flag.
+    """
     idx = bone_index
     while idx is not None:
         bone = bones[idx]
@@ -391,7 +401,11 @@ def _find_skeleton_bone(bone_index, bones):
 
 
 def _get_invbind_matrix(bone_index, bones):
-    """Get the inverse bind matrix, walking up parents if the bone doesn't have one."""
+    """Return the bone's inverse bind matrix, walking up parents if absent.
+
+    In: bone_index (int, ≥0); bones (list[IRBone]).
+    Out: Matrix (4×4); identity if no ancestor stores an inverse_bind_matrix.
+    """
     idx = bone_index
     while idx is not None:
         bone = bones[idx]
@@ -402,15 +416,10 @@ def _get_invbind_matrix(bone_index, bones):
 
 
 def _get_bind_world_matrix(bone_index, bones):
-    """Get the bone's world matrix at bind time for envelope deformation.
+    """Return the bone's bind-time world matrix (IBM.inv() preferred, SRT world fallback).
 
-    For bones with an IBM, use IBM.inv() as the authoritative bind-time world
-    matrix. This ensures deform = world @ IBM = identity at rest pose, regardless
-    of whether our SRT-computed world_matrix exactly matches the IBM. The IBM
-    may encode IK-solved positions, parent scale effects, or other runtime
-    adjustments not captured by pure SRT composition.
-
-    For bones without an IBM, fall back to the SRT-computed world_matrix.
+    In: bone_index (int, ≥0); bones (list[IRBone]).
+    Out: Matrix (4×4) suitable for envelope deformation.
     """
     bone = bones[bone_index]
     if bone.inverse_bind_matrix:
@@ -419,9 +428,10 @@ def _get_bind_world_matrix(bone_index, bones):
 
 
 def _envelope_coord_system(bone_index, bones):
-    """Compute envelope coordinate system matrix for a bone.
+    """Compute the envelope coordinate-system matrix for a bone, relative to its skeleton.
 
-    Ports legacy envelope_coord_system() to work with flat IRBone list.
+    In: bone_index (int, ≥0); bones (list[IRBone]).
+    Out: Matrix (4×4)|None — None if bone is JOBJ_SKELETON_ROOT or no skeleton ancestor exists.
     """
     bone = bones[bone_index]
     if bone.flags & JOBJ_SKELETON_ROOT:
@@ -450,7 +460,11 @@ def _envelope_coord_system(bone_index, bones):
 def _extract_envelope_weights(pobj, joint, bone_index, bones, joint_to_bone_index, faces,
                               vertices_out, normals=None, validated_face_lists=None,
                               logger=StubLogger(), options=None):
-    """Extract weighted envelope deformation data, deform vertices and normals."""
+    """Extract weighted-envelope skinning, deforming vertices and normals in place.
+
+    In: pobj (PObject, envelope type); joint (Joint); bone_index (int, ≥0); bones (list[IRBone]); joint_to_bone_index (dict[int,int]); faces (list[list[int]]); vertices_out (list[tuple], mutated); normals (list[tuple]|None, mutated); validated_face_lists (list[list[list[int]]]|None); logger (Logger); options (dict|None).
+    Out: IRBoneWeights (WEIGHTED with per-vertex assignments, or RIGID fallback if PNMTXIDX missing).
+    """
     vertex_list = pobj.vertex_list.vertices
     envelope_list = pobj.property
 

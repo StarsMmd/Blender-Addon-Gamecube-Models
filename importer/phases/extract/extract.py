@@ -41,17 +41,10 @@ class ContainerMetadata:
 
 
 def extract_dat(raw_bytes, filename, options=None):
-    """Extract DAT bytes from raw file contents.
+    """Extract DAT bytes from raw file contents, dispatching by container type.
 
-    Args:
-        raw_bytes: Complete file contents as bytes.
-        filename: Original filename (used to detect container type by extension).
-        options: dict of importer options (optional). When include_shiny is True,
-                 shiny color parameters are extracted from PKX headers.
-
-    Returns:
-        list of (dat_bytes, ContainerMetadata) tuples.
-        A .dat/.pkx yields one entry. A .fsys yields one per model inside.
+    In: raw_bytes (bytes, complete file contents); filename (str, used to detect container by extension); options (dict|None, importer options — `include_shiny` extracts PKX shiny params).
+    Out: list[tuple[bytes, ContainerMetadata]], one entry per model (>=1 for .fsys, exactly 1 for .dat/.pkx, >=0 for .wzx).
     """
     if options is None:
         options = {}
@@ -71,7 +64,11 @@ def extract_dat(raw_bytes, filename, options=None):
 
 
 def _extract_pkx(raw, filename, options):
-    """Extract DAT bytes from a PKX container."""
+    """Extract DAT bytes plus shiny/header/GPT1 metadata from a PKX container.
+
+    In: raw (bytes, complete .pkx file); filename (str); options (dict, `include_shiny` toggles shiny extraction).
+    Out: list[tuple[bytes, ContainerMetadata]], single-entry list with the embedded DAT payload.
+    """
     pkx = PKXContainer(raw)
     shiny_params = pkx.shiny_params if options.get("include_shiny") else None
     pkx_header = pkx.header
@@ -88,9 +85,8 @@ def _extract_pkx(raw, filename, options):
 def _extract_wzx(raw, filename, options):
     """Extract DAT and GPT1 payloads from a WZX effect container.
 
-    Each payload becomes a separate entry. DAT+GPT1 pairs stay paired.
-    Standalone GPT1 blocks (no DAT) are returned with empty dat_bytes
-    so the importer can still process the particle data.
+    In: raw (bytes, complete .wzx file); filename (str, base for per-payload naming); options (dict, unused but accepted).
+    Out: list[tuple[bytes, ContainerMetadata]], one per payload (DAT bytes may be empty for standalone GPT1 blocks).
     """
     payloads = extract_wzx(raw)
     if not payloads:
@@ -112,9 +108,10 @@ def _extract_wzx(raw, filename, options):
 
 
 def _extract_fsys(raw_bytes, archive_filename, options):
-    """Extract all model entries from an FSYS archive.
+    """Extract all model entries from an FSYS archive (decompressing LZSS if needed).
 
-    Decompresses LZSS if needed, and strips PKX headers for pkx entries.
+    In: raw_bytes (bytes, complete .fsys file); archive_filename (str, fallback base name); options (dict, importer options).
+    Out: list[tuple[bytes, ContainerMetadata]], one per model-bearing FSYS entry.
     """
     entries = parse_fsys(raw_bytes, archive_filename)
     results = []

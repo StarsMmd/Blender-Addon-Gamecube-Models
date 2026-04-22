@@ -41,10 +41,10 @@ _TEX_UV_MAP = {
 
 
 def describe_material_animations(model_set, joint_to_bone_index, bones, options, logger, model_name=None, total_meshes=0):
-    """Walk MaterialAnimationJoint trees and produce material animation sets.
+    """Walk MaterialAnimationJoint trees and emit material animation sets.
 
-    Returns:
-        list of objects with .name and .tracks attributes (for pairing into IRBoneAnimationSet).
+    In: model_set (parsed, with .animated_material_joints); joint_to_bone_index (dict[int,int]); bones (list[IRBone]); options (dict); logger (Logger); model_name (str|None, name prefix); total_meshes (int, ≥0, controls index padding).
+    Out: list[SimpleNamespace] each with .name (str) and .tracks (list[IRMaterialTrack]); empty if no tracks decoded.
     """
     mat_anim_joints = getattr(model_set, 'animated_material_joints', None) or []
     root_joint = model_set.root_joint
@@ -66,7 +66,11 @@ def describe_material_animations(model_set, joint_to_bone_index, bones, options,
 
 
 def _walk_parallel(mat_anim_joint, joint, tracks, jtb, bones, logger, mesh_digits=1, options=None):
-    """Walk MaterialAnimationJoint and Joint trees in parallel."""
+    """Walk MaterialAnimationJoint and Joint trees in parallel, appending one IRMaterialTrack per PObj.
+
+    In: mat_anim_joint (MaterialAnimationJoint); joint (Joint, tree-aligned); tracks (list[IRMaterialTrack], appended in place); jtb (dict[int,int]); bones (list[IRBone]); logger (Logger); mesh_digits (int, ≥1, name padding); options (dict|None).
+    Out: None — mutates `tracks` in place.
+    """
     try:
         from .....shared.Nodes.Classes.Mesh.Mesh import Mesh
     except (ImportError, SystemError):
@@ -110,7 +114,11 @@ def _walk_parallel(mat_anim_joint, joint, tracks, jtb, bones, logger, mesh_digit
 
 
 def _describe_material_track(mat_anim, mesh, bone_name, mesh_idx, logger, mesh_digits=1, options=None):
-    """Extract one MaterialAnimation into an IRMaterialTrack."""
+    """Extract one MaterialAnimation (color/alpha + texture UV chains) into an IRMaterialTrack.
+
+    In: mat_anim (MaterialAnimation node); mesh (Mesh node, for static texture lookup); bone_name (str); mesh_idx (int, ≥0, global IRMesh index); logger (Logger); mesh_digits (int, ≥1); options (dict|None).
+    Out: IRMaterialTrack|None — None if the animation has neither AOBJ nor texture animation.
+    """
     aobj = mat_anim.animation
     tex_anim = mat_anim.texture_animation
 
@@ -165,12 +173,10 @@ def _describe_material_track(mat_anim, mesh, bone_name, mesh_idx, logger, mesh_d
 
 
 def _describe_texture_uv_track(tex_anim, static_texture, logger, options=None):
-    """Extract one TextureAnimation into IRTextureUVTrack.
+    """Extract one TextureAnimation into an IRTextureUVTrack with V-flipped translation.
 
-    Applies V-flip to translation_v keyframes so the IR stores standard
-    bottom-left UV origin values. When scale_v is also animated, the scale
-    track is evaluated at each translation keyframe's frame to get the
-    correct per-keyframe correction.
+    In: tex_anim (TextureAnimation node); static_texture (Texture|None, for static scale_v fallback); logger (Logger); options (dict|None).
+    Out: IRTextureUVTrack|None — None if the animation is empty/disabled.
     """
     if not tex_anim.animation or (tex_anim.animation.flags & AOBJ_NO_ANIM):
         return None
@@ -196,12 +202,10 @@ def _describe_texture_uv_track(tex_anim, static_texture, logger, options=None):
 
 
 def _flip_translation_v(translation_kfs, scale_kfs, static_scale_v):
-    """Flip translation_v keyframes from GX top-left to standard bottom-left origin.
+    """Flip translation_v keyframes from GX top-left UV origin to standard bottom-left.
 
-    Formula: v_corrected = 1 - scale_v - translation_v
-
-    When scale_v is not animated, scale_v is a constant. When scale_v IS animated,
-    we evaluate the scale track at each translation keyframe's frame.
+    In: translation_kfs (list[IRKeyframe], V translation); scale_kfs (list[IRKeyframe], may be empty for static scale); static_scale_v (float, used when scale_kfs empty).
+    Out: list[IRKeyframe], same length as translation_kfs, with v = 1 - scale_v - translation_v applied (handles flipped too).
     """
     if not scale_kfs:
         # Static scale — simple offset
@@ -242,10 +246,10 @@ def _flip_translation_v(translation_kfs, scale_kfs, static_scale_v):
 
 
 def _evaluate_track(keyframes, frame):
-    """Evaluate a keyframe track at a given frame using the keyframes' interpolation.
+    """Evaluate a keyframe track at a given frame using its per-keyframe interpolation.
 
-    Supports CONSTANT, LINEAR, and BEZIER interpolation.
-    Uses binary search (bisect) for O(log n) keyframe lookup.
+    In: keyframes (list[IRKeyframe], sorted by frame, may be empty); frame (number, any).
+    Out: float — interpolated value (CONSTANT/LINEAR/BEZIER); 0.0 if keyframes empty; clamped to endpoints outside range.
     """
     if not keyframes:
         return 0.0

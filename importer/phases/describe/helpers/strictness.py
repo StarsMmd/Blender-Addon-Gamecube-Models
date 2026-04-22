@@ -13,7 +13,11 @@ class StrictMirrorError(RuntimeError):
 
 
 def report(logger, options, category, msg, *args, fatal=False):
-    """Log a leniency and optionally raise if strict_mirror is enabled."""
+    """Log a leniency and optionally raise StrictMirrorError when strict mode is enabled.
+
+    In: logger (Logger); options (dict|None, checks 'strict_mirror'); category (str, leniency tag); msg (str, printf-style); *args (any, msg substitutions); fatal (bool, raise iff strict + fatal).
+    Out: None — logs always; raises StrictMirrorError when fatal and options['strict_mirror'] is truthy.
+    """
     logger.leniency(category, msg, *args)
     if fatal and options and options.get("strict_mirror"):
         formatted = msg % args if args else msg

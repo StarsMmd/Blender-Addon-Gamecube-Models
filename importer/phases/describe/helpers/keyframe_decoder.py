@@ -43,18 +43,10 @@ _INTERPOLATION_MAP = {
 
 
 def decode_fobjdesc(fobj, bias=0, scale=1, logger=None, options=None):
-    """Decode an HSD compressed keyframe stream into a list of IRKeyframe.
+    """Decode an HSD compressed keyframe byte stream into a list of IRKeyframe.
 
-    Args:
-        fobj: A parsed Frame node with raw_ad, start_frame, frac_value, frac_slope.
-        bias: Value offset (added before scaling).
-        scale: Value multiplier.
-        logger: Logger for leniency reporting (optional).
-        options: Importer options dict (for strict_mirror); may be None.
-
-    Returns:
-        list[IRKeyframe] with frame positions, values, interpolation types,
-        and pre-computed bezier handle coordinates.
+    In: fobj (Frame node, parsed; needs raw_ad/start_frame/frac_value/frac_slope); bias (number, added before scaling); scale (number, multiplier); logger (Logger|None); options (dict|None).
+    Out: list[IRKeyframe], in stream order with per-keyframe interpolation and slope_in/slope_out.
     """
     if options is None:
         options = {}
@@ -142,7 +134,11 @@ def decode_fobjdesc(fobj, bias=0, scale=1, logger=None, options=None):
 
 
 def _read_node_values(opcode, value_type, frac_value, slope_type, frac_slope, ad, cur_pos):
-    """Decode one value+slope from the compressed animation byte stream."""
+    """Decode one value+slope pair from the compressed animation byte stream.
+
+    In: opcode (int, HSD_A_OP_*); value_type (int, fixed-point type flag); frac_value (int, fractional bits); slope_type (int); frac_slope (int); ad (bytes); cur_pos (int, byte cursor).
+    Out: tuple (val: float, slope: float, new_cur_pos: int).
+    """
     val = 0
     slope = 0
 
@@ -168,11 +164,10 @@ _FRAC_TYPE_INFO = {
 
 
 def _read_typed_value(type_flag, frac_bits, ad, cur_pos):
-    """Read a single value from the byte stream based on type encoding.
+    """Read a single fixed-point or float value from the compressed byte stream.
 
-    Unknown type_flag is left as a silent (0, cur_pos) fallback because the
-    caller has no logger; decode_fobjdesc reports the enclosing opcode
-    problem instead, which catches the same malformed-stream case.
+    In: type_flag (int, HSD_A_FRAC_*); frac_bits (int, fractional bits divisor exponent); ad (bytes); cur_pos (int, byte cursor).
+    Out: tuple (value: float, new_cur_pos: int); unknown type_flag returns (0, cur_pos) silently.
     """
     info = _FRAC_TYPE_INFO.get(type_flag)
     if info is None:

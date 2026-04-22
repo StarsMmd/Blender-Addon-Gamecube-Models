@@ -28,15 +28,10 @@ except (ImportError, SystemError):
 
 
 def describe_bones(root_joint, options=None, logger=None):
-    """Walk a Joint tree and produce a flat list of IRBone.
+    """Walk a Joint tree (DFS) producing a flat IRBone list and a joint→index map.
 
-    Args:
-        root_joint: Root Joint node from the parsed node tree.
-        options: dict of importer options (uses 'ik_hack').
-        logger: optional Logger instance.
-
-    Returns:
-        (list[IRBone], dict[int, int]) — bones list and joint_address→bone_index map.
+    In: root_joint (Joint, parsed root); options (dict|None, uses 'ik_hack' and 'pkx_header'); logger (Logger|None).
+    Out: tuple (list[IRBone] in DFS order, dict[int,int] mapping Joint.address → bone index).
     """
     if options is None:
         options = {}
@@ -179,7 +174,11 @@ def describe_bones(root_joint, options=None, logger=None):
 
 
 def _set_instance_refs(joint, bones, jtb):
-    """Set instance_child_bone_index for JOBJ_INSTANCE bones."""
+    """Set instance_child_bone_index on bones whose Joint has the JOBJ_INSTANCE flag.
+
+    In: joint (Joint, recursed); bones (list[IRBone], mutated in place); jtb (dict[int,int], joint addr→bone idx).
+    Out: None — mutates `bones` entries.
+    """
     if joint.flags & JOBJ_INSTANCE and joint.child:
         my_idx = jtb.get(joint.address)
         child_idx = jtb.get(joint.child.address)
@@ -197,20 +196,8 @@ NEAR_ZERO_SCALE_EPSILON = 0.001
 def _compose_bone_transforms(own_scale, rotation, position, classical_scaling, parent):
     """Compose the full bone transform record given parent state.
 
-    Used by both the initial ``describe_bones`` pass and the ``fix_near_zero``
-    rebind so the two stay numerically identical.
-
-    Args:
-        own_scale, rotation, position: this bone's SRT components.
-        classical_scaling: True if JOBJ_CLASSICAL_SCALING is set — own scale
-            then does NOT fold into the accumulated chain.
-        parent: None for root, else a dict with keys ``accumulated_scale``,
-            ``world`` (Matrix), ``normalized_world`` (Matrix),
-            ``scale_correction`` (Matrix).
-
-    Returns:
-        dict with keys ``local``, ``world``, ``normalized_world``,
-        ``normalized_local``, ``scale_correction``, ``accumulated_scale``.
+    In: own_scale (3-tuple float, GC scale); rotation (3-tuple float, Euler radians); position (3-tuple float, meters); classical_scaling (bool, JOBJ_CLASSICAL_SCALING); parent (dict|None with keys accumulated_scale/world/normalized_world/scale_correction).
+    Out: dict with keys 'local','world','normalized_world','normalized_local','scale_correction' (Matrix) and 'accumulated_scale' (3-tuple float).
     """
     parent_accum = parent['accumulated_scale'] if parent else None
 
@@ -246,17 +233,10 @@ def _compose_bone_transforms(own_scale, rotation, position, classical_scaling, p
 
 
 def compute_model_visible_scales(bones, bone_animations):
-    """Model-wide visible-scale table for near-zero-rest bones.
+    """Build a model-wide visible-scale table for bones with near-zero rest scale.
 
-    For each bone whose rest scale has any component below the near-zero
-    threshold, aggregate the maximum absolute scale value observed across
-    every animation's keyframes on that bone. Missing per-channel data
-    falls back to 1.0 so rest matrices are always invertible.
-
-    Returns:
-        dict[int, tuple[float, float, float]] keyed by bone index.
-        Every near-zero bone is present in the result (no bone is left
-        with a tiny rest scale that would later be inverted).
+    In: bones (list[IRBone]); bone_animations (list[IRBoneAnimationSet]).
+    Out: dict[int, tuple[float,float,float]] keyed by bone index, |value|≥1.0 per axis (sign preserved); empty if no near-zero bones.
     """
     nz = NEAR_ZERO_SCALE_EPSILON
 
@@ -298,23 +278,10 @@ def compute_model_visible_scales(bones, bone_animations):
 
 
 def fix_near_zero_bone_matrices(bones, bone_animations, logger=None):
-    """Rebind world matrices for bones with near-zero rest scale.
+    """Rebind world matrices for near-zero rest-scale bones and cascade to descendants.
 
-    Tiny rest scales can't be cleanly inverted during mesh skinning or
-    pose-basis computation. For every near-zero bone we substitute a
-    "visible scale" (max absolute value observed across all animations,
-    falling back to 1.0) and cascade corrected world matrices to all
-    descendants. The animation basis naturally collapses descendants back
-    to zero at hidden frames because basis = animated / visible.
-
-    Must run AFTER describe_bones and describe_bone_animations, and BEFORE
-    describe_meshes — mesh vertices bake into bone world frames, so the
-    rebind has to finish first or verts end up in the pre-rebind frame.
-
-    Args:
-        bones: list[IRBone] — mutated in-place.
-        bone_animations: list[IRBoneAnimationSet] from describe_bone_animations.
-        logger: optional Logger instance.
+    In: bones (list[IRBone], mutated in place); bone_animations (list[IRBoneAnimationSet], track rest matrices also mutated); logger (Logger|None).
+    Out: None — bones and tracks updated to use visible scales so rest matrices stay invertible.
     """
     visible_scales = compute_model_visible_scales(bones, bone_animations)
     if not visible_scales:

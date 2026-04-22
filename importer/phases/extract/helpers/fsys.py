@@ -43,23 +43,19 @@ _MODEL_FILE_TYPES = {
 
 
 def is_fsys(data):
-    """Check if data starts with the FSYS magic bytes."""
+    """Check if data starts with the FSYS magic bytes.
+
+    In: data (bytes, any length).
+    Out: bool, True iff the first 4 bytes equal b'FSYS'.
+    """
     return len(data) >= 4 and data[:4] == FSYS_MAGIC
 
 
 def parse_fsys(raw_bytes, archive_filename):
     """Parse an FSYS archive and extract model-relevant file entries.
 
-    Args:
-        raw_bytes: Complete FSYS archive as bytes.
-        archive_filename: Original archive filename (for fallback naming).
-
-    Returns:
-        list of (file_data, file_type_ext, entry_filename) tuples.
-        file_type_ext is 'dat' or 'pkx'.
-
-    Raises:
-        ValueError: If the FSYS magic is not found.
+    In: raw_bytes (bytes, complete FSYS archive); archive_filename (str, fallback base name).
+    Out: list[tuple[bytes, str, str]] of (file_data, ext in {'dat','pkx','wzx','cam'}, entry_filename); raises ValueError on bad magic.
     """
     if not is_fsys(raw_bytes):
         raise ValueError("Not an FSYS archive: magic bytes not found")
@@ -96,16 +92,20 @@ def parse_fsys(raw_bytes, archive_filename):
 
 
 def _read_string(raw_bytes, ptr):
-    """Read a null-terminated ASCII string at the given offset."""
+    """Read a null-terminated ASCII string at the given offset.
+
+    In: raw_bytes (bytes); ptr (int, absolute byte offset, must point inside raw_bytes).
+    Out: str, decoded ASCII (replacement chars on bad bytes).
+    """
     end = raw_bytes.index(b'\x00', ptr)
     return raw_bytes[ptr:end].decode('ascii', errors='replace')
 
 
 def _read_entry_filename(raw_bytes, entry_ptr, file_type, archive_filename, index):
-    """Build the filename for an FSYS entry.
+    """Build the filename for an FSYS entry, preferring the debug-mode full filename.
 
-    Checks full_filename_pointer first (set when the debug flag is on),
-    then falls back to short name + file type extension.
+    In: raw_bytes (bytes); entry_ptr (int, absolute offset of metadata entry); file_type (int, FSYS type id); archive_filename (str, fallback base); index (int, 0-based entry index).
+    Out: str, filename with appropriate extension.
     """
     # Prefer the full filename if present (includes extension)
     full_ptr = read('uint', raw_bytes, entry_ptr + _ENTRY_FULL_FILENAME_PTR)
