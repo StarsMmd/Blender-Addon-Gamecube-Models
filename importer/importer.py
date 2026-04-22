@@ -81,13 +81,11 @@ class Importer:
                 logger.info("=== Phase 5a: Plan (IR → BR) ===")
                 br_scene = plan_scene(ir_scene, options, logger=logger)
 
-                # Phase 5b — Build: BR + IR → Blender scene.
-                # Build still reads IR for meshes / materials / actions /
-                # constraints while Plan coverage is being expanded stage
-                # by stage; BR is consulted for the armature.
+                # Phase 5b — Build: BR → Blender scene. No IR access from
+                # here on; build is a pure bpy executor.
                 if context is not None:
                     build_results = build_blender_scene(
-                        ir_scene, context, options, logger=logger, br_scene=br_scene,
+                        br_scene, context, options, logger=logger,
                     )
 
                     # Phase 6 — Post-Processing: select animations, apply shiny, store PKX metadata

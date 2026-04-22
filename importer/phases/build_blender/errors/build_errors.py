@@ -2,7 +2,7 @@
 
 
 class ModelBuildError(Exception):
-    """Failed to build Blender objects from IR scene."""
+    """Failed to build Blender objects from the BR scene."""
     def __init__(self, model_name, cause):
         self.model_name = model_name
         self.cause = cause

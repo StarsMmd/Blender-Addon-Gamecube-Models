@@ -1,56 +1,54 @@
-"""Build Blender bone constraints from IR constraint types."""
+"""Build Blender bone constraints from a BRConstraints pass-through.
+
+The IR constraint dataclasses already mirror Blender's constraint API
+(target_bone, track_axis, owner_space, etc.) and BRConstraints holds them
+unchanged — so this layer is a mechanical copy from BR fields to bpy.
+"""
 import bpy
 from mathutils import Vector
 
 
-def build_constraints(ir_model, armature, logger):
-    """Create Blender bone constraints from IRModel constraint lists."""
-    total = (len(ir_model.ik_constraints) + len(ir_model.copy_location_constraints) +
-             len(ir_model.track_to_constraints) + len(ir_model.copy_rotation_constraints) +
-             len(ir_model.limit_rotation_constraints) + len(ir_model.limit_location_constraints))
-    if total == 0:
+def build_constraints(br_constraints, armature, logger):
+    if br_constraints.is_empty:
         return
 
-    logger.info("  Building %d constraint(s)", total)
+    logger.info("  Building %d constraint(s)", br_constraints.total)
 
-    for ik in ir_model.ik_constraints:
+    for ik in br_constraints.ik:
         _build_ik(ik, armature)
 
     bpy.context.view_layer.objects.active = armature
     bpy.ops.object.mode_set(mode='POSE')
 
-    for cl in ir_model.copy_location_constraints:
+    for cl in br_constraints.copy_location:
         c = armature.pose.bones[cl.bone_name].constraints.new(type='COPY_LOCATION')
         c.influence = cl.influence
         c.target = armature
         c.subtarget = cl.target_bone
 
-    for tt in ir_model.track_to_constraints:
+    for tt in br_constraints.track_to:
         c = armature.pose.bones[tt.bone_name].constraints.new(type='TRACK_TO')
         c.target = armature
         c.subtarget = tt.target_bone
         c.track_axis = tt.track_axis
         c.up_axis = tt.up_axis
 
-    for cr in ir_model.copy_rotation_constraints:
+    for cr in br_constraints.copy_rotation:
         c = armature.pose.bones[cr.bone_name].constraints.new(type='COPY_ROTATION')
         c.target = armature
         c.subtarget = cr.target_bone
         c.owner_space = cr.owner_space
         c.target_space = cr.target_space
 
-    for lim in ir_model.limit_rotation_constraints:
+    for lim in br_constraints.limit_rotation:
         _build_limit(armature, lim, 'LIMIT_ROTATION')
-
-    for lim in ir_model.limit_location_constraints:
+    for lim in br_constraints.limit_location:
         _build_limit(armature, lim, 'LIMIT_LOCATION')
 
     bpy.ops.object.mode_set(mode='OBJECT')
 
 
 def _build_ik(ik, armature):
-    """Build IK constraint with bone repositioning."""
-    # Reposition bones based on IK bone lengths
     for reposition in ik.bone_repositions:
         bpy.context.view_layer.objects.active = armature
         bpy.ops.object.mode_set(mode='EDIT')
@@ -72,7 +70,6 @@ def _build_ik(ik, armature):
 
         bpy.ops.object.mode_set(mode='POSE')
 
-    # Add the IK constraint
     c = armature.pose.bones[ik.bone_name].constraints.new(type='IK')
     c.chain_count = ik.chain_length
     if ik.target_bone:
@@ -85,8 +82,6 @@ def _build_ik(ik, armature):
 
 
 def _build_limit(armature, lim, limit_type):
-    """Build a LIMIT_ROTATION or LIMIT_LOCATION constraint."""
-    # Find or create constraint
     existing = None
     for cnst in armature.pose.bones[lim.bone_name].constraints:
         if cnst.type == limit_type:

@@ -1,9 +1,8 @@
 """Build Blender mesh objects from a BR model.
 
 Pure bpy executor — geometry, UV/color layers, vertex groups, instance
-copies, and parent-bone ownership all come pre-decided from the Plan phase.
-Material node-graph construction is still invoked from IR here; it will
-move into BR during the Plan-phase materials stage.
+copies, parent-bone ownership, and material node graphs all come
+pre-decided from the Plan phase.
 """
 import bpy
 from mathutils import Matrix, Vector
