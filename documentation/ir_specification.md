@@ -1,6 +1,8 @@
 # Intermediate Representation (IR) Specification
 
-The IR is the output of Phase 4 (Scene Description) and the input to Phase 5 (Build). It is a pure-Python dataclass hierarchy with no dependencies on `bpy` or the Node system.
+The IR is the output of Phase 4 (Scene Description) and the input to Phase 5a (Plan). It is a pure-Python dataclass hierarchy with no dependencies on `bpy` or the Node system.
+
+The downstream Blender-specialised counterpart produced by the Plan phase is the **BR** (Blender Representation). See [br_specification.md](br_specification.md) for that spec.
 
 > **Note:** Shiny variant data bypasses the IR entirely. Raw shiny parameters are extracted in Phase 1 (extract) and passed directly to Phase 6 (post_process), which applies them to Blender materials after the main build is complete.
 
@@ -8,10 +10,10 @@ The IR is the output of Phase 4 (Scene Description) and the input to Phase 5 (Bu
 - All types are `@dataclass` from the standard library
 - All categorical values use Python `enum.Enum`
 - No mutable shared state — each IR instance is a self-contained snapshot
-- Materials store abstract rendering parameters, not target-specific shader graphs
+- Materials store abstract rendering parameters, not target-specific shader graphs (target-specific shader-graph shape lives in BR)
 - Animation keyframes are fully decoded (frame/value/interpolation/handles) — not compressed bytes, not target-baked values
 - Image pixels are raw u8 bytes — float conversion happens in the build phase
-- Platform-agnostic: no source-format quirks (GameCube) or target-format quirks (Blender) — Phase 4 strips the former, Phase 5 applies the latter
+- Platform-agnostic: no source-format quirks (GameCube) or target-format quirks (Blender) — Phase 4 strips the former, Phase 5a translates the latter
 
 ---
 
@@ -21,18 +23,18 @@ The IR uses standard, widely-adopted conventions so that any build phase can con
 
 | Property | Convention | Notes |
 |---|---|---|
-| **Coordinate system** | Y-up, right-handed | GameCube uses Y-up natively; the π/2 X-rotation for Blender's Z-up is applied in Phase 5 at the armature level |
+| **Coordinate system** | Y-up, right-handed | GameCube uses Y-up natively; the π/2 X-rotation for Blender's Z-up is applied in Phase 5a (Plan) at the armature level via `BRArmature.matrix_basis` |
 | **Rotation** | Euler XYZ, radians | Stored as `(rx, ry, rz)` tuples |
 | **Matrices** | 4×4, row-major | Stored as `list[list[float]]` (4 rows of 4 floats) |
 | **UV origin** | Bottom-left (OpenGL convention) | Phase 4 flips V from GameCube's top-left origin: `v = 1 - scale_v - v` |
 | **UV animation** | Bottom-left, V-flipped in Phase 4 | Animated `translation_v` keyframes are corrected using the static or animated `scale_v` value at each keyframe's frame |
-| **Color space** | sRGB [0, 1] | Diffuse/ambient/specular/vertex colors are normalized from u8 [0, 255] to float [0, 1] but remain in sRGB space. Linearization for Blender happens in Phase 5 (build) |
+| **Color space** | sRGB [0, 1] | Diffuse/ambient/specular/vertex colors are normalized from u8 [0, 255] to float [0, 1] but remain in sRGB space. Linearization for Blender happens in Phase 5a (Plan) when constructing BR material/light colors |
 | **Vertex colors** | sRGB float [0, 1] | Source u8 [0, 255] values are normalized to [0, 1] in Phase 4. Not linearized — the build phase stores them as FLOAT_COLOR so Blender passes them through as-is |
 | **Image pixels** | Raw u8 RGBA, row-major, bottom-to-top | No gamma or color space conversion — stored as decoded from the source format |
 | **Bone transforms** | Local-space SRT | `position`, `rotation`, `scale` are relative to parent bone |
 | **Bone matrices** | World-space | `world_matrix`, `normalized_world_matrix` etc. are absolute transforms |
 | **Mesh vertices** | World-space positions | All vertices are in world space regardless of skin type. Phase 4 transforms RIGID/SINGLE_BONE vertices from bone-local to world space (`parent_world @ vertex`), and ENVELOPE vertices via deformation (`bone_world @ IBM @ vertex`). The compose phase reverses these transforms per skin type |
-| **Animation values** | Raw per-channel SRT | Keyframe values are raw rotation/translation/scale from the source. Phase 5 composes them via plain `T @ R @ S`. Format-specific corrections (e.g. aligned scale inheritance) are pre-baked into `rest_local_matrix` by Phase 4 |
+| **Animation values** | Raw per-channel SRT | Keyframe values are raw rotation/translation/scale from the source. Phase 5a builds a `BRBakeContext` so Phase 5b can compose them via `compute_pose_basis`. Format-specific corrections (e.g. aligned scale inheritance) are pre-baked into `rest_local_matrix` by Phase 4 |
 | **Angles** | Radians | All rotation values throughout the IR |
 | **Units** | Meters | All position values are in meters (Blender units). GameCube positions are converted using `GC_TO_METERS = 0.10` on import (Phase 4) and `METERS_TO_GC = 10.0` on export (compose phase). The scale constant is defined in `shared/helpers/scale.py` |
 
@@ -234,11 +236,11 @@ class FragmentBlending:
 
 **File:** `shared/IR/animation.py`
 
-All keyframes are fully decoded into explicit frame/value pairs with interpolation and bezier handles. Keyframe values are raw per-channel SRT — Phase 5 composes them into matrices via plain `T @ R @ S` (no format-specific corrections needed).
+All keyframes are fully decoded into explicit frame/value pairs with interpolation and bezier handles. Keyframe values are raw per-channel SRT — Phase 5a builds per-bone `BRBakeContext` with strategy-dependent rest data, and Phase 5b uses `compute_pose_basis` to turn (rest, animated SRT) pairs into pose deltas at each frame.
 
-Format-specific corrections (e.g. HSD's aligned scale inheritance) are pre-baked into `rest_local_matrix` by Phase 4. The build phase uses: `Bmtx = rest_local_matrix.inv() @ animated_SRT_matrix`. This keeps format-specific logic in the describe phase.
+Format-specific corrections (e.g. HSD's aligned scale inheritance) are pre-baked into `rest_local_matrix` by Phase 4 and carried through into `BRBakeContext.rest_base`. The build phase never recomputes them.
 
-For bones hidden at rest (near-zero scale), Phase 4 scans animation keyframes to find the intended "visible" scale and uses that for a numerically stable rest matrix.
+For bones hidden at rest (near-zero scale), Phase 4's `fix_near_zero_bone_matrices` scans every animation's keyframes for a max-abs visible scale and uses that for a numerically stable rest matrix. All transitive descendants are rebuilt through `_compose_bone_transforms` so the full six-field transform record stays consistent (see implementation_notes.md § "Near-zero-rest-scale rebind").
 
 ```python
 @dataclass
@@ -463,4 +465,4 @@ class IRParticleTexture:
 
 - `instructions` hold decoded opcodes (not raw bytecode bytes) so the compose phase re-emits bytecode from semantic args via `shared.helpers.gpt1_commands.assemble()`.
 - No raw-bytecode fallback field exists — every opcode must map to a `ParticleInstruction` the assembler knows. Unsupported opcodes cause the describe phase to raise `ValueError`.
-- Phase 5 turns each generator into a Blender mesh with a GeometryNodes modifier; see [exporter_setup.md](exporter_setup.md#particles-gpt1) for the scene layout and opcode coverage.
+- Phase 5b currently only stamps counts onto the armature (`BRParticleSummary` → `dat_particle_gen_count` / `dat_particle_tex_count` custom props); full generator-mesh + GeometryNodes instantiation is blocked on the generator→bone binding research noted in `build_blender/helpers/particles.py`. See [exporter_setup.md](exporter_setup.md#particles-gpt1) for the planned scene layout and opcode coverage.

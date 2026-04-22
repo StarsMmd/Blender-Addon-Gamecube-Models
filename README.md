@@ -106,12 +106,14 @@ importer/
     extract/               # Phase 1: container detection, PKX header stripping
     route/                 # Phase 2: section name -> node type mapping
     parse/                 # Phase 3: binary -> node trees (DATParser)
-    describe/              # Phase 4: node trees -> IR dataclasses
-    build_blender/         # Phase 5: IR -> Blender objects
+    describe/              # Phase 4: node trees -> IR (platform-agnostic)
+    plan/                  # Phase 5a: IR -> BR (Blender-specialised, pure)
+    build_blender/         # Phase 5b: BR -> Blender objects (bpy executor only)
     post_process/          # Phase 6: reset poses, select animations, apply shiny
 
 shared/
   IR/                      # Intermediate Representation dataclasses
+  BR/                      # Blender Representation dataclasses (shader graphs, etc.)
   Nodes/                   # Node class definitions (parsing + writing only, no bpy)
   Constants/               # HSD/GX format constants
   helpers/                 # Binary I/O, logging, math utilities, PKX container, sRGB
@@ -143,7 +145,7 @@ python3 CommandLineInterface.py model.dat
 python3 CommandLineInterface.py model.dat -v
 ```
 
-The CLI entry point is `CommandLineInterface.py` (invoked via `__main__.py`). Without `bpy` installed, the pipeline runs phases 1-4 (parse and describe) and outputs the IR without creating Blender objects.
+The CLI entry point is `CommandLineInterface.py` (invoked via `__main__.py`). Without `bpy` installed, the pipeline runs phases 1-5a (parse, describe, and plan) and outputs the BR without creating Blender objects.
 
 ### Running Tests
 
@@ -180,7 +182,9 @@ Detailed documentation lives in the `documentation/` folder:
 - [**Compatibility Table**](documentation/compatibility_table.md) — feature support across different games and file types
 - [**Exporter Setup**](documentation/exporter_setup.md) — supported features and usage guide for the exporter (WIP)
 - [**File Formats**](documentation/file_formats.md) — binary format specs for DAT, GX textures, WZX, PKX, and GPT1
-- [**IR Specification**](documentation/ir_specification.md) — the Intermediate Representation dataclass hierarchy and design principles
+- [**IR Specification**](documentation/ir_specification.md) — the Intermediate Representation dataclass hierarchy (output of Phase 4)
+- [**BR Specification**](documentation/br_specification.md) — the Blender Representation dataclass hierarchy (output of Phase 5a, Plan)
+- [**Implementation Notes**](documentation/implementation_notes.md) — architectural decisions, runtime invariants, and policies
 - [**Round-Trip Test Progress**](documentation/round_trip_test_progress.md) — NBN/NIN/IBI/BNB test results per model
 - [**Scripts**](documentation/scripts.md) — standalone Blender scripts and how to run them
 - [**Shiny Variants**](documentation/shiny_variants.md) — how the game stores shiny color data and how the addon implements it

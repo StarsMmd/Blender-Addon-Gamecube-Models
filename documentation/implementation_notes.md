@@ -2,6 +2,32 @@
 
 Cross-cutting findings, assumptions, and limitations of the plugin that aren't obvious from the code alone. This is the canonical home for empirical test results, reverse-engineered runtime invariants, and policies that required in-game verification to pin down. Current work-in-progress and session-specific debugging live elsewhere — only durable knowledge belongs here.
 
+## Architecture
+
+### Plan phase (IR → BR → build)
+
+The import pipeline inserts a **Plan** phase (`importer/phases/plan/`) between `describe` (which produces a platform-agnostic IR) and `build_blender` (which consumes a Blender-specialised BR). See the full dataclass reference in [br_specification.md](br_specification.md).
+
+Why this split exists: `build_blender` used to entangle two concerns — deciding how an IR concept maps onto Blender (inherit_scale mode, shader node graph shape, per-frame pose-basis formula, sRGB→linear, FOV→lens, Y-up→Z-up, etc.) and then calling bpy APIs to realise those decisions. The decisions were impossible to unit-test because every code path hit `nodes.new()` or `bpy.data.*` within the first few lines. Splitting the decision logic into Plan (pure, no bpy) with a BR dataclass output that build walks mechanically makes every decision testable with an in-memory fixture, and collapses the largest file in the importer (`build_blender/helpers/materials.py`) from ~900 lines to ~95.
+
+Invariants enforced:
+- `shared/BR/` holds plain data — tuples, lists, enum strings, 4x4 matrix lists. No bpy types, no mathutils.
+- `importer/phases/plan/` has zero `bpy` imports.
+- `importer/phases/build_blender/` has zero `IR` imports on the planned path. Build phase reads from BR only.
+- `BR` must not import from `IR` — BR is downstream data, not a type alias.
+
+Per-stage migration summary (all landed on `stars/WIP`):
+- **Armature** — `BRArmature`, `BRBone`; Plan picks `inherit_scale='ALIGNED'` vs `'NONE'` from `accumulated_scale` uniformity.
+- **Meshes** — `BRMesh`, `BRVertexGroup`, `BRMeshInstance`; flattens IR's three SkinType variants; expands `JOBJ_INSTANCE` bones into per-mesh instance entries.
+- **Actions** — `BRAction`, `BRBoneTrack`, `BRBakeContext`; `compute_pose_basis` is pure (aligned edit-scale sandwich vs direct SRT delta).
+- **Materials** — `BRMaterial`, `BRNodeGraph`, `BRNode`, `BRLink`, `BRImage`; full TEV / pixel-engine / output-shader wiring as graph data. `BRGraphBuilder` accumulates nodes; build walks the finalised graph.
+- **Lights/cameras/constraints/particles** — `BRLight`, `BRCamera`, `BRCameraAnimation`, `BRConstraints`, `BRParticleSummary`. sRGB→linear, FOV→lens, and coord conversions all Plan-side. Constraints and particle summaries are pass-through wrappers (IR shapes already match Blender's API).
+
+What still goes through IR:
+- `post_process/` reads IR indirectly via the armature's custom properties. It's outside the purity contract (it mutates Blender state) and remains on IR.
+- Material-animation helpers (`build_blender/helpers/material_animations.py`) still receive IR-typed keyframes as pass-through data. The `kf.interpolation.value` strings happen to be Blender's own enum values, so no conversion is needed at the bpy boundary.
+- The exporter side is still Blender → IR directly via `describe_blender` — the symmetric `inspect_blender` (Blender → BR) and `un_plan` (BR → IR) counterparts are not yet written. Until they land, the BR-bounded round-trip tests in `tests/test_plan_round_trips.py` stay skipped.
+
 ## Render pipeline
 
 ### Render pass dispatch
@@ -135,8 +161,10 @@ Test data is synthesised in-memory. Every unit test either constructs its fixtur
 | NBN | parse → write → reparse → compare fields | Node field preservation through serialisation |
 | NIN | parse → describe → compose → compare fields | IR round-trip fidelity |
 | IBI | build → describe_blender → compare IR fields | Blender round-trip fidelity |
+| BBB *(planned)* | plan → build → inspect_blender → compare BR fields | BR round-trip through bpy |
+| IBI-via-Plan *(planned)* | plan → build → inspect_blender → un_plan → compare IR fields | Full import ⇄ export via BR on both sides |
 
-NIN and IBI scores are computed against the full original data — not just the fields the exporter has implemented — so percentages naturally rise as more export features come online.
+NIN and IBI scores are computed against the full original data — not just the fields the exporter has implemented — so percentages naturally rise as more export features come online. The two planned test types are skipped placeholders in `tests/test_plan_round_trips.py` — they unblock once the exporter gains its `inspect_blender` (Blender → BR) and `un_plan` (BR → IR) phases.
 
 ### Blender Python version
 Use `python3.11` for round-trip tests. The default `python3` on the dev machine is 3.10, which ships an older `bpy==3.4.0` that lacks APIs like `action.slots` that the current codebase requires. `python3.11` pairs with `bpy==4.5.7`.
