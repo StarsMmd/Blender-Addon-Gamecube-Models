@@ -313,27 +313,9 @@ def _describe_bone_track(aobj, joint, bone, bone_index, bones, logger=None, opti
                     bone.name, bone_index, len(spline_path.parameter_keyframes),
                     len(spline_path.control_points), spline_path.curve_type)
 
-    # Compute the rest-pose local matrix as plain T @ R @ S (no parent_scl
-    # correction). The animated matrix in Phase 5 also uses plain T @ R @ S,
-    # so they cancel at rest (identity). Blender's ALIGNED inheritance handles
-    # parent scale propagation at evaluation time.
-    #
-    # The parent_scl correction from HSD's aligned scale inheritance is NOT
-    # applied here because it creates shear in the matrix. TRS decomposition
-    # can't represent shear, causing cascading errors in deep bone chains.
-    #
-    # Near-zero guard: bones hidden at rest (scale ≈ 0) use a "visible scale"
-    # discovered by scanning animation keyframes.
     rest_scale = tuple(joint.scale)
-    nz = 0.001
-    if any(abs(rest_scale[c]) < nz for c in range(3)):
-        vis = _find_visible_scale_in_channels(scale)
-        use_scale = vis if vis is not None else rest_scale
-    else:
-        use_scale = rest_scale
-
     scaled_pos = tuple(p * GC_TO_METERS for p in joint.position)
-    rest_local = compile_srt_matrix(use_scale, joint.rotation, scaled_pos)
+    rest_local = _compose_rest_local_matrix(joint, scale)
 
     return IRBoneTrack(
         bone_name=bone.name,
@@ -348,6 +330,28 @@ def _describe_bone_track(aobj, joint, bone, bone_index, bones, logger=None, opti
         end_frame=aobj.end_frame,
         spline_path=spline_path,
     )
+
+
+def _compose_rest_local_matrix(joint, scale_channels):
+    """Compose the bone's rest-pose local matrix (T@R@S in meters), with near-zero scale rescue.
+
+    Plain T@R@S — no parent_scl shear correction. Blender's ALIGNED inheritance
+    handles parent scale at evaluation time. For bones hidden at rest (scale ≈ 0)
+    we substitute a visible scale discovered by scanning the animation keyframes.
+
+    In: joint (Joint, parsed; reads .scale, .rotation, .position); scale_channels (list of 3 lists[IRKeyframe], scanned for visible scale).
+    Out: Matrix (4×4) — rest-pose local transform with translation in meters.
+    """
+    rest_scale = tuple(joint.scale)
+    nz = 0.001
+    if any(abs(rest_scale[c]) < nz for c in range(3)):
+        vis = _find_visible_scale_in_channels(scale_channels)
+        use_scale = vis if vis is not None else rest_scale
+    else:
+        use_scale = rest_scale
+
+    scaled_pos = tuple(p * GC_TO_METERS for p in joint.position)
+    return compile_srt_matrix(use_scale, joint.rotation, scaled_pos)
 
 
 def _find_visible_scale_in_channels(scale_channels):
@@ -378,35 +382,13 @@ def _extract_spline_path(aobj, joint, bone, bones, fobj, logger, options=None):
     if not path_keyframes:
         return None
 
-    # The Animation object's 'joint' field points to the spline joint
     spline_joint = getattr(aobj, 'joint', None)
-    spline_node = None
-    if spline_joint and hasattr(spline_joint, 'property') and spline_joint.property:
-        prop = spline_joint.property
-        if hasattr(prop, 's1') and not isinstance(prop, int):
-            spline_node = prop
-
-    if spline_node is None or not isinstance(getattr(spline_node, 's1', None), list):
+    spline_data = _resolve_spline_node_data(spline_joint)
+    if spline_data is None:
         return None
 
-    control_points = [[c * GC_TO_METERS for c in p] for p in spline_node.s1]
-    curve_type = getattr(spline_node, 'flags', 0) >> 8
-    tension = getattr(spline_node, 'f0', 0.0) or 0.0
-    num_cvs = getattr(spline_node, 'n', 0)
-
-    # Compute world matrix for the spline joint (for curve positioning)
-    world_matrix = None
-    if spline_joint:
-        scaled_spl_pos = tuple(p * GC_TO_METERS for p in spline_joint.position)
-        spline_local = compile_srt_matrix(
-            spline_joint.scale, spline_joint.rotation, scaled_spl_pos
-        )
-        if bone.parent_index is not None:
-            parent_world = Matrix(bones[bone.parent_index].world_matrix)
-            spline_world = parent_world @ spline_local
-        else:
-            spline_world = spline_local
-        world_matrix = matrix_to_list(spline_world)
+    control_points, curve_type, tension, num_cvs = spline_data
+    world_matrix = _compose_spline_world_matrix(spline_joint, bone, bones)
 
     return IRSplinePath(
         control_points=control_points,
@@ -416,3 +398,42 @@ def _extract_spline_path(aobj, joint, bone, bones, fobj, logger, options=None):
         num_control_points=num_cvs,
         world_matrix=world_matrix,
     )
+
+
+def _resolve_spline_node_data(spline_joint):
+    """Pull spline geometry off a Joint's property (Spline node), in meters.
+
+    In: spline_joint (Joint|None, expected to have .property with .s1 control-point list).
+    Out: tuple (control_points: list[list[float]], curve_type: int, tension: float, num_control_points: int) or None when the Joint or spline node is absent.
+    """
+    if spline_joint is None or not hasattr(spline_joint, 'property') or not spline_joint.property:
+        return None
+    prop = spline_joint.property
+    if not hasattr(prop, 's1') or isinstance(prop, int):
+        return None
+    if not isinstance(prop.s1, list):
+        return None
+
+    control_points = [[c * GC_TO_METERS for c in p] for p in prop.s1]
+    curve_type = getattr(prop, 'flags', 0) >> 8
+    tension = getattr(prop, 'f0', 0.0) or 0.0
+    num_cvs = getattr(prop, 'n', 0)
+    return control_points, curve_type, tension, num_cvs
+
+
+def _compose_spline_world_matrix(spline_joint, bone, bones):
+    """Compose the world matrix for a spline joint, anchored under the owning bone's parent.
+
+    In: spline_joint (Joint|None); bone (IRBone, owning bone for parent lookup); bones (list[IRBone]).
+    Out: list[list[float]]|None — 4×4 world matrix in meters, or None if spline_joint is missing.
+    """
+    if spline_joint is None:
+        return None
+    scaled_spl_pos = tuple(p * GC_TO_METERS for p in spline_joint.position)
+    spline_local = compile_srt_matrix(spline_joint.scale, spline_joint.rotation, scaled_spl_pos)
+    if bone.parent_index is not None:
+        parent_world = Matrix(bones[bone.parent_index].world_matrix)
+        spline_world = parent_world @ spline_local
+    else:
+        spline_world = spline_local
+    return matrix_to_list(spline_world)
