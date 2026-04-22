@@ -4,9 +4,11 @@ from unittest.mock import patch, MagicMock
 
 from importer.phases.describe.helpers.meshes import (
     _validate_mesh, _extract_uv_layer, _extract_normals, describe_meshes,
+    _walk_joints, _walk_mesh_chain, _describe_pobj,
 )
 from shared.IR.geometry import IRUVLayer
 from shared.Constants.gx import GX_VA_POS
+from shared.helpers.logger import StubLogger
 
 
 class TestValidateMesh:
@@ -187,6 +189,83 @@ class TestMaterialCache:
         assert len(meshes) == 2
         assert meshes[0].material is not meshes[1].material
         assert mock_describe_mat.call_count == 2
+
+    def test_describe_pobj_direct_call(self):
+        """_describe_pobj is callable at module level with explicit args."""
+        pobj = _make_pobj(address=200)
+        joint = SimpleNamespace(address=0, flags=0)
+        bones = [_make_bone()]
+        mesh = _describe_pobj(
+            pobj, joint, bone_index=0, count=0,
+            bones=bones, joint_to_bone_index={0: 0},
+            options={}, image_cache={}, logger=StubLogger(),
+            ir_material=None,
+        )
+        assert mesh is not None
+        assert mesh.name == 'prim'
+        assert len(mesh.vertices) == 3
+        assert mesh.faces == [[0, 1, 2]]
+        assert mesh.material is None
+
+    def test_describe_pobj_returns_none_without_position(self):
+        """No GX_VA_POS attribute → returns None."""
+        pobj = SimpleNamespace(
+            address=200, name='x', flags=0, sources=[], face_lists=[],
+            property=None, next=None,
+            vertex_list=SimpleNamespace(vertices=[]),
+        )
+        joint = SimpleNamespace(address=0, flags=0)
+        result = _describe_pobj(
+            pobj, joint, 0, 0, [_make_bone()], {0: 0},
+            {}, {}, StubLogger(),
+        )
+        assert result is None
+
+    def test_walk_mesh_chain_appends_meshes(self):
+        """_walk_mesh_chain walks DObject linked list and appends to meshes list."""
+        pobj_a = _make_pobj(address=200)
+        pobj_b = _make_pobj(address=300)
+        mesh_a = _make_mesh_node(50, mobject=None, pobj=pobj_a)
+        mesh_b = _make_mesh_node(60, mobject=None, pobj=pobj_b)
+        mesh_a.next = mesh_b
+
+        joint = SimpleNamespace(address=0, flags=0)
+        bones = [_make_bone()]
+        meshes = []
+        _walk_mesh_chain(
+            mesh_a, joint, bone_index=0,
+            bones=bones, joint_to_bone_index={0: 0},
+            options={}, image_cache={}, logger=StubLogger(),
+            meshes=meshes, material_cache={},
+        )
+        assert len(meshes) == 2
+        assert bones[0].mesh_indices == [0, 1]
+
+    def test_walk_joints_recurses_children_and_siblings(self):
+        """_walk_joints visits child + next, populating meshes from each."""
+        # Build: root -> child(meshes) -> sibling(meshes)
+        pobj_c = _make_pobj(address=200)
+        pobj_s = _make_pobj(address=300)
+        mesh_c = _make_mesh_node(50, mobject=None, pobj=pobj_c)
+        mesh_s = _make_mesh_node(60, mobject=None, pobj=pobj_s)
+
+        child = SimpleNamespace(address=1, flags=0, child=None, next=None,
+                                property=mesh_c)
+        sibling = SimpleNamespace(address=2, flags=0, child=None, next=None,
+                                  property=mesh_s)
+        child.next = sibling
+        root = SimpleNamespace(address=0, flags=0, child=child, next=None,
+                               property=None)
+
+        bones = [_make_bone('r'), _make_bone('c'), _make_bone('s')]
+        meshes = []
+        _walk_joints(
+            root, bones, {0: 0, 1: 1, 2: 2}, {}, {}, StubLogger(),
+            meshes, {},
+        )
+        assert len(meshes) == 2
+        assert bones[1].mesh_indices == [0]
+        assert bones[2].mesh_indices == [1]
 
     def test_none_mobject_no_error(self):
         """DObject with mobject=None produces mesh with material=None."""

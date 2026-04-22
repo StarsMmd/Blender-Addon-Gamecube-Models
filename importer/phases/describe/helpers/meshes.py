@@ -54,171 +54,12 @@ def describe_meshes(root_joint, bones, joint_to_bone_index, image_cache=None, lo
     if options is None:
         options = {}
     meshes = []
-    mesh_count = [0]
     material_cache = {}  # {mobject.address: IRMaterial} — dedup shared materials
 
-    def _walk_joints(joint):
-        bone_index = joint_to_bone_index.get(joint.address, 0)
-        bone = bones[bone_index]
-
-        if joint.property is not None and hasattr(joint.property, 'pobject'):
-            _walk_mesh_chain(joint.property, joint, bone_index)
-
-        if joint.child and not (joint.flags & (1 << 12)):  # JOBJ_INSTANCE
-            _walk_joints(joint.child)
-        if joint.next:
-            _walk_joints(joint.next)
-
-    def _walk_mesh_chain(mesh_node, joint, bone_index):
-        """Walk the Mesh (DObject) linked list."""
-        import time
-        while mesh_node:
-            # Describe the material for this DObject (cached by mobject address)
-            ir_material = None
-            if mesh_node.mobject:
-                mob_addr = mesh_node.mobject.address
-                if mob_addr in material_cache:
-                    ir_material = material_cache[mob_addr]
-                    logger.debug("    reusing cached IRMaterial for DObj 0x%X (mob 0x%X)", mesh_node.address, mob_addr)
-                else:
-                    from .materials import describe_material
-                    t = time.time()
-                    ir_material = describe_material(mesh_node.mobject, image_cache=image_cache, logger=logger, options=options)
-                    logger.debug("    describe_material for DObj 0x%X: %.3fs", mesh_node.address, time.time() - t)
-                    material_cache[mob_addr] = ir_material
-
-            pobj = mesh_node.pobject
-            while pobj:
-                t = time.time()
-                ir_mesh = _describe_pobj(pobj, joint, bone_index, mesh_count[0], ir_material)
-                logger.debug("    describe_pobj 0x%X: %.3fs", pobj.address, time.time() - t)
-                if ir_mesh is not None:
-                    bones[bone_index].mesh_indices.append(len(meshes))
-                    meshes.append(ir_mesh)
-                    mesh_count[0] += 1
-                pobj = pobj.next
-            mesh_node = mesh_node.next
-
-    def _describe_pobj(pobj, joint, bone_index, count, ir_material=None):
-        """Extract geometry from a single PObject into an IRMesh."""
-        vertex_list = pobj.vertex_list.vertices
-
-        # Find position vertex index
-        pos_idx = None
-        for i, vertex in enumerate(vertex_list):
-            if vertex.attribute == GX_VA_POS:
-                pos_idx = i
-                break
-
-        if pos_idx is None:
-            return None
-
-        vertices = list(pobj.sources[pos_idx])
-        faces = list(pobj.face_lists[pos_idx])
-
-        # Validate: remove degenerate faces
-        face_lists_copy = [list(fl) for fl in pobj.face_lists]
-        orig_face_count = len(faces)
-        face_lists_copy, faces = _validate_mesh(face_lists_copy, faces)
-        if len(faces) != orig_face_count:
-            from .strictness import report
-            report(logger, options, "degenerate_faces_pruned",
-                   "PObj 0x%X mesh#%d: removed %d degenerate faces (%d → %d); game would render garbage",
-                   pobj.address, count, orig_face_count - len(faces), orig_face_count, len(faces),
-                   fatal=False)
-
-        # Convert vertices to tuples and scale to meters
-        verts_out = [tuple(c * GC_TO_METERS for c in v) for v in vertices]
-
-        # Extract UV layers, color layers, normals
-        uv_layers = []
-        color_layers = []
-        normals = None
-
-        for i, vertex in enumerate(vertex_list):
-            if vertex.isTexture():
-                tex_idx = vertex.attribute - GX_VA_TEX0
-                uv_layer = _extract_uv_layer(
-                    pobj.sources[i], face_lists_copy[i], faces, tex_idx
-                )
-                uv_layers.append(uv_layer)
-
-            elif vertex.attribute in (GX_VA_NRM, GX_VA_NBT):
-                normals = _extract_normals(
-                    pobj.sources[i], face_lists_copy[i], faces,
-                    is_nbt=(vertex.attribute == GX_VA_NBT)
-                )
-
-            elif vertex.attribute in (GX_VA_CLR0, GX_VA_CLR1):
-                color_num = '0' if vertex.attribute == GX_VA_CLR0 else '1'
-                color_layer, alpha_layer = _extract_color_layers(
-                    pobj.sources[i], face_lists_copy[i], faces, color_num
-                )
-                color_layers.append(color_layer)
-                color_layers.append(alpha_layer)
-
-        # Add default white color/alpha layers if CLR0 not present.
-        # In strict mirror mode we skip the fabrication entirely so the mesh
-        # renders with missing vertex colours — which in Blender produces the
-        # unlit/black-tinted look the game would display. That's a visible
-        # diagnostic, more useful than either silently healing or aborting.
-        has_color_0 = any(cl.name == 'color_0' for cl in color_layers)
-        has_alpha_0 = any(cl.name == 'alpha_0' for cl in color_layers)
-        total_loops = sum(len(f) for f in faces)
-        strict = options.get("strict_mirror") if options else False
-        if not has_color_0 or not has_alpha_0:
-            from .strictness import report
-            report(logger, options, "missing_vertex_colors",
-                   "PObj 0x%X missing CLR0 %s%s; %s (game would render unlit)",
-                   pobj.address,
-                   "color" if not has_color_0 else "",
-                   "+alpha" if (not has_color_0 and not has_alpha_0) else ("alpha" if not has_alpha_0 else ""),
-                   "leaving absent" if strict else "fabricating white",
-                   fatal=False)
-        if not has_color_0 and not strict:
-            color_layers.append(IRColorLayer(
-                name='color_0',
-                colors=[(1.0, 1.0, 1.0, 1.0)] * total_loops,
-            ))
-        if not has_alpha_0 and not strict:
-            color_layers.append(IRColorLayer(
-                name='alpha_0',
-                colors=[(1.0, 1.0, 1.0, 1.0)] * total_loops,
-            ))
-
-        # Extract bone weight info (may deform verts_out and normals in-place for envelopes)
-        bone_weights = _extract_bone_weights(
-            pobj, joint, bone_index, bones, joint_to_bone_index, faces,
-            verts_out, normals, face_lists_copy, logger, options
-        )
-
-        # For non-envelope meshes (RIGID, SINGLE_BONE), vertices are in the
-        # parent bone's local space. Transform to world space so the IR
-        # consistently stores world-space vertices for all skin types.
-        # Envelope vertices are already in world space (deformed above).
-        if bone_weights and bone_weights.type in (SkinType.RIGID, SkinType.SINGLE_BONE):
-            parent_world = Matrix(bones[bone_index].world_matrix)
-            for vi in range(len(verts_out)):
-                verts_out[vi] = tuple(parent_world @ Vector(verts_out[vi]))
-
-        name = pobj.name if pobj.name else str(count)
-
-        return IRMesh(
-            name=name,
-            vertices=verts_out,
-            faces=faces,
-            uv_layers=uv_layers,
-            color_layers=color_layers,
-            normals=normals,
-            material=ir_material,
-            bone_weights=bone_weights,
-            is_hidden=bool(joint.flags & JOBJ_HIDDEN),
-            parent_bone_index=bone_index,
-            cull_front=bool(pobj.flags & POBJ_CULLFRONT),
-            cull_back=bool(pobj.flags & POBJ_CULLBACK),
-        )
-
-    _walk_joints(root_joint)
+    _walk_joints(
+        root_joint, bones, joint_to_bone_index, options, image_cache, logger,
+        meshes, material_cache,
+    )
 
     # Pad numeric mesh names based on total count
     if meshes:
@@ -228,6 +69,183 @@ def describe_meshes(root_joint, bones, joint_to_bone_index, image_cache=None, lo
                 mesh.name = mesh.name.zfill(digits)
 
     return meshes
+
+
+def _walk_joints(joint, bones, joint_to_bone_index, options, image_cache, logger,
+                 meshes, material_cache):
+    """Walk the Joint tree, dispatching mesh chains to _walk_mesh_chain."""
+    bone_index = joint_to_bone_index.get(joint.address, 0)
+
+    if joint.property is not None and hasattr(joint.property, 'pobject'):
+        _walk_mesh_chain(
+            joint.property, joint, bone_index,
+            bones, joint_to_bone_index, options, image_cache, logger,
+            meshes, material_cache,
+        )
+
+    if joint.child and not (joint.flags & (1 << 12)):  # JOBJ_INSTANCE
+        _walk_joints(joint.child, bones, joint_to_bone_index, options,
+                     image_cache, logger, meshes, material_cache)
+    if joint.next:
+        _walk_joints(joint.next, bones, joint_to_bone_index, options,
+                     image_cache, logger, meshes, material_cache)
+
+
+def _walk_mesh_chain(mesh_node, joint, bone_index,
+                     bones, joint_to_bone_index, options, image_cache, logger,
+                     meshes, material_cache):
+    """Walk the Mesh (DObject) linked list, appending IRMeshes to `meshes`."""
+    import time
+    while mesh_node:
+        # Describe the material for this DObject (cached by mobject address)
+        ir_material = None
+        if mesh_node.mobject:
+            mob_addr = mesh_node.mobject.address
+            if mob_addr in material_cache:
+                ir_material = material_cache[mob_addr]
+                logger.debug("    reusing cached IRMaterial for DObj 0x%X (mob 0x%X)", mesh_node.address, mob_addr)
+            else:
+                try:
+                    from .materials import describe_material
+                except (ImportError, SystemError):
+                    from importer.phases.describe.helpers.materials import describe_material
+                t = time.time()
+                ir_material = describe_material(mesh_node.mobject, image_cache=image_cache, logger=logger, options=options)
+                logger.debug("    describe_material for DObj 0x%X: %.3fs", mesh_node.address, time.time() - t)
+                material_cache[mob_addr] = ir_material
+
+        pobj = mesh_node.pobject
+        while pobj:
+            t = time.time()
+            ir_mesh = _describe_pobj(
+                pobj, joint, bone_index, len(meshes),
+                bones, joint_to_bone_index, options, image_cache, logger,
+                ir_material=ir_material,
+            )
+            logger.debug("    describe_pobj 0x%X: %.3fs", pobj.address, time.time() - t)
+            if ir_mesh is not None:
+                bones[bone_index].mesh_indices.append(len(meshes))
+                meshes.append(ir_mesh)
+            pobj = pobj.next
+        mesh_node = mesh_node.next
+
+
+def _describe_pobj(pobj, joint, bone_index, count,
+                   bones, joint_to_bone_index, options, image_cache, logger,
+                   ir_material=None):
+    """Extract geometry from a single PObject into an IRMesh."""
+    vertex_list = pobj.vertex_list.vertices
+
+    pos_idx = None
+    for i, vertex in enumerate(vertex_list):
+        if vertex.attribute == GX_VA_POS:
+            pos_idx = i
+            break
+
+    if pos_idx is None:
+        return None
+
+    vertices = list(pobj.sources[pos_idx])
+    faces = list(pobj.face_lists[pos_idx])
+
+    face_lists_copy = [list(fl) for fl in pobj.face_lists]
+    orig_face_count = len(faces)
+    face_lists_copy, faces = _validate_mesh(face_lists_copy, faces)
+    if len(faces) != orig_face_count:
+        try:
+            from .strictness import report
+        except (ImportError, SystemError):
+            from importer.phases.describe.helpers.strictness import report
+        report(logger, options, "degenerate_faces_pruned",
+               "PObj 0x%X mesh#%d: removed %d degenerate faces (%d → %d); game would render garbage",
+               pobj.address, count, orig_face_count - len(faces), orig_face_count, len(faces),
+               fatal=False)
+
+    verts_out = [tuple(c * GC_TO_METERS for c in v) for v in vertices]
+
+    uv_layers = []
+    color_layers = []
+    normals = None
+
+    for i, vertex in enumerate(vertex_list):
+        if vertex.isTexture():
+            tex_idx = vertex.attribute - GX_VA_TEX0
+            uv_layer = _extract_uv_layer(
+                pobj.sources[i], face_lists_copy[i], faces, tex_idx
+            )
+            uv_layers.append(uv_layer)
+
+        elif vertex.attribute in (GX_VA_NRM, GX_VA_NBT):
+            normals = _extract_normals(
+                pobj.sources[i], face_lists_copy[i], faces,
+                is_nbt=(vertex.attribute == GX_VA_NBT)
+            )
+
+        elif vertex.attribute in (GX_VA_CLR0, GX_VA_CLR1):
+            color_num = '0' if vertex.attribute == GX_VA_CLR0 else '1'
+            color_layer, alpha_layer = _extract_color_layers(
+                pobj.sources[i], face_lists_copy[i], faces, color_num
+            )
+            color_layers.append(color_layer)
+            color_layers.append(alpha_layer)
+
+        # Strict mirror skips fabrication so the missing-color render artifact
+        # surfaces in Blender, mirroring the unlit look the game would show.
+    has_color_0 = any(cl.name == 'color_0' for cl in color_layers)
+    has_alpha_0 = any(cl.name == 'alpha_0' for cl in color_layers)
+    total_loops = sum(len(f) for f in faces)
+    strict = options.get("strict_mirror") if options else False
+    if not has_color_0 or not has_alpha_0:
+        try:
+            from .strictness import report
+        except (ImportError, SystemError):
+            from importer.phases.describe.helpers.strictness import report
+        report(logger, options, "missing_vertex_colors",
+               "PObj 0x%X missing CLR0 %s%s; %s (game would render unlit)",
+               pobj.address,
+               "color" if not has_color_0 else "",
+               "+alpha" if (not has_color_0 and not has_alpha_0) else ("alpha" if not has_alpha_0 else ""),
+               "leaving absent" if strict else "fabricating white",
+               fatal=False)
+    if not has_color_0 and not strict:
+        color_layers.append(IRColorLayer(
+            name='color_0',
+            colors=[(1.0, 1.0, 1.0, 1.0)] * total_loops,
+        ))
+    if not has_alpha_0 and not strict:
+        color_layers.append(IRColorLayer(
+            name='alpha_0',
+            colors=[(1.0, 1.0, 1.0, 1.0)] * total_loops,
+        ))
+
+    bone_weights = _extract_bone_weights(
+        pobj, joint, bone_index, bones, joint_to_bone_index, faces,
+        verts_out, normals, face_lists_copy, logger, options
+    )
+
+    # RIGID / SINGLE_BONE verts arrive in parent bone local space; transform
+    # to world space so the IR uniformly stores world-space vertices.
+    if bone_weights and bone_weights.type in (SkinType.RIGID, SkinType.SINGLE_BONE):
+        parent_world = Matrix(bones[bone_index].world_matrix)
+        for vi in range(len(verts_out)):
+            verts_out[vi] = tuple(parent_world @ Vector(verts_out[vi]))
+
+    name = pobj.name if pobj.name else str(count)
+
+    return IRMesh(
+        name=name,
+        vertices=verts_out,
+        faces=faces,
+        uv_layers=uv_layers,
+        color_layers=color_layers,
+        normals=normals,
+        material=ir_material,
+        bone_weights=bone_weights,
+        is_hidden=bool(joint.flags & JOBJ_HIDDEN),
+        parent_bone_index=bone_index,
+        cull_front=bool(pobj.flags & POBJ_CULLFRONT),
+        cull_back=bool(pobj.flags & POBJ_CULLBACK),
+    )
 
 
 def _validate_mesh(face_lists, faces):
