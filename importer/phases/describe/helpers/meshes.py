@@ -484,22 +484,50 @@ def _extract_envelope_weights(pobj, joint, bone_index, bones, joint_to_bone_inde
 
     envelope_vertex_index = pobj.find_attribute_index(GX_VA_PNMTXIDX)
     if envelope_vertex_index is None:
-        from .strictness import report
+        try:
+            from .strictness import report
+        except (ImportError, SystemError):
+            from importer.phases.describe.helpers.strictness import report
         report(logger, options, "envelope_no_pnmtxidx",
                "PObj 0x%X has envelope descriptor bits but no PNMTXIDX attribute; game would deref garbage",
                pobj.address, fatal=True)
         return IRBoneWeights(type=SkinType.RIGID, bone_name=bones[bone_index].name)
 
     env_source = pobj.sources[envelope_vertex_index]
-    # Use validated face lists (degenerate faces removed) to stay in sync
-    # with the validated position faces. Legacy modifies face_lists in-place
-    # before calling make_deform_skin; we must use the same validated lists.
     if validated_face_lists is not None:
         env_faces = validated_face_lists[envelope_vertex_index]
     else:
         env_faces = pobj.face_lists[envelope_vertex_index]
 
-    # Build vertex → envelope index mapping from face data
+    indices = _build_vertex_to_envelope_map(faces, env_faces, env_source)
+    coord = _envelope_coord_system(bone_index, bones)
+    deform_matrices = _compute_envelope_deform_matrices(
+        envelope_list, bones, joint_to_bone_index, coord, pobj.address, logger, options,
+    )
+
+    logger.debug("    envelope: bone=%s, %d verts, %d matrices, %d envs, %d faces",
+                 bones[bone_index].name, len(indices), len(deform_matrices),
+                 len(envelope_list), len(faces))
+
+    new_vertices = _deform_vertices_by_envelope(vertices_out, deform_matrices, indices)
+    vertices_out[:] = new_vertices
+
+    if normals is not None:
+        new_normals = _deform_normals_by_envelope(normals, deform_matrices, indices, faces)
+        normals[:] = new_normals
+
+    assignments = _build_envelope_weight_assignments(
+        envelope_list, indices, bones, joint_to_bone_index,
+    )
+    return IRBoneWeights(type=SkinType.WEIGHTED, assignments=assignments)
+
+
+def _build_vertex_to_envelope_map(faces, env_faces, env_source):
+    """Map each position-vertex index to its envelope index via face-list parallelism.
+
+    In: faces (list[list[int]], position face list); env_faces (list[list[int]], PNMTXIDX face list, may be shorter); env_source (sequence[int], raw PNMTXIDX values; envelope index = value//3).
+    Out: dict[int, int] — vertex index → envelope index for every vertex covered by both face lists.
+    """
     indices = {}
     for face_id, face in enumerate(faces):
         if face_id < len(env_faces):
@@ -507,105 +535,114 @@ def _extract_envelope_weights(pobj, joint, bone_index, bones, joint_to_bone_inde
             for vert_idx, global_vert in enumerate(face):
                 if vert_idx < len(env_face):
                     indices[global_vert] = env_source[env_face[vert_idx]] // 3
+    return indices
 
-    # Compute envelope coord system for the owning bone
-    coord = _envelope_coord_system(bone_index, bones)
 
-    # Compute per-envelope deformation matrices.
-    # Formula: deform = (bone_world @ bone_IBM) [@ coord]
-    #
-    # The SRT-computed world_matrix may differ from IBM.inv() for some
-    # bones (IK targets, certain parent scale chains). However, the edit
-    # bone positions in Blender are ALSO derived from the SRT world matrix.
-    # Using IBM.inv() here would make deformation identity at rest but
-    # create a mismatch with the edit bones, causing garbled geometry under
-    # the armature modifier. By using the SRT world matrix consistently,
-    # the deformation error matches the edit bone error and they cancel out.
-    deform_matrices = []
-    for env_idx_iter, envelope in enumerate(envelope_list):
-        if len(envelope.envelopes) > 10:
-            from .strictness import report
-            report(logger, options, "envelope_over_cap",
-                   "PObj 0x%X envelope %d has %d weights (game caps at 10)",
-                   pobj.address, env_idx_iter, len(envelope.envelopes), fatal=True)
-        entries = [(entry.weight, entry.joint) for entry in envelope.envelopes]
-        zero = [[0] * 4 for _ in range(4)]
-        matrix = Matrix(zero)
+def _compute_envelope_deform_matrix(envelope, bones, joint_to_bone_index, coord):
+    """Compute the deformation matrix for a single envelope (single- or multi-weight).
 
-        if entries[0][0] == 1.0:
-            # Single-weight envelope
-            entry_joint = entries[0][1]
+    In: envelope (Envelope node with .envelopes list of weight/joint entries); bones (list[IRBone]); joint_to_bone_index (dict[int,int]); coord (Matrix|None — envelope coord system; None ⇒ skeleton-root path).
+    Out: Matrix (4×4) — the per-envelope deformation matrix to apply to verts.
+    """
+    entries = [(entry.weight, entry.joint) for entry in envelope.envelopes]
+    if entries[0][0] == 1.0:
+        entry_joint = entries[0][1]
+        entry_bone_idx = joint_to_bone_index.get(entry_joint.address, 0)
+        entry_world = Matrix(bones[entry_bone_idx].world_matrix)
+        if coord:
+            entry_invbind = _get_invbind_matrix(entry_bone_idx, bones)
+            matrix = entry_world @ entry_invbind
+        else:
+            # Skeleton-root case: HSD engine uses world matrix only, no IBM.
+            matrix = entry_world
+    else:
+        matrix = Matrix([[0] * 4 for _ in range(4)])
+        for weight, entry_joint in entries:
             entry_bone_idx = joint_to_bone_index.get(entry_joint.address, 0)
             entry_world = Matrix(bones[entry_bone_idx].world_matrix)
-            if coord:
-                entry_invbind = _get_invbind_matrix(entry_bone_idx, bones)
-                matrix = entry_world @ entry_invbind
-            else:
-                # When coord is None (skeleton root owns the mesh), the HSD
-                # engine uses just the world matrix without IBM for single-weight
-                # envelopes. This matches the legacy import_hsd.py behavior.
-                matrix = entry_world
-        else:
-            # Multi-weight envelope
-            for weight, entry_joint in entries:
-                entry_bone_idx = joint_to_bone_index.get(entry_joint.address, 0)
-                entry_world = Matrix(bones[entry_bone_idx].world_matrix)
-                entry_invbind = _get_invbind_matrix(entry_bone_idx, bones)
-                contrib = entry_world @ entry_invbind
-                for i in range(4):
-                    for j in range(4):
-                        matrix[i][j] += weight * contrib[i][j]
+            entry_invbind = _get_invbind_matrix(entry_bone_idx, bones)
+            contrib = entry_world @ entry_invbind
+            for i in range(4):
+                for j in range(4):
+                    matrix[i][j] += weight * contrib[i][j]
 
-        if coord:
-            matrix = matrix @ coord
-        deform_matrices.append(matrix)
+    if coord:
+        matrix = matrix @ coord
+    return matrix
 
-    # Deform vertex positions in-place
-    logger.debug("    envelope: bone=%s, %d verts, %d matrices, %d envs, %d faces",
-                 bones[bone_index].name, len(indices), len(deform_matrices), len(envelope_list), len(faces))
+
+def _compute_envelope_deform_matrices(envelope_list, bones, joint_to_bone_index, coord,
+                                      pobj_addr, logger, options):
+    """Compute one deform matrix per envelope, reporting weight-cap violations.
+
+    In: envelope_list (list[Envelope]); bones (list[IRBone]); joint_to_bone_index (dict[int,int]); coord (Matrix|None); pobj_addr (int, for the leniency report); logger (Logger); options (dict|None).
+    Out: list[Matrix] — one 4×4 matrix per envelope, in the same order.
+    """
+    matrices = []
+    for env_idx, envelope in enumerate(envelope_list):
+        if len(envelope.envelopes) > 10:
+            try:
+                from .strictness import report
+            except (ImportError, SystemError):
+                from importer.phases.describe.helpers.strictness import report
+            report(logger, options, "envelope_over_cap",
+                   "PObj 0x%X envelope %d has %d weights (game caps at 10)",
+                   pobj_addr, env_idx, len(envelope.envelopes), fatal=True)
+        matrices.append(_compute_envelope_deform_matrix(envelope, bones, joint_to_bone_index, coord))
+    return matrices
+
+
+def _deform_vertices_by_envelope(vertices, deform_matrices, indices):
+    """Apply per-vertex envelope deformation, returning a new vertex list.
+
+    In: vertices (list[tuple[float,float,float]]); deform_matrices (list[Matrix]); indices (dict[int,int], vertex idx → envelope idx).
+    Out: list[tuple[float,float,float]] — same length, deformed where indices reference a valid envelope.
+    """
+    out = list(vertices)
     for vertex_idx, env_idx in indices.items():
         if env_idx < len(deform_matrices):
-            old_pos = vertices_out[vertex_idx]
-            new_pos = deform_matrices[env_idx] @ Vector(old_pos)
-            if vertex_idx < 3:
-                logger.debug("    envelope v%d: (%.4f,%.4f,%.4f) -> (%.4f,%.4f,%.4f) env=%d",
-                             vertex_idx, old_pos[0], old_pos[1], old_pos[2],
-                             new_pos[0], new_pos[1], new_pos[2], env_idx)
-            vertices_out[vertex_idx] = tuple(new_pos)
+            new_pos = deform_matrices[env_idx] @ Vector(out[vertex_idx])
+            out[vertex_idx] = tuple(new_pos)
+    return out
 
-    # Transform normals by inverse-transpose of deformation matrices
-    # (normal matrix = inverse transpose of the 3x3 part of the deform matrix)
-    if normals:
-        normal_matrices = []
-        for dm in deform_matrices:
-            nm = dm.to_3x3()
-            nm.invert()
-            nm.transpose()
-            normal_matrices.append(nm.to_4x4())
 
-        loop_idx = 0
-        for face in faces:
-            for vert_idx in face:
-                env_idx = indices.get(vert_idx)
-                if env_idx is not None and env_idx < len(normal_matrices):
-                    old_n = Vector(normals[loop_idx])
-                    new_n = (normal_matrices[env_idx] @ old_n).normalized()
-                    normals[loop_idx] = tuple(new_n)
-                loop_idx += 1
+def _deform_normals_by_envelope(normals, deform_matrices, indices, faces):
+    """Apply inverse-transpose envelope deformation to per-loop normals.
 
-    # Build per-vertex bone weight assignments
+    In: normals (list[tuple[float,float,float]], one per loop); deform_matrices (list[Matrix]); indices (dict[int,int]); faces (list[list[int]], drives loop ordering).
+    Out: list[tuple[float,float,float]] — same length as `normals`, normalized after transform.
+    """
+    normal_matrices = []
+    for dm in deform_matrices:
+        nm = dm.to_3x3()
+        nm.invert()
+        nm.transpose()
+        normal_matrices.append(nm.to_4x4())
+
+    out = list(normals)
+    loop_idx = 0
+    for face in faces:
+        for vert_idx in face:
+            env_idx = indices.get(vert_idx)
+            if env_idx is not None and env_idx < len(normal_matrices):
+                new_n = (normal_matrices[env_idx] @ Vector(out[loop_idx])).normalized()
+                out[loop_idx] = tuple(new_n)
+            loop_idx += 1
+    return out
+
+
+def _build_envelope_weight_assignments(envelope_list, indices, bones, joint_to_bone_index):
+    """Build per-vertex (bone_name, weight) assignments from envelope entries.
+
+    In: envelope_list (list[Envelope]); indices (dict[int,int], vertex idx → envelope idx); bones (list[IRBone]); joint_to_bone_index (dict[int,int]).
+    Out: list[tuple[int, list[tuple[str, float]]]] — sorted by vertex index, weights as (bone_name, weight) pairs.
+    """
     assignments = []
     for vertex_idx, env_idx in sorted(indices.items()):
         if env_idx < len(envelope_list):
-            envelope = envelope_list[env_idx]
             weights = []
-            for entry in envelope.envelopes:
-                entry_joint = entry.joint
-                entry_bone_idx = joint_to_bone_index.get(entry_joint.address, 0)
+            for entry in envelope_list[env_idx].envelopes:
+                entry_bone_idx = joint_to_bone_index.get(entry.joint.address, 0)
                 weights.append((bones[entry_bone_idx].name, entry.weight))
             assignments.append((vertex_idx, weights))
-
-    return IRBoneWeights(
-        type=SkinType.WEIGHTED,
-        assignments=assignments,
-    )
+    return assignments

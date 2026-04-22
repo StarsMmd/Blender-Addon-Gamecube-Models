@@ -10,7 +10,11 @@ from shared.Constants.gx import GX_VA_PNMTXIDX, GX_VA_POS
 from shared.IR.enums import SkinType
 from importer.phases.describe.helpers.meshes import (
     _extract_envelope_weights, _envelope_coord_system, _get_invbind_matrix,
+    _build_vertex_to_envelope_map, _compute_envelope_deform_matrix,
+    _compute_envelope_deform_matrices, _deform_vertices_by_envelope,
+    _deform_normals_by_envelope, _build_envelope_weight_assignments,
 )
+from shared.helpers.logger import StubLogger
 
 
 # ---------------------------------------------------------------------------
@@ -363,3 +367,124 @@ class TestGetInvbindMatrix:
         child = _make_bone(name='child', inverse_bind_matrix=None, parent_index=0)
         result = _get_invbind_matrix(1, [parent, child])
         assert abs(result[0][0] - 2.0) < 1e-6
+
+
+# ---------------------------------------------------------------------------
+# Tests for the responsibility-bounded envelope helpers
+# ---------------------------------------------------------------------------
+
+class TestBuildVertexToEnvelopeMap:
+    def test_maps_each_vertex_to_envelope_index(self):
+        # env_source raw values are pnmtxidx*3, so envelope_index = value // 3.
+        faces = [[0, 1, 2]]
+        env_faces = [[0, 1, 2]]
+        env_source = [0, 3, 6]  # → envelopes 0, 1, 2
+        result = _build_vertex_to_envelope_map(faces, env_faces, env_source)
+        assert result == {0: 0, 1: 1, 2: 2}
+
+    def test_skips_faces_beyond_env_face_list(self):
+        faces = [[0, 1, 2], [3, 4, 5]]
+        env_faces = [[0, 1, 2]]  # only one face
+        env_source = [0, 3, 6]
+        result = _build_vertex_to_envelope_map(faces, env_faces, env_source)
+        assert result == {0: 0, 1: 1, 2: 2}
+
+    def test_empty_faces_returns_empty(self):
+        assert _build_vertex_to_envelope_map([], [], []) == {}
+
+
+class TestComputeEnvelopeDeformMatrix:
+    def test_single_weight_no_coord_uses_world_only(self):
+        bones = [_make_bone(world_matrix=Matrix.Identity(4) * 2)]
+        bones[0].world_matrix = [list(row) for row in Matrix.Identity(4)]
+        bones[0].world_matrix[0][0] = 5.0  # x scale 5
+        envelope = SimpleNamespace(envelopes=[
+            SimpleNamespace(weight=1.0, joint=SimpleNamespace(address=0x100)),
+        ])
+        m = _compute_envelope_deform_matrix(envelope, bones, {0x100: 0}, coord=None)
+        assert abs(m[0][0] - 5.0) < 1e-6
+
+    def test_multi_weight_blends_by_weight(self):
+        b0 = _make_bone(world_matrix=[[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]])
+        b1 = _make_bone(world_matrix=[[3, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]])
+        b0.inverse_bind_matrix = [list(row) for row in Matrix.Identity(4)]
+        b1.inverse_bind_matrix = [list(row) for row in Matrix.Identity(4)]
+        envelope = SimpleNamespace(envelopes=[
+            SimpleNamespace(weight=0.5, joint=SimpleNamespace(address=0x100)),
+            SimpleNamespace(weight=0.5, joint=SimpleNamespace(address=0x200)),
+        ])
+        m = _compute_envelope_deform_matrix(
+            envelope, [b0, b1], {0x100: 0, 0x200: 1}, coord=None,
+        )
+        # 0.5*1 + 0.5*3 = 2 along the x axis
+        assert abs(m[0][0] - 2.0) < 1e-6
+
+
+class TestComputeEnvelopeDeformMatrices:
+    def test_one_matrix_per_envelope(self):
+        b = _make_bone()
+        b.inverse_bind_matrix = [list(row) for row in Matrix.Identity(4)]
+        env = SimpleNamespace(envelopes=[
+            SimpleNamespace(weight=1.0, joint=SimpleNamespace(address=0x100)),
+        ])
+        result = _compute_envelope_deform_matrices(
+            [env, env, env], [b], {0x100: 0}, coord=None,
+            pobj_addr=0, logger=StubLogger(), options=None,
+        )
+        assert len(result) == 3
+
+
+class TestDeformVerticesByEnvelope:
+    def test_returns_new_list(self):
+        verts = [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0)]
+        m = Matrix.Identity(4)
+        out = _deform_vertices_by_envelope(verts, [m], {0: 0, 1: 0})
+        assert out is not verts
+        assert out[0] == (0.0, 0.0, 0.0)
+
+    def test_translation_matrix_applied(self):
+        verts = [(0.0, 0.0, 0.0)]
+        m = Matrix([[1, 0, 0, 5], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]])
+        out = _deform_vertices_by_envelope(verts, [m], {0: 0})
+        assert abs(out[0][0] - 5.0) < 1e-6
+
+    def test_unmapped_vertex_left_alone(self):
+        verts = [(7.0, 7.0, 7.0)]
+        m = Matrix([[2, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]])
+        out = _deform_vertices_by_envelope(verts, [m], {})
+        assert out[0] == (7.0, 7.0, 7.0)
+
+
+class TestDeformNormalsByEnvelope:
+    def test_identity_preserves_normals(self):
+        normals = [(0.0, 0.0, 1.0)] * 3
+        out = _deform_normals_by_envelope(
+            normals, [Matrix.Identity(4)], {0: 0, 1: 0, 2: 0}, [[0, 1, 2]],
+        )
+        for n in out:
+            assert abs(n[2] - 1.0) < 1e-6
+
+    def test_returns_new_list(self):
+        normals = [(0.0, 0.0, 1.0)]
+        out = _deform_normals_by_envelope(
+            normals, [Matrix.Identity(4)], {0: 0}, [[0]],
+        )
+        assert out is not normals
+
+
+class TestBuildEnvelopeWeightAssignments:
+    def test_assignments_sorted_by_vertex_index(self):
+        b0 = _make_bone(name='a')
+        b1 = _make_bone(name='b')
+        env = SimpleNamespace(envelopes=[
+            SimpleNamespace(weight=1.0, joint=SimpleNamespace(address=0x100)),
+        ])
+        env2 = SimpleNamespace(envelopes=[
+            SimpleNamespace(weight=1.0, joint=SimpleNamespace(address=0x200)),
+        ])
+        result = _build_envelope_weight_assignments(
+            [env, env2], {2: 1, 0: 0}, [b0, b1], {0x100: 0, 0x200: 1},
+        )
+        assert [vi for vi, _ in result] == [0, 2]
+        assert result[0][1] == [('a', 1.0)]
+        assert result[1][1] == [('b', 1.0)]
