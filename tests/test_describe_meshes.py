@@ -5,8 +5,10 @@ from unittest.mock import patch, MagicMock
 from importer.phases.describe.helpers.meshes import (
     _validate_mesh, _extract_uv_layer, _extract_normals, describe_meshes,
     _walk_joints, _walk_mesh_chain, _describe_pobj,
+    _resolve_material, _validated_face_lists, _collect_attribute_layers,
+    _fabricate_missing_color_layers, _world_transform_vertices,
 )
-from shared.IR.geometry import IRUVLayer
+from shared.IR.geometry import IRUVLayer, IRColorLayer
 from shared.Constants.gx import GX_VA_POS
 from shared.helpers.logger import StubLogger
 
@@ -93,9 +95,16 @@ def _make_bone(name='bone'):
     )
 
 
+def _attach_pobj_methods(ns):
+    ns.find_attribute_index = lambda attr: next(
+        (i for i, v in enumerate(ns.vertex_list.vertices) if v.attribute == attr), None)
+    ns.pobj_type_flag = lambda: ns.flags & 0x3000  # POBJ_TYPE_MASK
+    return ns
+
+
 def _make_pobj(address=200):
     """Minimal PObject with one triangle."""
-    return SimpleNamespace(
+    return _attach_pobj_methods(SimpleNamespace(
         address=address,
         name='prim',
         vertex_list=SimpleNamespace(vertices=[
@@ -106,7 +115,7 @@ def _make_pobj(address=200):
         face_lists=[[[0, 1, 2]]],
         property=None,
         next=None,
-    )
+    ))
 
 
 def _make_mesh_node(address, mobject, pobj):
@@ -209,11 +218,11 @@ class TestMaterialCache:
 
     def test_describe_pobj_returns_none_without_position(self):
         """No GX_VA_POS attribute → returns None."""
-        pobj = SimpleNamespace(
+        pobj = _attach_pobj_methods(SimpleNamespace(
             address=200, name='x', flags=0, sources=[], face_lists=[],
             property=None, next=None,
             vertex_list=SimpleNamespace(vertices=[]),
-        )
+        ))
         joint = SimpleNamespace(address=0, flags=0)
         result = _describe_pobj(
             pobj, joint, 0, 0, [_make_bone()], {0: 0},
@@ -284,3 +293,129 @@ class TestMaterialCache:
 
         assert len(meshes) == 1
         assert meshes[0].material is None
+
+
+# --- Tests for the responsibility-bounded helpers ---
+
+class TestPObjectMethods:
+    def test_find_attribute_index_finds_present(self):
+        from shared.Nodes.Classes.Mesh.PObject import PObject
+        pobj = PObject(0, None)
+        pobj.vertex_list = SimpleNamespace(vertices=[
+            SimpleNamespace(attribute=GX_VA_POS),
+            SimpleNamespace(attribute=99),
+        ])
+        assert pobj.find_attribute_index(GX_VA_POS) == 0
+        assert pobj.find_attribute_index(99) == 1
+
+    def test_find_attribute_index_returns_none_when_absent(self):
+        from shared.Nodes.Classes.Mesh.PObject import PObject
+        pobj = PObject(0, None)
+        pobj.vertex_list = SimpleNamespace(vertices=[
+            SimpleNamespace(attribute=99),
+        ])
+        assert pobj.find_attribute_index(GX_VA_POS) is None
+
+    def test_pobj_type_flag_masks_lower_bits(self):
+        from shared.Nodes.Classes.Mesh.PObject import PObject
+        from shared.Constants.hsd import POBJ_TYPE_MASK, POBJ_ENVELOPE
+        pobj = PObject(0, None)
+        pobj.flags = POBJ_ENVELOPE | 0x0007  # type bits + culling bits
+        assert pobj.pobj_type_flag() == (POBJ_ENVELOPE)
+        assert pobj.pobj_type_flag() == pobj.flags & POBJ_TYPE_MASK
+
+
+class TestResolveMaterial:
+    def test_returns_none_when_no_mobject(self):
+        mesh_node = SimpleNamespace(mobject=None, address=0)
+        assert _resolve_material(mesh_node, {}, {}, {}, StubLogger()) is None
+
+    @patch('importer.phases.describe.helpers.materials.describe_material')
+    def test_caches_by_mobject_address(self, mock_desc):
+        mat = SimpleNamespace(texture_layers=[])
+        mock_desc.return_value = mat
+        cache = {}
+        m1 = SimpleNamespace(mobject=SimpleNamespace(address=0x100), address=1)
+        m2 = SimpleNamespace(mobject=SimpleNamespace(address=0x100), address=2)
+        a = _resolve_material(m1, cache, {}, {}, StubLogger())
+        b = _resolve_material(m2, cache, {}, {}, StubLogger())
+        assert a is b is mat
+        assert mock_desc.call_count == 1
+        assert cache[0x100] is mat
+
+
+class TestFabricateMissingColorLayers:
+    def test_fabricates_white_when_missing(self):
+        result = _fabricate_missing_color_layers([], faces=[[0, 1, 2]],
+                                                 options={}, pobj_addr=0, logger=StubLogger())
+        names = [l.name for l in result]
+        assert 'color_0' in names and 'alpha_0' in names
+        color = next(l for l in result if l.name == 'color_0')
+        assert color.colors == [(1.0, 1.0, 1.0, 1.0)] * 3
+
+    def test_existing_color_layer_passed_through(self):
+        existing = IRColorLayer(name='color_0', colors=[(0.5, 0.5, 0.5, 1.0)] * 3)
+        existing_alpha = IRColorLayer(name='alpha_0', colors=[(1.0, 1.0, 1.0, 1.0)] * 3)
+        result = _fabricate_missing_color_layers(
+            [existing, existing_alpha], faces=[[0, 1, 2]],
+            options={}, pobj_addr=0, logger=StubLogger())
+        assert len(result) == 2
+        assert result[0] is existing
+        assert result[1] is existing_alpha
+
+    def test_only_missing_alpha_fabricated(self):
+        existing = IRColorLayer(name='color_0', colors=[(0.5, 0.5, 0.5, 1.0)] * 3)
+        result = _fabricate_missing_color_layers(
+            [existing], faces=[[0, 1, 2]],
+            options={}, pobj_addr=0, logger=StubLogger())
+        names = [l.name for l in result]
+        assert 'alpha_0' in names
+        assert 'color_0' in names and result[0] is existing
+
+
+class TestWorldTransformVertices:
+    def test_identity_returns_same_values(self):
+        verts = [(1.0, 2.0, 3.0), (4.0, 5.0, 6.0)]
+        identity = [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]
+        out = _world_transform_vertices(verts, identity)
+        assert len(out) == 2
+        assert all(abs(a - b) < 1e-6 for a, b in zip(out[0], (1.0, 2.0, 3.0)))
+
+    def test_translation_offsets_each_vertex(self):
+        verts = [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0)]
+        m = [[1, 0, 0, 10], [0, 1, 0, 20], [0, 0, 1, 30], [0, 0, 0, 1]]
+        out = _world_transform_vertices(verts, m)
+        assert all(abs(a - b) < 1e-6 for a, b in zip(out[0], (10.0, 20.0, 30.0)))
+        assert all(abs(a - b) < 1e-6 for a, b in zip(out[1], (11.0, 20.0, 30.0)))
+
+
+class TestCollectAttributeLayers:
+    def test_extracts_uv_color_normal(self):
+        from shared.Constants.gx import GX_VA_TEX0, GX_VA_NRM, GX_VA_CLR0
+
+        class _Color:
+            def __init__(self, r, g, b, a):
+                self.red, self.green, self.blue, self.alpha = r, g, b, a
+
+        verts = [
+            SimpleNamespace(attribute=GX_VA_POS, isTexture=lambda: False),
+            SimpleNamespace(attribute=GX_VA_TEX0, isTexture=lambda: True),
+            SimpleNamespace(attribute=GX_VA_NRM, isTexture=lambda: False),
+            SimpleNamespace(attribute=GX_VA_CLR0, isTexture=lambda: False),
+        ]
+        pobj = _attach_pobj_methods(SimpleNamespace(
+            address=0, vertex_list=SimpleNamespace(vertices=verts), flags=0,
+            sources=[
+                None,
+                [(0.5, 0.5)] * 3,
+                [(0, 0, 1)] * 3,
+                [_Color(255, 128, 64, 200)] * 3,
+            ],
+            face_lists=[[[0, 1, 2]]] * 4,
+        ))
+        face_lists_copy = [list(fl) for fl in pobj.face_lists]
+        uvs, colors, normals = _collect_attribute_layers(pobj, face_lists_copy, [[0, 1, 2]])
+        assert len(uvs) == 1 and uvs[0].name == 'uvtex_0'
+        assert normals is not None and len(normals) == 3
+        names = [c.name for c in colors]
+        assert 'color_0' in names and 'alpha_0' in names

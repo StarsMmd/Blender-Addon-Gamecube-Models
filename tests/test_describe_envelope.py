@@ -45,6 +45,13 @@ def _make_envelope(entries):
     )
 
 
+def _attach_pobj_methods(ns):
+    ns.find_attribute_index = lambda attr: next(
+        (i for i, v in enumerate(ns.vertex_list.vertices) if v.attribute == attr), None)
+    ns.pobj_type_flag = lambda: ns.flags & 0x3000  # POBJ_TYPE_MASK
+    return ns
+
+
 def _make_pobj(envelope_list, env_source, env_faces, pos_faces):
     """Build a minimal PObject mock for envelope testing.
 
@@ -56,13 +63,14 @@ def _make_pobj(envelope_list, env_source, env_faces, pos_faces):
     vtx_pos = SimpleNamespace(attribute=GX_VA_POS)
     vertex_list = SimpleNamespace(vertices=[vtx_pnmtx, vtx_pos])
 
-    return SimpleNamespace(
+    return _attach_pobj_methods(SimpleNamespace(
+        address=0xABCD,
         vertex_list=vertex_list,
         property=envelope_list,
         flags=POBJ_ENVELOPE,
         sources={0: env_source, 1: []},
         face_lists={0: env_faces, 1: pos_faces},
-    )
+    ))
 
 
 # ---------------------------------------------------------------------------

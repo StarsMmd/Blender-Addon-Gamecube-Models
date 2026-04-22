@@ -46,6 +46,13 @@ def _make_envelope(entry_count):
     return SimpleNamespace(envelopes=entries)
 
 
+def _attach_pobj_methods(ns):
+    ns.find_attribute_index = lambda attr: next(
+        (i for i, v in enumerate(ns.vertex_list.vertices) if v.attribute == attr), None)
+    ns.pobj_type_flag = lambda: ns.flags & 0x3000  # POBJ_TYPE_MASK
+    return ns
+
+
 def _make_pobj(envelope_list, include_pnmtxidx=True, address=0xABCD):
     if include_pnmtxidx:
         vtx_pnmtx = SimpleNamespace(attribute=GX_VA_PNMTXIDX)
@@ -61,14 +68,14 @@ def _make_pobj(envelope_list, include_pnmtxidx=True, address=0xABCD):
         sources = {0: []}
         face_lists = {0: [[0, 1, 2]]}
 
-    return SimpleNamespace(
+    return _attach_pobj_methods(SimpleNamespace(
         address=address,
         vertex_list=vertex_list,
         property=envelope_list,
         flags=POBJ_ENVELOPE,
         sources=sources,
         face_lists=face_lists,
-    )
+    ))
 
 
 def _make_camera(perspective_flags=1, position=(0.0, 0.0, 10.0),
@@ -235,7 +242,7 @@ class TestMissingVertexColors:
         # Minimal position-only PObj
         vtx_pos = SimpleNamespace(attribute=GX_VA_POS, isTexture=lambda: False)
         vertex_list = SimpleNamespace(vertices=[vtx_pos])
-        pobj = SimpleNamespace(
+        pobj = _attach_pobj_methods(SimpleNamespace(
             address=0x1234,
             name='p',
             vertex_list=vertex_list,
@@ -244,7 +251,7 @@ class TestMissingVertexColors:
             property=None,
             flags=0,
             next=None,
-        )
+        ))
         mesh = SimpleNamespace(
             address=0x100, pobject=pobj, mobject=None, next=None,
         )
