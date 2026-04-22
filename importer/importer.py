@@ -12,6 +12,7 @@ from .phases.route.route import route_sections
 from .phases.parse.parse import parse_sections
 from .phases.describe.describe import describe_scene
 from .phases.describe.helpers.particles import describe_particles
+from .phases.plan.plan import plan_scene
 from .phases.build_blender.build_blender import build_blender_scene
 from .phases.build_blender.errors.build_errors import ModelBuildError
 from .phases.post_process.post_process import post_process
@@ -76,9 +77,18 @@ class Importer:
                         logger.info("Attached particle system to model '%s'",
                                     ir_scene.models[0].name)
 
-                # Phase 5 — Blender Build: Intermediate Representation → Blender scene
+                # Phase 5a — Plan: IR → BR (Blender Representation)
+                logger.info("=== Phase 5a: Plan (IR → BR) ===")
+                br_scene = plan_scene(ir_scene, options, logger=logger)
+
+                # Phase 5b — Build: BR + IR → Blender scene.
+                # Build still reads IR for meshes / materials / actions /
+                # constraints while Plan coverage is being expanded stage
+                # by stage; BR is consulted for the armature.
                 if context is not None:
-                    build_results = build_blender_scene(ir_scene, context, options, logger=logger)
+                    build_results = build_blender_scene(
+                        ir_scene, context, options, logger=logger, br_scene=br_scene,
+                    )
 
                     # Phase 6 — Post-Processing: select animations, apply shiny, store PKX metadata
                     post_process(set(), metadata.shiny_params, options, logger=logger,

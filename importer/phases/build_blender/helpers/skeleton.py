@@ -1,105 +1,73 @@
-"""Build a Blender armature from IRModel.bones."""
+"""Build a Blender armature from a BRArmature spec.
+
+Pure bpy executor — every decision (edit-bone matrix, inherit_scale, tail
+offset, display type) is already baked into the BR by the Plan phase.
+"""
 import bpy
-import math
-import os
 from mathutils import Matrix, Vector
 
 try:
-    from .....shared.helpers.logger import StubLogger
+    from ....shared.helpers.logger import StubLogger
 except (ImportError, SystemError):
     from shared.helpers.logger import StubLogger
 
 
-def build_skeleton(ir_model, context, options, logger=StubLogger(), model_index=0):
-    """Create a Blender armature with bones from IRModel.
+def build_skeleton(br_armature, context, logger=StubLogger()):
+    """Create a Blender armature + bones from a BRArmature.
 
     Args:
-        ir_model: IRModel with bones list populated.
+        br_armature: BRArmature spec from the Plan phase.
         context: Blender context.
-        options: dict of importer options.
-        logger: Logger instance (defaults to StubLogger).
-        model_index: Index of this model in the scene (for unique naming).
+        logger: Logger instance.
 
     Returns:
         The armature object.
     """
-    filepath = options.get("filepath", "")
-    base_name = os.path.basename(filepath).split('.')[0] if filepath else "model"
-    model_name = ir_model.name or ""
-    if model_name and model_name != base_name:
-        armature_name = f"{base_name}_{model_name}_skeleton_{model_index}"
-    else:
-        armature_name = f"{base_name}_skeleton_{model_index}"
+    armature_data = bpy.data.armatures.new(name=br_armature.name)
+    armature = bpy.data.objects.new(name=br_armature.name, object_data=armature_data)
 
-    armature_data = bpy.data.armatures.new(name=armature_name)
-    armature = bpy.data.objects.new(name=armature_name, object_data=armature_data)
+    if br_armature.matrix_basis is not None:
+        armature.matrix_basis = Matrix(br_armature.matrix_basis)
 
-    # Coordinate system rotation: GameCube Y-up → Blender Z-up (pi/2 around X)
-    armature.matrix_basis = Matrix.Translation(Vector((0, 0, 0)))
-    armature.matrix_basis @= Matrix.Rotation(math.pi / 2, 4, [1.0, 0.0, 0.0])
-
-    # Link to scene
     bpy.context.scene.collection.objects.link(armature)
+    armature_data.display_type = br_armature.display_type
 
-    if options.get("ik_hack"):
-        armature_data.display_type = 'STICK'
-
-    # Ensure only this armature is selected/active before entering EDIT mode,
-    # otherwise Blender enters multi-armature edit mode.
+    # Enter edit mode on this armature alone (multi-armature edit mode would
+    # break bone creation).
     if bpy.context.mode != 'OBJECT':
         bpy.ops.object.mode_set(mode='OBJECT')
     bpy.ops.object.select_all(action='DESELECT')
     armature.select_set(True)
     bpy.context.view_layer.objects.active = armature
-
-    # Create edit bones
     bpy.ops.object.mode_set(mode='EDIT')
 
     edit_bones = []
-    for bone_data in ir_model.bones:
-        bone = armature_data.edit_bones.new(name=bone_data.name)
-
-        # IK hack: shrink effector/spline bones
-        if bone_data.ik_shrink:
-            bone.tail = Vector((0.0, 1e-4 / bone_data.scale[1] if bone_data.scale[1] != 0 else 1e-4, 0.0))
-        else:
-            bone.tail = Vector((0.0, 0.01, 0.0))
-
-        # Set parent
-        if bone_data.parent_index is not None:
-            bone.parent = edit_bones[bone_data.parent_index]
-
-        # Set world matrix — use normalized to avoid degenerate edit bones when
-        # rest scale is near-zero (hidden mesh bones). Blender normalizes the
-        # matrix internally anyway; our pre-normalized version is numerically stable.
-        bone.matrix = Matrix(bone_data.normalized_world_matrix)
-
-        # Per-bone inherit_scale: ALIGNED for uniform accumulated scale
-        # (correct scale propagation, no shear), NONE for non-uniform
-        # (prevents cascading scale errors from TRS decomposition limits).
-        accum = bone_data.accumulated_scale
-        mn = min(abs(x) for x in accum)
-        mx = max(abs(x) for x in accum)
-        is_uniform = (mn < 0.001) or (mx / max(mn, 1e-9) < 1.1)
-        bone.inherit_scale = 'ALIGNED' if is_uniform else 'NONE'
-
+    for br_bone in br_armature.bones:
+        bone = armature_data.edit_bones.new(name=br_bone.name)
+        bone.tail = Vector(br_bone.tail_offset)
+        if br_bone.parent_index is not None:
+            bone.parent = edit_bones[br_bone.parent_index]
+        bone.matrix = Matrix(br_bone.edit_matrix)
+        bone.inherit_scale = br_bone.inherit_scale
+        bone.use_connect = br_bone.use_connect
         edit_bones.append(bone)
 
-    logger.info("  Created armature '%s' with %d bones", armature_name, len(edit_bones))
+    logger.info("  Created armature '%s' with %d bones", br_armature.name, len(edit_bones))
 
     bpy.ops.object.mode_set(mode='POSE')
-
-    # Set rotation mode for pose bones
-    for bone_data in ir_model.bones:
-        pose_bone = armature.pose.bones.get(bone_data.name)
+    for br_bone in br_armature.bones:
+        pose_bone = armature.pose.bones.get(br_bone.name)
         if pose_bone:
-            pose_bone.rotation_mode = 'XYZ'
+            pose_bone.rotation_mode = br_bone.rotation_mode
 
     bpy.ops.object.mode_set(mode='OBJECT')
     bpy.context.view_layer.update()
 
-    # Record any describe-phase leniencies on the armature so users can inspect
-    # what the importer silently healed via the N-panel → Custom Properties.
+    for key, value in br_armature.custom_props.items():
+        armature[key] = value
+
+    # Describe-phase leniencies come via the logger, not BR — they're a
+    # per-run diagnostic, not part of the plan.
     if getattr(logger, "leniency_categories", None):
         armature["dat_leniencies"] = [
             "%s:%d" % (k, v) for k, v in sorted(logger.leniency_categories.items())
