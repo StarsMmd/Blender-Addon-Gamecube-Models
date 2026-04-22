@@ -229,61 +229,89 @@ _BODY_MAP_KEYS = [
 def _derive_pkx_custom_props(pkx_header, actions=None, bone_names=None):
     """Derive the dat_pkx_* property dict for a PKX header. Pure: no bpy.
 
-    Args:
-        pkx_header: PKXHeader instance from extract phase.
-        actions: optional sequence of objects with a `.name` attribute, in
-            DAT animation order. Used to resolve animation indices to action
-            names. Indices not covered yield "".
-        bone_names: optional sequence of strings, the armature's bone names
-            in DAT bone order. Used to resolve bone indices. None or out-of-
-            range indices yield "".
-
-    Returns:
-        dict[str, value] of all properties to be written to the armature.
+    In: pkx_header (PKXHeader); actions (sequence with .name|None, DAT order); bone_names (sequence[str]|None, DAT bone order).
+    Out: dict[str, value] — all properties to write to the armature.
     """
-    h = pkx_header
-    bone_list = list(bone_names) if bone_names else []
-
-    index_to_action = {}
-    if actions:
-        for idx, action in enumerate(actions):
-            index_to_action[idx] = action.name
-
-    def _action_name(anim_idx):
-        return index_to_action.get(anim_idx, "")
-
-    def _bone_name(idx):
-        if idx < 0 or idx >= len(bone_list):
-            return ""
-        return bone_list[idx]
+    name_resolver = _build_action_name_resolver(actions)
+    bone_resolver = _build_bone_name_resolver(bone_names)
 
     props = {}
+    props.update(_derive_preamble_props(pkx_header, bone_resolver))
+    props.update(_derive_sub_anim_props(pkx_header, name_resolver, bone_resolver))
 
-    # Preamble
-    props["dat_pkx_format"] = "XD" if h.is_xd else "COLOSSEUM"
-    props["dat_pkx_species_id"] = h.species_id
-    props["dat_pkx_particle_orientation"] = h.particle_orientation
-    props["dat_pkx_distortion_param"] = h.distortion_param
-    props["dat_pkx_distortion_type"] = h.distortion_type
-    props["dat_pkx_model_type"] = "TRAINER" if h.species_id == 0 and h.particle_orientation == 0 else "POKEMON"
+    first_active = pkx_header.anim_entries[0] if pkx_header.anim_entries else None
+    if first_active:
+        props.update(_derive_body_map_props(first_active, bone_resolver))
 
-    props["dat_pkx_flag_flying"] = bool(h.flags & 0x01)
-    props["dat_pkx_flag_skip_frac_frames"] = bool(h.flags & 0x04)
-    props["dat_pkx_flag_no_root_anim"] = bool(h.flags & 0x40)
-    props["dat_pkx_flag_bit7"] = bool(h.flags & 0x80)
+    props["dat_pkx_anim_count"] = len(pkx_header.anim_entries)
+    for i, entry in enumerate(pkx_header.anim_entries):
+        props.update(_derive_anim_entry_props(i, entry, first_active, name_resolver, bone_resolver))
 
-    props["dat_pkx_head_bone"] = _bone_name(h.head_bone_index)
+    return props
 
-    # Sub-animations
+
+def _build_action_name_resolver(actions):
+    """Build a closure that maps a DAT animation index to an action name (or "").
+
+    In: actions (sequence with .name|None).
+    Out: callable (int) -> str.
+    """
+    index_to_name = {idx: a.name for idx, a in enumerate(actions or [])}
+    def resolve(anim_idx):
+        return index_to_name.get(anim_idx, "")
+    return resolve
+
+
+def _build_bone_name_resolver(bone_names):
+    """Build a closure that maps a bone index to a bone name (or "" for out-of-range).
+
+    In: bone_names (sequence[str]|None).
+    Out: callable (int) -> str.
+    """
+    bones = list(bone_names) if bone_names else []
+    def resolve(idx):
+        if idx < 0 or idx >= len(bones):
+            return ""
+        return bones[idx]
+    return resolve
+
+
+def _derive_preamble_props(h, bone_resolver):
+    """Derive the dat_pkx_* preamble properties (format, species, flags, head bone).
+
+    In: h (PKXHeader); bone_resolver (callable int->str).
+    Out: dict[str, value] of preamble keys only.
+    """
+    return {
+        "dat_pkx_format": h.format_label,
+        "dat_pkx_species_id": h.species_id,
+        "dat_pkx_particle_orientation": h.particle_orientation,
+        "dat_pkx_distortion_param": h.distortion_param,
+        "dat_pkx_distortion_type": h.distortion_type,
+        "dat_pkx_model_type": h.model_type_label,
+        "dat_pkx_flag_flying": h.flag_flying,
+        "dat_pkx_flag_skip_frac_frames": h.flag_skip_frac_frames,
+        "dat_pkx_flag_no_root_anim": h.flag_no_root_anim,
+        "dat_pkx_flag_bit7": h.flag_bit7,
+        "dat_pkx_head_bone": bone_resolver(h.head_bone_index),
+    }
+
+
+def _derive_sub_anim_props(h, name_resolver, bone_resolver):
+    """Derive the dat_pkx_sub_anim_* properties (XD: PartAnimData; Colo: colo_part_anim_refs).
+
+    In: h (PKXHeader); name_resolver (callable int->str); bone_resolver (callable int->str).
+    Out: dict[str, value] of sub-anim keys only.
+    """
+    props = {}
     if h.is_xd:
         for i, pad in enumerate(h.part_anim_data):
             prefix = "dat_pkx_sub_anim_%d" % i
             props[prefix + "_type"] = _SUB_ANIM_TYPES.get(pad.has_data, "unknown")
             props[prefix + "_trigger"] = _SUB_ANIM_TRIGGERS.get(i, "unknown")
-            props[prefix + "_anim_ref"] = _action_name(pad.anim_index_ref) if pad.has_data > 0 else ""
-            if pad.has_data == 2:
-                bone_indices = [b for b in pad.bone_config if b != 0xFF]
-                names = [_bone_name(idx) for idx in bone_indices]
+            props[prefix + "_anim_ref"] = name_resolver(pad.anim_index_ref) if pad.is_active else ""
+            if pad.is_targeted:
+                names = [bone_resolver(idx) for idx in pad.active_bone_indices()]
                 props[prefix + "_bones"] = ', '.join(names) if names else ""
     else:
         for i in range(3):
@@ -291,38 +319,48 @@ def _derive_pkx_custom_props(pkx_header, actions=None, bone_names=None):
             ref = h.colo_part_anim_refs[i]
             props[prefix + "_type"] = "simple" if ref >= 0 else "none"
             props[prefix + "_trigger"] = _SUB_ANIM_TRIGGERS.get(i, "unknown")
-            props[prefix + "_anim_ref"] = _action_name(ref) if ref >= 0 else ""
+            props[prefix + "_anim_ref"] = name_resolver(ref) if ref >= 0 else ""
+    return props
 
-    # Body map bones
-    first_active = h.anim_entries[0] if h.anim_entries else None
-    if first_active:
-        for j in range(len(_BODY_MAP_KEYS)):
-            props["dat_pkx_body_%s" % _BODY_MAP_KEYS[j]] = _bone_name(first_active.body_map_bones[j])
 
-    # Animation entries
-    props["dat_pkx_anim_count"] = len(h.anim_entries)
-    for i, entry in enumerate(h.anim_entries):
-        prefix = "dat_pkx_anim_%02d" % i
-        props[prefix + "_type"] = _ANIM_TYPE_NAMES.get(entry.anim_type, str(entry.anim_type))
-        props[prefix + "_sub_count"] = entry.sub_anim_count
-        props[prefix + "_damage_flags"] = _clamp_int32(entry.damage_flags)
-        props[prefix + "_timing_1"] = entry.timing[0]
-        props[prefix + "_timing_2"] = entry.timing[1]
-        props[prefix + "_timing_3"] = entry.timing[2]
-        props[prefix + "_timing_4"] = entry.timing[3]
-        props[prefix + "_terminator"] = _clamp_int32(entry.terminator)
+def _derive_body_map_props(first_active, bone_resolver):
+    """Derive the model-level dat_pkx_body_* slots from the first active anim entry.
 
-        for s in range(min(len(entry.sub_anims), 3)):
-            sub = entry.sub_anims[s]
-            if sub.motion_type > 0:
-                props[prefix + "_sub_%d_anim" % s] = _action_name(sub.anim_index)
-            else:
-                props[prefix + "_sub_%d_anim" % s] = ""
+    In: first_active (AnimMetadataEntry); bone_resolver (callable int->str).
+    Out: dict[str, str] — one entry per body-map slot key.
+    """
+    return {
+        "dat_pkx_body_%s" % key: bone_resolver(first_active.body_map_bones[j])
+        for j, key in enumerate(_BODY_MAP_KEYS)
+    }
 
-        if first_active and entry.body_map_bones[:len(_BODY_MAP_KEYS)] != first_active.body_map_bones[:len(_BODY_MAP_KEYS)]:
-            for j in range(len(_BODY_MAP_KEYS)):
-                if entry.body_map_bones[j] != first_active.body_map_bones[j]:
-                    props[prefix + "_body_%s" % _BODY_MAP_KEYS[j]] = _bone_name(entry.body_map_bones[j])
+
+def _derive_anim_entry_props(i, entry, first_active, name_resolver, bone_resolver):
+    """Derive properties for a single animation entry (timing, sub-anims, body overrides).
+
+    In: i (int, ≥0, slot index); entry (AnimMetadataEntry); first_active (AnimMetadataEntry|None, model-level reference for body-map override detection); name_resolver (callable int->str); bone_resolver (callable int->str).
+    Out: dict[str, value] of dat_pkx_anim_NN_* keys (and per-entry body overrides where present).
+    """
+    prefix = "dat_pkx_anim_%02d" % i
+    props = {
+        prefix + "_type": _ANIM_TYPE_NAMES.get(entry.anim_type, str(entry.anim_type)),
+        prefix + "_sub_count": entry.sub_anim_count,
+        prefix + "_damage_flags": _clamp_int32(entry.damage_flags),
+        prefix + "_timing_1": entry.timing[0],
+        prefix + "_timing_2": entry.timing[1],
+        prefix + "_timing_3": entry.timing[2],
+        prefix + "_timing_4": entry.timing[3],
+        prefix + "_terminator": _clamp_int32(entry.terminator),
+    }
+
+    for s in range(min(len(entry.sub_anims), 3)):
+        sub = entry.sub_anims[s]
+        props[prefix + "_sub_%d_anim" % s] = name_resolver(sub.anim_index) if sub.is_active else ""
+
+    if first_active and entry.body_map_bones[:len(_BODY_MAP_KEYS)] != first_active.body_map_bones[:len(_BODY_MAP_KEYS)]:
+        for j, key in enumerate(_BODY_MAP_KEYS):
+            if entry.body_map_bones[j] != first_active.body_map_bones[j]:
+                props[prefix + "_body_%s" % key] = bone_resolver(entry.body_map_bones[j])
 
     return props
 

@@ -39,6 +39,24 @@ class PartAnimData:
     bone_config: bytes = field(default_factory=lambda: b'\xff' * 16)
     anim_index_ref: int = 0
 
+    @property
+    def is_active(self):
+        """True iff this entry references an animation (has_data > 0)."""
+        return self.has_data > 0
+
+    @property
+    def is_targeted(self):
+        """True iff has_data == 2 (targeted: bone_config carries real bone indices)."""
+        return self.has_data == 2
+
+    def active_bone_indices(self):
+        """Return the bone-config indices, dropping the 0xFF "unused" sentinel.
+
+        In: (none — derived from self.bone_config).
+        Out: list[int] of bone indices in declaration order, no 0xFF entries.
+        """
+        return [b for b in self.bone_config if b != 0xFF]
+
     @classmethod
     def from_bytes(cls, data, offset):
         has_data = read('uchar', data, offset)
@@ -65,6 +83,11 @@ class SubAnim:
     """Sub-animation entry within an AnimMetadataEntry."""
     motion_type: int = 0    # 0=none, 1=play_once, 2=loop
     anim_index: int = 0     # DAT animation index
+
+    @property
+    def is_active(self):
+        """True iff this sub-anim references a real DAT animation (motion_type > 0)."""
+        return self.motion_type > 0
 
 
 # ---------------------------------------------------------------------------
@@ -250,6 +273,41 @@ class PKXHeader:
         identity = (self.shiny_route == (0, 1, 2, 3))
         neutral = all(abs(b - 0x7F) <= 1 for b in self.shiny_brightness)
         return not (identity and neutral)
+
+    @property
+    def is_trainer(self):
+        """True iff this PKX represents a trainer (species_id == 0 and particle_orientation == 0)."""
+        return self.species_id == 0 and self.particle_orientation == 0
+
+    @property
+    def model_type_label(self):
+        """Human-readable model classification."""
+        return "TRAINER" if self.is_trainer else "POKEMON"
+
+    @property
+    def format_label(self):
+        """Container format label ('XD' or 'COLOSSEUM')."""
+        return "XD" if self.is_xd else "COLOSSEUM"
+
+    @property
+    def flag_flying(self):
+        """True iff the flying behaviour bit (0x01) is set."""
+        return bool(self.flags & 0x01)
+
+    @property
+    def flag_skip_frac_frames(self):
+        """True iff the integer-frame-stepping bit (0x04) is set."""
+        return bool(self.flags & 0x04)
+
+    @property
+    def flag_no_root_anim(self):
+        """True iff the root-joint-animation-suppression bit (0x40) is set."""
+        return bool(self.flags & 0x40)
+
+    @property
+    def flag_bit7(self):
+        """True iff the unknown bit-7 flag (0x80) is set."""
+        return bool(self.flags & 0x80)
 
     @property
     def header_byte_size(self):
