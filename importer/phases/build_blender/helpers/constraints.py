@@ -9,6 +9,13 @@ from mathutils import Vector
 
 
 def build_constraints(br_constraints, armature, logger):
+    """Create Blender bone constraints from a BRConstraints bundle.
+
+    In: br_constraints (BRConstraints); armature (bpy.types.Object);
+        logger (Logger).
+    Out: None. Adds IK / COPY_LOCATION / TRACK_TO / COPY_ROTATION /
+         LIMIT_ROTATION / LIMIT_LOCATION constraints to the relevant pose bones.
+    """
     if br_constraints.is_empty:
         return
 
@@ -49,6 +56,12 @@ def build_constraints(br_constraints, armature, logger):
 
 
 def _build_ik(ik, armature):
+    """Add an IK constraint plus any pre-IK bone repositions it specifies.
+
+    In: ik (IRIKConstraint); armature (bpy.types.Object).
+    Out: None. Edit-bone head/tail may shift by each reposition's offset;
+         pose-bone gets an IK constraint with chain_count and targets.
+    """
     for reposition in ik.bone_repositions:
         bpy.context.view_layer.objects.active = armature
         bpy.ops.object.mode_set(mode='EDIT')
@@ -82,6 +95,12 @@ def _build_ik(ik, armature):
 
 
 def _build_limit(armature, lim, limit_type):
+    """Add (or reuse) a LIMIT_ROTATION or LIMIT_LOCATION constraint.
+
+    In: armature (bpy.types.Object); lim (IRLimitConstraint);
+        limit_type (str, 'LIMIT_ROTATION' | 'LIMIT_LOCATION').
+    Out: None. Per-axis min/max are enabled only when the IR value is not None.
+    """
     existing = None
     for cnst in armature.pose.bones[lim.bone_name].constraints:
         if cnst.type == limit_type:

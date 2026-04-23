@@ -86,7 +86,12 @@ def post_process(armature_names, shiny_params=None, options=None, logger=StubLog
 
 
 def _find_actions(armature):
-    """Find all actions that have an OBJECT slot targeting this armature."""
+    """Find all actions that have an OBJECT slot targeting this armature.
+
+    In: armature (bpy.types.Object).
+    Out: list[bpy.types.Action]; includes a name-prefix fallback for legacy
+         actions that lack a slot handle.
+    """
     actions = []
     for action in bpy.data.actions:
         for slot in action.slots:
@@ -107,6 +112,9 @@ def _find_material_slot_indices(armature, actions):
 
     Looks at the first action's MATERIAL slots and matches them to materials
     in the scene by name.
+
+    In: armature (bpy.types.Object, unused); actions (list[bpy.types.Action]).
+    Out: dict[bpy.types.Material, int].
     """
     if not actions:
         return {}
@@ -127,6 +135,11 @@ def _select_first_action(armature, actions, mat_slot_indices, pkx_header=None):
 
     Uses the PKX header's idle animation index (entry 0) if available,
     otherwise falls back to the first action with '_Idle' in the name.
+
+    In: armature (bpy.types.Object); actions (list[bpy.types.Action]);
+        mat_slot_indices (dict[bpy.types.Material, int]);
+        pkx_header (PKXHeader|None).
+    Out: bpy.types.Action|None — the selected active action.
     """
     if not armature.animation_data or not actions:
         return None
@@ -258,6 +271,7 @@ def _build_action_name_resolver(actions):
     """
     index_to_name = {idx: a.name for idx, a in enumerate(actions or [])}
     def resolve(anim_idx):
+        """In: anim_idx (int). Out: str — action.name or '' if out of range."""
         return index_to_name.get(anim_idx, "")
     return resolve
 
@@ -270,6 +284,7 @@ def _build_bone_name_resolver(bone_names):
     """
     bones = list(bone_names) if bone_names else []
     def resolve(idx):
+        """In: idx (int). Out: str — bone name or '' if out-of-range or negative."""
         if idx < 0 or idx >= len(bones):
             return ""
         return bones[idx]
@@ -366,7 +381,12 @@ def _derive_anim_entry_props(i, entry, first_active, name_resolver, bone_resolve
 
 
 def _store_pkx_metadata(armature, pkx_header, logger, actions=None):
-    """Store PKX header fields as custom properties on the armature."""
+    """Store PKX header fields as custom properties on the armature.
+
+    In: armature (bpy.types.Object); pkx_header (PKXHeader);
+        logger (Logger); actions (sequence[Action]|None, for anim name resolution).
+    Out: None; custom properties are written to the armature.
+    """
     bone_names = [b.name for b in armature.data.bones]
     props = _derive_pkx_custom_props(pkx_header, actions=actions, bone_names=bone_names)
     for key, value in props.items():
@@ -380,7 +400,11 @@ def _store_pkx_metadata(armature, pkx_header, logger, actions=None):
 
 
 def _add_property_descriptions(armature):
-    """Add tooltip descriptions to all PKX custom properties."""
+    """Add tooltip descriptions to all PKX custom properties.
+
+    In: armature (bpy.types.Object, with PKX custom props already set).
+    Out: None; ``id_properties_ui`` descriptions updated where supported.
+    """
     descriptions = {
         "dat_pkx_format": "PKX container format: XD or COLOSSEUM. Determines header layout and timing format.",
         "dat_pkx_species_id": "Pokédex species number. Set to 0 for trainer or generic models.",
@@ -412,6 +436,9 @@ def _clamp_int32(value):
 
     Values like 0xCDCDCDCD (debug heap fill) exceed Python's C int limit.
     Treat them as 0 since they represent uninitialized data.
+
+    In: value (int, 0..0xFFFFFFFF).
+    Out: int within signed int32 range (or 0 for values above 0x7FFFFFFF).
     """
     if value > 0x7FFFFFFF:
         return 0
@@ -419,19 +446,33 @@ def _clamp_int32(value):
 
 
 def _bone_name_for_index(bone_list, index):
-    """Resolve a bone index to a bone name. Returns '' for -1 or out-of-range."""
+    """Resolve a bone index to a bone name. Returns '' for -1 or out-of-range.
+
+    In: bone_list (sequence with .name attribute per item); index (int).
+    Out: str, bone name or ''.
+    """
     if index < 0 or index >= len(bone_list):
         return ""
     return bone_list[index].name
 
 
 def _register_action_sync_handler(armature, mat_slot_indices):
-    """Register a depsgraph handler that syncs material actions when the armature's action changes."""
+    """Register a depsgraph handler that syncs material actions when the
+    armature's action changes.
+
+    In: armature (bpy.types.Object); mat_slot_indices (dict[Material, int]).
+    Out: None; the handler is appended to ``bpy.app.handlers.depsgraph_update_post``.
+    """
     armature_name = armature.name
     mat_info = [(mat.name, slot_idx) for mat, slot_idx in mat_slot_indices.items()]
     last_action = [armature.animation_data.action]
 
     def on_depsgraph_update(scene):
+        """Sync linked material actions whenever the armature's action changes.
+
+        In: scene (bpy.types.Scene, argument passed by Blender's handler).
+        Out: None; each Material's animation_data.action is re-assigned.
+        """
         arm = bpy.data.objects.get(armature_name)
         if not arm or not arm.animation_data or not arm.animation_data.action:
             return

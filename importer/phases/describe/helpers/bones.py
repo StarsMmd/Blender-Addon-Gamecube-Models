@@ -42,6 +42,11 @@ def describe_bones(root_joint, options=None, logger=None):
 
     # Pre-count total bones to determine digit padding
     def _count_joints(joint):
+        """Recursive DFS joint count, skipping subtrees under JOBJ_INSTANCE.
+
+        In: joint (Joint).
+        Out: int — total joints visited.
+        """
         n = 1
         if joint.child and not (joint.flags & (1 << 12)):
             n += _count_joints(joint.child)
@@ -80,6 +85,11 @@ def describe_bones(root_joint, options=None, logger=None):
 
         parent_data is the transform record returned by
         _compose_bone_transforms for the parent bone — or None for roots.
+
+        In: joint (Joint); parent_index (int|None);
+            parent_data (dict|None, record from _compose_bone_transforms).
+        Out: None. ``bones`` and ``joint_to_bone_index`` are mutated in place
+             through the closure.
         """
         my_index = len(bones)
         joint_to_bone_index[joint.address] = my_index
@@ -318,6 +328,14 @@ def fix_near_zero_bone_matrices(bones, bone_animations, logger=None):
     rebound = {}  # bone_index → transform record from _compose_bone_transforms
 
     def _parent_record(parent_index):
+        """Return the parent's transform record, preferring any rebound value.
+
+        In: parent_index (int|None).
+        Out: dict with keys accumulated_scale, world, normalized_world,
+             scale_correction — or None for roots. Falls back to constructing
+             a record from the stored (pre-rebind) bone when the parent isn't
+             in ``rebound`` yet.
+        """
         if parent_index is None:
             return None
         if parent_index in rebound:

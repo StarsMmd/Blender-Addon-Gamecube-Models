@@ -31,11 +31,21 @@ def plan_lights(ir_lights):
     and sRGB → linear color conversion. Ambient IR lights become
     zero-energy POINT lights flagged ``is_ambient=True`` so build can
     stamp the ``dat_light_type`` custom property.
+
+    In: ir_lights (list[IRLight]).
+    Out: list[BRLight], same length and order.
     """
     return [plan_light(ir) for ir in ir_lights]
 
 
 def plan_light(ir_light):
+    """Convert one IRLight into a BRLight.
+
+    In: ir_light (IRLight).
+    Out: BRLight with linear color and Z-up positions. Ambient type becomes
+         POINT + energy 0 + is_ambient=True; other types map SUN/POINT/SPOT
+         directly with brightness → energy.
+    """
     color_linear = _linearize_rgb(ir_light.color)
     if ir_light.type.value == 'AMBIENT':
         return BRLight(
@@ -66,6 +76,11 @@ _BLENDER_DEFAULT_LENS = 50.0
 
 
 def plan_cameras(ir_cameras):
+    """Convert IRCamera list to BRCamera list.
+
+    In: ir_cameras (list[IRCamera]).
+    Out: list[BRCamera], same length and order.
+    """
     return [plan_camera(ir_cam) for ir_cam in ir_cameras]
 
 
@@ -76,6 +91,11 @@ def plan_camera(ir_cam):
     build never does math. Ortho cameras store ``field_of_view`` as an
     ortho_scale; we carry that through on the ``lens`` field regardless
     of projection, and the build layer knows which to apply.
+
+    In: ir_cam (IRCamera).
+    Out: BRCamera with projection string, lens (mm for PERSP or ortho_scale for
+         ORTHO), sensor_height, clip planes, Z-up location/target, and per-anim
+         BRCameraAnimation entries.
     """
     if ir_cam.projection == CameraProjection.ORTHO:
         lens = ir_cam.field_of_view  # used as ortho_scale
@@ -99,7 +119,12 @@ def plan_camera(ir_cam):
 
 def _plan_camera_animation(anim):
     """Convert IRCameraKeyframes → BRCameraAnimation with values already
-    transformed into Blender space (coord flips + FOV→lens conversion)."""
+    transformed into Blender space (coord flips + FOV→lens conversion).
+
+    In: anim (IRCameraKeyframes).
+    Out: BRCameraAnimation; eye_z keyframes negated into loc_y; FOV keyframes
+         mapped to focal-length mm; target coords flipped symmetrically.
+    """
     return BRCameraAnimation(
         name=anim.name,
         loc_x=anim.eye_x,             # unchanged
@@ -118,7 +143,12 @@ def _plan_camera_animation(anim):
 
 
 def _map_keyframes(keyframes, transform):
-    """Apply a per-value transform while preserving IRKeyframe metadata."""
+    """Apply a per-value transform while preserving IRKeyframe metadata.
+
+    In: keyframes (list[IRKeyframe]|None); transform (callable float→float).
+    Out: list[IRKeyframe] with each kf.value replaced by transform(kf.value);
+         empty list when input is falsy.
+    """
     if not keyframes:
         return []
     mapped = []
@@ -129,10 +159,21 @@ def _map_keyframes(keyframes, transform):
 
 
 def _negate_keyframes(keyframes):
+    """Sign-flip every keyframe value (used for GC Z → Blender Y).
+
+    In: keyframes (list[IRKeyframe]|None).
+    Out: list[IRKeyframe] with value → -value.
+    """
     return _map_keyframes(keyframes or [], lambda v: -v)
 
 
 def _fov_to_lens(fov_degrees, sensor_height):
+    """Vertical FOV (degrees) → focal length in mm, with safe fallback.
+
+    In: fov_degrees (float); sensor_height (float, mm).
+    Out: float, focal length mm. Returns Blender's default 50 mm when
+         fov_degrees is out of range (≤0 or ≥180).
+    """
     if fov_degrees <= 0 or fov_degrees >= 180:
         return _BLENDER_DEFAULT_LENS
     return sensor_height / (2.0 * math.tan(math.radians(fov_degrees) / 2.0))
@@ -145,7 +186,13 @@ def _fov_to_lens(fov_degrees, sensor_height):
 
 def plan_constraints(ir_ik, ir_copy_loc, ir_track_to, ir_copy_rot,
                      ir_limit_rot, ir_limit_loc):
-    """Wrap IR constraint lists in BRConstraints without modification."""
+    """Wrap IR constraint lists in BRConstraints without modification.
+
+    In: ir_ik (list[IRIKConstraint]); ir_copy_loc (list[IRCopyLocationConstraint]);
+        ir_track_to (list[IRTrackToConstraint]); ir_copy_rot (list[IRCopyRotationConstraint]);
+        ir_limit_rot (list[IRLimitConstraint]); ir_limit_loc (list[IRLimitConstraint]).
+    Out: BRConstraints holding shallow copies of each list.
+    """
     return BRConstraints(
         ik=list(ir_ik),
         copy_location=list(ir_copy_loc),
@@ -165,6 +212,9 @@ def plan_particle_summary(ir_particles):
     """Compute the counts that build writes as armature custom props.
 
     Returns None if there's no particle system; build phase skips entirely.
+
+    In: ir_particles (IRParticleSystem|None).
+    Out: BRParticleSummary|None.
     """
     if ir_particles is None:
         return None
@@ -180,11 +230,20 @@ def plan_particle_summary(ir_particles):
 
 
 def _gc_to_blender(xyz):
-    """GC Y-up → Blender Z-up: (x, y, z) → (x, -z, y)."""
+    """GC Y-up → Blender Z-up: (x, y, z) → (x, -z, y).
+
+    In: xyz (tuple[float, float, float], GC-space position).
+    Out: tuple[float, float, float], Blender-space position.
+    """
     x, y, z = xyz
     return (x, -z, y)
 
 
 def _linearize_rgb(rgb):
+    """sRGB → linear per channel (RGB only, alpha left to the caller).
+
+    In: rgb (tuple/sequence with at least 3 floats, sRGB [0, 1]).
+    Out: tuple[float, float, float], linear RGB.
+    """
     r, g, b = rgb[0], rgb[1], rgb[2]
     return (srgb_to_linear(r), srgb_to_linear(g), srgb_to_linear(b))

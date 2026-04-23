@@ -97,7 +97,13 @@ def plan_meshes(ir_model):
 
 
 def plan_vertex_groups(ir_mesh):
-    """Flatten the three IR SkinType variants into a single BRVertexGroup list."""
+    """Flatten the three IR SkinType variants into a single BRVertexGroup list.
+
+    In: ir_mesh (IRMesh).
+    Out: list[BRVertexGroup] — empty if bone_weights is None; WEIGHTED produces
+         one group per referenced bone; SINGLE_BONE/RIGID produce one group with
+         every vertex at weight 1.0.
+    """
     bw = ir_mesh.bone_weights
     if bw is None:
         return []
@@ -120,7 +126,12 @@ def plan_vertex_groups(ir_mesh):
 
 
 def plan_mesh_instances(ir_model):
-    """Expand JOBJ_INSTANCE bones into BRMeshInstance entries."""
+    """Expand JOBJ_INSTANCE bones into BRMeshInstance entries.
+
+    In: ir_model (IRModel).
+    Out: list[BRMeshInstance] — one entry per (instanced source mesh, target bone)
+         pair, carrying the target bone's world matrix as matrix_local.
+    """
     meshes_by_source_bone = {}
     for mesh_index, ir_mesh in enumerate(ir_model.meshes):
         meshes_by_source_bone.setdefault(ir_mesh.parent_bone_index, []).append(mesh_index)
@@ -139,13 +150,23 @@ def plan_mesh_instances(ir_model):
 
 
 def _material_dedup_key(ir_mesh):
-    """Dedup key: (id(ir_material), cull_front, cull_back). None if no material."""
+    """Dedup key for a mesh's material: (id(ir_material), cull_front, cull_back).
+
+    In: ir_mesh (IRMesh).
+    Out: tuple(int, bool, bool) or None when the mesh has no material.
+    """
     if ir_mesh.material is None:
         return None
     return (id(ir_mesh.material), ir_mesh.cull_front, ir_mesh.cull_back)
 
 
 def _collect_color_animated_mesh_keys(ir_model):
+    """Mesh keys whose materials need a DiffuseColor fcurve target.
+
+    In: ir_model (IRModel).
+    Out: set[str] of mesh_key strings (matches BRMesh.mesh_key format) for
+         every mesh whose bone_animations include any diffuse RGB keyframe.
+    """
     keys = set()
     for anim_set in (ir_model.bone_animations or []):
         for mat_track in anim_set.material_tracks:
@@ -155,10 +176,20 @@ def _collect_color_animated_mesh_keys(ir_model):
 
 
 def _lookup_parent_bone_name(parent_bone_index, bones):
+    """Safe name lookup — returns None for out-of-range indices.
+
+    In: parent_bone_index (int|None); bones (list[IRBone]).
+    Out: str|None.
+    """
     if parent_bone_index is None or parent_bone_index >= len(bones):
         return None
     return bones[parent_bone_index].name
 
 
 def _make_mesh_key(index, digit_width, parent_bone_name):
+    """Stable mesh key used to bind material-animation tracks to their mesh.
+
+    In: index (int); digit_width (int, padding); parent_bone_name (str|None).
+    Out: str — 'mesh_{NN}_{bone_name or unknown}'.
+    """
     return "mesh_%s_%s" % (str(index).zfill(digit_width), parent_bone_name or 'unknown')

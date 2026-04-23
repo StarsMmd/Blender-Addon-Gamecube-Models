@@ -38,7 +38,11 @@ _PATH_ROTATION_X = -math.pi / 2  # GC Y-up → Blender Z-up rotation for spline-
 
 
 def plan_actions(ir_anim_sets, ir_bones):
-    """Convert a list of IRBoneAnimationSet into BRAction list."""
+    """Convert a list of IRBoneAnimationSet into BRAction list.
+
+    In: ir_anim_sets (list[IRBoneAnimationSet]); ir_bones (list[IRBone], for bake-context lookup).
+    Out: list[BRAction], one per input anim set, in the same order.
+    """
     actions = []
     for anim_set in ir_anim_sets:
         actions.append(_plan_single_action(anim_set, ir_bones))
@@ -46,6 +50,11 @@ def plan_actions(ir_anim_sets, ir_bones):
 
 
 def _plan_single_action(anim_set, ir_bones):
+    """Convert one IRBoneAnimationSet into a BRAction with bone + material tracks.
+
+    In: anim_set (IRBoneAnimationSet); ir_bones (list[IRBone]).
+    Out: BRAction with bone_tracks, material_tracks, loop, is_static populated.
+    """
     bone_tracks = [
         _plan_bone_track(track, ir_bones)
         for track in anim_set.tracks
@@ -72,6 +81,12 @@ def _plan_single_action(anim_set, ir_bones):
 
 
 def _plan_bone_track(ir_track, ir_bones):
+    """Convert one IRBoneTrack into a BRBoneTrack with a pre-computed BRBakeContext.
+
+    In: ir_track (IRBoneTrack); ir_bones (list[IRBone], for accumulated_scale lookup).
+    Out: BRBoneTrack. parent_edit_scale_correction is left None here — filled later
+         by attach_parent_edit_scale_corrections.
+    """
     ir_bone = ir_bones[ir_track.bone_index]
     has_path = ir_track.spline_path is not None
     strategy = choose_bake_strategy(ir_bone.accumulated_scale)
@@ -97,6 +112,9 @@ def choose_bake_strategy(accumulated_scale):
     Mirrors the heuristic that was previously inline in ``_bake_bone_track``.
     A zero-ish component in the accumulation forces 'direct' because the
     aligned sandwich requires a safely invertible rest.
+
+    In: accumulated_scale (tuple[float, float, float]).
+    Out: str, either 'aligned' or 'direct'.
     """
     nonzero = [abs(x) for x in accumulated_scale if abs(x) > _NEAR_ZERO_SCALE]
     if not nonzero:
@@ -108,7 +126,13 @@ def choose_bake_strategy(accumulated_scale):
 
 
 def build_bake_context(ir_track, ir_bone, strategy, has_path):
-    """Pre-compute the rest data consumed by ``compute_pose_basis``."""
+    """Pre-compute the rest data consumed by ``compute_pose_basis``.
+
+    In: ir_track (IRBoneTrack); ir_bone (IRBone); strategy (str, 'aligned'|'direct');
+        has_path (bool, FOLLOW_PATH constraint bone).
+    Out: BRBakeContext with rest_base/inv, decomposed rest SRT, and aligned-only
+         edit matrices when applicable. parent_edit_scale_correction is None.
+    """
     rest_base = Matrix(ir_track.rest_local_matrix)
     if has_path:
         rest_base = Matrix.Rotation(_PATH_ROTATION_X, 4, 'X') @ rest_base
@@ -152,6 +176,9 @@ def attach_parent_edit_scale_corrections(br_actions, ir_bones):
     Must run after ``plan_actions`` because the parent's scale_correction
     comes from IRBone, not from the track itself. Kept as a separate pass
     so ``_plan_bone_track`` can stay self-contained.
+
+    In: br_actions (list[BRAction], mutated in place); ir_bones (list[IRBone]).
+    Out: None; bake_contexts' parent_edit_scale_correction fields are populated.
     """
     for action in br_actions:
         for track in action.bone_tracks:
@@ -178,6 +205,10 @@ def compute_pose_basis(ctx, animated_scale, animated_rotation, animated_location
 
     The only decision this function makes is picking between the aligned
     formula (edit_scale_correction sandwich) and the direct SRT delta.
+
+    In: ctx (BRBakeContext); animated_scale/rotation/location (tuple[float, float, float]).
+    Out: ((loc_x, loc_y, loc_z), (euler_x, euler_y, euler_z), (scl_x, scl_y, scl_z));
+         scale components clamped to ±_MAX_BASIS_SCALE.
     """
     mtx = compile_srt_matrix(animated_scale, animated_rotation, animated_location)
     if ctx.has_path:
@@ -205,6 +236,9 @@ def _compute_aligned_basis(ctx, mtx):
 
     Falls back to direct ``rest_base_inv @ mtx`` if the sandwich's inversion
     fails (singular matrix), matching the pre-Plan behaviour.
+
+    In: ctx (BRBakeContext with strategy='aligned'); mtx (Matrix, composed animated T·R·S).
+    Out: (Vector, Quaternion, Vector) — decomposed (translation, rotation, scale).
     """
     try:
         local_edit = Matrix(ctx.local_edit)
@@ -228,6 +262,11 @@ def _compute_direct_basis(ctx, mtx, animated_rotation, animated_scale):
     the composed matrix (so path rotation applies cleanly); scale is the
     raw animated component divided by the rest component (with a safe
     fallback for near-zero rests).
+
+    In: ctx (BRBakeContext with strategy='direct'); mtx (Matrix, composed animated T·R·S);
+        animated_rotation (tuple[float, float, float], Euler XYZ);
+        animated_scale (tuple[float, float, float]).
+    Out: (Vector, Quaternion, Vector) — (translation, rotation, scale).
     """
     rest_loc = Vector(ctx.rest_translation)
     rest_quat_inv = _quaternion(ctx.rest_rotation_quat).inverted()
@@ -253,13 +292,22 @@ def _compute_direct_basis(ctx, mtx, animated_rotation, animated_scale):
 
 
 def _safe_scale_delta(rest_component, animated_component):
+    """Per-axis ``animated / rest``, falling back to ``animated`` when rest is ~0.
+
+    In: rest_component (float); animated_component (float).
+    Out: float.
+    """
     if abs(rest_component) > _NEAR_ZERO_SCALE:
         return animated_component / rest_component
     return animated_component
 
 
 def _quaternion(wxyz):
-    """Lightweight wrapper so callers don't have to import Quaternion directly."""
+    """Lightweight wrapper so callers don't have to import Quaternion directly.
+
+    In: wxyz (tuple[float, float, float, float], scalar-first).
+    Out: Quaternion (mathutils when available, else math_shim fallback).
+    """
     try:
         from mathutils import Quaternion
         return Quaternion(wxyz)
@@ -269,6 +317,11 @@ def _quaternion(wxyz):
 
 
 def _clamp_scale(scale_vec, limit):
+    """Per-component clamp of a scale Vector into ``[-limit, +limit]``.
+
+    In: scale_vec (Vector); limit (float).
+    Out: Vector with each component clamped.
+    """
     return Vector((
         max(-limit, min(limit, scale_vec.x)),
         max(-limit, min(limit, scale_vec.y)),

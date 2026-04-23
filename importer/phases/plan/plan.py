@@ -31,6 +31,10 @@ def plan_scene(ir_scene, options=None, logger=StubLogger()):
     Full coverage: armature, meshes, materials, actions, constraints,
     particles, lights, cameras. build_blender should not import from IR
     on the planned path.
+
+    In: ir_scene (IRScene); options (dict|None, reads 'filepath', 'ik_hack');
+        logger (Logger, defaults to StubLogger).
+    Out: BRScene with models/lights/cameras populated.
     """
     options = options or {}
     models = []

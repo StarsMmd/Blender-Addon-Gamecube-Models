@@ -45,12 +45,25 @@ except (ImportError, SystemError):
 
 class BRGraphBuilder:
     def __init__(self):
+        """Initialise an empty graph with auto-generated-name counter at 0.
+
+        In: (self).
+        Out: None.
+        """
         self._nodes = []
         self._links = []
         self._counter = 0
 
     def add_node(self, node_type, name=None, properties=None,
                  input_defaults=None, image_ref=None, location=None):
+        """Append a new BRNode to the graph and return its name.
+
+        In: node_type (str, bl_idname); name (str|None, auto-gen '_nN' if None);
+            properties (dict|None); input_defaults (dict|None);
+            image_ref (BRImage|None, only for ShaderNodeTexImage);
+            location (tuple[float, float]|None, editor canvas coords).
+        Out: str, the resolved node name for use in add_link targets.
+        """
         if name is None:
             name = '_n%d' % self._counter
             self._counter += 1
@@ -65,6 +78,12 @@ class BRGraphBuilder:
         return name
 
     def add_link(self, from_node, from_output, to_node, to_input):
+        """Record a socket-to-socket link between two already-added nodes.
+
+        In: from_node (str, BRNode name); from_output (int|str, socket key);
+            to_node (str, BRNode name); to_input (int|str, socket key).
+        Out: None.
+        """
         self._links.append(BRLink(
             from_node=from_node,
             from_output=from_output,
@@ -73,6 +92,12 @@ class BRGraphBuilder:
         ))
 
     def set_input_default(self, node_name, socket_key, value):
+        """Set an input socket's default_value on an already-added node.
+
+        In: node_name (str, must match an added BRNode.name);
+            socket_key (int|str); value (object).
+        Out: None. Raises KeyError if node_name isn't found.
+        """
         for n in self._nodes:
             if n.name == node_name:
                 n.input_defaults[socket_key] = value
@@ -80,6 +105,11 @@ class BRGraphBuilder:
         raise KeyError("node %r not found" % node_name)
 
     def set_property(self, node_name, key, value):
+        """Set a type-specific attribute (applied via setattr at build time).
+
+        In: node_name (str); key (str, bpy attribute name); value (object).
+        Out: None. Raises KeyError if node_name isn't found.
+        """
         for n in self._nodes:
             if n.name == node_name:
                 n.properties[key] = value
@@ -87,11 +117,20 @@ class BRGraphBuilder:
         raise KeyError("node %r not found" % node_name)
 
     def finalize(self):
+        """Snapshot accumulated nodes+links into an immutable BRNodeGraph.
+
+        In: (self only).
+        Out: BRNodeGraph with defensive copies of nodes and links lists.
+        """
         return BRNodeGraph(nodes=list(self._nodes), links=list(self._links))
 
 
 def _linearize_rgb(rgba):
-    """Convert IR-side sRGB to linear for Blender shader defaults (alpha untouched)."""
+    """Convert IR-side sRGB to linear for Blender shader defaults (alpha untouched).
+
+    In: rgba (tuple[float, float, float, float], sRGB [0, 1]).
+    Out: tuple[float, float, float, float] — linear RGB + unchanged alpha.
+    """
     return (
         srgb_to_linear(rgba[0]),
         srgb_to_linear(rgba[1]),
@@ -109,14 +148,12 @@ def plan_material(ir_material, name, has_color_animation=False,
                   cull_front=False, cull_back=False, dedup_key=None):
     """Build a BRMaterial spec from IRMaterial.
 
-    Args:
-        ir_material: IRMaterial dataclass.
-        name: material name.
-        has_color_animation: force creation of a DiffuseColor RGB node.
-        cull_front, cull_back: GameCube POBJ cull flags (controls
-            ``mat.use_backface_culling``).
-        dedup_key: opaque identity used by build to dedup bpy materials
-            across meshes. If None, build treats every plan as unique.
+    In: ir_material (IRMaterial); name (str, Blender material name);
+        has_color_animation (bool, force DiffuseColor RGB node);
+        cull_front (bool); cull_back (bool);
+        dedup_key (object|None, identity for bpy-material sharing).
+    Out: BRMaterial with a fully baked BRNodeGraph, blend_method, and
+         use_backface_culling set.
     """
     g = BRGraphBuilder()
 
@@ -201,6 +238,13 @@ def plan_material(ir_material, name, has_color_animation=False,
 
 
 def _plan_base_color_alpha(g, ir_mat, has_color_animation):
+    """Emit the base-color + alpha nodes and return their output refs.
+
+    In: g (BRGraphBuilder, mutated); ir_mat (IRMaterial);
+        has_color_animation (bool, force DiffuseColor node for unlit materials).
+    Out: ((str, int|str), (str, int|str)) — (color_ref, alpha_ref) socket refs
+         that subsequent stages chain from.
+    """
     dc = _linearize_rgb(ir_mat.diffuse_color)
 
     if ir_mat.lighting == LightingModel.LIT:
@@ -228,6 +272,13 @@ def _plan_base_color_alpha(g, ir_mat, has_color_animation):
 
 
 def _plan_unlit_base_color(g, ir_mat, dc, has_color_animation):
+    """Unlit-path base color — material-only, vertex-only, or combined.
+
+    In: g (BRGraphBuilder, mutated); ir_mat (IRMaterial);
+        dc (tuple[float, float, float, float], linearised diffuse);
+        has_color_animation (bool).
+    Out: (str, int|str) — output socket ref feeding the rest of the color chain.
+    """
     if ir_mat.color_source == ColorSource.MATERIAL or has_color_animation:
         color = g.add_node('ShaderNodeRGB', name='DiffuseColor')
         g.set_property(color, '_output_default', list(dc))
@@ -257,6 +308,11 @@ def _plan_unlit_base_color(g, ir_mat, dc, has_color_animation):
 
 
 def _plan_unlit_base_alpha(g, ir_mat):
+    """Unlit-path alpha — material-only, vertex-only, or multiplied combination.
+
+    In: g (BRGraphBuilder, mutated); ir_mat (IRMaterial).
+    Out: (str, int|str) — output socket ref feeding the alpha chain.
+    """
     if ir_mat.alpha_source == ColorSource.MATERIAL:
         alpha = g.add_node('ShaderNodeValue', name='AlphaValue')
         g.set_property(alpha, '_output_default', float(ir_mat.alpha))
@@ -276,6 +332,12 @@ def _plan_unlit_base_alpha(g, ir_mat):
 
 
 def _plan_vertex_color_mult(g, prev_ref, attribute_name):
+    """Multiply the current color/alpha chain by a named vertex attribute.
+
+    In: g (BRGraphBuilder, mutated); prev_ref ((str, int|str), upstream socket);
+        attribute_name (str, e.g. 'color_0' or 'alpha_0').
+    Out: (str, int|str) — MixRGB MULTIPLY output socket.
+    """
     vtx = g.add_node('ShaderNodeAttribute',
                      properties={'attribute_name': attribute_name})
     mult = g.add_node('ShaderNodeMixRGB',
@@ -292,6 +354,12 @@ def _plan_vertex_color_mult(g, prev_ref, attribute_name):
 
 
 def _plan_texture_sampling(g, tex_layer, tex_idx):
+    """Emit the UV → Mapping → (optional wrap chain) → Image Texture pipeline.
+
+    In: g (BRGraphBuilder, mutated); tex_layer (IRTextureLayer); tex_idx (int).
+    Out: ((str, int), (str, int), (str, int|str)|None) —
+         (tex_color_ref, tex_alpha_ref, uv_source_ref).
+    """
     uv_ref = None
     if tex_layer.coord_type == CoordType.UV:
         uv = g.add_node('ShaderNodeUVMap',
@@ -366,7 +434,12 @@ def _plan_texture_sampling(g, tex_layer, tex_idx):
 
 def _plan_per_axis_wrap(g, mapping_name, tex_idx, wrap_s, wrap_t):
     """Separate → per-axis op → Combine chain. Exporter pattern-matches
-    against this to recover wrap mode per axis."""
+    against this to recover wrap mode per axis.
+
+    In: g (BRGraphBuilder, mutated); mapping_name (str, upstream ShaderNodeMapping name);
+        tex_idx (int, for node naming); wrap_s/wrap_t (WrapMode enum).
+    Out: (str, int) — CombineXYZ output socket feeding the texture node.
+    """
     sep = g.add_node('ShaderNodeSeparateXYZ', name='wrap_sep_%d' % tex_idx)
     g.add_link(mapping_name, 0, sep, 0)
 
@@ -381,6 +454,15 @@ def _plan_per_axis_wrap(g, mapping_name, tex_idx, wrap_s, wrap_t):
 
 
 def _plan_wrap_axis(g, sep_name, axis_idx, wrap, axis_label, tex_idx):
+    """Emit the per-axis wrap op matching a single GX WrapMode.
+
+    MIRROR → PINGPONG; REPEAT → FRACT; CLAMP → Max(Min(u, 1), 0) chain.
+
+    In: g (BRGraphBuilder, mutated); sep_name (str, SeparateXYZ node name);
+        axis_idx (int, 0 or 1); wrap (WrapMode); axis_label (str, 's' or 't');
+        tex_idx (int, for node naming).
+    Out: (str, int) — final op's output socket for the axis.
+    """
     if wrap == WrapMode.MIRROR:
         n = g.add_node('ShaderNodeMath',
                        name='wrap_pp_%s_%d' % (axis_label, tex_idx),
@@ -409,6 +491,11 @@ def _plan_wrap_axis(g, sep_name, axis_idx, wrap, axis_label, tex_idx):
 
 
 def _to_br_image(ir_image):
+    """Convert IRImage → BRImage (or pass None through).
+
+    In: ir_image (IRImage|None).
+    Out: BRImage|None. cache_key is (image_id, palette_id).
+    """
     if ir_image is None:
         return None
     return BRImage(
@@ -439,6 +526,16 @@ _LAYER_BLEND_OPS = {
 
 
 def _plan_apply_blend(g, last_ref, cur_color, cur_alpha, blend_mode, blend_factor, is_color):
+    """Insert a MixRGB node applying one IR LayerBlendMode to the running chain.
+
+    In: g (BRGraphBuilder, mutated); last_ref ((str, int|str), upstream chain output);
+        cur_color ((str, int|str), current texture color output);
+        cur_alpha ((str, int|str), current texture alpha output);
+        blend_mode (LayerBlendMode); blend_factor (float);
+        is_color (bool, True for color chain, False for alpha chain).
+    Out: (str, int|str) — output ref of the inserted mix node, or the original
+         last_ref unchanged for NONE/PASS/unknown modes.
+    """
     if blend_mode in (LayerBlendMode.NONE, LayerBlendMode.PASS):
         return last_ref
 
@@ -484,6 +581,14 @@ def _plan_apply_blend(g, last_ref, cur_color, cur_alpha, blend_mode, blend_facto
 
 
 def _plan_tev_stage(g, stage, cur_color, cur_alpha, is_color):
+    """Emit one full TEV combiner stage (add/sub + bias + scale + clamp).
+
+    In: g (BRGraphBuilder, mutated); stage (CombinerStage);
+        cur_color/cur_alpha ((str, int|str), current chain sockets);
+        is_color (bool, color vs alpha stage).
+    Out: (str, int) — final scaled/clamped output socket. Comparison ops
+         are stubbed to return input A unchanged.
+    """
     inputs = [
         _plan_tev_input(g, ci, cur_color, cur_alpha, is_color)
         for ci in (stage.input_a, stage.input_b, stage.input_c, stage.input_d)
@@ -532,6 +637,16 @@ def _plan_tev_stage(g, stage, cur_color, cur_alpha, is_color):
 
 
 def _plan_tev_input(g, combiner_input, cur_color, cur_alpha, is_color):
+    """Resolve one TEV combiner input to a shader socket reference.
+
+    Returns the current texture output for TEXTURE_COLOR/TEXTURE_ALPHA;
+    creates a new constant RGB/Value node for CONSTANT/REGISTER/ZERO/ONE/HALF
+    sources honouring the GX channel selector (RGB/RRR/GGG/BBB/AAA).
+
+    In: g (BRGraphBuilder, mutated); combiner_input (CombinerInput);
+        cur_color/cur_alpha ((str, int|str)); is_color (bool).
+    Out: (str, int|str) — socket ref usable as a link source.
+    """
     src = combiner_input.source
 
     if src == CombinerInputSource.TEXTURE_COLOR:
@@ -596,6 +711,12 @@ def _plan_tev_input(g, combiner_input, cur_color, cur_alpha, is_color):
 
 
 def _plan_tev_add_sub(g, inputs, stage, is_color):
+    """TEV add/sub body: ``lerp(A, B, C) ± D`` expanded as individual nodes.
+
+    In: g (BRGraphBuilder, mutated); inputs (list of 4 (str, int|str), A/B/C/D);
+        stage (CombinerStage, only .operation is read); is_color (bool).
+    Out: (str, int) — final MixRGB (color path) or Math (alpha path) output socket.
+    """
     is_sub = (stage.operation == CombinerOp.SUBTRACT)
 
     if is_color:
@@ -658,7 +779,17 @@ def _plan_tev_add_sub(g, inputs, stage, is_color):
 
 
 def _plan_pixel_engine(g, ir_mat, color_ref, alpha_ref):
-    """Returns (color_ref, alpha_ref, transparent_shader, alt_blend_mode, blend_method)."""
+    """Apply fragment-blending effects; returns updated chain refs + flags.
+
+    In: g (BRGraphBuilder, mutated); ir_mat (IRMaterial);
+        color_ref/alpha_ref ((str, int|str), current chain sockets).
+    Out: (color_ref, alpha_ref, transparent_shader, alt_blend_mode, blend_method):
+         color_ref/alpha_ref: possibly-replaced socket refs ((str, int|str)).
+         transparent_shader (bool): wire Alpha input on Principled BSDF.
+         alt_blend_mode (str): 'NOTHING' / 'ADD' / 'ADD_ALPHA' / 'MULTIPLY' — picked
+             up by _plan_output_shader for post-shader wiring.
+         blend_method (str|None): 'OPAQUE' / 'HASHED' / 'BLEND' / None (no change).
+    """
     transparent = False
     alt_blend = 'NOTHING'
     blend_method = None
@@ -756,6 +887,16 @@ def _plan_pixel_engine(g, ir_mat, color_ref, alpha_ref):
 
 def _plan_output_shader(g, ir_mat, color_ref, alpha_ref, bump_ref,
                         transparent_shader, alt_blend_mode, blend_method):
+    """Wire the Principled BSDF (+ optional emission / add-shader / bump).
+
+    In: g (BRGraphBuilder, mutated); ir_mat (IRMaterial);
+        color_ref/alpha_ref/bump_ref ((str, int|str)|None);
+        transparent_shader (bool); alt_blend_mode (str);
+        blend_method (str|None, incoming from _plan_pixel_engine).
+    Out: (shader_ref, blend_method): shader_ref ((str, int|str)) feeds the final
+         add-shader that receives the ambient emission; blend_method may be
+         upgraded to 'BLEND' by alt_blend_mode.
+    """
     # Principled BSDF. Specular computations mirror the original math.
     tint = _compute_specular_tint(ir_mat)
     shader_props = {}
@@ -832,7 +973,14 @@ def _plan_output_shader(g, ir_mat, color_ref, alpha_ref, bump_ref,
 
 
 def _compute_specular_tint(ir_mat):
-    """Tint = (spec - 1) / (diff - 1) per channel, clamped to [0, 1]."""
+    """Tint = (spec - 1) / (diff - 1) per channel, clamped to [0, 1].
+
+    Blender 4's Principled BSDF computes specular as mix(white, base_color, tint);
+    the formula inverts that so our IR specular color survives the mapping.
+
+    In: ir_mat (IRMaterial).
+    Out: list[float, float, float, float] — per-channel tint with alpha=1.0.
+    """
     tint = [0.0, 0.0, 0.0, 1.0]
     for c in range(3):
         diff = srgb_to_linear(ir_mat.diffuse_color[c])
@@ -850,6 +998,14 @@ def _compute_specular_tint(ir_mat):
 
 
 def _plan_ambient_emission(g, ir_mat, shader_ref):
+    """Add the hidden ambient emission + add-shader pair for round-trip export.
+
+    The ambient emission has Strength=0 (disconnected visually) but exporter
+    reads the Color back by node name.
+
+    In: g (BRGraphBuilder, mutated); ir_mat (IRMaterial); shader_ref ((str, int|str)).
+    Out: (str, int) — final add-shader output that should feed Material Output.
+    """
     ambient_emission = g.add_node(
         'ShaderNodeEmission',
         name='dat_ambient_emission',
@@ -870,6 +1026,14 @@ def _plan_ambient_emission(g, ir_mat, shader_ref):
 
 
 def _plan_auto_layout(g):
+    """Assign each BRNode a canvas location via BFS depth from the output.
+
+    Columns go right→left (output at column 0, right edge); within a column
+    nodes are sorted by name for stable vertical order.
+
+    In: g (BRGraphBuilder, nodes mutated in place).
+    Out: None. Each BRNode.location gets a (x, y) tuple.
+    """
     NODE_WIDTH = 300
     NODE_HEIGHT = 200
 

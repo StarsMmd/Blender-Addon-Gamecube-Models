@@ -21,6 +21,12 @@ def build_bone_animations(br_actions, armature, options, logger=StubLogger(), ma
 
     Each Action gets an OBJECT slot for the armature plus MATERIAL slots
     for any paired material tracks (multi-slot actions).
+
+    In: br_actions (list[BRAction]); armature (bpy.types.Object, armature);
+        options (dict, reads 'max_frame'); logger (Logger);
+        material_lookup (dict[str, bpy.types.Material]|None, keyed by mesh_key).
+    Out: (list[bpy.types.Action], dict[bpy.types.Material, int]) — Actions in
+         the order given + slot index map for material animations.
     """
     from .material_animations import apply_color_tracks, apply_texture_uv_tracks
 
@@ -70,6 +76,9 @@ def reset_pose(armature):
 
     Direct property assignment (not mode-switching operators) so the reset
     is robust when prior imports leave Blender in unexpected state.
+
+    In: armature (bpy.types.Object, armature; pose bones mutated in place).
+    Out: None.
     """
     for bone in armature.pose.bones:
         bone.location = (0, 0, 0)
@@ -92,6 +101,11 @@ def _bake_bone_track(track, action, max_frame, logger, armature):
     """Insert raw IR keyframes into temp fcurves, evaluate frame-by-frame,
     run them through the pure pose-basis formula, and batch-write final
     rotation_euler / location / scale fcurves.
+
+    In: track (BRBoneTrack); action (bpy.types.Action, mutated);
+        max_frame (int, upper bake bound); logger (Logger);
+        armature (bpy.types.Object|None, needed for FOLLOW_PATH setup).
+    Out: None. The temporary raw fcurves are removed before returning.
     """
     if track.spline_path is not None and armature is not None:
         _apply_path_constraint(track, action, armature, logger)
@@ -111,7 +125,13 @@ def _bake_bone_track(track, action, max_frame, logger, armature):
 
 def _insert_raw_keyframes(track, action):
     """Create temp fcurves on the 'r'/'l'/'s' data paths and seed them with
-    the decoded IR keyframes. Returns a 10-slot list indexed by channel."""
+    the decoded IR keyframes.
+
+    In: track (BRBoneTrack); action (bpy.types.Action, fcurves mutated).
+    Out: list[bpy.types.FCurve|None] of length _CHANNEL_COUNT; None for any
+         channel that had no keyframes in the input (filled by
+         _fill_missing_channels_with_rest next).
+    """
     raw = [None] * _CHANNEL_COUNT
     for keyframe_channels, letter, indices in (
         (track.rotation, 'r', _ROT_INDICES),
@@ -140,7 +160,12 @@ def _insert_raw_keyframes(track, action):
 
 def _fill_missing_channels_with_rest(track, action, raw_curves):
     """Seed any channel without keyframes with a single rest-pose value so
-    evaluate() returns a sensible constant during the bake loop."""
+    evaluate() returns a sensible constant during the bake loop.
+
+    In: track (BRBoneTrack); action (bpy.types.Action, mutated);
+        raw_curves (list[bpy.types.FCurve|None], mutated — None slots filled).
+    Out: None.
+    """
     rest_per_letter = {
         'r': track.rest_rotation,
         'l': track.rest_position,
@@ -157,6 +182,12 @@ def _fill_missing_channels_with_rest(track, action, raw_curves):
 
 
 def _create_final_fcurves(bone_name, action):
+    """Create the nine final fcurves (rotation_euler × 3, location × 3, scale × 3).
+
+    In: bone_name (str); action (bpy.types.Action, fcurves mutated).
+    Out: list[bpy.types.FCurve|None] of length _CHANNEL_COUNT; index 3 is
+         always None (channel layout reserves it).
+    """
     curves = [None] * _CHANNEL_COUNT
     for component in range(3):
         curves[component] = action.fcurves.new(
@@ -170,8 +201,13 @@ def _create_final_fcurves(bone_name, action):
 
 def _bake_frames(track, raw_curves, end_frame, logger):
     """Evaluate raw fcurves at every integer frame and run the result
-    through compute_pose_basis. Returns one list-of-(frame, value) per
-    channel."""
+    through compute_pose_basis.
+
+    In: track (BRBoneTrack, read for bake_context); raw_curves (list[FCurve]);
+        end_frame (int, exclusive upper bound); logger (Logger).
+    Out: list[list[tuple[int, float]]] of length _CHANNEL_COUNT — per-channel
+         (frame, value) pairs ready for bulk insert.
+    """
     baked = [[] for _ in range(_CHANNEL_COUNT)]
     ctx = track.bake_context
 
@@ -211,7 +247,11 @@ def _bake_frames(track, raw_curves, end_frame, logger):
 
 def _write_baked_values(curves, baked):
     """Bulk-write per-frame values with BEZIER interpolation. Using add()
-    once + per-slot assignment is O(n); per-frame insert() is O(n log k)."""
+    once + per-slot assignment is O(n); per-frame insert() is O(n log k).
+
+    In: curves (list[FCurve|None]); baked (list[list[tuple[int, float]]]).
+    Out: None; fcurves are mutated in place.
+    """
     for idx in (0, 1, 2, 4, 5, 6, 7, 8, 9):
         curve = curves[idx]
         values = baked[idx]
@@ -229,7 +269,16 @@ def _build_material_tracks(br_action, action, material_lookup, mat_slot_indices,
                            logger):
     """Attach paired material animation tracks to the action as additional
     slots. Still consumes IR-shaped material tracks (carried through BR
-    as pass-through until the materials stage migrates them)."""
+    as pass-through until the materials stage migrates them).
+
+    In: br_action (BRAction); action (bpy.types.Action, mutated);
+        material_lookup (dict[str, bpy.types.Material]|None);
+        mat_slot_indices (dict[bpy.types.Material, int], mutated);
+        max_frame (int); apply_color_tracks / apply_texture_uv_tracks (callables
+        injected from material_animations to avoid a circular import);
+        logger (Logger).
+    Out: int, number of material fcurves created across all material tracks.
+    """
     if not br_action.material_tracks or not material_lookup:
         return 0
 
@@ -287,7 +336,14 @@ _SPLINE_TYPE_MAP = {
 def _apply_path_constraint(track, action, armature, logger):
     """Create a Blender curve from spline points and add a FOLLOW_PATH
     constraint. Bone follows the curve; path parameter is animated via
-    the constraint's offset fcurve."""
+    the constraint's offset fcurve.
+
+    In: track (BRBoneTrack with non-None spline_path); action (bpy.types.Action,
+        gets an offset fcurve); armature (bpy.types.Object);
+        logger (Logger).
+    Out: None. Creates a bpy.types.Curve object parented to the armature and
+         adds FOLLOW_PATH + LIMIT_LOCATION constraints on the pose bone.
+    """
     bone_name = track.bone_name
     path = track.spline_path
     points = path.control_points

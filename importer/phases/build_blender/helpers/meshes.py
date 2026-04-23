@@ -15,10 +15,14 @@ except (ImportError, SystemError):
 
 def build_meshes(br_model, armature, context, logger=StubLogger()):
     """Create Blender meshes, vertex groups, armature modifiers, and instance
-    copies from a BRModel. Returns a material_lookup dict keyed by mesh_key.
+    copies from a BRModel. Materials are built once per ``BRModel.materials``
+    entry and reused across every BRMesh that references the same
+    ``material_index``.
 
-    Materials are built once per BRModel.materials entry and reused across
-    every BRMesh that references the same material_index.
+    In: br_model (BRModel); armature (bpy.types.Object);
+        context (Blender context); logger (Logger).
+    Out: dict[str, bpy.types.Material] — mesh_key → material, consumed later
+         by the animation baker to bind material-animation fcurves.
     """
     image_cache = {}
     material_lookup = {}
@@ -55,7 +59,13 @@ def build_meshes(br_model, armature, context, logger=StubLogger()):
 
 
 def _build_mesh(br_mesh, armature, logger, mesh_idx, material=None):
-    """Create one Blender mesh object from a BRMesh."""
+    """Create one Blender mesh object from a BRMesh.
+
+    In: br_mesh (BRMesh); armature (bpy.types.Object);
+        logger (Logger); mesh_idx (int, for debug logs);
+        material (bpy.types.Material|None, falls back to an empty placeholder).
+    Out: bpy.types.Object — the newly created mesh object, linked to the scene.
+    """
     mesh_data = bpy.data.meshes.new(br_mesh.name)
     mesh_object = bpy.data.objects.new(br_mesh.name, mesh_data)
     mesh_object.location = Vector((0, 0, 0))
@@ -117,7 +127,11 @@ def _build_mesh(br_mesh, armature, logger, mesh_idx, material=None):
 
 
 def _apply_vertex_groups(vertex_groups, mesh_object):
-    """Create Blender vertex groups and assign weights from a BRVertexGroup list."""
+    """Create Blender vertex groups and assign weights from a BRVertexGroup list.
+
+    In: vertex_groups (list[BRVertexGroup]); mesh_object (bpy.types.Object).
+    Out: None; vertex groups added in list order with REPLACE semantics.
+    """
     for vg in vertex_groups:
         group = mesh_object.vertex_groups.new(name=vg.name)
         for vertex_index, weight in vg.assignments:
@@ -125,6 +139,11 @@ def _apply_vertex_groups(vertex_groups, mesh_object):
 
 
 def _add_armature_modifier(mesh_object, armature):
+    """Attach a bone-envelope-disabled ARMATURE modifier named 'Skinmod'.
+
+    In: mesh_object (bpy.types.Object); armature (bpy.types.Object).
+    Out: None.
+    """
     mod = mesh_object.modifiers.new('Skinmod', 'ARMATURE')
     mod.object = armature
     mod.use_bone_envelopes = False

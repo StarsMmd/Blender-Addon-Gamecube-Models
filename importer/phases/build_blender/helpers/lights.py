@@ -3,6 +3,11 @@ import bpy
 
 
 def build_lights(br_lights, logger):
+    """Create Blender lights for every BRLight in the list.
+
+    In: br_lights (list[BRLight]); logger (Logger).
+    Out: None. Lights + target empties are linked into the scene.
+    """
     for br_light in br_lights:
         _build_light(br_light)
     if br_lights:
@@ -10,6 +15,12 @@ def build_lights(br_lights, logger):
 
 
 def _build_light(br_light):
+    """Build one Light data block + Object from a BRLight.
+
+    In: br_light (BRLight).
+    Out: None. Ambient lights get dat_light_type='AMBIENT' custom prop;
+         non-ambient with a target_location get a TRACK_TO-ed empty.
+    """
     light_data = bpy.data.lights.new(name=br_light.name, type=br_light.blender_type)
     light_data.color = br_light.color
     light_data.energy = br_light.energy

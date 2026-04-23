@@ -12,14 +12,9 @@ import numpy as np
 def build_material(br_material, image_cache=None):
     """Create a Blender material from a BRMaterial spec.
 
-    Args:
-        br_material: BRMaterial with a fully populated BRNodeGraph.
-        image_cache: dict caching bpy.data.images by ``BRImage.cache_key``.
-            Shared across a model so multiple materials referencing the
-            same image reuse the same bpy image.
-
-    Returns:
-        bpy.types.Material.
+    In: br_material (BRMaterial, with a populated BRNodeGraph);
+        image_cache (dict|None, keyed by BRImage.cache_key, shared across model).
+    Out: bpy.types.Material.
     """
     if image_cache is None:
         image_cache = {}
@@ -74,7 +69,11 @@ def build_material(br_material, image_cache=None):
 
 
 def _set_output_default(node, value):
-    """ShaderNodeRGB / ShaderNodeValue store their value on outputs[0]."""
+    """ShaderNodeRGB / ShaderNodeValue store their value on outputs[0].
+
+    In: node (bpy.types.ShaderNode); value (float | sequence of 4 floats).
+    Out: None.
+    """
     socket = node.outputs[0]
     if isinstance(value, (list, tuple)):
         socket.default_value[:] = list(value)
@@ -83,6 +82,12 @@ def _set_output_default(node, value):
 
 
 def _set_input_default(node, socket_key, value):
+    """Set ``default_value`` on a named or indexed input socket.
+
+    In: node (bpy.types.ShaderNode); socket_key (int | str);
+        value (float | sequence).
+    Out: None.
+    """
     socket = _resolve_socket(node.inputs, socket_key)
     if isinstance(value, (list, tuple)):
         socket.default_value[:] = list(value)
@@ -91,7 +96,12 @@ def _set_input_default(node, socket_key, value):
 
 
 def _resolve_socket(collection, key):
-    """Socket access: int → positional, str → by name."""
+    """Socket access: int → positional, str → by name.
+
+    In: collection (bpy_prop_collection — node.inputs or node.outputs);
+        key (int | str).
+    Out: bpy socket.
+    """
     if isinstance(key, int):
         return collection[key]
     return collection[key]
@@ -102,6 +112,9 @@ def _resolve_image(br_image, image_cache):
 
     Dedup by BRImage.cache_key — multiple materials referencing the same
     source image share the same bpy image.
+
+    In: br_image (BRImage|None); image_cache (dict, mutated).
+    Out: bpy.types.Image|None.
     """
     if br_image is None:
         return None

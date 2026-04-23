@@ -35,6 +35,9 @@ def choose_inherit_scale(accumulated_scale):
 
     The thresholds mirror the pre-Plan build_skeleton heuristic so this
     refactor produces byte-identical output.
+
+    In: accumulated_scale (tuple[float, float, float]).
+    Out: str, Blender inherit_scale enum value ('ALIGNED' or 'NONE').
     """
     mn = min(abs(x) for x in accumulated_scale)
     mx = max(abs(x) for x in accumulated_scale)
@@ -48,6 +51,9 @@ def choose_tail_offset(ir_bone, ik_hack):
     IK-hack bones (effectors, splines under options['ik_hack']) get a
     shrunk tail; regular bones get a 0.01-unit Y offset so edit bones
     aren't degenerate.
+
+    In: ir_bone (IRBone); ik_hack (bool, from importer options).
+    Out: tuple[float, float, float], head→tail offset.
     """
     if ik_hack and ir_bone.ik_shrink:
         y = ir_bone.scale[1] if ir_bone.scale[1] != 0 else 1.0
@@ -56,7 +62,11 @@ def choose_tail_offset(ir_bone, ik_hack):
 
 
 def derive_armature_name(ir_model, options, model_index):
-    """Replicate build_skeleton's naming scheme."""
+    """Replicate build_skeleton's naming scheme.
+
+    In: ir_model (IRModel); options (dict|None, reads 'filepath'); model_index (int).
+    Out: str, '{file_base}_{model_name}_skeleton_{index}' or '{file_base}_skeleton_{index}'.
+    """
     filepath = options.get("filepath", "") if options else ""
     base_name = os.path.basename(filepath).split('.')[0] if filepath else "model"
     model_name = ir_model.name or ""
