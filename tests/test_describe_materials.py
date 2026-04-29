@@ -645,7 +645,7 @@ class TestDetectBlendMode:
         return tex, links
 
     def test_alpha_mask_detected_when_tex_alpha_drives_fac(self):
-        from exporter.phases.describe_blender.helpers.materials import _detect_blend_mode
+        from exporter.phases.describe.helpers.materials_decode import _detect_blend_mode
         tex, links = self._setup(fac_source_socket_name='Alpha')
         blend, factor, is_bump = _detect_blend_mode(tex, links)
         assert blend == LayerBlendMode.ALPHA_MASK
@@ -653,7 +653,7 @@ class TestDetectBlendMode:
         assert is_bump is False
 
     def test_rgb_mask_detected_when_tex_color_drives_fac(self):
-        from exporter.phases.describe_blender.helpers.materials import _detect_blend_mode
+        from exporter.phases.describe.helpers.materials_decode import _detect_blend_mode
         tex, links = self._setup(fac_source_socket_name='Color')
         blend, factor, is_bump = _detect_blend_mode(tex, links)
         assert blend == LayerBlendMode.RGB_MASK
@@ -661,14 +661,14 @@ class TestDetectBlendMode:
         assert is_bump is False
 
     def test_plain_mix_when_fac_is_unlinked(self):
-        from exporter.phases.describe_blender.helpers.materials import _detect_blend_mode
+        from exporter.phases.describe.helpers.materials_decode import _detect_blend_mode
         tex, links = self._setup(fac_source_socket_name=None)
         blend, factor, _ = _detect_blend_mode(tex, links)
         assert blend == LayerBlendMode.MIX
 
     def test_plain_mix_when_fac_driven_by_unrelated_node(self):
         # Fac is linked but from a different node — still plain MIX.
-        from exporter.phases.describe_blender.helpers.materials import _detect_blend_mode
+        from exporter.phases.describe.helpers.materials_decode import _detect_blend_mode
         tex = _StubNode('ShaderNodeTexImage')
         other = _StubNode('ShaderNodeValue')
         mix = _StubNode('ShaderNodeMixRGB', blend_type='MIX')

@@ -13,6 +13,7 @@ try:
     from ....shared.Nodes.Classes.Light.Light import Light
     from ....shared.Nodes.Classes.Light.LightSet import LightSet
     from ....shared.Nodes.Classes.Camera.CameraSet import CameraSet
+    from ....shared.Nodes.Classes.Kirby.KirbyDataGroup import KirbyDataGroup
     from ....shared.helpers.logger import StubLogger
 except (ImportError, SystemError):
     from shared.IR import IRScene
@@ -26,6 +27,7 @@ except (ImportError, SystemError):
     from shared.Nodes.Classes.Light.Light import Light
     from shared.Nodes.Classes.Light.LightSet import LightSet
     from shared.Nodes.Classes.Camera.CameraSet import CameraSet
+    from shared.Nodes.Classes.Kirby.KirbyDataGroup import KirbyDataGroup
     from shared.helpers.logger import StubLogger
 
 from .helpers.bones import describe_bones
@@ -40,7 +42,7 @@ from .helpers.material_animations import describe_material_animations
 def describe_scene(sections, options, logger=StubLogger()):
     """Convert parsed node tree sections into a fully populated IRScene.
 
-    In: sections (list[SectionInfo], from Phase 3); options (dict, importer options including 'filepath', 'pkx_header', 'strict_mirror'); logger (Logger, defaults to StubLogger).
+    In: sections (list[SectionInfo], from Phase 3); options (dict, importer options including 'filepath', 'pkx_header'); logger (Logger, defaults to StubLogger).
     Out: IRScene, with models/lights/cameras populated (no bpy state touched).
     """
 
@@ -52,7 +54,7 @@ def describe_scene(sections, options, logger=StubLogger()):
     light_nodes = []
     camera_nodes = []      # Camera nodes (for static properties)
     camera_set_nodes = []  # CameraSet nodes (for animations)
-    disjoint_root_joint = None
+    disjoint_root_joints = []
     disjoint_anim_joints = []
     disjoint_mat_anim_joints = []
 
@@ -64,7 +66,7 @@ def describe_scene(sections, options, logger=StubLogger()):
         logger.debug("Section: %s -> %s", section.section_name, type(root).__name__)
 
         if isinstance(root, Joint):
-            disjoint_root_joint = root
+            disjoint_root_joints.append(root)
 
         elif isinstance(root, AnimationJoint):
             disjoint_anim_joints.append(root)
@@ -95,12 +97,32 @@ def describe_scene(sections, options, logger=StubLogger()):
                 camera_nodes.append(root.camera.camera)
                 camera_set_nodes.append(root.camera)
 
-    # If we accumulated disjoint sections into a model set, create one
-    if disjoint_root_joint is not None:
+        elif isinstance(root, KirbyDataGroup):
+            # Each non-null variant points to a Kirby ModelRef whose +0x00 is
+            # the JObj root. Variants of the same enemy frequently share the
+            # same Joint root (alternate states of the same model — e.g.
+            # EmCappy variants 0 and 1 both point to the same skeleton),
+            # so feed each unique Joint root into the disjoint pipeline.
+            for joint in root.root_joints():
+                disjoint_root_joints.append(joint)
+
+    # If we accumulated disjoint Joint sections, wrap each unique root in a
+    # synthetic ModelSet. Multiple roots can come from a Kirby DataGroup
+    # (one per non-null variant) — dedupe by address since variants of the
+    # same enemy often share a Joint root. Animation/material-anim joints
+    # collected at the section level attach to the FIRST disjoint root only:
+    # that mirrors the historical Colo/XD single-root behavior, and Kirby
+    # files don't currently expose section-level anim joints (those live
+    # inside the still-opaque KirbyModelRef.anim_set_* fields).
+    seen_joint_addrs = set()
+    for i, root_joint in enumerate(disjoint_root_joints):
+        if root_joint.address in seen_joint_addrs:
+            continue
+        seen_joint_addrs.add(root_joint.address)
         disjoint_set = type('DisjointModelSet', (), {
-            'root_joint': disjoint_root_joint,
-            'animated_joints': disjoint_anim_joints,
-            'animated_material_joints': disjoint_mat_anim_joints,
+            'root_joint': root_joint,
+            'animated_joints': disjoint_anim_joints if i == 0 else [],
+            'animated_material_joints': disjoint_mat_anim_joints if i == 0 else [],
         })()
         model_sets.append(disjoint_set)
 
@@ -136,17 +158,8 @@ def describe_scene(sections, options, logger=StubLogger()):
         # bones[i].world_matrix, so it has to run after the world matrices
         # are rebound — otherwise mesh verts stay at pre-rebind positions
         # while bones move to post-rebind positions, breaking skinning.
-        if not options.get("strict_mirror"):
-            from .helpers.bones import fix_near_zero_bone_matrices
-            fix_near_zero_bone_matrices(bones, bone_anims, logger)
-        else:
-            near_zero_count = sum(
-                1 for b in bones if any(abs(b.scale[c]) < 0.001 for c in range(3))
-            )
-            if near_zero_count:
-                logger.leniency("near_zero_bone_not_rescued",
-                                "%d bones have near-zero rest scale; not rescued in strict mode",
-                                near_zero_count)
+        from .helpers.bones import fix_near_zero_bone_matrices
+        fix_near_zero_bone_matrices(bones, bone_anims, logger)
 
         t2 = time.time()
         meshes = describe_meshes(root_joint, bones, joint_to_bone_index, logger=logger, options=options)

@@ -26,7 +26,7 @@ Per-stage migration summary (all landed on `stars/WIP`):
 What still goes through IR:
 - `post_process/` reads IR indirectly via the armature's custom properties. It's outside the purity contract (it mutates Blender state) and remains on IR.
 - Material-animation helpers (`build_blender/helpers/material_animations.py`) still receive IR-typed keyframes as pass-through data. The `kf.interpolation.value` strings happen to be Blender's own enum values, so no conversion is needed at the bpy boundary.
-- The exporter side is still Blender → IR directly via `describe_blender` — the symmetric `inspect_blender` (Blender → BR) and `un_plan` (BR → IR) counterparts are not yet written. Until they land, the BR-bounded round-trip tests in `tests/test_plan_round_trips.py` stay skipped.
+- The exporter mirrors the import shape: `describe` (Blender → BR) and `plan` (BR → IR) live under `exporter/phases/`. Armature, meshes, lights, cameras, and constraints flow through real BR types end-to-end. Materials and animations use interim BR shells: the heavy decoders (`describe/helpers/{materials,animations,material_animations}_decode.py`) produce IR directly and stash it on the BR object via a `_ir_material` / `_ir_animation_set` side-channel that plan unwraps. The BR-bounded round-trip tests in `tests/test_plan_round_trips.py` stay skipped because they require a real bpy runtime — they're exercised via `tests/round_trip/run_round_trips.py`.
 
 ## Render pipeline
 
@@ -46,7 +46,7 @@ The runtime supports translucent rendering in principle (see above), and a handf
 Something beyond the JObj flag is required to complete the XLU-pass pipeline successfully, and we don't yet know what. Until somebody identifies the missing ingredient, **the exporter treats material translucency as unsupported**:
 
 - Every `IRMaterial` ships with `is_translucent = False` regardless of the Blender BSDF `Alpha` slider or any sub-1.0 texel alpha.
-- `_refine_bone_flags` always sets `JOBJ_OPA` / `JOBJ_ROOT_OPA` on mesh-owning bones and never sets the XLU bits.
+- `refine_bone_flags` (in `exporter/phases/plan/helpers/scene.py`) always sets `JOBJ_OPA` / `JOBJ_ROOT_OPA` on mesh-owning bones and never sets the XLU bits.
 - Image alpha data is still encoded into the exported texture (so alpha-test cutouts in textures survive the round-trip), but the **material** around those textures always renders as a fully opaque surface.
 
 ### PObject count ceiling
@@ -160,11 +160,10 @@ Test data is synthesised in-memory. Every unit test either constructs its fixtur
 | BNB | bytes → parse → write → compare bytes | Binary-level fidelity (fuzzy word match) |
 | NBN | parse → write → reparse → compare fields | Node field preservation through serialisation |
 | NIN | parse → describe → compose → compare fields | IR round-trip fidelity |
-| IBI | build → describe_blender → compare IR fields | Blender round-trip fidelity |
-| BBB *(planned)* | plan → build → inspect_blender → compare BR fields | BR round-trip through bpy |
-| IBI-via-Plan *(planned)* | plan → build → inspect_blender → un_plan → compare IR fields | Full import ⇄ export via BR on both sides |
+| BBB | importer.plan → build → exporter.describe → compare BR fields | Blender-leg fidelity (build + describe only) |
+| IBI | importer.plan → build → exporter.describe → exporter.plan → compare IR fields | Full import ⇄ export round-trip through BR on both sides |
 
-NIN and IBI scores are computed against the full original data — not just the fields the exporter has implemented — so percentages naturally rise as more export features come online. The two planned test types are skipped placeholders in `tests/test_plan_round_trips.py` — they unblock once the exporter gains its `inspect_blender` (Blender → BR) and `un_plan` (BR → IR) phases.
+NIN, BBB, and IBI scores are computed against the full original data — not just the fields the exporter has implemented — so percentages naturally rise as more export features come online. BBB and IBI need a real bpy runtime, so the unit-test stubs in `tests/test_plan_round_trips.py` stay skipped; the live coverage is in `tests/round_trip/run_round_trips.py` (run with `python3.11`).
 
 ### Blender Python version
 Use `python3.11` for round-trip tests. The default `python3` on the dev machine is 3.10, which ships an older `bpy==3.4.0` that lacks APIs like `action.slots` that the current codebase requires. `python3.11` pairs with `bpy==4.5.7`.

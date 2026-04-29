@@ -550,23 +550,25 @@ def apply_pkx_metadata(armature, format='XD', model_type='POKEMON', species_id=0
     # Slot types: 0=idle(loop), 8=damage(hit), 9=damageB(compound), 10=faint(hit), rest=action
     _SLOT_TYPES = {0: "loop", 8: "hit_reaction", 9: "compound", 10: "hit_reaction"}
 
-    # Point every slot at a single default action so every state resolves
-    # to the same DAT animation. With the exporter's slot-ordered
-    # enumeration this action becomes DAT[0] and every slot's anim_index
-    # lands at 0 — the game plays the same animation in every state, which
-    # is a sane baseline for arbitrary models that don't yet have per-slot
-    # actions authored. When no actions exist yet (fresh rig), leave the
-    # slot empty so the UI shows it unassigned.
+    # Point slots 0-10 at a single default action so core states (idle,
+    # physical/special attacks, damage, faint) resolve to the same DAT
+    # animation. With the exporter's slot-ordered enumeration this action
+    # becomes DAT[0] and every assigned slot's anim_index lands at 0 —
+    # a sane baseline for arbitrary models that don't yet have per-slot
+    # actions authored. Slots 11-16 (Extra 1-4, Special C, Take Flight)
+    # are per-species and often unused; leave them unassigned so the
+    # author has to opt in explicitly.
     default_action = _first_bone_action_name(armature)
 
     for i in range(anim_count):
         prefix = "dat_pkx_anim_%02d" % i
         anim_type = _SLOT_TYPES.get(i, "action")
+        slot_action = default_action if i <= 10 else ""
 
         armature[prefix + "_type"] = anim_type
-        armature[prefix + "_sub_0_anim"] = default_action
+        armature[prefix + "_sub_0_anim"] = slot_action
         if anim_type == "compound":
-            armature[prefix + "_sub_1_anim"] = default_action
+            armature[prefix + "_sub_1_anim"] = slot_action
         armature[prefix + "_sub_count"] = 2 if anim_type == "compound" else 1
         armature[prefix + "_damage_flags"] = 0
         armature[prefix + "_terminator"] = 3 if is_xd else 1
@@ -584,12 +586,19 @@ def apply_pkx_metadata(armature, format='XD', model_type='POKEMON', species_id=0
 
 
 def _get_action_duration(action_name):
-    """Get an action's duration in seconds (frame count / 60fps). Returns 0 if not found."""
+    """Get an action's duration in seconds (frame count / 30 fps).
+
+    HSD AOBJs advance at 30 animation-units/second on XD (verified by
+    matching `AOBJ.end_frame / 30` against every game-native PKX header
+    `timing_1` value). The importer samples `range(end_frame)` so the
+    last keyframe lands at `end_frame - 1`; we add 1 back so the derived
+    duration equals the stored timing exactly.
+    """
     action = bpy.data.actions.get(action_name)
     if not action or not action.fcurves:
         return 0.0
     max_frame = max(kp.co[0] for fc in action.fcurves for kp in fc.keyframe_points)
-    return max_frame / 60.0
+    return (max_frame + 1) / 30.0
 
 
 def derive_timing(armature):
@@ -766,7 +775,7 @@ def prepare_texture_formats(armature):
                     images_seen.add(img.name)
 
                     # Skip textures that already have a format set
-                    if hasattr(img, 'dat_gx_format') and img.dat_gx_format != 'AUTO':
+                    if img.dat_gx_format != 'AUTO':
                         continue
 
                     fmt = _analyze_texture(img)
@@ -841,12 +850,12 @@ def _shiny_build_route_group(routing, name):
     comb = group.nodes.new('ShaderNodeCombineColor')
     comb.mode = 'RGB'
     for i in range(3):
-        if routing[i] in srcs:
-            group.links.new(srcs[routing[i]], comb.inputs[i])
-        else:
-            v = group.nodes.new('ShaderNodeValue')
-            v.outputs[0].default_value = 0.0
-            group.links.new(v.outputs[0], comb.inputs[i])
+        # On GX the 4th source is alpha, but the shiny preview only carries
+        # an RGB Color socket — alpha isn't available to route in. Fall back
+        # to identity for that slot so "Alpha" reads as "leave this channel
+        # alone" instead of silently zeroing it.
+        source = srcs.get(routing[i], srcs[i])
+        group.links.new(source, comb.inputs[i])
     group.links.new(comb.outputs[0], go.inputs[0])
     _shiny_auto_layout(group.nodes, group.links, output_type='GROUP_OUTPUT')
     return group
@@ -888,8 +897,51 @@ def _shiny_build_bright_group(brightness, name):
     return group
 
 
+_SHINY_ALBEDO_KEYS = ('albedo', 'basecolor', 'diffuse', 'color')
+
+
+def _shiny_albedo_rank(name):
+    """Lower = more likely to be the albedo input. Names are normalised by
+    stripping spaces/underscores so 'BaseColor', 'base color', and
+    'base_color' all match. Unmatched names rank last.
+    """
+    lname = name.lower().replace('_', '').replace(' ', '')
+    for i, key in enumerate(_SHINY_ALBEDO_KEYS):
+        if key in lname:
+            return i
+    return len(_SHINY_ALBEDO_KEYS)
+
+
+def _shiny_find_color_input_via_group(group_node):
+    """Pick the outer input on `group_node` most likely to be the albedo
+    feed: name matches albedo/basecolor/diffuse/color AND its material-
+    level chain contains a texture.
+
+    Topology-agnostic on purpose — shader packs like PokemonShaderbyChicoEevee
+    route the Principled BSDF's Base Color through fresnel/rim-light mixes
+    that never trace back to the actual albedo input, so a DFS from
+    Principled.Base Color would miss it. The artist-facing input name is
+    the only reliable signal for which outer socket is the albedo.
+    """
+    if group_node.node_tree is None:
+        return None
+    textured = [s for s in group_node.inputs
+                if not _shiny_no_texture_in_color_chain(s)
+                and _shiny_albedo_rank(s.name) < len(_SHINY_ALBEDO_KEYS)]
+    if not textured:
+        return None
+    textured.sort(key=lambda s: _shiny_albedo_rank(s.name))
+    return textured[0]
+
+
 def _shiny_find_color_input(nodes):
-    """Find the main color input on the output shader."""
+    """Find the main color input on the output shader.
+
+    Prefers a top-level Principled/Emission; otherwise recurses into
+    ShaderNodeGroup instances so shader packs like PokemonShaderbyChicoEevee
+    that wrap a Principled BSDF behind a custom group still get shiny
+    nodes spliced onto whichever outer group input carries the albedo.
+    """
     for node in nodes:
         if node.type == 'BSDF_PRINCIPLED':
             bc = node.inputs['Base Color']
@@ -898,6 +950,11 @@ def _shiny_find_color_input(nodes):
     for node in nodes:
         if node.type == 'EMISSION':
             return node, node.inputs['Color']
+    for node in nodes:
+        if node.bl_idname == 'ShaderNodeGroup' and node.node_tree:
+            outer = _shiny_find_color_input_via_group(node)
+            if outer is not None:
+                return node, outer
     for node in nodes:
         if node.type == 'BSDF_PRINCIPLED':
             return node, node.inputs['Base Color']
@@ -1049,43 +1106,6 @@ MAX_WEIGHTS_PER_VERTEX = 3
 # to preserve exact game-model round-trips; flip to True when testing
 # arbitrary rips that exhibit shrunken / floating vertices.
 REDISTRIBUTE_SUB_0_1_WEIGHTS = False
-
-
-def join_armature_child_meshes(armature):
-    """Collapse every mesh object parented to `armature` into a single
-    mesh. The compose phase splits the result back into PObjects by
-    material and by the 10-unique-weight-combo palette cap, so joining
-    doesn't lose any information — but it lets compose pack far fewer
-    PObjects than it would if each Blender mesh were processed
-    independently (each mesh contributes at least one PObject per
-    material slot regardless of how few verts it holds).
-
-    No-op when the armature already has ≤ 1 child mesh.
-
-    Returns the name of the joined mesh, or None when nothing was joined.
-    """
-    mesh_objs = [o for o in bpy.data.objects
-                 if o.type == 'MESH' and o.parent is armature]
-    if len(mesh_objs) < 2:
-        return None
-
-    # Blender's join op keeps the active object's data and merges the rest
-    # in. Pick the first mesh alphabetically for deterministic output.
-    mesh_objs.sort(key=lambda o: o.name)
-    target = mesh_objs[0]
-
-    # bpy.ops.object.join needs an OBJECT-mode context with all meshes
-    # selected and the target active. Clear any edit/pose mode from the
-    # armature first.
-    if bpy.context.mode != 'OBJECT':
-        bpy.ops.object.mode_set(mode='OBJECT')
-    bpy.ops.object.select_all(action='DESELECT')
-    for m in mesh_objs:
-        m.select_set(True)
-    bpy.context.view_layer.objects.active = target
-
-    bpy.ops.object.join()
-    return target.name
 
 
 def prepare_mesh_weights(armature):
@@ -1483,6 +1503,39 @@ def _prop_row(layout, label, value):
     row.label(text=str(value))
 
 
+_GX_FORMAT_ITEMS = [
+    ('AUTO', 'AUTO (Pick based on content)', 'Let the exporter choose a format'),
+    ('CMPR', 'CMPR (Compressed)', 'S3TC/DXT1 compressed — best for most textures'),
+    ('RGBA8', 'RGBA8 (Full Quality)', '32-bit full quality RGBA'),
+    ('RGB565', 'RGB565 (No Alpha)', '16-bit RGB, no alpha'),
+    ('RGB5A3', 'RGB5A3 (RGB+Alpha)', '16-bit with optional alpha'),
+    ('I4', 'I4 (Grayscale 4-bit)', '4-bit grayscale'),
+    ('I8', 'I8 (Grayscale 8-bit)', '8-bit grayscale (intensity = alpha)'),
+    ('IA4', 'IA4 (Intensity+Alpha 4-bit)', '4-bit intensity + 4-bit alpha'),
+    ('IA8', 'IA8 (Intensity+Alpha 8-bit)', '8-bit intensity + 8-bit alpha'),
+    ('C4', 'C4 (4-bit Palette)', 'Palette indexed, up to 16 colors'),
+    ('C8', 'C8 (8-bit Palette)', 'Palette indexed, up to 256 colors'),
+]
+
+
+def _register_image_props():
+    """Register `dat_gx_format` on bpy.types.Image if not already registered.
+
+    Mirrors the addon's definition in BlenderPlugin.py so the prep script
+    works even when the addon is disabled or its register() hasn't run in
+    the current session (e.g. after a botched script reload).
+    """
+    if hasattr(bpy.types.Image, 'dat_gx_format'):
+        return
+    from bpy.props import EnumProperty
+    bpy.types.Image.dat_gx_format = EnumProperty(
+        name="GX Texture Format",
+        description="GX texture format used when exporting this texture. Auto selects based on pixel content.",
+        items=_GX_FORMAT_ITEMS,
+        default='AUTO',
+    )
+
+
 def _register_pkx_panel():
     """Register the PKX Metadata panel and properties if not already registered."""
     from bpy.props import (StringProperty, BoolProperty, EnumProperty,
@@ -1684,6 +1737,7 @@ if __name__ == "__main__" or True:
 
     # 0. Register panel + properties if the addon isn't loaded
     _register_pkx_panel()
+    _register_image_props()
 
     # 1. Bake loc/rot/scale on armatures + child meshes. Must run before
     #    anything else so subsequent prep + the exporter itself see clean
@@ -1719,12 +1773,6 @@ if __name__ == "__main__" or True:
         print("  No armatures in scene (PKX/timing/texture steps skipped)")
 
     for arm in armatures:
-        # Join every armature-child mesh into one so compose can pack
-        # weight-combos across the whole model instead of per mesh object.
-        joined = join_armature_child_meshes(arm)
-        if joined:
-            print("  Joined all child meshes on '%s' -> '%s'" % (arm.name, joined))
-
         # Mesh weight limiting and splitting (before other steps)
         limited, split = prepare_mesh_weights(arm)
         if limited:

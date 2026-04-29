@@ -9,7 +9,7 @@ everything past frame 51 flat-tailed.
 `_bone_fcurves_frame_range` consults only the collected bone fcurves, so
 material-side keyframes can no longer stretch the bone frame range.
 """
-from exporter.phases.describe_blender.helpers.animations import (
+from exporter.phases.describe.helpers.animations_decode import (
     _bone_fcurves_frame_range,
 )
 
@@ -33,9 +33,10 @@ def _bone_fcurves(frames_per_bone):
 
 
 def test_frame_range_ignores_padding_not_in_bone_fcurves():
-    # Bone fcurves span 0..51 only (sirnight idle shape).
+    # Bone fcurves span 0..51 only (sirnight idle shape). end_frame is the
+    # *sample count* — inclusive of both endpoints — so 52 for 0..51.
     fcurves = _bone_fcurves({'Bone_002': list(range(0, 52))})
-    assert _bone_fcurves_frame_range(fcurves) == (0, 51, 51)
+    assert _bone_fcurves_frame_range(fcurves) == (0, 51, 52)
 
 
 def test_frame_range_uses_min_and_max_across_all_bones():
@@ -44,7 +45,7 @@ def test_frame_range_uses_min_and_max_across_all_bones():
         'Bone_B': [0, 20],
         'Bone_C': [8, 12],
     })
-    assert _bone_fcurves_frame_range(fcurves) == (0, 20, 20)
+    assert _bone_fcurves_frame_range(fcurves) == (0, 20, 21)
 
 
 def test_frame_range_none_when_no_keyframes():
@@ -62,5 +63,6 @@ def test_frame_range_never_zero_for_single_keyframe():
 
 def test_frame_range_handles_fractional_frames():
     # Blender's NLA editor can place keyframes on non-integer frames.
+    # int(49.75) = 49; end_frame = 49 - 0 + 1 = 50 (inclusive sample count).
     fcurves = _bone_fcurves({'Bone_A': [0.0, 12.5, 49.75]})
-    assert _bone_fcurves_frame_range(fcurves) == (0, 49, 49)
+    assert _bone_fcurves_frame_range(fcurves) == (0, 49, 50)

@@ -50,16 +50,24 @@ def _colo_header():
 
 
 def test_xd_pokemon_format_and_model_type():
-    props = _derive_pkx_custom_props(_xd_pokemon_header())
+    """When the importer passes model_type='POKEMON' (PKX Pokémon kind), it lands on the armature."""
+    props = _derive_pkx_custom_props(_xd_pokemon_header(), model_type="POKEMON")
     assert props["dat_pkx_format"] == "XD"
     assert props["dat_pkx_model_type"] == "POKEMON"
     assert props["dat_pkx_species_id"] == 25
 
 
-def test_xd_trainer_model_type():
-    props = _derive_pkx_custom_props(_xd_trainer_header())
+def test_xd_trainer_model_type_passthrough():
+    """When the importer passes model_type='TRAINER' (PKX Trainer kind), it lands as TRAINER regardless of header values."""
+    props = _derive_pkx_custom_props(_xd_trainer_header(), model_type="TRAINER")
     assert props["dat_pkx_format"] == "XD"
     assert props["dat_pkx_model_type"] == "TRAINER"
+
+
+def test_dat_model_omits_model_type():
+    """DAT Model imports pass model_type=None — the dat_pkx_model_type prop is not written."""
+    props = _derive_pkx_custom_props(_xd_pokemon_header(), model_type=None)
+    assert "dat_pkx_model_type" not in props
 
 
 def test_colosseum_format():
@@ -182,20 +190,9 @@ class TestNodeProperties:
         pad = PartAnimData(has_data=2, bone_config=bytes([3, 0xFF, 7, 0xFF, 0xFF, 12]))
         assert pad.active_bone_indices() == [3, 7, 12]
 
-    def test_pkxheader_is_trainer(self):
-        h = _xd_pokemon_header()
-        assert h.is_trainer is False
-        h.species_id = 0
-        h.particle_orientation = 0
-        assert h.is_trainer is True
-        h.particle_orientation = 1
-        assert h.is_trainer is False
-
-    def test_pkxheader_format_and_model_type_labels(self):
+    def test_pkxheader_format_label(self):
         assert _xd_pokemon_header().format_label == "XD"
         assert _colo_header().format_label == "COLOSSEUM"
-        assert _xd_trainer_header().model_type_label == "TRAINER"
-        assert _xd_pokemon_header().model_type_label == "POKEMON"
 
     def test_pkxheader_flag_properties(self):
         h = _xd_pokemon_header()
@@ -230,7 +227,7 @@ class TestDerivePreambleProps:
         h.head_bone_index = 1
         props = _derive_preamble_props(h, _build_bone_name_resolver(["root", "head"]))
         assert props["dat_pkx_format"] == "XD"
-        assert props["dat_pkx_model_type"] == "POKEMON"
+        assert "dat_pkx_model_type" not in props  # set by the caller from importer options, not derived
         assert props["dat_pkx_head_bone"] == "head"
         assert "dat_pkx_flag_flying" in props
 

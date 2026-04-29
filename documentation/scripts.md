@@ -70,6 +70,8 @@ After running, use the **Shiny Variant** panel in Object Properties to tweak par
 
 **Purpose:** Prepare a Blender scene for Colosseum/XD export. Adds custom properties the exporter needs on cameras, armatures, and lights. Operates on all objects in the scene — no selection required. Only adds properties that don't already exist — not needed on models that were imported through the DAT plugin.
 
+> **Scope of its optimisations:** prep applies only the optimisations needed to land within the game's **hard** limits — texture size ≤ 512×512, ≤ 3 bone weights per vertex, 10 % weight quantisation. It will not shrink a model beyond that. If the exported file is still too large, or the target is a heavier newer-game rip, reach for `optimize.py` (or the individual `optimize/*.py` passes) first — those are lossier but more aggressive (polycount decimation, 256 px textures, keyframe thinning, vertex merging).
+
 **Usage:**
 1. Open the Scripting workspace
 2. Open `scripts/prepare_for_export.py`
@@ -141,3 +143,97 @@ The format can also be set manually per-texture by selecting the image in the Im
 
 **Errors:**
 - "Select an armature object" — no armature is selected
+
+---
+
+## optimize.py
+
+**Purpose:** Run every lossy optimisation pass in one go to shrink oversized models from newer games. Lossy — intended for rips/imports that are too heavy to fit the GameCube budget.
+
+> **When to use:** `prepare_for_export.py` already enforces the game's hard limits (≤ 512×512 textures, ≤ 3 weights per vertex, 10 % weight quantisation). Reach for these scripts when prep isn't enough — e.g. when the exported file is too large, when the source is a newer-gen rip with dense geometry / long animations, or when you want a smaller in-memory footprint than the hardware ceiling. Run `optimize.py` before `prepare_for_export.py`; prep then picks up the already-optimised scene and adds the export-specific metadata.
+
+**Usage:**
+1. Open the Scripting workspace
+2. Open `scripts/optimize.py`
+3. Click **Run Script**
+
+**What it does (in order):**
+1. **Merge verts** — welds duplicate vertices within 0.0001 units on every mesh
+2. **Polycount** — if the scene has more than 10 000 triangles, applies a DECIMATE modifier to every mesh at a ratio that brings the total down to the target
+3. **Weights** — caps each vertex at 3 bone influences (drops lowest, re-normalises)
+4. **Weight quantization** — rounds bone weights to 1/10 steps (matches game-model precision), normalises and rounds again to stay on the grid
+5. **Textures** — downscales any image larger than 256×256 to the largest power of two that fits, preserving aspect ratio
+6. **Keyframes** — on every F-curve, drops interior keys within 5 % of their neighbours' linear interp, then keeps every Nth remaining key (N = 2 → halves; 3 → thirds; 1 disables)
+
+Tune the constants at the top of the file: `TARGET_TRIS`, `MAX_WEIGHTS_PER_VERTEX`, `QUANT_STEPS`, `MAX_TEX_DIM`, `MERGE_DISTANCE`, `KEYFRAME_ERROR_TOLERANCE`, `KEEP_EVERY_NTH_KEYFRAME`.
+
+Each pass also ships as its own standalone script under `scripts/optimize/` for one-off use — constants at the top of each file.
+
+---
+
+## optimize/optimize_polycount.py
+
+**Purpose:** Decimate all meshes in the scene down to a target triangle count (default 10 000). No-op if the scene is already at or below the target.
+
+**Constants:** `TARGET_TRIS`
+
+Meshes with shape keys are skipped (the DECIMATE modifier cannot apply to them).
+
+---
+
+## optimize/optimize_keyframes.py
+
+**Purpose:** Thin out F-curve keyframes on every action. First pass drops keys within `ERROR_TOLERANCE` (5 % by default) of their neighbours' linear interp; second pass keeps every Nth remaining key. First and last keys are always preserved.
+
+**Constants:** `ERROR_TOLERANCE`, `KEEP_EVERY_NTH_KEYFRAME` (default 2 — halve; set to 1 to disable, 3 for a third, etc.)
+
+---
+
+## optimize/optimize_textures.py
+
+**Purpose:** Clamp oversized images to a maximum dimension (default 256 px). Longer side rounds down to the largest power of two ≤ `MAX_DIM`; shorter side scales to match, also rounded down to a power of two.
+
+**Constants:** `MAX_DIM`
+
+The GameCube hardware ceiling is 512×512; the 256 default halves memory footprint without visible loss on most assets.
+
+---
+
+## optimize/optimize_weights.py
+
+**Purpose:** Cap bone weights per vertex on every mesh parented to an armature. Uses Blender's `vertex_group_limit_total` op — lowest-weighted influences are dropped, remaining weights are re-normalised.
+
+**Constants:** `MAX_WEIGHTS_PER_VERTEX` (default 3; hardware max is 4)
+
+---
+
+## optimize/optimize_weight_quantization.py
+
+**Purpose:** Quantise bone weights to fixed steps (default 1/10), matching game-model precision. Normalises, rounds, normalises again, and rounds once more to keep every weight on the grid. Run this after `optimize_weights.py` — fewer influences means less rounding error per vertex.
+
+**Constants:** `QUANT_STEPS` (default 10 → 0.1 step)
+
+---
+
+## optimize/optimize_merge_verts.py
+
+**Purpose:** Weld coincident vertices on every mesh in the scene. Cleans up duplicate geometry common in GLB / FBX rips that split verts on every UV / normal seam.
+
+**Constants:** `MERGE_DISTANCE` (default 0.0001)
+
+Averaging UVs / normals at merged points can introduce minor seam artefacts — skip on assets where exact shading boundaries matter.
+
+---
+
+## utilities/deduplicate_images.py
+
+**Purpose:** Merge image datablocks that share the same on-disk filepath into one canonical datablock per file. Clears Blender's "can't save multiple images to the same path" warning on save.
+
+**What it does:**
+- Groups every `bpy.data.images` entry by its absolute filepath (ignores packed images and images with no filepath).
+- For each group of 2+, keeps the datablock with the shortest name (the one without a `.001` / `.002` / ... suffix) and remaps every user of the duplicates to it.
+- Deletes the orphaned duplicates.
+
+**When to run:** Immediately after importing a glTF / GLB. The glTF importer creates a fresh Image datablock for every texture *reference* rather than per unique URI, so a PNG sampled from several material slots ends up as `name`, `name.001`, `name.002`, ... all pointing at the same file on disk.
+
+**Safety:** Pixel data comes from the same file, so no image content is lost. Every duplicate typically has `users=1`, and `user_remap` rewires shader nodes before deletion.

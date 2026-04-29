@@ -34,7 +34,25 @@ class Importer:
         """
         # Phase 1 — Container Extraction: raw file bytes → DAT bytes
         logger.info("=== Phase 1: Container Extraction ===")
-        dat_entries = extract_dat(raw_bytes, filename, options=options)
+        try:
+            dat_entries = extract_dat(raw_bytes, filename, options=options)
+        except ValueError as error:
+            logger.error("Phase 1 rejected %s: %s", filename, error)
+            logger.info("Log file: %s", logger.log_path)
+            logger.close()
+            raise ModelBuildError(filename, ValueError(
+                "No model data found in %s: %s" % (filename, error)
+            )) from error
+
+        if not dat_entries:
+            logger.error("Phase 1 produced 0 entries for %s", filename)
+            logger.info("Log file: %s", logger.log_path)
+            logger.close()
+            raise ModelBuildError(filename, ValueError(
+                "No model data found in %s — the container has no DAT payloads "
+                "to import." % filename
+            ))
+
         logger.info("Extracted %d DAT entry(s) from %s", len(dat_entries), filename)
 
         any_succeeded = False
@@ -57,7 +75,26 @@ class Importer:
 
                 # Phase 2 — Section Routing: DAT bytes → section name→type map
                 logger.info("=== Phase 2: Section Routing ===")
-                section_map = route_sections(dat_bytes, logger=logger)
+                section_map = route_sections(dat_bytes, game=options.get("game"), logger=logger)
+
+                # Refuse to silently produce an empty scene when nothing was
+                # routed to a known node type. The most common cause is a
+                # game-of-origin mismatch (e.g. importing a Kirby DAT under
+                # the default Colo/XD rules), or a file whose top-level
+                # symbols are game-specific structs the plugin doesn't decode.
+                if section_map and all(t == 'Dummy' for t in section_map.values()):
+                    raise ValueError(
+                        "None of the %d section(s) in %s matched a known node type "
+                        "under game=%s. Section names: %s. Either the wrong Game of "
+                        "Origin is selected in the import dialog, or this file's "
+                        "root nodes are a game-specific format the plugin doesn't "
+                        "decode yet." % (
+                            len(section_map), metadata.filename,
+                            options.get("game") or "COLO_XD",
+                            ", ".join(repr(n) for n in list(section_map.keys())[:8])
+                            + (", …" if len(section_map) > 8 else ""),
+                        )
+                    )
 
                 # Phase 3 — Node Tree Parsing: DAT bytes + map → parsed node trees
                 logger.info("=== Phase 3: Node Tree Parsing ===")
@@ -91,7 +128,8 @@ class Importer:
                     # Phase 6 — Post-Processing: select animations, apply shiny, store PKX metadata
                     post_process(set(), metadata.shiny_params, options, logger=logger,
                                  build_results=build_results,
-                                 pkx_header=metadata.pkx_header)
+                                 pkx_header=metadata.pkx_header,
+                                 colo_xd_kind=options.get("colo_xd_kind"))
 
                 any_succeeded = True
 

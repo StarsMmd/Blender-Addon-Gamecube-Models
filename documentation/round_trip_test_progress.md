@@ -18,7 +18,7 @@ Parse a DAT binary into a node tree, run the describe phase to produce an IRScen
 
 ### IR → Blender → IR (IBI)
 
-Build an IRScene into Blender objects via the build phase, then read them back via the describe_blender phase to produce a new IRScene. Compare the two IR scenes using category-weighted scoring — each IR category (bones, meshes, materials, animations, constraints, lights) is scored independently, then averaged across categories that have data. This prevents large vertex arrays from inflating the score.
+Build an IRScene into Blender objects via the importer's build phase, then read them back via the exporter's `describe → plan` phases to produce a new IRScene. Compare the two IR scenes using category-weighted scoring — each IR category (bones, meshes, materials, animations, constraints, lights) is scored independently, then averaged across categories that have data. This prevents large vertex arrays from inflating the score.
 
 ### Binary → Node tree → Binary (BNB)
 

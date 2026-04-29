@@ -6,7 +6,7 @@ Blender actions alphabetically (`bpy.data.actions` default order) but the PKX
 slots expect slot 0's action to live at DAT[0], the game ends up playing
 whichever action sorts first regardless of what the slot actually references.
 """
-from exporter.phases.describe_blender.helpers.animations import (
+from exporter.phases.describe.helpers.animations_decode import (
     _collect_slot_ordered_action_names,
     _reorder_actions_by_slot,
 )

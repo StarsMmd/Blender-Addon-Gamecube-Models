@@ -22,8 +22,8 @@ pytest.importorskip("mathutils")
 
 from mathutils import Matrix
 
-from exporter.phases.describe_blender.describe_blender import (
-    _check_baked_transforms,
+from exporter.phases.describe.helpers.scene import (
+    check_baked_transforms as _check_baked_transforms,
     _is_identity_matrix,
 )
 from exporter.phases.pre_process.pre_process import (
@@ -31,6 +31,7 @@ from exporter.phases.pre_process.pre_process import (
     MAX_VERTEX_WEIGHTS,
     _check_texture_sizes,
     _check_vertex_weight_count,
+    _check_baked_transforms as _preprocess_check_baked_transforms,
 )
 
 
@@ -86,6 +87,49 @@ class TestCheckBakedTransforms:
         arm = _MockObj('Armature', Matrix.Diagonal((2.0, 2.0, 2.0, 1.0)))
         with pytest.raises(ValueError, match="prepare_for_export"):
             _check_baked_transforms([arm], {arm: []})
+
+
+class TestPreProcessBakedTransforms:
+    """The pre-process check fires before the pipeline starts. Same condition
+    as the describe-side check, but a clearer multi-line error message:
+    counts armatures vs meshes separately, samples a few names, and shows
+    both remediation paths (prep script + manual Apply All Transforms)."""
+
+    def test_clean_scene_passes(self):
+        arm = _MockObj('Armature', Matrix.Identity(4))
+        mesh = _MockObj('Body', Matrix.Identity(4))
+        _preprocess_check_baked_transforms([arm], {arm: [mesh]})
+
+    def test_error_separates_armature_and_mesh_counts(self):
+        arm = _MockObj('rig', Matrix.Diagonal((2.0, 2.0, 2.0, 1.0)))
+        meshes = [_MockObj('m_%03d' % i, Matrix.Translation((i + 1, 0, 0)))
+                  for i in range(20)]
+        with pytest.raises(ValueError) as excinfo:
+            _preprocess_check_baked_transforms([arm], {arm: meshes})
+        msg = str(excinfo.value)
+        assert "1 armature(s)" in msg
+        assert "20 mesh(es)" in msg
+        assert "rig" in msg
+        # Only first 3 mesh names sampled — the user shouldn't get a wall of names.
+        assert "m_000" in msg and "m_002" in msg
+        assert "m_010" not in msg
+
+    def test_error_lists_remediation_paths(self):
+        arm = _MockObj('rig', Matrix.Diagonal((2.0, 1.0, 1.0, 1.0)))
+        with pytest.raises(ValueError) as excinfo:
+            _preprocess_check_baked_transforms([arm], {arm: []})
+        msg = str(excinfo.value)
+        assert "prepare_for_export.py" in msg
+        assert "Apply > All Transforms" in msg
+
+    def test_only_meshes_unbaked(self):
+        arm = _MockObj('rig', Matrix.Identity(4))
+        meshes = [_MockObj('a', Matrix.Translation((1, 0, 0)))]
+        with pytest.raises(ValueError) as excinfo:
+            _preprocess_check_baked_transforms([arm], {arm: meshes})
+        msg = str(excinfo.value)
+        assert "armature" not in msg.lower() or "mesh" in msg.lower()
+        assert "1 mesh(es)" in msg
 
 
 class _MockVertexGroup:

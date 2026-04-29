@@ -22,7 +22,7 @@ pytest.importorskip("mathutils")
 
 from mathutils import Matrix
 
-from exporter.phases.describe_blender.helpers.animations import (
+from exporter.phases.describe.helpers.animations_decode import (
     _unbake_bone_track, _build_bone_data,
 )
 from shared.IR.skeleton import IRBone
@@ -100,7 +100,7 @@ def test_unbake_signature_drops_loc_scale():
 
     sig_action = inspect.signature(
         __import__(
-            'exporter.phases.describe_blender.helpers.animations',
+            'exporter.phases.describe.helpers.animations_decode',
             fromlist=['_describe_action'],
         )._describe_action
     )

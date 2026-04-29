@@ -336,6 +336,14 @@ def _build_texture_flags(ir_layer):
     elif lmc == LightmapChannel.EXTENSION:
         flags |= TEX_LIGHTMAP_EXT
 
+    # Bump-mapped layers contribute to both diffuse AND specular
+    # lighting in the game's shader — every bump-layer MObj we've
+    # seen carries TEX_LIGHTMAP_DIFFUSE|SPECULAR together. Add the
+    # specular bit automatically so round-tripped bump layers match
+    # game-native flag patterns without requiring an IR change.
+    if getattr(ir_layer, 'is_bump', False):
+        flags |= TEX_LIGHTMAP_SPECULAR
+
     # Color blend mode (bits 16-19)
     color_map = {
         LayerBlendMode.NONE: TEX_COLORMAP_NONE,

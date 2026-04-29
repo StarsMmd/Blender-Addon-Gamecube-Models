@@ -93,10 +93,9 @@ def decode_fobjdesc(fobj, bias=0, scale=1, logger=None, options=None):
                 cur_slope = slope
 
                 if opcode not in _INTERPOLATION_MAP and logger is not None:
-                    from .strictness import report
-                    report(logger, options, "keyframe_unknown_opcode",
-                           "Unknown keyframe opcode 0x%X; fell back to CONSTANT (game would crash or glitch)",
-                           opcode, fatal=True)
+                    logger.leniency("keyframe_unknown_opcode",
+                                    "Unknown keyframe opcode 0x%X; fell back to CONSTANT (game would crash or glitch)",
+                                    opcode)
                 interp = _INTERPOLATION_MAP.get(opcode, Interpolation.CONSTANT)
                 scaled_val = (val + bias) * scale
                 decoded.append((current_frame, scaled_val, interp, opcode))

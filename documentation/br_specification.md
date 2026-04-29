@@ -1,6 +1,9 @@
 # Blender Representation (BR) Specification
 
-The BR is the output of Phase 5a (Plan) and the input to Phase 5b (Build). It is a pure-Python dataclass hierarchy with every field pre-decided for Blender consumption — enum strings match Blender's own, matrices are in Blender's target space, shader graphs are fully specified node-by-node. The build phase is a mechanical bpy walker with no shader / geometry / bake decisions of its own.
+The BR is a pure-Python dataclass hierarchy with every field pre-decided for Blender consumption — enum strings match Blender's own, matrices are in Blender's target space, shader graphs are fully specified node-by-node. It serves both pipeline directions:
+
+- **Import side** — output of Phase 5a (`importer/phases/plan/`) and input to Phase 5b (`importer/phases/build_blender/`). Plan converts IR → BR; build mechanically walks the BR with no shader / geometry / bake decisions of its own.
+- **Export side** — output of Phase 1 (`exporter/phases/describe/`) and input to Phase 2 (`exporter/phases/plan/`). Describe snapshots Blender into BR; the export `plan` converts BR → IR for the rest of the export pipeline. Materials and animations currently ride a `_ir_material` / `_ir_animation_set` side-channel on the BR object; the deep decoders that produce them live in `exporter/phases/describe/helpers/{materials,animations,material_animations}_decode.py` and will eventually shape into BR types directly.
 
 **Design principles:**
 - All types are `@dataclass` from the standard library — no `bpy` types, no `mathutils`.

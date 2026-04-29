@@ -35,7 +35,7 @@ Every Blender Python API call used by this addon, with the Blender version range
 | | | | | |
 | | | **Custom Properties** | | |
 | 2.80 | current | `object["key"] = value` | `shiny_filter.py`, `post_process.py`, `cameras.py` | `dat_pkx_has_shiny`, `dat_pkx_shiny_*_group`, `dat_pkx_*` metadata, `dat_camera_aspect` |
-| 2.80 | current | `object.get("key", default)` | `shiny_filter.py`, `BlenderPlugin.py`, `describe_blender.py`, `export/cameras.py` | Panel poll, group name lookup, PKX metadata extraction, camera aspect readback |
+| 2.80 | current | `object.get("key", default)` | `shiny_filter.py`, `BlenderPlugin.py`, `exporter/describe/helpers/scene.py`, `exporter/describe/helpers/cameras.py` | Panel poll, group name lookup, PKX metadata extraction, camera aspect readback |
 | | | | | |
 | | | **IO Helpers (bpy_extras)** | | |
 | 2.80 | current | `bpy_extras.io_utils.ImportHelper` | `BlenderPlugin.py` | |
@@ -47,18 +47,18 @@ Every Blender Python API call used by this addon, with the Blender version range
 | | | | | |
 | | | **Context & Scene** | | |
 | 2.80 | current | `bpy.context.scene.collection.objects.link(obj)` | `meshes.py`, `skeleton.py`, `lights.py`, `cameras.py` | |
-| 2.80 | current | `bpy.context.view_layer.objects.active = obj` | `skeleton.py`, `exporter/skeleton.py` | |
+| 2.80 | current | `bpy.context.view_layer.objects.active = obj` | `skeleton.py`, `exporter/describe/helpers/armature.py` | |
 | 2.80 | current | `bpy.context.view_layer.update()` | `skeleton.py`, `animations.py` | Force dependency graph update |
-| 2.80 | current | `bpy.context.scene.frame_set(n)` | `post_process.py`, `exporter/describe_blender.py` | Reset timeline / sample animations at frame |
-| 2.80 | current | `bpy.context.scene.frame_current` | `exporter/describe_blender.py` | Save/restore frame while sampling |
+| 2.80 | current | `bpy.context.scene.frame_set(n)` | `post_process.py`, `exporter/describe/helpers/scene.py` | Reset timeline / sample animations at frame |
+| 2.80 | current | `bpy.context.scene.frame_current` | `exporter/describe/helpers/scene.py` | Save/restore frame while sampling |
 | 2.80 | current | `bpy.context.scene.frame_start / frame_end = n` | `post_process.py` | Set playback range from active action's frame_range |
-| 2.80 | current | `bpy.context.mode` | `skeleton.py`, `exporter/skeleton.py` | Check current editor mode |
+| 2.80 | current | `bpy.context.mode` | `skeleton.py`, `exporter/describe/helpers/armature.py` | Check current editor mode |
 | 2.80 | current | `context.screen.areas` | `BlenderPlugin.py` | Workspace setup |
 | 3.2 | current | `context.temp_override(area=...)` | `BlenderPlugin.py` | Workspace split |
 | | | | | |
 | | | **Operators (bpy.ops)** | | |
-| 2.80 | current | `bpy.ops.object.mode_set(mode=...)` | `skeleton.py`, `animations.py`, `constraints.py`, `exporter/skeleton.py`, `exporter/constraints.py` | EDIT/OBJECT/POSE mode switching |
-| 2.80 | current | `bpy.ops.object.select_all(action='DESELECT')` | `BlenderPlugin.py`, `exporter/skeleton.py` | |
+| 2.80 | current | `bpy.ops.object.mode_set(mode=...)` | `skeleton.py`, `animations.py`, `constraints.py`, `exporter/describe/helpers/armature.py`, `exporter/describe/helpers/constraints.py` | EDIT/OBJECT/POSE mode switching |
+| 2.80 | current | `bpy.ops.object.select_all(action='DESELECT')` | `BlenderPlugin.py`, `exporter/describe/helpers/armature.py` | |
 | 2.80 | current | `bpy.ops.screen.area_split(direction, factor)` | `BlenderPlugin.py` | Workspace setup |
 | 2.80 | current | `bpy.ops.object.transform_apply(location, rotation, scale)` | `prepare_for_export.py` | Bake armature + child mesh world transforms into data |
 | 2.80 | current | `bpy.ops.object.vertex_group_limit_total(limit=n)` | `prepare_for_export.py` | Cap per-vertex influences at hardware limit |
@@ -253,70 +253,71 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.80 | current | `matrix.inverted()` | `animations.py` | |
 | 2.80 | current | `matrix.decompose()` | `animations.py` | Returns `(trans, rot, scale)` |
 | | | | | |
-| | | **Exporter — Describe Blender (Phase 1)** | | |
-| 2.80 | current | `context.scene.objects` | `describe_blender.py` | Find all armatures in scene |
-| 2.80 | current | `obj.type` | `describe_blender.py`, `exporter/meshes.py` | Filter ARMATURE / MESH |
-| 2.80 | current | `bpy.context.view_layer.objects.active` | `exporter/skeleton.py` | Set active for mode switch |
-| 2.80 | current | `bpy.ops.object.select_all(action='DESELECT')` | `exporter/skeleton.py` | Clean selection state |
-| 2.80 | current | `armature.select_set(True)` | `exporter/skeleton.py` | Select armature for edit mode |
-| 2.80 | current | `bpy.ops.object.mode_set(mode='EDIT')` | `exporter/skeleton.py` | Enter edit mode to read bones |
-| 2.80 | current | `bpy.ops.object.mode_set(mode='OBJECT')` | `exporter/skeleton.py` | Return to object mode |
-| 2.80 | current | `armature_data.edit_bones` | `exporter/skeleton.py` | Iterate edit bones |
-| 2.80 | current | `edit_bone.parent` | `exporter/skeleton.py` | Parent bone reference |
-| 2.80 | current | `edit_bone.matrix` | `exporter/skeleton.py` | 4x4 bone matrix in armature space |
-| 2.80 | current | `edit_bone.hide` | `exporter/skeleton.py` | Bone visibility |
-| 2.80 | current | `edit_bone.children` | `exporter/skeleton.py` | Child bones for DFS traversal |
-| 2.80 | current | `armature.matrix_world.to_scale()` | `exporter/skeleton.py`, `exporter/meshes.py` | Armature object scale for bone/vertex scaling |
-| 2.80 | current | `matrix.decompose()` | `exporter/skeleton.py` | Decompose to (trans, quat, scale) |
-| 2.80 | current | `matrix.inverted()` | `exporter/skeleton.py` | Compute local from parent/child world |
-| 2.80 | current | `Matrix.Rotation(angle, size, axis)` | `exporter/skeleton.py` | Coordinate system conversion |
-| 2.80 | current | `Matrix.Identity(size)` | `exporter/skeleton.py` | Scale correction placeholder |
-| 2.80 | current | `quat.to_euler('XYZ')` | `exporter/skeleton.py` | Quaternion → Euler conversion |
-| 2.80 | current | `obj.parent` | `exporter/meshes.py` | Find meshes parented to armature |
-| 2.80 | current | `mesh_data.calc_loop_triangles()` | `exporter/meshes.py` | Ensure geometry is up to date |
-| 2.80 | current | `mesh_data.vertices` | `exporter/meshes.py` | Read vertex positions |
-| 2.80 | current | `mesh_data.polygons` | `exporter/meshes.py` | Read face indices |
-| 2.80 | current | `polygon.material_index` | `exporter/meshes.py` | Group faces by material for multi-material mesh splitting |
-| 2.80 | current | `polygon.loop_start` / `polygon.loop_total` | `exporter/meshes.py` | Map polygon to per-loop data indices |
-| 2.80 | current | `mesh_data.materials` | `exporter/meshes.py` | Access material slots for multi-material meshes |
-| 2.80 | current | `mesh_data.uv_layers` | `exporter/meshes.py` | Read UV layers |
-| 3.2 | current | `mesh_data.color_attributes` | `exporter/meshes.py` | Read vertex color layers (FLOAT_COLOR) |
-| 2.80 | current | `mesh_data.has_custom_normals` | `exporter/meshes.py` | Check for custom normals |
-| 4.1 | current | `mesh_data.corner_normals` | `exporter/meshes.py` | Per-loop normals (replaces `calc_normals_split()`) |
-| 2.80 | 4.0 | `mesh_data.calc_normals_split()` | `exporter/meshes.py` | Fallback for pre-4.1; removed in 4.1 |
-| 2.80 | current | `mesh_data.loops` | `exporter/meshes.py` | Read per-loop data (fallback path) |
-| 2.80 | current | `obj.vertex_groups` | `exporter/meshes.py` | Read vertex group list |
-| 2.80 | current | `vertex.groups` | `exporter/meshes.py` | Per-vertex group assignments |
-| 2.80 | current | `group_element.group` | `exporter/meshes.py` | Vertex group index |
-| 2.80 | current | `group_element.weight` | `exporter/meshes.py` | Vertex weight value |
-| 2.80 | current | `obj.hide_render` | `exporter/meshes.py` | Mesh visibility |
-| 2.80 | current | `material.use_backface_culling` | `exporter/meshes.py` | Backface culling flag |
+| | | **Exporter — Describe Phase 1 (Blender → BR)** | | |
+| 2.80 | current | `context.scene.objects` | `exporter/describe/describe.py` | Find all armatures in scene |
+| 2.80 | current | `obj.type` | `exporter/describe/describe.py`, `exporter/describe/helpers/meshes.py` | Filter ARMATURE / MESH |
+| 2.80 | current | `bpy.context.view_layer.objects.active` | `exporter/describe/helpers/armature.py`, `exporter/describe/helpers/constraints.py` | Set active for mode switch |
+| 2.80 | current | `bpy.ops.object.select_all(action='DESELECT')` | `exporter/describe/helpers/armature.py` | Clean selection state |
+| 2.80 | current | `armature.select_set(True)` | `exporter/describe/helpers/armature.py` | Select armature for edit mode |
+| 2.80 | current | `bpy.ops.object.mode_set(mode='EDIT')` | `exporter/describe/helpers/armature.py` | Enter edit mode to read bones |
+| 2.80 | current | `bpy.ops.object.mode_set(mode='OBJECT')` | `exporter/describe/helpers/armature.py`, `exporter/describe/helpers/constraints.py` | Return to object mode |
+| 2.80 | current | `armature_data.edit_bones` | `exporter/describe/helpers/armature.py` | Iterate edit bones |
+| 2.80 | current | `edit_bone.parent` | `exporter/describe/helpers/armature.py` | Parent bone reference |
+| 2.80 | current | `edit_bone.matrix` | `exporter/describe/helpers/armature.py` | 4x4 bone matrix in armature space (captured into BRBone.edit_matrix) |
+| 2.80 | current | `edit_bone.hide` | `exporter/describe/helpers/armature.py` | Bone visibility |
+| 2.80 | current | `edit_bone.children` | `exporter/describe/helpers/armature.py` | Child bones for DFS traversal |
+| 2.80 | current | `armature.matrix_world` | `exporter/describe/helpers/scene.py`, `exporter/pre_process/pre_process.py` | Identity check for baked-transforms validator |
+| 2.80 | current | `obj.parent` | `exporter/describe/helpers/meshes.py` | Find meshes parented to armature |
+| 2.80 | current | `mesh_data.calc_loop_triangles()` | `exporter/describe/helpers/meshes.py` | Ensure geometry is up to date |
+| 2.80 | current | `mesh_data.vertices` | `exporter/describe/helpers/meshes.py` | Read vertex positions |
+| 2.80 | current | `mesh_data.polygons` | `exporter/describe/helpers/meshes.py` | Read face indices |
+| 2.80 | current | `polygon.material_index` | `exporter/describe/helpers/meshes.py` | Group faces by material for multi-material mesh splitting |
+| 2.80 | current | `polygon.loop_start` / `polygon.loop_total` | `exporter/describe/helpers/meshes.py` | Map polygon to per-loop data indices |
+| 2.80 | current | `mesh_data.materials` | `exporter/describe/helpers/meshes.py` | Access material slots for multi-material meshes |
+| 2.80 | current | `mesh_data.uv_layers` | `exporter/describe/helpers/meshes.py` | Read UV layers |
+| 3.2 | current | `mesh_data.color_attributes` | `exporter/describe/helpers/meshes.py` | Read vertex color layers (FLOAT_COLOR) |
+| 2.80 | current | `mesh_data.has_custom_normals` | `exporter/describe/helpers/meshes.py` | Check for custom normals |
+| 4.1 | current | `mesh_data.corner_normals` | `exporter/describe/helpers/meshes.py` | Per-loop normals (replaces `calc_normals_split()`) |
+| 2.80 | 4.0 | `mesh_data.calc_normals_split()` | `exporter/describe/helpers/meshes.py` | Fallback for pre-4.1; removed in 4.1 |
+| 2.80 | current | `mesh_data.loops` | `exporter/describe/helpers/meshes.py` | Read per-loop data (fallback path) |
+| 2.80 | current | `obj.vertex_groups` | `exporter/describe/helpers/meshes.py` | Read vertex group list |
+| 2.80 | current | `vertex.groups` | `exporter/describe/helpers/meshes.py` | Per-vertex group assignments |
+| 2.80 | current | `group_element.group` | `exporter/describe/helpers/meshes.py` | Vertex group index |
+| 2.80 | current | `group_element.weight` | `exporter/describe/helpers/meshes.py` | Vertex weight value |
+| 2.80 | current | `obj.hide_render` | `exporter/describe/helpers/meshes.py` | Mesh visibility |
+| 2.80 | current | `material.use_backface_culling` | `exporter/describe/helpers/meshes.py` | Backface culling flag |
 | | | | | |
-| | | **Exporter — Describe Animations (Phase 1)** | | |
-| 2.80 | current | `bpy.data.actions` | `exporter/animations.py` | Iterate all actions to find bone animations |
-| 2.80 | current | `action.id_root` | `exporter/animations.py` | Filter actions by root type |
-| 2.80 | current | `action.fcurves` | `exporter/animations.py` | Access F-Curves for channel grouping |
-| 2.80 | current | `fcurve.data_path` | `exporter/animations.py` | Match `pose.bones["..."].rotation_euler` etc |
-| 2.80 | current | `fcurve.array_index` | `exporter/animations.py` | Channel component index (X=0, Y=1, Z=2; W=0 for quat) |
-| 2.80 | current | `fcurve.evaluate(frame)` | `exporter/animations.py` | Sample animation value at a frame |
-| 2.80 | current | `action.frame_range` | `exporter/animations.py` | Get action start/end frames |
-| 2.80 | current | `Quaternion((w, x, y, z)).to_euler('XYZ')` | `exporter/animations.py` | Convert quaternion rotation fcurves to Euler |
+| | | **Exporter — Describe Animations (Phase 1, deep decoder)** | | |
+| 2.80 | current | `bpy.data.actions` | `exporter/describe/helpers/animations_decode.py` | Iterate all actions to find bone animations |
+| 2.80 | current | `action.id_root` | `exporter/describe/helpers/animations_decode.py` | Filter actions by root type |
+| 2.80 | current | `action.fcurves` | `exporter/describe/helpers/animations_decode.py` | Access F-Curves for channel grouping |
+| 2.80 | current | `fcurve.data_path` | `exporter/describe/helpers/animations_decode.py` | Match `pose.bones["..."].rotation_euler` etc |
+| 2.80 | current | `fcurve.array_index` | `exporter/describe/helpers/animations_decode.py` | Channel component index (X=0, Y=1, Z=2; W=0 for quat) |
+| 2.80 | current | `fcurve.evaluate(frame)` | `exporter/describe/helpers/animations_decode.py` | Sample animation value at a frame |
+| 2.80 | current | `action.frame_range` | `exporter/describe/helpers/animations_decode.py` | Get action start/end frames |
+| 2.80 | current | `Quaternion((w, x, y, z)).to_euler('XYZ')` | `exporter/describe/helpers/animations_decode.py` | Convert quaternion rotation fcurves to Euler |
 | | | | | |
-| | | **Exporter — Describe Materials (Phase 1)** | | |
-| 2.80 | current | `material.use_nodes` | `exporter/materials.py` | Check for node-based material |
-| 2.80 | current | `material.node_tree.nodes` | `exporter/materials.py` | Access shader nodes |
-| 2.80 | current | `material.node_tree.links` | `exporter/materials.py` | Access node links |
-| 2.80 | current | `node.bl_idname` | `exporter/materials.py` | Identify node type |
-| 2.80 | current | `node.inputs[name].default_value` | `exporter/materials.py` | Read Principled BSDF inputs |
-| 2.80 | current | `node.outputs[0].default_value` | `exporter/materials.py` | Read RGB node color |
-| 2.80 | current | `node.attribute_name` | `exporter/materials.py` | Read ShaderNodeAttribute target |
-| 2.80 | current | `tex_node.image` | `exporter/materials.py` | Access texture image |
-| 2.80 | current | `tex_node.interpolation` | `exporter/materials.py` | Texture sampling mode |
-| 2.80 | current | `tex_node.extension` | `exporter/materials.py` | Texture wrap/extension mode |
-| 2.80 | current | `image.size` | `exporter/materials.py` | Image dimensions |
-| 2.80 | current | `image.pixels` | `exporter/materials.py` | Read image pixel data (float RGBA) |
-| 2.80 | current | `link.from_node` / `link.to_node` | `exporter/materials.py` | Trace node connections |
-| 2.80 | current | `link.from_socket` / `link.to_socket` | `exporter/materials.py` | Identify connected sockets |
+| | | **Exporter — Describe Materials (Phase 1, deep decoder)** | | |
+| 2.80 | current | `material.use_nodes` | `exporter/describe/helpers/materials_decode.py` | Check for node-based material |
+| 2.80 | current | `material.node_tree.nodes` | `exporter/describe/helpers/materials_decode.py` | Access shader nodes |
+| 2.80 | current | `material.node_tree.links` | `exporter/describe/helpers/materials_decode.py` | Access node links |
+| 2.80 | current | `node.bl_idname` | `exporter/describe/helpers/materials_decode.py` | Identify node type |
+| 2.80 | current | `node.inputs[name].default_value` | `exporter/describe/helpers/materials_decode.py` | Read Principled BSDF inputs |
+| 2.80 | current | `node.outputs[0].default_value` | `exporter/describe/helpers/materials_decode.py` | Read RGB node color |
+| 2.80 | current | `node.attribute_name` | `exporter/describe/helpers/materials_decode.py` | Read ShaderNodeAttribute target |
+| 2.80 | current | `tex_node.image` | `exporter/describe/helpers/materials_decode.py` | Access texture image |
+| 2.80 | current | `tex_node.interpolation` | `exporter/describe/helpers/materials_decode.py` | Texture sampling mode |
+| 2.80 | current | `tex_node.extension` | `exporter/describe/helpers/materials_decode.py` | Texture wrap/extension mode |
+| 2.80 | current | `image.size` | `exporter/describe/helpers/materials_decode.py` | Image dimensions |
+| 2.80 | current | `image.pixels` | `exporter/describe/helpers/materials_decode.py` | Read image pixel data (float RGBA) |
+| 2.80 | current | `link.from_node` / `link.to_node` | `exporter/describe/helpers/materials_decode.py` | Trace node connections |
+| 2.80 | current | `link.from_socket` / `link.to_socket` | `exporter/describe/helpers/materials_decode.py` | Identify connected sockets |
+| | | | | |
+| | | **Exporter — Describe Lights / Cameras / Constraints (Phase 1)** | | |
+| 2.80 | current | `light_data.color`, `light_data.energy`, `light_data.type` | `exporter/describe/helpers/lights.py` | Read POINT/SUN/SPOT lights into BRLight |
+| 2.80 | current | `cam_data.type`, `cam_data.lens`, `cam_data.ortho_scale`, `cam_data.sensor_height`, `cam_data.sensor_fit`, `cam_data.clip_start`, `cam_data.clip_end` | `exporter/describe/helpers/cameras.py` | Read camera properties into BRCamera |
+| 2.80 | current | `obj.constraints` (read) | `exporter/describe/helpers/lights.py`, `exporter/describe/helpers/cameras.py` | Find TRACK_TO target empty |
+| 2.80 | current | `pose_bone.constraints` (read) | `exporter/describe/helpers/constraints.py` | Iterate IK / COPY_LOCATION / TRACK_TO / COPY_ROTATION / LIMIT_* |
 | | | | | |
 | | | **Third-Party Libraries** | | |
 | — | — | `numpy.frombuffer(bytes, dtype=np.uint8)` | `materials.py` | Image pixel conversion; bundled with Blender |

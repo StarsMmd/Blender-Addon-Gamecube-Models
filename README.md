@@ -27,28 +27,14 @@ The file-browser sidebar exposes these toggles:
 
 | Toggle | Default | Purpose |
 |---|---|---|
-| **IK Hack** | on | Shrink bones to 1e-3 so Blender's IK solver behaves correctly. |
-| **Write Logs** | on | Write per-import logs to `$TMPDIR/blender_dat_import/<model>/`. Warnings and leniencies always print to the terminal regardless of this setting. |
+| **Game of Origin** | Colosseum / XD | Selects the section-name → node-type routing rules. Pick *Kirby Air Ride* for Kirby Air Ride dumps, *Super Smash Bros.* for Melee dumps. |
 | **Setup Workspace** | on | Split the viewport, open an Action Editor, set playback end to frame 60. |
 | **Import Lights** | off | Import `LightSet` nodes as Blender lights (AMBIENT/SUN/POINT/SPOT). |
 | **Import Cameras** | off | Import `CameraSet` nodes as Blender cameras (static + animated). |
 | **Include Shiny Variant** | on | For `.pkx` files, extract shiny color parameters and build a toggleable shader filter. |
 | **Use Legacy Importer** | off | Route through the pre-refactor pipeline instead of the IR pipeline. For comparison only. |
-| **Strict Mirror Mode** | off | Refuse to silently heal malformed input. Use when diagnosing re-exported models — see below. |
 
-#### Strict Mirror Mode
-
-The importer normally heals edge-case data so it renders cleanly in Blender: it rescues near-zero-scale bones using animation keyframes, fabricates white vertex colors when `CLR0` is absent, falls back to rigid skinning when an envelope-typed mesh lacks `PNMTXIDX`, and drops cameras with unknown projection flags. These workarounds mask bugs in re-exported models — a file that crashes or renders garbage in-game often still loads fine here.
-
-Strict Mirror Mode disables that healing for fault classes the game engine cannot tolerate. It raises on:
-
-- Envelope weight chains longer than the game's 10-weight-per-vertex cap
-- Missing `PNMTXIDX` on a mesh whose flags claim envelope skinning
-- Cameras with unknown projection type or missing eye/target positions
-
-and skips near-zero-scale bone rescue so broken skeletons collapse visibly instead of being silently repaired. Use it when a re-exported model looks fine in Blender but misbehaves in-game: the exception message points at the exact PObj address / camera index the game would also choke on.
-
-Leniency warnings print to the terminal with strict mode **off** too — the toggle only controls whether the importer *fails* on them. Each import also writes a `dat_leniencies` list onto the armature as a custom property, so you can inspect healing history in the N-panel → Object Properties → Custom Properties.
+The importer heals edge-case data so it renders cleanly in Blender: it rescues near-zero-scale bones using animation keyframes, fabricates white vertex colors when `CLR0` is absent, falls back to rigid skinning when an envelope-typed mesh lacks `PNMTXIDX`, and drops cameras with unknown projection flags. Leniency warnings print to the terminal and each import writes a `dat_leniencies` list onto the armature as a custom property, so you can inspect healing history in the N-panel → Object Properties → Custom Properties.
 
 ## Particles (GPT1)
 
@@ -71,6 +57,43 @@ The exporter writes a Blender scene to a `.dat` or `.pkx` binary. See the [Expor
 For models not imported through this plugin, run `scripts/prepare_for_export.py` first to set up camera, lights, weight optimization, and PKX metadata.
 
 ## Developer Instructions
+
+### Local Development Setup
+
+**Goal:** install the addon into Blender, find the on-disk install location, and edit files there so changes pick up after a restart.
+
+1. **Clone the repository.**
+   ```bash
+   git clone <repo-url>
+   cd colo_xd
+   ```
+
+2. **Build a Blender extension `.zip`.** Compress the **contents** of the repo (not the parent folder), so the resulting zip's top level is the addon files (`__init__.py`, `blender_manifest.toml`, `BlenderPlugin.py`, etc.).
+   ```bash
+   # macOS / Linux
+   cd /path/to/colo_xd
+   zip -r ../colo_xd.zip . -x ".git/*" "__pycache__/*"
+
+   # Windows (PowerShell)
+   Compress-Archive -Path * -DestinationPath ..\colo_xd.zip
+   ```
+
+3. **Install in Blender.** Open Blender 4.5.7 LTS, then:
+   - **Edit > Preferences > Get Extensions > drop-down (top right) > Install from Disk…** and select the `.zip`.
+   - Or simply drag the `.zip` into a Blender window.
+
+4. **Find the on-disk install location.** Blender unpacks extensions into a per-OS user-default folder:
+   | OS | Default extensions folder |
+   |---|---|
+   | macOS | `~/Library/Application Support/Blender/4.5/extensions/user_default/` |
+   | Windows | `%APPDATA%\Blender Foundation\Blender\4.5\extensions\user_default\` |
+   | Linux | `~/.config/blender/4.5/extensions/user_default/` |
+
+   Inside that folder, the addon lives in a sub-directory named after the manifest's `id` (here: `gamecube_dat_model`) — or after whatever folder name the `.zip` extracted to. Edit files **at this location** for changes to affect the running addon.
+
+   *Tip:* to skip the zip-and-reinstall loop, you can `rm -rf` the installed folder once and replace it with a symlink to your clone. macOS/Linux: `ln -s "$(pwd)" ~/Library/Application\ Support/Blender/4.5/extensions/user_default/gamecube_dat_model`. Windows: `mklink /D "%APPDATA%\Blender Foundation\Blender\4.5\extensions\user_default\gamecube_dat_model" "C:\path\to\colo_xd"`. Then every git pull / file edit is live.
+
+5. **Restart Blender after every code change.** Blender loads extension modules once at startup; reloading without a restart will not pick up edits to the addon's Python files. If a change doesn't take effect, fully quit and relaunch Blender (closing the window is sometimes not enough — use *Blender > Quit* on macOS, or kill the process if the launcher menu won't accept input).
 
 ### Dependencies
 
@@ -121,11 +144,14 @@ shared/
 exporter/
   exporter.py              # Pipeline entry point: Exporter.run()
   phases/
-    pre_process/           # Pre-process: validate output path + scene
-    describe_blender/      # Phase 1: Blender -> IR dataclasses
-    compose/               # Phase 2: IR -> node trees
-    serialize/             # Phase 3: node trees -> DAT bytes (DATBuilder)
-    package/               # Phase 4: DAT bytes -> final output (.dat or .pkx)
+    pre_process/           # Validate output path + scene (baked transforms,
+                           #   weight/texture caps, anim timings)
+    describe/              # Phase 1: Blender -> BR (only phase that touches bpy)
+    plan/                  # Phase 2: BR -> IR (pure)
+    compose/               # Phase 3: IR -> node trees
+    serialize/             # Phase 4: node trees -> DAT bytes (DATBuilder)
+    package/               # Phase 5: DAT bytes -> final output (.dat or .pkx)
+    describe_blender/      # Empty deprecation stubs (pending file deletion)
 
 legacy/                    # Pre-refactor importer (available via "Use Legacy" toggle)
 documentation/             # Pipeline docs, API reference, compatibility table, IR spec

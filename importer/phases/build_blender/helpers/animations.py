@@ -9,7 +9,7 @@ import bpy
 from mathutils import Matrix, Vector
 
 try:
-    from ....shared.helpers.logger import StubLogger
+    from .....shared.helpers.logger import StubLogger
     from ...plan.helpers.animations import compute_pose_basis
 except (ImportError, SystemError):
     from shared.helpers.logger import StubLogger

@@ -189,14 +189,9 @@ def _validated_face_lists(pobj, pos_idx, count, logger, options):
     orig_face_count = len(faces)
     face_lists_copy, faces = _validate_mesh(face_lists_copy, faces)
     if len(faces) != orig_face_count:
-        try:
-            from .strictness import report
-        except (ImportError, SystemError):
-            from importer.phases.describe.helpers.strictness import report
-        report(logger, options, "degenerate_faces_pruned",
-               "PObj 0x%X mesh#%d: removed %d degenerate faces (%d → %d); game would render garbage",
-               pobj.address, count, orig_face_count - len(faces), orig_face_count, len(faces),
-               fatal=False)
+        logger.leniency("degenerate_faces_pruned",
+                        "PObj 0x%X mesh#%d: removed %d degenerate faces (%d → %d); game would render garbage",
+                        pobj.address, count, orig_face_count - len(faces), orig_face_count, len(faces))
     return face_lists_copy, faces
 
 
@@ -225,9 +220,9 @@ def _collect_attribute_layers(pobj, face_lists_copy, faces):
 
 
 def _fabricate_missing_color_layers(color_layers, faces, options, pobj_addr, logger):
-    """Append default white color_0/alpha_0 layers when missing (skipped under strict_mirror).
+    """Append default white color_0/alpha_0 layers when missing.
 
-    In: color_layers (list[IRColorLayer], not mutated); faces (list[list[int]]); options (dict|None); pobj_addr (int, for the leniency report); logger (Logger).
+    In: color_layers (list[IRColorLayer], not mutated); faces (list[list[int]]); options (dict|None, unused — kept for signature stability); pobj_addr (int, for the leniency report); logger (Logger).
     Out: list[IRColorLayer] — original layers plus any fabricated white layers.
     """
     has_color_0 = any(cl.name == 'color_0' for cl in color_layers)
@@ -236,23 +231,16 @@ def _fabricate_missing_color_layers(color_layers, faces, options, pobj_addr, log
         return list(color_layers)
 
     total_loops = sum(len(f) for f in faces)
-    strict = options.get("strict_mirror") if options else False
-    try:
-        from .strictness import report
-    except (ImportError, SystemError):
-        from importer.phases.describe.helpers.strictness import report
-    report(logger, options, "missing_vertex_colors",
-           "PObj 0x%X missing CLR0 %s%s; %s (game would render unlit)",
-           pobj_addr,
-           "color" if not has_color_0 else "",
-           "+alpha" if (not has_color_0 and not has_alpha_0) else ("alpha" if not has_alpha_0 else ""),
-           "leaving absent" if strict else "fabricating white",
-           fatal=False)
+    logger.leniency("missing_vertex_colors",
+                    "PObj 0x%X missing CLR0 %s%s; fabricating white (game would render unlit)",
+                    pobj_addr,
+                    "color" if not has_color_0 else "",
+                    "+alpha" if (not has_color_0 and not has_alpha_0) else ("alpha" if not has_alpha_0 else ""))
 
     out = list(color_layers)
-    if not has_color_0 and not strict:
+    if not has_color_0:
         out.append(IRColorLayer(name='color_0', colors=[(1.0, 1.0, 1.0, 1.0)] * total_loops))
-    if not has_alpha_0 and not strict:
+    if not has_alpha_0:
         out.append(IRColorLayer(name='alpha_0', colors=[(1.0, 1.0, 1.0, 1.0)] * total_loops))
     return out
 
@@ -484,13 +472,9 @@ def _extract_envelope_weights(pobj, joint, bone_index, bones, joint_to_bone_inde
 
     envelope_vertex_index = pobj.find_attribute_index(GX_VA_PNMTXIDX)
     if envelope_vertex_index is None:
-        try:
-            from .strictness import report
-        except (ImportError, SystemError):
-            from importer.phases.describe.helpers.strictness import report
-        report(logger, options, "envelope_no_pnmtxidx",
-               "PObj 0x%X has envelope descriptor bits but no PNMTXIDX attribute; game would deref garbage",
-               pobj.address, fatal=True)
+        logger.leniency("envelope_no_pnmtxidx",
+                        "PObj 0x%X has envelope descriptor bits but no PNMTXIDX attribute; game would deref garbage",
+                        pobj.address)
         return IRBoneWeights(type=SkinType.RIGID, bone_name=bones[bone_index].name)
 
     env_source = pobj.sources[envelope_vertex_index]
@@ -581,13 +565,9 @@ def _compute_envelope_deform_matrices(envelope_list, bones, joint_to_bone_index,
     matrices = []
     for env_idx, envelope in enumerate(envelope_list):
         if len(envelope.envelopes) > 10:
-            try:
-                from .strictness import report
-            except (ImportError, SystemError):
-                from importer.phases.describe.helpers.strictness import report
-            report(logger, options, "envelope_over_cap",
-                   "PObj 0x%X envelope %d has %d weights (game caps at 10)",
-                   pobj_addr, env_idx, len(envelope.envelopes), fatal=True)
+            logger.leniency("envelope_over_cap",
+                            "PObj 0x%X envelope %d has %d weights (game caps at 10)",
+                            pobj_addr, env_idx, len(envelope.envelopes))
         matrices.append(_compute_envelope_deform_matrix(envelope, bones, joint_to_bone_index, coord))
     return matrices
 

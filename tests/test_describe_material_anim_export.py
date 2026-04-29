@@ -8,7 +8,7 @@ from shared.IR.skeleton import IRBone
 from shared.IR.geometry import IRMesh
 from shared.IR.enums import ScaleInheritance, Interpolation
 from shared.IR.animation import IRKeyframe
-from exporter.phases.describe_blender.helpers.material_animations import (
+from exporter.phases.describe.helpers.material_animations_decode import (
     build_material_lookup_from_meshes,
     _fcurve_to_keyframes,
     _build_material_track,

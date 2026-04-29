@@ -117,13 +117,12 @@ def _build_anim_name_map(pkx_header):
         return {}
 
     try:
-        from .....shared.helpers.pkx_header import XD_POKEMON_ANIM_NAMES, XD_TRAINER_ANIM_NAMES
+        from .....shared.helpers.pkx_header import XD_POKEMON_ANIM_NAMES
     except (ImportError, SystemError):
-        from shared.helpers.pkx_header import XD_POKEMON_ANIM_NAMES, XD_TRAINER_ANIM_NAMES
+        from shared.helpers.pkx_header import XD_POKEMON_ANIM_NAMES
 
     is_xd = pkx_header.is_xd
-    is_trainer = is_xd and pkx_header.species_id == 0 and pkx_header.particle_orientation == 0
-    slot_names = XD_TRAINER_ANIM_NAMES if is_trainer else XD_POKEMON_ANIM_NAMES
+    slot_names = XD_POKEMON_ANIM_NAMES
 
     # Collect active slot names per animation index.
     # XD uses motion_type > 0 to indicate active entries.

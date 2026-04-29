@@ -34,6 +34,7 @@ def pre_process(context, filepath, options=None, logger=StubLogger()):
 
     _validate_output_path(filepath, logger)
     _validate_scene(context, logger)
+    _validate_baked_transforms(context, logger)
     _validate_vertex_weight_count(context, logger)
     _validate_texture_sizes(context, logger)
     _validate_anim_timings(context, logger)
@@ -71,6 +72,84 @@ def _validate_scene(context, logger):
     # - Check that meshes are parented to the armature
     # - Check for unsupported configurations
     logger.info("  Scene validation OK (stub)")
+
+
+def _validate_baked_transforms(context, logger):
+    """Reject scenes whose armature or child meshes carry a non-identity
+    `matrix_world` — the SRT decompose path on the bone side and the plain
+    matmul on the vertex side disagree about shear, so unbaked transforms
+    let those two paths drift bone-by-bone down the chain.
+
+    `scripts/prepare_for_export.py` bakes everything into the data; this
+    check guards against running the exporter on a scene that skipped
+    that step.
+    """
+    try:
+        import bpy
+    except ImportError:
+        bpy = None
+    scene = getattr(context, 'scene', None)
+    objects = list(scene.objects) if scene is not None else (
+        list(bpy.data.objects) if bpy is not None else []
+    )
+
+    armatures = [o for o in objects if getattr(o, 'type', None) == 'ARMATURE']
+    children_by_armature = {
+        arm: [o for o in objects
+              if getattr(o, 'parent', None) is arm and getattr(o, 'type', None) == 'MESH']
+        for arm in armatures
+    }
+    _check_baked_transforms(armatures, children_by_armature)
+    logger.info("  Baked transforms OK (armatures + child meshes at identity matrix_world)")
+
+
+def _check_baked_transforms(armatures, children_by_armature):
+    """Pure helper for `_validate_baked_transforms` — drives unit tests
+    without needing a real `bpy.data.objects`."""
+    bad_armatures = []
+    bad_meshes = []
+    for arm in armatures:
+        if not _is_identity_matrix(arm.matrix_world):
+            bad_armatures.append(arm.name)
+        for child in children_by_armature.get(arm, ()):
+            if not _is_identity_matrix(child.matrix_world):
+                bad_meshes.append(child.name)
+
+    if not bad_armatures and not bad_meshes:
+        return
+
+    parts = []
+    if bad_armatures:
+        sample = ", ".join(bad_armatures[:3])
+        parts.append("%d armature(s) [%s%s]" % (
+            len(bad_armatures), sample,
+            "…" if len(bad_armatures) > 3 else "",
+        ))
+    if bad_meshes:
+        sample = ", ".join(bad_meshes[:3])
+        parts.append("%d mesh(es) [%s%s]" % (
+            len(bad_meshes), sample,
+            "…" if len(bad_meshes) > 3 else "",
+        ))
+
+    raise ValueError(
+        "Scene has unbaked transforms on " + " and ".join(parts) + ". "
+        "Every armature and child mesh must have an identity matrix_world "
+        "before exporting, or the bone path (SRT decompose) and vertex "
+        "path (matmul) drift apart. Fix with one of:\n"
+        "  • Run scripts/prepare_for_export.py against this .blend\n"
+        "  • In Blender: select the armature + meshes, "
+        "Object > Apply > All Transforms"
+    )
+
+
+def _is_identity_matrix(m, tol=1e-5):
+    for i in range(4):
+        for j in range(4):
+            expected = 1.0 if i == j else 0.0
+            if abs(m[i][j] - expected) > tol:
+                return False
+    return True
 
 
 def _validate_vertex_weight_count(context, logger):

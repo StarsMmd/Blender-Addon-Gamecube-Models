@@ -1,29 +1,25 @@
-"""Stubs for round-trip tests involving the Plan phase (IR → BR).
+"""Stubs for round-trip tests involving the Plan phase (IR ↔ BR).
 
-Both round-trip flows are deferred until the exporter has the symmetric
-phase counterparts (inspect_blender: Blender → BR, un_plan: BR → IR).
-For now these tests are skipped placeholders that document the intended
-coverage and will become the real tests once the exporter side lands.
-
-Until then, the Plan phase is validated only by unit tests on its
-individual conversion helpers (IR→BR for armature, meshes, materials,
-actions, etc. as each stage lands).
+These tests need a real Blender (bpy) runtime — the build / describe
+steps drive bpy operators — so they remain skipped under the headless
+pytest suite. The round-trip runner under tests/round_trip/ exercises
+the same flow against real model files when invoked via python3.11.
 
 Flow reference:
-    Import:  IR → plan → BR → build → Blender
-    Export:  Blender → inspect → BR → un_plan → IR
+    Import:  IR → plan (importer) → BR → build → Blender
+    Export:  Blender → describe (exporter) → BR → plan (exporter) → IR
 """
 import pytest
 
 
-@pytest.mark.skip(reason="Awaiting exporter inspect_blender + un_plan phases")
+@pytest.mark.skip(reason="Requires real bpy — exercised via tests/round_trip/")
 class TestIBIRoundTripThroughPlan:
-    """IR → Plan → Build → Blender → Inspect → UnPlan → IR.
+    """IR → plan → BR → build → Blender → describe → BR → plan → IR.
 
     Extends the existing IBI round-trip test type to pass through the Plan
     phase on both sides. Asserts that the IR re-derived after a full pass
     through Blender matches the original IR (field-level), bounding both
-    directions of the BR conversion and the build/inspect steps.
+    directions of the BR conversion and the build/describe steps.
     """
 
     def test_armature_survives_round_trip(self):
@@ -42,12 +38,12 @@ class TestIBIRoundTripThroughPlan:
         pass
 
 
-@pytest.mark.skip(reason="Awaiting exporter inspect_blender phase")
+@pytest.mark.skip(reason="Requires real bpy — exercised via tests/round_trip/")
 class TestBBBRoundTripThroughBuild:
-    """BR → Build → Blender → Inspect → BR.
+    """BR → build → Blender → describe → BR.
 
     New round-trip type introduced with the Plan phase: bounds just the
-    Blender-facing build + inspect steps, independent of IR↔BR conversion.
+    Blender-facing build + describe steps, independent of IR↔BR conversion.
     Assumes a BR as input (hand-crafted or produced by Plan from a fixture
     IR) and asserts the BR read back from Blender after build matches.
 

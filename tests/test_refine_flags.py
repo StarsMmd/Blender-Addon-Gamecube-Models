@@ -15,7 +15,7 @@ from shared.Constants.hsd import (
     JOBJ_ROOT_OPA, JOBJ_ROOT_XLU,
     JOBJ_HIDDEN,
 )
-from exporter.phases.describe_blender.describe_blender import _refine_bone_flags
+from exporter.phases.plan.helpers.scene import refine_bone_flags as _refine_bone_flags
 from shared.helpers.logger import StubLogger
 
 
@@ -132,40 +132,38 @@ class TestRefineBoneFlags:
         assert bones[1].flags & JOBJ_SKELETON == 0
         assert bones[1].flags & (JOBJ_LIGHTING | JOBJ_OPA) != 0
 
-    # --- Translucency-is-unsupported regression tests ---
+    # --- Alpha-cutout (TEXEDGE) is preserved on round-trip ---
     #
-    # Material translucency is treated as an unsupported feature on the
-    # export side — every `IRMaterial` ships opaque regardless of the
-    # Blender alpha channel or the texture's alpha. `_refine_bone_flags`
-    # must therefore always emit JOBJ_OPA / JOBJ_ROOT_OPA and never
-    # JOBJ_XLU, even on a mesh whose `IRMaterial.is_translucent` claims
-    # otherwise (as a backstop against future describe-phase regressions).
-    # See documentation/implementation_notes.md for the rationale.
+    # Game-native PKXs flag alpha-cutout materials (eyes, wings, fur
+    # edges) with JOBJ_TEXEDGE, not JOBJ_XLU. JOBJ_XLU (true
+    # alpha-blending) has a documented in-game invisibility issue and
+    # no game-native PKX in the corpus uses it. _refine_bone_flags
+    # therefore maps IRMaterial.is_translucent → JOBJ_TEXEDGE +
+    # JOBJ_ROOT_TEXEDGE and leaves JOBJ_XLU / JOBJ_ROOT_XLU unused.
 
-    def test_bone_owning_material_marked_translucent_still_gets_opa(self):
-        # If describe_blender ever regressed and set is_translucent=True
-        # on an IRMaterial, _refine_bone_flags must still mark the bone OPA
-        # (not XLU) — every mesh ships opaque on the export side.
+    def test_bone_owning_alpha_cutout_material_gets_texedge(self):
+        from shared.Constants.hsd import JOBJ_TEXEDGE
         bones = [
             _make_bone("root"),
-            _make_bone("scarf_bone", parent_index=0, mesh_indices=[0]),
+            _make_bone("eye_bone", parent_index=0, mesh_indices=[0]),
         ]
-        meshes = [_make_mesh("scarf", parent_bone_index=1, translucent=True)]
+        meshes = [_make_mesh("eye", parent_bone_index=1, translucent=True)]
 
         _refine_bone_flags(bones, meshes, StubLogger())
 
-        assert bones[1].flags & JOBJ_OPA != 0, (
-            "every mesh-owning bone gets JOBJ_OPA; flags=%#x" % bones[1].flags
+        assert bones[1].flags & JOBJ_TEXEDGE != 0, (
+            "alpha-cutout mesh → bone must carry JOBJ_TEXEDGE; flags=%#x" % bones[1].flags
         )
         assert bones[1].flags & JOBJ_XLU == 0, (
-            "translucency is unsupported — bone must never carry JOBJ_XLU; "
-            "flags=%#x" % bones[1].flags
+            "JOBJ_XLU is reserved for true alpha-blending; game-native "
+            "PKXs never use it for alpha-cutout textures. flags=%#x" % bones[1].flags
+        )
+        assert bones[1].flags & JOBJ_OPA == 0, (
+            "pure-alpha-cutout bone should not also be JOBJ_OPA; flags=%#x" % bones[1].flags
         )
 
-    def test_root_opa_propagates_for_every_mesh_owning_descendant(self):
-        # root → spine → mesh_bone. Even when the mesh's material claims
-        # translucency, ROOT_OPA (not ROOT_XLU) must propagate all the way
-        # up so pass-0 dispatch can descend.
+    def test_root_texedge_propagates_for_alpha_cutout_descendant(self):
+        from shared.Constants.hsd import JOBJ_TEXEDGE, JOBJ_ROOT_TEXEDGE
         bones = [
             _make_bone("root"),
             _make_bone("spine", parent_index=0),
@@ -175,8 +173,9 @@ class TestRefineBoneFlags:
 
         _refine_bone_flags(bones, meshes, StubLogger())
 
-        assert bones[0].flags & JOBJ_ROOT_OPA != 0
-        assert bones[1].flags & JOBJ_ROOT_OPA != 0
-        assert bones[0].flags & JOBJ_ROOT_XLU == 0
-        assert bones[1].flags & JOBJ_ROOT_XLU == 0
-        assert bones[2].flags & JOBJ_XLU == 0
+        assert bones[0].flags & JOBJ_ROOT_TEXEDGE != 0
+        assert bones[1].flags & JOBJ_ROOT_TEXEDGE != 0
+        assert bones[2].flags & JOBJ_TEXEDGE != 0
+        # No opaque mesh anywhere → no ROOT_OPA chain.
+        assert bones[0].flags & JOBJ_ROOT_OPA == 0
+        assert bones[1].flags & JOBJ_ROOT_OPA == 0

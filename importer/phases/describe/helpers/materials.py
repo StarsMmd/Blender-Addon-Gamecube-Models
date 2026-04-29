@@ -34,7 +34,7 @@ except (ImportError, SystemError):
 def describe_material(mobj, image_cache=None, logger=None, options=None):
     """Extract material data from a MaterialObject node into an IRMaterial.
 
-    In: mobj (MaterialObject, parsed); image_cache (dict|None, keyed by (image_id, palette_id), shared across calls); logger (Logger|None); options (dict|None, uses 'strict_mirror').
+    In: mobj (MaterialObject, parsed); image_cache (dict|None, keyed by (image_id, palette_id), shared across calls); logger (Logger|None); options (dict|None).
     Out: IRMaterial with diffuse/ambient/specular colors (sRGB [0,1]), texture layers, and optional FragmentBlending.
     """
     if image_cache is None:
@@ -134,10 +134,9 @@ def _describe_texture(texture, image_cache, logger=None, options=None, mobj_addr
 
     if ir_image is None:
         if logger is not None and texture.image:
-            from .strictness import report
-            report(logger, options, "texture_missing_pixels",
-                   "MObj 0x%X texture %d referenced image but decoded_pixels was empty; game would sample garbage/default",
-                   mobj_addr, texture_number, fatal=False)
+            logger.leniency("texture_missing_pixels",
+                            "MObj 0x%X texture %d referenced image but decoded_pixels was empty; game would sample garbage/default",
+                            mobj_addr, texture_number)
         return None
 
     # Coordinate type

@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 from shared.IR.enums import SkinType
 from shared.IR.geometry import IRBoneWeights
-from exporter.phases.describe_blender.helpers.meshes import _determine_parent_bone
+from exporter.phases.plan.helpers.meshes import determine_parent_bone as _determine_parent_bone
 
 
 def _mesh(parent_bone="", parent_type="OBJECT"):

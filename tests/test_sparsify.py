@@ -16,7 +16,7 @@ from shared.IR.enums import Interpolation
 
 # Import the functions under test from describe_blender animations helper.
 # These are module-level functions, not class methods.
-from exporter.phases.describe_blender.helpers.animations import (
+from exporter.phases.describe.helpers.animations_decode import (
     _compute_slopes,
     _hermite_eval,
     _sparsify_bezier,
@@ -125,13 +125,22 @@ class TestSparsifyBezier:
         assert abs(result[0].value - 5.0) < 1e-10
 
     def test_constant_channel(self):
-        """All same values → single CONSTANT keyframe."""
+        """All same values → two CONSTANT keyframes (start + end).
+
+        Single-keyframe channels cause the game's animation player to
+        silently fall back to rest pose; emitting two constant keyframes
+        keeps the animation engaged and holds the channel's value.
+        """
         fv = [(i, 3.0) for i in range(20)]
         slopes = _compute_slopes(fv)
         result = _sparsify_bezier(fv, slopes)
-        assert len(result) == 1
+        assert len(result) == 2
         assert result[0].interpolation == Interpolation.CONSTANT
+        assert result[1].interpolation == Interpolation.CONSTANT
         assert abs(result[0].value - 3.0) < 1e-10
+        assert abs(result[1].value - 3.0) < 1e-10
+        assert result[0].frame == 0
+        assert result[1].frame == 19
 
     def test_linear_ramp(self):
         """Perfect linear ramp → two LINEAR keyframes."""

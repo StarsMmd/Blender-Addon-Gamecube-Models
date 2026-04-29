@@ -15,8 +15,15 @@ except (ImportError, SystemError):
     from shared.helpers.logger import StubLogger
 
 
+_COLO_XD_KIND_TO_MODEL_TYPE = {
+    'PKX_POKEMON': 'POKEMON',
+    'PKX_TRAINER': 'TRAINER',
+    'DAT_MODEL': None,  # Pokémon/Trainer distinction does not apply
+}
+
+
 def post_process(armature_names, shiny_params=None, options=None, logger=StubLogger(),
-                 build_results=None, pkx_header=None):
+                 build_results=None, pkx_header=None, colo_xd_kind=None):
     """Post-process imported models: reset poses, select animations, apply shiny, store PKX metadata.
 
     Args:
@@ -52,7 +59,9 @@ def post_process(armature_names, shiny_params=None, options=None, logger=StubLog
                 _apply_shiny(armature, shiny_params, logger)
 
             if pkx_header is not None:
-                _store_pkx_metadata(armature, pkx_header, logger, actions=actions)
+                model_type = _COLO_XD_KIND_TO_MODEL_TYPE.get(colo_xd_kind, 'POKEMON')
+                _store_pkx_metadata(armature, pkx_header, logger, actions=actions,
+                                    model_type=model_type)
     else:
         # Legacy path: discover actions by name matching
         logger.info("  Armatures: %s", armature_names)
@@ -71,7 +80,9 @@ def post_process(armature_names, shiny_params=None, options=None, logger=StubLog
                 _apply_shiny(armature, shiny_params, logger)
 
             if pkx_header is not None:
-                _store_pkx_metadata(armature, pkx_header, logger, actions=actions)
+                model_type = _COLO_XD_KIND_TO_MODEL_TYPE.get(colo_xd_kind, 'POKEMON')
+                _store_pkx_metadata(armature, pkx_header, logger, actions=actions,
+                                    model_type=model_type)
 
     scene = bpy.context.scene
     if selected_actions:
@@ -239,10 +250,10 @@ _BODY_MAP_KEYS = [
 ]
 
 
-def _derive_pkx_custom_props(pkx_header, actions=None, bone_names=None):
+def _derive_pkx_custom_props(pkx_header, actions=None, bone_names=None, model_type=None):
     """Derive the dat_pkx_* property dict for a PKX header. Pure: no bpy.
 
-    In: pkx_header (PKXHeader); actions (sequence with .name|None, DAT order); bone_names (sequence[str]|None, DAT bone order).
+    In: pkx_header (PKXHeader); actions (sequence with .name|None, DAT order); bone_names (sequence[str]|None, DAT bone order); model_type (str|None, "POKEMON"|"TRAINER" — user-specified at import time; None means the import is a raw .dat model and the Pokémon/Trainer distinction does not apply).
     Out: dict[str, value] — all properties to write to the armature.
     """
     name_resolver = _build_action_name_resolver(actions)
@@ -250,6 +261,10 @@ def _derive_pkx_custom_props(pkx_header, actions=None, bone_names=None):
 
     props = {}
     props.update(_derive_preamble_props(pkx_header, bone_resolver))
+    if model_type is None:
+        props.pop("dat_pkx_model_type", None)
+    else:
+        props["dat_pkx_model_type"] = model_type
     props.update(_derive_sub_anim_props(pkx_header, name_resolver, bone_resolver))
 
     first_active = pkx_header.anim_entries[0] if pkx_header.anim_entries else None
@@ -303,7 +318,6 @@ def _derive_preamble_props(h, bone_resolver):
         "dat_pkx_particle_orientation": h.particle_orientation,
         "dat_pkx_distortion_param": h.distortion_param,
         "dat_pkx_distortion_type": h.distortion_type,
-        "dat_pkx_model_type": h.model_type_label,
         "dat_pkx_flag_flying": h.flag_flying,
         "dat_pkx_flag_skip_frac_frames": h.flag_skip_frac_frames,
         "dat_pkx_flag_no_root_anim": h.flag_no_root_anim,
@@ -380,15 +394,19 @@ def _derive_anim_entry_props(i, entry, first_active, name_resolver, bone_resolve
     return props
 
 
-def _store_pkx_metadata(armature, pkx_header, logger, actions=None):
+def _store_pkx_metadata(armature, pkx_header, logger, actions=None, model_type=None):
     """Store PKX header fields as custom properties on the armature.
 
     In: armature (bpy.types.Object); pkx_header (PKXHeader);
-        logger (Logger); actions (sequence[Action]|None, for anim name resolution).
+        logger (Logger); actions (sequence[Action]|None, for anim name resolution);
+        model_type (str|None, "POKEMON"|"TRAINER" — user-specified at import
+        time. None for raw .dat models, where the Pokémon/Trainer distinction
+        does not apply).
     Out: None; custom properties are written to the armature.
     """
     bone_names = [b.name for b in armature.data.bones]
-    props = _derive_pkx_custom_props(pkx_header, actions=actions, bone_names=bone_names)
+    props = _derive_pkx_custom_props(pkx_header, actions=actions, bone_names=bone_names,
+                                      model_type=model_type)
     for key, value in props.items():
         armature[key] = value
 

@@ -636,13 +636,13 @@ class TestPKXReferencedActions:
 
     def test_returns_none_when_no_pkx_metadata(self):
         """Pure .dat scenes (no dat_pkx_format) fall through to keep-all."""
-        from exporter.phases.describe_blender.describe_blender import _collect_pkx_referenced_actions
+        from exporter.phases.describe.helpers.scene import collect_pkx_referenced_actions as _collect_pkx_referenced_actions
         arm = _FakeArmature({})
         assert _collect_pkx_referenced_actions(arm) is None
 
     def test_returns_none_when_all_slots_empty(self):
         """PKX metadata present but no slot assigned yet → treat as not-yet-configured, keep all actions."""
-        from exporter.phases.describe_blender.describe_blender import _collect_pkx_referenced_actions
+        from exporter.phases.describe.helpers.scene import collect_pkx_referenced_actions as _collect_pkx_referenced_actions
         props = {"dat_pkx_format": "XD", "dat_pkx_anim_count": 17}
         for i in range(17):
             for s in range(3):
@@ -652,7 +652,7 @@ class TestPKXReferencedActions:
 
     def test_collects_assigned_main_slots(self):
         """Main anim-slot sub_N_anim refs are collected."""
-        from exporter.phases.describe_blender.describe_blender import _collect_pkx_referenced_actions
+        from exporter.phases.describe.helpers.scene import collect_pkx_referenced_actions as _collect_pkx_referenced_actions
         props = {
             "dat_pkx_format": "XD",
             "dat_pkx_anim_count": 17,
@@ -665,7 +665,7 @@ class TestPKXReferencedActions:
 
     def test_collects_sub_anim_refs(self):
         """Part-anim (dat_pkx_sub_anim_N_anim_ref) refs are collected too."""
-        from exporter.phases.describe_blender.describe_blender import _collect_pkx_referenced_actions
+        from exporter.phases.describe.helpers.scene import collect_pkx_referenced_actions as _collect_pkx_referenced_actions
         props = {
             "dat_pkx_format": "XD",
             "dat_pkx_anim_00_sub_0_anim": "Idle",
@@ -677,7 +677,7 @@ class TestPKXReferencedActions:
 
     def test_empty_strings_are_skipped(self):
         """Unassigned slots (empty string) do not appear in the referenced set."""
-        from exporter.phases.describe_blender.describe_blender import _collect_pkx_referenced_actions
+        from exporter.phases.describe.helpers.scene import collect_pkx_referenced_actions as _collect_pkx_referenced_actions
         props = {
             "dat_pkx_format": "XD",
             "dat_pkx_anim_00_sub_0_anim": "Idle",

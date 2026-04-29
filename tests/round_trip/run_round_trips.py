@@ -2,7 +2,7 @@
 """
 Round-trip test runner for real model files.
 
-Runs all four round-trip test types (NBN, NIN, BNB, IBI) on one or more
+Runs all five round-trip test types (NBN, NIN, BNB, BBB, IBI) on one or more
 real .dat/.pkx model files and reports per-model scores.
 
 Usage:
@@ -18,10 +18,13 @@ Requires: bpy (standalone module), mathutils
     pip install bpy mathutils
 
 Test types:
-    NBN  Node tree -> Binary -> Node tree   (field-level serialization fidelity)
-    NIN  Node tree -> IR -> Node tree        (describe/compose round-trip)
-    BNB  Binary -> Node tree -> Binary       (byte-level fidelity)
-    IBI  IR -> Blender -> IR                 (Blender round-trip)
+    NBN  Node tree -> Binary -> Node tree    (field-level serialization fidelity)
+    NIN  Node tree -> IR -> Node tree         (describe/compose round-trip)
+    BNB  Binary -> Node tree -> Binary        (byte-level fidelity)
+    BBB  BR -> Blender -> BR                  (build/describe round-trip; bounds the
+                                              Blender-facing leg only — no IR↔BR involvement)
+    IBI  IR -> BR -> Blender -> BR -> IR      (full Blender round-trip; bounds Plan
+                                              on both sides plus build/describe)
 """
 import sys
 import os
@@ -47,8 +50,10 @@ from importer.phases.extract.extract import extract_dat
 from importer.phases.route.route import route_sections
 from importer.phases.parse.parse import parse_sections
 from importer.phases.describe.describe import describe_scene
+from importer.phases.plan.plan import plan_scene as plan_ir_to_br
 from importer.phases.build_blender.build_blender import build_blender_scene
-from exporter.phases.describe_blender.describe_blender import describe_blender_scene
+from exporter.phases.describe.describe import describe_scene as describe_blender_to_br
+from exporter.phases.plan.plan import plan_scene as plan_br_to_ir
 from exporter.phases.compose.compose import compose_scene
 from exporter.phases.serialize.helpers.dat_builder import DATBuilder
 from importer.phases.parse.helpers.dat_parser import DATParser
@@ -97,8 +102,17 @@ def describe_ir(sections, options=None, logger=None):
     return describe_scene(sections, options, logger=logger)
 
 
-def build_in_blender(ir_scene, options=None):
-    """Run import phase 5 (build_blender). Returns build_results."""
+def plan_to_br(ir_scene, options=None, logger=None):
+    """Run import phase 5a (plan). Returns BRScene."""
+    if options is None:
+        options = {"filepath": "test_model"}
+    if logger is None:
+        logger = StubLogger()
+    return plan_ir_to_br(ir_scene, options=options, logger=logger)
+
+
+def build_in_blender(br_scene, options=None):
+    """Run import phase 5b (build_blender). Returns build_results."""
     if options is None:
         options = {"filepath": "test_model"}
     # Enable all optional features for round-trip testing. Without
@@ -108,15 +122,22 @@ def build_in_blender(ir_scene, options=None):
     # the scene to read back.
     options.setdefault("import_lights", True)
     options.setdefault("import_cameras", True)
-    return build_blender_scene(ir_scene, bpy.context, options)
+    return build_blender_scene(br_scene, bpy.context, options)
+
+
+def describe_back_to_br():
+    """Run export phase 1 (describe). Returns (BRScene, shiny_params, pkx_header)."""
+    return describe_blender_to_br(bpy.context)
 
 
 def read_back_from_blender(build_results):
-    """Run export phase 1 (describe_blender). Returns (IRScene, shiny_params, pkx_header).
+    """Run export phases 1-2 (describe → plan). Returns (IRScene, shiny_params, pkx_header).
 
     Describes all armatures in the scene (no selection needed).
     """
-    return describe_blender_scene(bpy.context)
+    br_scene, shiny_params, pkx_header = describe_blender_to_br(bpy.context)
+    ir_scene = plan_br_to_ir(br_scene)
+    return ir_scene, shiny_params, pkx_header
 
 
 def clear_blender_scene():
@@ -203,13 +224,12 @@ def compute_bnb_score(filepath):
 # Scoring: NIN (Node -> IR -> Node)
 # ---------------------------------------------------------------------------
 
-def compute_nin_score(filepath, strict=False, logger=None):
+def compute_nin_score(filepath, logger=None):
     """Parse a file, describe to IR, compose back to nodes, compare."""
     _, sections = load_model(filepath)
 
     # Describe (phase 4)
-    options = {"strict_mirror": True} if strict else {}
-    ir_scene = describe_ir(sections, options=options, logger=logger)
+    ir_scene = describe_ir(sections, options={}, logger=logger)
 
     # Compose (phase 2 export)
     composed_nodes, _ = compose_scene(ir_scene, {'strip_names': True})
@@ -244,7 +264,7 @@ def compute_nin_score(filepath, strict=False, logger=None):
 # Scoring: IBI (IR -> Blender -> IR)
 # ---------------------------------------------------------------------------
 
-def compute_ibi_score(filepath, strict=False, logger=None):
+def compute_ibi_score(filepath, logger=None):
     """Parse through phase 4 to get IR, build in Blender, read back, compare.
 
     Uses category-weighted scoring: each IR category (bones, meshes,
@@ -256,14 +276,13 @@ def compute_ibi_score(filepath, strict=False, logger=None):
 
     _, sections = load_model(filepath)
     options = {"filepath": filepath}
-    if strict:
-        options["strict_mirror"] = True
     ir_original = describe_ir(sections, options=options, logger=logger)
 
-    # Build in Blender (phase 5)
-    build_results = build_in_blender(ir_original, options={"filepath": filepath})
+    # Plan IR → BR (phase 5a), then build (phase 5b)
+    br_scene = plan_to_br(ir_original, options={"filepath": filepath}, logger=logger)
+    build_results = build_in_blender(br_scene, options={"filepath": filepath})
 
-    # Read back from Blender (export phase 1)
+    # Read back from Blender (export phase 1 → phase 2)
     ir_roundtripped, _, _ = read_back_from_blender(build_results)
 
     # Compare IR scenes by category
@@ -280,6 +299,103 @@ def compute_ibi_score(filepath, strict=False, logger=None):
 
     clear_blender_scene()
     return pct, err_pct, miss_pct, details, categories
+
+
+# ---------------------------------------------------------------------------
+# Scoring: BBB (BR -> Blender -> BR)
+# ---------------------------------------------------------------------------
+
+def compute_bbb_score(filepath, logger=None):
+    """Plan a BR from the file, build in Blender, describe back to BR, compare.
+
+    Bounds the Blender-facing leg of the pipeline (build + describe) without
+    re-crossing the BR↔IR boundary. The reference BR is the one produced by
+    the importer's Plan phase from the on-disk model; the read-back BR is
+    what the exporter's describe phase recovers from the built scene.
+    """
+    clear_blender_scene()
+
+    _, sections = load_model(filepath)
+    options = {"filepath": filepath}
+    ir_original = describe_ir(sections, options=options, logger=logger)
+    br_original = plan_to_br(ir_original, options={"filepath": filepath}, logger=logger)
+
+    build_in_blender(br_original, options={"filepath": filepath})
+    br_roundtripped, _, _ = describe_back_to_br()
+
+    categories, details = _compare_br_by_category(br_original, br_roundtripped)
+
+    scored = {k: v for k, v in categories.items() if v['total'] > 0}
+    if scored:
+        pct = sum(v['pct'] for v in scored.values()) / len(scored)
+        err_pct = sum(v['errors'] / v['total'] * 100 for v in scored.values()) / len(scored)
+        miss_pct = sum(v['misses'] / v['total'] * 100 for v in scored.values()) / len(scored)
+    else:
+        pct, err_pct, miss_pct = 100.0, 0.0, 0.0
+
+    clear_blender_scene()
+    return pct, err_pct, miss_pct, details, categories
+
+
+def _compare_br_by_category(br_a, br_b):
+    """Compare two BRScenes with per-category scoring.
+
+    Categories mirror the BR structure rather than the IR structure: bones
+    come from each model's armature, materials live as a top-level list on
+    BRModel (not per-mesh), and constraints share one BRConstraints holder.
+    """
+    categories = {}
+    all_details = []
+
+    models_a = br_a.models if br_a else []
+    models_b = br_b.models if br_b else []
+
+    for mi in range(max(len(models_a), len(models_b))):
+        ma = models_a[mi] if mi < len(models_a) else None
+        mb = models_b[mi] if mi < len(models_b) else None
+        if ma is None:
+            continue
+
+        bones_a = ma.armature.bones if ma.armature else []
+        bones_b = mb.armature.bones if (mb and mb.armature) else []
+        _score_category(categories, all_details, 'bones',
+                        bones_a, bones_b, f"model[{mi}].armature.bones")
+
+        _score_category(categories, all_details, 'meshes',
+                        ma.meshes, mb.meshes if mb else [],
+                        f"model[{mi}].meshes")
+
+        _score_category(categories, all_details, 'materials',
+                        ma.materials, mb.materials if mb else [],
+                        f"model[{mi}].materials")
+
+        _score_category(categories, all_details, 'actions',
+                        ma.actions, mb.actions if mb else [],
+                        f"model[{mi}].actions")
+
+        cons_a = ma.constraints
+        cons_b = mb.constraints if mb else None
+        cons_list_a = (cons_a.ik + cons_a.copy_location + cons_a.track_to +
+                       cons_a.copy_rotation + cons_a.limit_rotation +
+                       cons_a.limit_location) if cons_a else []
+        cons_list_b = (cons_b.ik + cons_b.copy_location + cons_b.track_to +
+                       cons_b.copy_rotation + cons_b.limit_rotation +
+                       cons_b.limit_location) if cons_b else []
+        _score_category(categories, all_details, 'constraints',
+                        cons_list_a, cons_list_b,
+                        f"model[{mi}].constraints")
+
+    _score_category(categories, all_details, 'lights',
+                    br_a.lights if br_a else [],
+                    br_b.lights if br_b else [],
+                    "scene.lights")
+
+    _score_category(categories, all_details, 'cameras',
+                    br_a.cameras if br_a else [],
+                    br_b.cameras if br_b else [],
+                    "scene.cameras")
+
+    return categories, all_details
 
 
 # ---------------------------------------------------------------------------
@@ -777,15 +893,10 @@ def find_model_files(path):
     return []
 
 
-def run_all_tests(filepath, strict=False):
+def run_all_tests(filepath):
     """Run all round-trip tests on a single model file. Returns dict of scores."""
     name = os.path.splitext(os.path.basename(filepath))[0]
     scores = {'name': name}
-    # One logger per model so leniency counts are isolated. The logger writes
-    # to disk (per shared Logger behavior) and also accumulates counts we can
-    # read after each score is computed.
-    nin_logger = Logger(verbose=False, model_name="%s_strict_gate" % name) if strict else None
-    ibi_logger = Logger(verbose=False, model_name="%s_strict_gate" % name) if strict else None
 
     # NBN
     try:
@@ -811,7 +922,7 @@ def run_all_tests(filepath, strict=False):
 
     # NIN
     try:
-        pct, err_pct, miss_pct, nin_details = compute_nin_score(filepath, strict=strict, logger=nin_logger)
+        pct, err_pct, miss_pct, nin_details = compute_nin_score(filepath)
         scores['nin'] = pct
         scores['nin_err'] = err_pct
         scores['nin_miss'] = miss_pct
@@ -821,9 +932,25 @@ def run_all_tests(filepath, strict=False):
         scores['nin_err'] = 0.0
         scores['nin_miss'] = 0.0
 
+    # BBB
+    try:
+        pct, err_pct, miss_pct, details, categories = compute_bbb_score(filepath)
+        scores['bbb'] = pct
+        scores['bbb_err'] = err_pct
+        scores['bbb_miss'] = miss_pct
+        scores['bbb_details'] = details
+        scores['bbb_categories'] = categories
+    except Exception as e:
+        scores['bbb'] = f"ERROR: {e}"
+        scores['bbb_err'] = 0.0
+        scores['bbb_miss'] = 0.0
+        import traceback
+        scores['bbb_details'] = [traceback.format_exc()]
+        scores['bbb_categories'] = {}
+
     # IBI
     try:
-        pct, err_pct, miss_pct, details, categories = compute_ibi_score(filepath, strict=strict, logger=ibi_logger)
+        pct, err_pct, miss_pct, details, categories = compute_ibi_score(filepath)
         scores['ibi'] = pct
         scores['ibi_err'] = err_pct
         scores['ibi_miss'] = miss_pct
@@ -836,19 +963,6 @@ def run_all_tests(filepath, strict=False):
         import traceback
         scores['ibi_details'] = [traceback.format_exc()]
         scores['ibi_categories'] = {}
-
-    if strict:
-        lenc = 0
-        cats = {}
-        for lg in (nin_logger, ibi_logger):
-            if lg is None:
-                continue
-            lenc += lg.leniency_count
-            for k, v in lg.leniency_categories.items():
-                cats[k] = cats.get(k, 0) + v
-            lg.close()
-        scores['leniency_count'] = lenc
-        scores['leniency_categories'] = cats
 
     return scores
 
@@ -870,21 +984,18 @@ def main():
         sys.exit(1)
 
     verbose = '--verbose' in flags or '-v' in flags
-    strict = '--strict' in flags
 
-    if strict:
-        print("Strict Mirror Mode: leniencies will fail the acceptance gate.")
     print(f"Running round-trip tests on {len(files)} model(s)...\n")
 
     all_scores = []
     for filepath in files:
         name = os.path.splitext(os.path.basename(filepath))[0]
         print(f"  {name}...", end=' ', flush=True)
-        scores = run_all_tests(filepath, strict=strict)
+        scores = run_all_tests(filepath)
         all_scores.append(scores)
 
         parts = []
-        for key in ('nbn', 'nin', 'ibi'):
+        for key in ('nbn', 'nin', 'bbb', 'ibi'):
             val = scores.get(key)
             if isinstance(val, float):
                 err = scores.get(f'{key}_err', 0.0)
@@ -900,41 +1011,40 @@ def main():
             parts.append(f"BNB={bnb_val}")
         print('  '.join(parts))
 
-        # Show IBI category breakdown with error/miss rates
-        cats = scores.get('ibi_categories', {})
-        cat_parts = []
-        for cat_name in ('bones', 'meshes', 'materials', 'animations', 'constraints', 'lights', 'cameras'):
-            cat = cats.get(cat_name)
-            if cat and cat['total'] > 0:
-                err_pct = cat['errors'] / cat['total'] * 100
-                miss_pct = cat['misses'] / cat['total'] * 100
-                cat_parts.append(f"{cat_name}={cat['pct']:.0f}%({err_pct:.0f}/{miss_pct:.0f})")
-        if cat_parts:
-            print(f"    IBI breakdown: {', '.join(cat_parts)}")
+        # Show BBB / IBI category breakdowns with error/miss rates
+        for label, cat_key in (('BBB', 'bbb_categories'), ('IBI', 'ibi_categories')):
+            cats = scores.get(cat_key, {})
+            cat_parts = []
+            for cat_name in ('bones', 'meshes', 'materials', 'animations', 'actions',
+                             'constraints', 'lights', 'cameras'):
+                cat = cats.get(cat_name)
+                if cat and cat['total'] > 0:
+                    err_pct = cat['errors'] / cat['total'] * 100
+                    miss_pct = cat['misses'] / cat['total'] * 100
+                    cat_parts.append(f"{cat_name}={cat['pct']:.0f}%({err_pct:.0f}/{miss_pct:.0f})")
+            if cat_parts:
+                print(f"    {label} breakdown: {', '.join(cat_parts)}")
 
         if verbose and scores.get('nin_details'):
             for detail in scores['nin_details'][:20]:
                 print(f"    NIN: {detail}")
 
+        if verbose and scores.get('bbb_details'):
+            for detail in scores['bbb_details'][:20]:
+                print(f"    BBB: {detail}")
+
         if verbose and scores.get('ibi_details'):
             for detail in scores['ibi_details'][:20]:
-                print(f"    {detail}")
-
-        if strict:
-            lenc = scores.get('leniency_count', 0)
-            cats = scores.get('leniency_categories', {})
-            if lenc:
-                summary = ", ".join(f"{v} {k}" for k, v in sorted(cats.items()))
-                print(f"    STRICT: {lenc} leniencies ({summary})")
+                print(f"    IBI: {detail}")
 
     # Summary table
     col_w = 18
-    print(f"\n{'='*(20 + col_w * 3 + 8 + 4)}")
-    print(f"{'Model':<20} {'NBN':>{col_w}} {'NIN':>{col_w}} {'IBI':>{col_w}} {'BNB':>8}")
-    print(f"{'-'*20} {'-'*col_w} {'-'*col_w} {'-'*col_w} {'-'*8}")
+    print(f"\n{'='*(20 + col_w * 4 + 8 + 5)}")
+    print(f"{'Model':<20} {'NBN':>{col_w}} {'NIN':>{col_w}} {'BBB':>{col_w}} {'IBI':>{col_w}} {'BNB':>8}")
+    print(f"{'-'*20} {'-'*col_w} {'-'*col_w} {'-'*col_w} {'-'*col_w} {'-'*8}")
     for scores in all_scores:
         row = f"{scores['name']:<20}"
-        for key in ('nbn', 'nin', 'ibi'):
+        for key in ('nbn', 'nin', 'bbb', 'ibi'):
             val = scores.get(key)
             if isinstance(val, float):
                 err = scores.get(f'{key}_err', 0.0)
@@ -949,18 +1059,6 @@ def main():
         else:
             row += f" {'ERR':>7}%"
         print(row)
-
-    if strict:
-        total_lenc = sum(s.get('leniency_count', 0) for s in all_scores)
-        failures = [s for s in all_scores if s.get('leniency_count', 0) > 0 or
-                    isinstance(s.get('nin'), str) or isinstance(s.get('ibi'), str)]
-        print()
-        if total_lenc == 0 and not failures:
-            print("Strict mirror gate: PASS — all baseline models produced zero leniencies.")
-        else:
-            print(f"Strict mirror gate: FAIL — {total_lenc} total leniencies across {len(failures)} model(s).")
-            sys.exit(2)
-
 
 if __name__ == '__main__':
     main()

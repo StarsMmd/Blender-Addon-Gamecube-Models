@@ -275,16 +275,6 @@ class PKXHeader:
         return not (identity and neutral)
 
     @property
-    def is_trainer(self):
-        """True iff this PKX represents a trainer (species_id == 0 and particle_orientation == 0)."""
-        return self.species_id == 0 and self.particle_orientation == 0
-
-    @property
-    def model_type_label(self):
-        """Human-readable model classification."""
-        return "TRAINER" if self.is_trainer else "POKEMON"
-
-    @property
     def format_label(self):
         """Container format label ('XD' or 'COLOSSEUM')."""
         return "XD" if self.is_xd else "COLOSSEUM"

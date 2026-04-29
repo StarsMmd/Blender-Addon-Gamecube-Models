@@ -8,7 +8,7 @@ import bpy
 from mathutils import Matrix, Vector
 
 try:
-    from ....shared.helpers.logger import StubLogger
+    from .....shared.helpers.logger import StubLogger
 except (ImportError, SystemError):
     from shared.helpers.logger import StubLogger
 
