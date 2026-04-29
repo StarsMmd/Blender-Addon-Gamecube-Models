@@ -191,6 +191,21 @@ GameCube → Blender requires a π/2 rotation around the X-axis. Applied once at
 ### Color space
 The IR stores all colors in sRGB [0-1], normalised from u8 but not linearised. Blender-specific linearisation happens in Phase 5 only — material colors, material-animation RGB keyframes, and light colors are linearised when set on the corresponding Blender properties. Vertex colors are stored as `FLOAT_COLOR` (not `BYTE_COLOR`) so Blender does not auto-linearise them; the raw sRGB values pass through to the shader, matching the GameCube's gamma-space rendering. Image pixels are raw u8 RGBA and Blender handles color management internally.
 
+## Particles (GPT1)
+
+15 battle models in Colosseum / XD ship with embedded GPT1 particle data — the flame-, gas- and mist-themed Pokémon (Moltres, Articuno, Charmander/Charmeleon/Charizard, Gastly, Magmar, Magcargo, Torkoal, Koffing, Weezing, Vaporeon, plus the three shiny variants `rare_fire`, `rare_freezer`, `rare_lizardon`).
+
+The GPT1 parser, disassembler, IR types, and compose-side assembler are all in place and unit-tested, but no Blender objects are created from the data and the exporter does not write the GPT1 region. The blocker is the **generator → bone binding**: we have not been able to locate the table or code path that pairs each generator in a model's GPT1 with the body-map slot it renders from. Investigation has ruled out:
+
+- The HSD `JOBJ_PTCL` flag (unset on all 15 models).
+- `_particleJObjCallback`.
+- The PKX header body map (a bone lookup table, not a binding).
+- WZX move files (carry move/attack effects only).
+- The `common.rel` index table.
+- The DOL data section around `PKXPokemonModels`.
+
+Visualising generators at the armature origin without a correct bone attachment is misleading in practice (every flame floats in the wrong place), so the import stub logs generator/texture counts on the armature but creates nothing in the scene. Re-exported `.pkx` files drop the GPT1 region — the original file should be retained if effects need to be preserved.
+
 ## Convention: code comments vs. documentation
 
 Code comments in `exporter/`, `importer/`, `shared/`, `scripts/`, `tools/` describe what the code does and why it's structured the way it is. They do **not**:

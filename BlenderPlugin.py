@@ -55,8 +55,6 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
                                description='Import light sets from the model file.')
     import_cameras: BoolProperty(default=False, name='Import Cameras',
                                 description='Import cameras from the model file.')
-    include_shiny: BoolProperty(default=True, name='Include Shiny Variant',
-                               description='Extract shiny color parameters from PKX files and add a toggleable shiny filter to materials.')
     use_legacy: BoolProperty(default=False, name='Use Legacy Importer',
                             description='Use the old import pipeline instead of the new Intermediate Representation pipeline.')
 
@@ -71,7 +69,6 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
         layout.prop(self, "setup_workspace")
         layout.prop(self, "import_lights")
         layout.prop(self, "import_cameras")
-        layout.prop(self, "include_shiny")
         if self.game == 'COLO_XD':
             layout.prop(self, "use_legacy")
 
@@ -113,7 +110,7 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
             "filepath": path,
             "import_lights": self.import_lights,
             "import_cameras": self.import_cameras,
-            "include_shiny": self.include_shiny,
+            "include_shiny": True,
             "game": self.game,
             "colo_xd_kind": self.colo_xd_kind if self.game == 'COLO_XD' else None,
         }

@@ -27,22 +27,20 @@ The file-browser sidebar exposes these toggles:
 
 | Toggle | Default | Purpose |
 |---|---|---|
-| **Game of Origin** | Colosseum / XD | Selects the section-name → node-type routing rules. Pick *Kirby Air Ride* for Kirby Air Ride dumps, *Super Smash Bros.* for Melee dumps. |
+| **Game of Origin** | Colosseum / XD | Selects the section-name → node-type routing rules. Pick *Kirby Air Ride* for Kirby Air Ride dumps, *Super Smash Bros.* for Melee dumps, or *Other* to fall back to the Colosseum / XD rules for unknown games. |
+| **Colo/XD Kind** | PKX Pokémon | (Visible only when *Game of Origin* is Colosseum / XD.) Picks the animation-slot label set: *PKX Pokémon* (battle-move conventions), *PKX Trainer* (trainer-pose conventions), or *DAT Model* (raw `.dat`, no PKX header). |
 | **Setup Workspace** | on | Split the viewport, open an Action Editor, set playback end to frame 60. |
 | **Import Lights** | off | Import `LightSet` nodes as Blender lights (AMBIENT/SUN/POINT/SPOT). |
 | **Import Cameras** | off | Import `CameraSet` nodes as Blender cameras (static + animated). |
-| **Include Shiny Variant** | on | For `.pkx` files, extract shiny color parameters and build a toggleable shader filter. |
-| **Use Legacy Importer** | off | Route through the pre-refactor pipeline instead of the IR pipeline. For comparison only. |
+| **Use Legacy Importer** | off | (Visible only when *Game of Origin* is Colosseum / XD.) Route through the pre-refactor pipeline instead of the IR pipeline. For comparison only. |
 
-The importer heals edge-case data so it renders cleanly in Blender: it rescues near-zero-scale bones using animation keyframes, fabricates white vertex colors when `CLR0` is absent, falls back to rigid skinning when an envelope-typed mesh lacks `PNMTXIDX`, and drops cameras with unknown projection flags. Leniency warnings print to the terminal and each import writes a `dat_leniencies` list onto the armature as a custom property, so you can inspect healing history in the N-panel → Object Properties → Custom Properties.
+For `.pkx` Pokémon models, shiny color parameters are always extracted and a toggleable shader filter is added to the imported materials — there's no per-import opt-out. Toggle the resulting filter on/off via the **Shiny Variant** panel on the imported armature (see [Shiny Variants](#shiny-variants)).
 
 ## Particles (GPT1)
 
 15 battle models ship with embedded GPT1 particle data — the flame-, gas- and mist-themed Pokémon (Moltres, Articuno, Charmander/Charmeleon/Charizard, Gastly, Magmar, Magcargo, Torkoal, Koffing, Weezing, Vaporeon, plus the three shiny variants `rare_fire`, `rare_freezer`, `rare_lizardon`).
 
-**Particle import and export are both disabled in this release.** The GPT1 parser, disassembler, IR types, and compose-side assembler are all in place and unit-tested, but no Blender objects are created from the data. The blocker is the **generator → bone binding**: we have not been able to locate the table or code path that pairs each generator in a model's GPT1 with the body-map slot it renders from. Our investigation ruled out the HSD `JOBJ_PTCL` flag (unset on all 15 models), `_particleJObjCallback`, the PKX header body map (a bone lookup table, not a binding), WZX move files (carry move/attack effects only), the common.rel index table, and the DOL data section around `PKXPokemonModels`.
-
-Visualising generators at the armature origin without a correct bone attachment looked misleading in practice (every flame floating in the wrong place), so the import stub logs generator/texture counts on the armature but creates nothing in the scene. Re-exported `.pkx` files drop the GPT1 region — keep the original file around if you need to preserve effects.
+Particle import and export are not currently supported but are planned for the future. See [Implementation Notes — Particles (GPT1)](documentation/implementation_notes.md#particles-gpt1) for the technical details and outstanding investigation.
 
 ## Shiny Variants
 
@@ -62,10 +60,10 @@ For models not imported through this plugin, run `scripts/prepare_for_export.py`
 
 **Goal:** install the addon into Blender, find the on-disk install location, and edit files there so changes pick up after a restart.
 
-1. **Clone the repository.**
+1. **Clone the repository.** The same `git` commands work on macOS, Linux, and Windows (Git Bash, PowerShell, or Command Prompt — all accept this syntax once Git for Windows is installed).
    ```bash
-   git clone <repo-url>
-   cd colo_xd
+   git clone https://github.com/StarsMmd/Blender-Addon-Gamecube-Models.git
+   cd Blender-Addon-Gamecube-Models
    ```
 
 2. **Build a Blender extension `.zip`.** Compress the **contents** of the repo (not the parent folder), so the resulting zip's top level is the addon files (`__init__.py`, `blender_manifest.toml`, `BlenderPlugin.py`, etc.).
@@ -90,8 +88,6 @@ For models not imported through this plugin, run `scripts/prepare_for_export.py`
    | Linux | `~/.config/blender/4.5/extensions/user_default/` |
 
    Inside that folder, the addon lives in a sub-directory named after the manifest's `id` (here: `gamecube_dat_model`) — or after whatever folder name the `.zip` extracted to. Edit files **at this location** for changes to affect the running addon.
-
-   *Tip:* to skip the zip-and-reinstall loop, you can `rm -rf` the installed folder once and replace it with a symlink to your clone. macOS/Linux: `ln -s "$(pwd)" ~/Library/Application\ Support/Blender/4.5/extensions/user_default/gamecube_dat_model`. Windows: `mklink /D "%APPDATA%\Blender Foundation\Blender\4.5\extensions\user_default\gamecube_dat_model" "C:\path\to\colo_xd"`. Then every git pull / file edit is live.
 
 5. **Restart Blender after every code change.** Blender loads extension modules once at startup; reloading without a restart will not pick up edits to the addon's Python files. If a change doesn't take effect, fully quit and relaunch Blender (closing the window is sometimes not enough — use *Blender > Quit* on macOS, or kill the process if the launcher menu won't accept input).
 
