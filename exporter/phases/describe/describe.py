@@ -82,9 +82,13 @@ def describe_scene(context, options=None, logger=StubLogger(), output_ext=''):
         logger.info("  Processing armature '%s'", armature.name)
         br_model = _describe_one_model(armature, use_bezier, logger)
         br_models.append(br_model)
+        # Diagnostic dump expects IR-shaped animation sets (it walks
+        # `anim_set.tracks` and `track.bone_index`). BRAction now carries
+        # BRBoneTracks with the same field names, so we can pass them
+        # straight in.
         maybe_dump_diagnostic(
             armature, br_model._ir_bones,
-            [a._ir_animation_set for a in br_model.actions],
+            br_model.actions,
             logger,
         )
 

@@ -315,6 +315,8 @@ Choose the output file location and set the file extension:
 - **`.dat`** — standalone model file
 - **`.pkx`** — PKX container with game metadata (species ID, animation slots, shiny params). Built from scratch using the PKX metadata set via the preparation script.
 
+> **Animations and output size.** A `.dat` export includes **every** action attached to the armature in the scene, since `.dat` has no PKX-style slot table to tell the exporter which actions matter. Animation keyframes are a major contributor to file size, so before exporting to `.dat` delete any actions you don't need. A `.pkx` export only writes the actions that are referenced by a battle-animation slot (set via the PKX panel during the [preparation](#3-preparation-script) / [refine](#5-refine-and-re-run) steps); other actions in the scene are ignored.
+
 ---
 
 ## Notes

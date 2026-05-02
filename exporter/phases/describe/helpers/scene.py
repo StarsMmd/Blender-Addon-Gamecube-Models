@@ -358,7 +358,10 @@ def maybe_dump_diagnostic(armature, bones, bone_animations, logger=StubLogger())
 
     bones_with_tracks = {}
     for anim_set in bone_animations:
-        for track in anim_set.tracks:
+        # `anim_set` is a BRAction in the new pipeline (bone_tracks) or
+        # an IRBoneAnimationSet in older callers (tracks). Tolerate both.
+        tracks = getattr(anim_set, 'bone_tracks', None) or getattr(anim_set, 'tracks', ())
+        for track in tracks:
             bones_with_tracks.setdefault(anim_set.name, set()).add(track.bone_index)
 
     lines = ["=== DAT skinning diagnostic dump ===",

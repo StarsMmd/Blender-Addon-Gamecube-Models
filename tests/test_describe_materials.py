@@ -605,28 +605,8 @@ class TestVTranslationMirrorCorrection:
 
 
 # ---------------------------------------------------------------------------
-# Export-side blend mode detection (describe_blender._detect_blend_mode)
+# Export-side blend mode detection (plan_material._detect_blend_mode)
 # ---------------------------------------------------------------------------
-
-class _StubSocket:
-    def __init__(self, name, default_value=0.5):
-        self.name = name
-        self.default_value = default_value
-
-class _StubNode:
-    def __init__(self, bl_idname, blend_type=None, inputs=None):
-        self.bl_idname = bl_idname
-        if blend_type is not None:
-            self.blend_type = blend_type
-        self.inputs = inputs or [_StubSocket('Fac'), _StubSocket('Color1'), _StubSocket('Color2')]
-
-class _StubLink:
-    def __init__(self, from_node, from_socket_name, to_node, to_socket):
-        self.from_node = from_node
-        self.from_socket = _StubSocket(from_socket_name)
-        self.to_node = to_node
-        self.to_socket = to_socket
-
 
 class TestDetectBlendMode:
     """Regression: `_detect_blend_mode` must distinguish ALPHA_MASK and
@@ -637,45 +617,65 @@ class TestDetectBlendMode:
     """
 
     def _setup(self, fac_source_socket_name=None):
-        tex = _StubNode('ShaderNodeTexImage')
-        mix = _StubNode('ShaderNodeMixRGB', blend_type='MIX')
-        links = [_StubLink(tex, 'Color', mix, mix.inputs[1])]
+        """Build a `(_GraphView, BRNode)` pair where:
+          - tex.Color → mix.Color2  (always)
+          - if fac_source_socket_name set: tex.<name> → mix.Fac  (mask wiring)
+        """
+        from shared.BR.materials import BRNodeGraph, BRNode, BRLink
+        from exporter.phases.plan.helpers.materials import _GraphView
+
+        tex = BRNode(node_type='ShaderNodeTexImage', name='tex')
+        mix = BRNode(node_type='ShaderNodeMixRGB', name='mix',
+                     properties={'blend_type': 'MIX'},
+                     input_defaults={'Fac': 0.5})
+        links = [BRLink(from_node='tex', from_output='Color',
+                        to_node='mix', to_input='Color2')]
         if fac_source_socket_name is not None:
-            links.append(_StubLink(tex, fac_source_socket_name, mix, mix.inputs[0]))
-        return tex, links
+            links.append(BRLink(from_node='tex',
+                                from_output=fac_source_socket_name,
+                                to_node='mix', to_input='Fac'))
+        return _GraphView(BRNodeGraph(nodes=[tex, mix], links=links)), tex
 
     def test_alpha_mask_detected_when_tex_alpha_drives_fac(self):
-        from exporter.phases.describe.helpers.materials_decode import _detect_blend_mode
-        tex, links = self._setup(fac_source_socket_name='Alpha')
-        blend, factor, is_bump = _detect_blend_mode(tex, links)
+        from exporter.phases.plan.helpers.materials import _detect_blend_mode
+        view, tex = self._setup(fac_source_socket_name='Alpha')
+        blend, factor, is_bump = _detect_blend_mode(view, tex)
         assert blend == LayerBlendMode.ALPHA_MASK
         assert factor == 1.0
         assert is_bump is False
 
     def test_rgb_mask_detected_when_tex_color_drives_fac(self):
-        from exporter.phases.describe.helpers.materials_decode import _detect_blend_mode
-        tex, links = self._setup(fac_source_socket_name='Color')
-        blend, factor, is_bump = _detect_blend_mode(tex, links)
+        from exporter.phases.plan.helpers.materials import _detect_blend_mode
+        view, tex = self._setup(fac_source_socket_name='Color')
+        blend, factor, is_bump = _detect_blend_mode(view, tex)
         assert blend == LayerBlendMode.RGB_MASK
         assert factor == 1.0
         assert is_bump is False
 
     def test_plain_mix_when_fac_is_unlinked(self):
-        from exporter.phases.describe.helpers.materials_decode import _detect_blend_mode
-        tex, links = self._setup(fac_source_socket_name=None)
-        blend, factor, _ = _detect_blend_mode(tex, links)
+        from exporter.phases.plan.helpers.materials import _detect_blend_mode
+        view, tex = self._setup(fac_source_socket_name=None)
+        blend, factor, _ = _detect_blend_mode(view, tex)
         assert blend == LayerBlendMode.MIX
 
     def test_plain_mix_when_fac_driven_by_unrelated_node(self):
-        # Fac is linked but from a different node — still plain MIX.
-        from exporter.phases.describe.helpers.materials_decode import _detect_blend_mode
-        tex = _StubNode('ShaderNodeTexImage')
-        other = _StubNode('ShaderNodeValue')
-        mix = _StubNode('ShaderNodeMixRGB', blend_type='MIX')
+        """Fac is linked but from a different node — still plain MIX."""
+        from shared.BR.materials import BRNodeGraph, BRNode, BRLink
+        from exporter.phases.plan.helpers.materials import (
+            _GraphView, _detect_blend_mode,
+        )
+        tex = BRNode(node_type='ShaderNodeTexImage', name='tex')
+        other = BRNode(node_type='ShaderNodeValue', name='other')
+        mix = BRNode(node_type='ShaderNodeMixRGB', name='mix',
+                     properties={'blend_type': 'MIX'},
+                     input_defaults={'Fac': 0.5})
         links = [
-            _StubLink(tex, 'Color', mix, mix.inputs[1]),
-            _StubLink(other, 'Value', mix, mix.inputs[0]),
+            BRLink(from_node='tex', from_output='Color',
+                   to_node='mix', to_input='Color2'),
+            BRLink(from_node='other', from_output='Value',
+                   to_node='mix', to_input='Fac'),
         ]
-        blend, _, _ = _detect_blend_mode(tex, links)
+        view = _GraphView(BRNodeGraph(nodes=[tex, other, mix], links=links))
+        blend, _, _ = _detect_blend_mode(view, tex)
         assert blend == LayerBlendMode.MIX
 

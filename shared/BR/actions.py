@@ -49,7 +49,11 @@ class BRBoneTrack:
     rest_position: tuple[float, float, float]
     rest_scale: tuple[float, float, float]
     end_frame: float
-    bake_context: BRBakeContext
+    # Importer-only: pre-computed pose-basis bake context, consumed by
+    # `build_blender/helpers/animations.py`. The exporter direction
+    # leaves this `None` — its plan converts BRBoneTrack back to
+    # IRBoneTrack without ever touching the basis math.
+    bake_context: BRBakeContext | None = None
     # Pass-through until later stages migrate these:
     spline_path: object = None  # IRSplinePath
 
