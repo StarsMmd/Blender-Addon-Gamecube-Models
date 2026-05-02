@@ -154,8 +154,9 @@ Scores below come from the full corpus in `~/Documents/Projects/DAT plugin/model
 | M1_out | XD | 98.3%(2/0) | 23.1%(0/77) | 79.4%(8/12) | 78.0%(9/13) | 2.6% |
 | M2_out | XD | 99.4%(1/0) | 25.0%(0/75) | 77.0%(9/14) | 79.2%(10/11) | 3.0% |
 | M3_out | XD | 99.2%(1/0) | 23.0%(0/77) | 76.3%(9/15) | 79.8%(9/11) | 1.5% |
+| M3_shrine_1F | XD | 99.9%(0/0) | 24.2%(0/76) | 75.5%(8/17) | 75.0%(8/17) | 0.8% |
 
-**Averages (5 models):** NBN 98.4% · NIN 22.8% · BBB 74.7% · IBI 74.8% · BNB 11.4%
+**Averages (6 models):** NBN 98.7% · NIN 23.1% · BBB 74.9% · IBI 74.8% · BNB 9.7%
 
 <!-- AUTO-GENERATED-RESULTS END -->
 
