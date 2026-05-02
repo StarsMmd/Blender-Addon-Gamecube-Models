@@ -71,6 +71,18 @@ def describe_meshes(armature, br_armature, logger=StubLogger()):
             br_meshes.append(br_mesh)
             blender_materials.append(_blender_material_for(mesh_obj, br_mesh))
 
+    # Stamp mesh_key in the importer's synthetic `mesh_NN_<bone>` format.
+    # The format is load-bearing — `exporter/phases/compose/helpers/
+    # material_animations.py:_parse_mesh_index` parses the digit out of
+    # `IRMaterialTrack.material_mesh_name` to bind animations to meshes,
+    # and the importer's plan + build_blender use the same key shape on
+    # their side. Mirroring the format here keeps BBB round-trip parity
+    # without needing a deeper refactor of the IR material-anim binding.
+    digit_width = len(str(max(len(br_meshes) - 1, 0)))
+    for i, br_mesh in enumerate(br_meshes):
+        bone_label = br_mesh.parent_bone_name or 'unknown'
+        br_mesh.mesh_key = "mesh_%s_%s" % (str(i).zfill(digit_width), bone_label)
+
     total_verts = sum(len(m.vertices) for m in br_meshes)
     total_faces = sum(len(m.faces) for m in br_meshes)
     weighted = sum(1 for m in br_meshes if m.vertex_groups)
@@ -219,7 +231,9 @@ def _build_submesh(mesh_name, mat_index, num_materials,
         )
 
     name = mesh_name if num_materials <= 1 else "%s_%03d" % (mesh_name, mat_index)
-    mesh_key = name  # interim — task 4 will adopt the importer's mesh_key format
+    # Final `mesh_key` is stamped by the outer `describe_meshes` loop
+    # once the post-split mesh index is known.
+    mesh_key = name
 
     br_mesh = BRMesh(
         name=name,
