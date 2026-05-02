@@ -424,6 +424,15 @@ _SKIP_FIELDS = {
     'deformed_vertices', 'deformed_normals',
     # Convenience/metadata — DAT file offsets used as cache keys, not model data
     'image_id', 'palette_id',
+    # Internal IDs — opaque foreign-key targets that cross-reference entities
+    # within a single pipeline run. Importer and exporter mint these
+    # independently for their own binding purposes; identity across a
+    # build → describe round-trip is not a fidelity concern, only that
+    # the bindings work *within* each side.
+    'mesh_key',           # BRMesh: binds material-anim tracks
+    'cache_key',          # BRImage: dedup identity for build-side image reuse
+    'dedup_key',          # BRMaterial: dedup identity for build-side material reuse
+    'material_mesh_name', # IR/BRMaterialTrack: foreign key into mesh list
 }
 
 # Maximum number of detail lines per category
