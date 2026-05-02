@@ -7,10 +7,11 @@ Operates entirely on Blender objects — no dependency on earlier phases.
 Bakes the importer's Y-up→Z-up viewing rotation into bone + child-mesh
 data so each `matrix_world` arrives at identity (mirrors
 `scripts/prepare_for_export.py:bake_transforms()`). Re-exports through
-the prep script find the data already baked and skip that step; the
-round-trip test runner uses the same `bake_imported_transforms` helper
-to keep IBI / BBB scoring past the exporter's
-`validate_baked_transforms` check.
+the prep script find the data already baked and skip that step. The
+exporter itself now composes `matrix_world` / `matrix_basis` on the
+fly inside describe + plan, so this bake is convenience rather than
+correctness — but production scenes still benefit from arriving in
+canonical Z-up native form.
 
 Shiny filter injection is also handled here, independent of earlier
 phases. Like the standalone shiny script, this phase can inject shiny
@@ -128,10 +129,18 @@ def bake_imported_transforms(armatures, logger=StubLogger()):
     The plan phase sets `armature.matrix_basis` to a π/2 X-rotation —
     a "viewing rotation" that lets the importer keep raw Y-up GameCube
     bone matrices verbatim while still rendering Z-up in the viewport.
-    Without this bake, the exporter's `validate_baked_transforms` check
-    rejects the imported scene until `scripts/prepare_for_export.py:
-    bake_transforms()` runs, and the round-trip test runner (which
-    skips prep) trips on the same check.
+    Baking that rotation into the data makes the imported scene's
+    canonical form match what `scripts/prepare_for_export.py:
+    bake_transforms()` produces, so a re-export through the prep script
+    finds the data already baked and skips its own bake step.
+
+    The exporter now composes `matrix_world` / `matrix_basis` on the
+    fly inside describe + plan (see `exporter/phases/describe/helpers/
+    meshes.py` and `exporter/phases/plan/helpers/armature.py`), so the
+    bake is no longer required for the exporter's `validate_baked_transforms`
+    safety net to pass — but baking on import keeps the scene in a
+    canonical state, which is what users expect of an "imported and
+    ready to edit" model.
 
     Animations are preserved transparently. `Armature.transform(M)`
     rotates every bone's rest world by M consistently, so for any

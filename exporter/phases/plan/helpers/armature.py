@@ -39,8 +39,20 @@ def plan_armature(br_armature, logger=StubLogger()):
     gc_world = {}   # GameCube Y-up world matrices (post coord rotation)
     srt_world = {}  # SRT-accumulated world matrices (HSD-native, no coord rot)
 
+    # Compose the armature object's matrix_basis with the Z-up → Y-up
+    # coordinate rotation. For a baked scene `matrix_basis` is identity
+    # so this collapses to just the coord rotation; for an unbaked
+    # importer-built scene matrix_basis carries the Y-up→Z-up viewing
+    # rotation and `_COORD_ROTATION_INV @ matrix_basis` cancels it back
+    # out, leaving Y-up bone matrices either way.
+    matrix_basis = (
+        br_armature.matrix_basis if br_armature.matrix_basis is not None
+        else _identity_4x4()
+    )
+    base_xform = _matmul_4x4(_COORD_ROTATION_INV, matrix_basis)
+
     for i, br_bone in enumerate(br_armature.bones):
-        edit_world = _matmul_4x4(_COORD_ROTATION_INV, br_bone.edit_matrix)
+        edit_world = _matmul_4x4(base_xform, br_bone.edit_matrix)
         gc_world[i] = edit_world
 
         if br_bone.parent_index is not None:

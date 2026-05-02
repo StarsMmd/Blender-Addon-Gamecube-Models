@@ -32,13 +32,20 @@ except (ImportError, SystemError):
 def plan_scene(br_scene, options=None, logger=StubLogger()):
     """Convert a BRScene to an IRScene.
 
-    In: br_scene (BRScene); options (dict|None); logger.
+    In: br_scene (BRScene); options (dict|None — reads
+        ``skip_baked_transforms_validation`` to opt out of the BR-side
+        baked-transforms check; round-trip tests use this so they can
+        compare a freshly-built (un-baked) scene without the validator
+        firing); logger.
     Out: IRScene ready for compose.
     """
     if options is None:
         options = {}
 
     logger.info("=== Export Phase 2: Plan (BR → IR) ===")
+
+    if not options.get('skip_baked_transforms_validation'):
+        validate_baked_br(br_scene)
 
     ir_models = []
     for br_model in br_scene.models:
@@ -81,3 +88,57 @@ def _plan_one_model(br_model, logger):
         limit_rotation_constraints=lr,
         limit_location_constraints=ll,
     )
+
+
+# ---------------------------------------------------------------------------
+# BR-side defense-in-depth: validate baked transforms before we commit BR
+# data into IR. Pre-process catches the same case earlier with a
+# user-facing error; this is the second line, operating on the BR data
+# the describe phase actually captured.
+# ---------------------------------------------------------------------------
+
+def validate_baked_br(br_scene):
+    """Reject BR scenes whose armature carries a non-identity matrix_basis.
+
+    Mirrors `pre_process.validate_baked_transforms` but runs against BR
+    data rather than bpy data. Matters because the export bone path
+    decomposes world matrices into SRT (silently dropping shear from
+    a non-uniform scale × rotation combo), while the vertex path uses
+    plain matmul (preserving that shear). Bones and verts then drift
+    apart as you walk down the chain.
+
+    Pre-process catches this earlier on the bpy side with a friendlier
+    multi-line error; this is the BR-shaped backstop.
+
+    Tests opt out via ``options['skip_baked_transforms_validation'] = True``
+    when they want to plan a freshly-built (un-baked) BR snapshot.
+    """
+    bad = []
+    for model in br_scene.models:
+        arm = model.armature
+        if arm is None:
+            continue
+        if arm.matrix_basis is None:
+            continue
+        if not _is_identity_matrix_4x4(arm.matrix_basis):
+            bad.append(arm.name)
+    if bad:
+        raise ValueError(
+            "BR armature(s) with unbaked matrix_basis: " + ", ".join(bad) +
+            ". The exporter requires every armature to land at identity "
+            "matrix_basis (and matrix_world) before plan runs — the bone "
+            "path SRT-decomposes world matrices and silently drops shear "
+            "that the vertex path keeps. Run `scripts/prepare_for_export.py` "
+            "(or `Object > Apply > All Transforms`) before exporting; "
+            "round-trip tests can opt out via "
+            "options['skip_baked_transforms_validation']=True."
+        )
+
+
+def _is_identity_matrix_4x4(m, tol=1e-5):
+    for i in range(4):
+        for j in range(4):
+            expected = 1.0 if i == j else 0.0
+            if abs(m[i][j] - expected) > tol:
+                return False
+    return True

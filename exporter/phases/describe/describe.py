@@ -23,7 +23,6 @@ try:
     from .helpers.lights import describe_lights
     from .helpers.cameras import describe_cameras
     from .helpers.scene import (
-        validate_baked_transforms,
         collect_pkx_referenced_actions,
         extract_shiny_params,
         extract_pkx_header,
@@ -42,7 +41,6 @@ except (ImportError, SystemError):
     from exporter.phases.describe.helpers.lights import describe_lights
     from exporter.phases.describe.helpers.cameras import describe_cameras
     from exporter.phases.describe.helpers.scene import (
-        validate_baked_transforms,
         collect_pkx_referenced_actions,
         extract_shiny_params,
         extract_pkx_header,
@@ -73,8 +71,11 @@ def describe_scene(context, options=None, logger=StubLogger(), output_ext=''):
             "No armatures in the scene. The scene must contain at least one armature to export."
         )
 
-    validate_baked_transforms(armatures)
-
+    # Note: baked-transforms validation lives in pre_process (user-facing,
+    # runs before the pipeline starts) and in plan (BR-side defense-in-depth).
+    # Describe deliberately does not validate so round-trip tests can take a
+    # build → describe → BR snapshot of an importer-built scene without first
+    # baking the importer's Y-up→Z-up viewing rotation into the data.
     use_bezier = options.get('sparsify_bezier', True)
 
     br_models = []

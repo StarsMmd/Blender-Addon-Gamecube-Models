@@ -97,8 +97,15 @@ def _describe_mesh_object(mesh_obj, bone_names, logger,
     mesh_data = mesh_obj.data
     mesh_data.calc_loop_triangles()
 
-    vertex_xform = _COORD_ROTATION_INV
-    normal_xform = vertex_xform.to_3x3()
+    # Compose the mesh's own world transform with the Z-up → Y-up
+    # coordinate rotation. For a baked scene `matrix_world` is identity
+    # so this collapses to just the coord rotation; for an unbaked
+    # importer-built scene the matrix_world carries the Y-up→Z-up
+    # viewing rotation, and `_COORD_ROTATION_INV @ matrix_world` cancels
+    # it back out. Either way the captured vertices land in GameCube
+    # Y-up world space.
+    vertex_xform = _COORD_ROTATION_INV @ mesh_obj.matrix_world
+    normal_xform = (_COORD_ROTATION_INV @ mesh_obj.matrix_world).to_3x3()
 
     all_vertices = [tuple(vertex_xform @ v.co) for v in mesh_data.vertices]
     if not all_vertices:
