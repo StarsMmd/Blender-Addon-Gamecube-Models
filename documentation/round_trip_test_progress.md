@@ -147,12 +147,13 @@ Scores below come from the full corpus in `~/Documents/Projects/DAT plugin/model
 
 ### Map / Scene Models
 
-| Model | Game | NBN ✅ | NIN 🔴 | BBB 🔵 | IBI 🔵 | BNB 🟠 |
+| Model | Game | NBN ✅ | NIN 🔴 | BBB 🔵 | IBI 🔵 | BNB 🔴 |
 |---|---|---|---|---|---|---|
 | D6_out_all | XD | 96.4%(4/0) | 18.1%(0/82) | 68.1%(13/19) | 61.2%(14/25) | 43.7% |
 | M1_out | XD | 98.3%(2/0) | 23.1%(0/77) | 79.4%(8/12) | 78.0%(9/13) | 2.6% |
+| M3_out | XD | 99.2%(1/0) | 23.0%(0/77) | 76.3%(9/15) | 79.8%(9/11) | 1.5% |
 
-**Averages (2 models):** NBN 97.4% · NIN 20.6% · BBB 73.8% · IBI 69.6% · BNB 23.2%
+**Averages (3 models):** NBN 98.0% · NIN 21.4% · BBB 74.6% · IBI 73.0% · BNB 15.9%
 
 <!-- AUTO-GENERATED-RESULTS END -->
 
