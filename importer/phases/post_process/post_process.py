@@ -1,11 +1,20 @@
-"""Phase 6 — Post-Processing: reset poses, select first animation, apply shiny filters.
+"""Phase 6 — Post-Processing: bake transforms, reset poses, select first
+animation, apply shiny filters.
 
 Runs after either the new IR pipeline (Phase 5) or the legacy importer.
 Operates entirely on Blender objects — no dependency on earlier phases.
 
-Shiny filter injection is handled here as a post-processing step, independent
-of what happened in earlier phases. Like the standalone shiny script, this phase
-can inject shiny shaders into any model's materials given the raw PKX parameters.
+Bakes the importer's Y-up→Z-up viewing rotation into bone + child-mesh
+data so each `matrix_world` arrives at identity (mirrors
+`scripts/prepare_for_export.py:bake_transforms()`). Re-exports through
+the prep script find the data already baked and skip that step; the
+round-trip test runner uses the same `bake_imported_transforms` helper
+to keep IBI / BBB scoring past the exporter's
+`validate_baked_transforms` check.
+
+Shiny filter injection is also handled here, independent of earlier
+phases. Like the standalone shiny script, this phase can inject shiny
+shaders into any model's materials given the raw PKX parameters.
 """
 import bpy
 
@@ -42,6 +51,22 @@ def post_process(armature_names, shiny_params=None, options=None, logger=StubLog
 
     include_shiny = True if options is None else options.get("include_shiny", True)
     selected_actions = []
+
+    # Bake the importer's Y-up→Z-up viewing rotation into the bone +
+    # mesh data so each `matrix_world` is identity. Mirrors the prep
+    # script's `bake_transforms()` step — running it here means a re-export
+    # through `scripts/prepare_for_export.py` finds the data already
+    # baked and noops that step. Also lets the round-trip runner's IBI
+    # / BBB scoring pass the exporter's baked-transforms validator.
+    if build_results:
+        bake_targets = [r['armature'] for r in build_results]
+    else:
+        bake_targets = [
+            obj for name in armature_names
+            for obj in [bpy.data.objects.get(name)]
+            if obj is not None and obj.type == 'ARMATURE'
+        ]
+    bake_imported_transforms(bake_targets, logger=logger)
 
     if build_results:
         # New pipeline path: use actions directly from Phase 5
@@ -94,6 +119,98 @@ def post_process(armature_names, shiny_params=None, options=None, logger=StubLog
                     start, end, len(selected_actions))
     scene.frame_set(scene.frame_start)
     logger.info("=== Phase 6 complete ===")
+
+
+def bake_imported_transforms(armatures, logger=StubLogger()):
+    """Bake each armature's `matrix_world` into bone + child-mesh data so
+    the imported scene arrives with identity `matrix_world`.
+
+    The plan phase sets `armature.matrix_basis` to a π/2 X-rotation —
+    a "viewing rotation" that lets the importer keep raw Y-up GameCube
+    bone matrices verbatim while still rendering Z-up in the viewport.
+    Without this bake, the exporter's `validate_baked_transforms` check
+    rejects the imported scene until `scripts/prepare_for_export.py:
+    bake_transforms()` runs, and the round-trip test runner (which
+    skips prep) trips on the same check.
+
+    Animations are preserved transparently. `Armature.transform(M)`
+    rotates every bone's rest world by M consistently, so for any
+    non-root bone `new_rest_local = (M @ parent_world)⁻¹ @ (M @ bone_world)
+    = old_rest_local` — the M's cancel through the parent chain. Pose-bone
+    keyframes are interpreted against the unchanged rest_local, so no
+    keyframe transformation is needed. Root bones don't carry pose-loc
+    fcurves in practice (or pose-loc on root is zero on imported models).
+
+    The bake is also safe with respect to scale: this is called only on
+    freshly-imported armatures whose `matrix_basis` is a pure rotation
+    (no scale, no translation), so `Armature.transform`'s known
+    Blender-4.5 translation-drop bug doesn't apply.
+
+    In: armatures (iterable of bpy.types.Object); logger.
+    Out: int — number of objects baked.
+    """
+    from mathutils import Matrix as _Matrix
+    identity = _Matrix.Identity(4)
+    baked = 0
+
+    for arm in armatures:
+        if arm is None or arm.type != 'ARMATURE':
+            continue
+        if _is_identity_matrix(arm.matrix_world):
+            continue
+
+        # Mute any action that's been assigned so depsgraph re-evaluation
+        # during the bake doesn't read stale pose state.
+        ad = arm.animation_data
+        saved_action = ad.action if ad else None
+        saved_use_nla = ad.use_nla if ad else None
+        if ad:
+            ad.action = None
+            ad.use_nla = False
+
+        # Capture world matrices BEFORE any mutation. matrix_world is
+        # cached and re-reading it after a sibling object is baked
+        # returns half-stale values.
+        targets = [(arm, arm.matrix_world.copy())]
+        for obj in bpy.data.objects:
+            if obj.parent is arm and obj.type == 'MESH':
+                targets.append((obj, obj.matrix_world.copy()))
+
+        for obj, world in targets:
+            data = getattr(obj, 'data', None)
+            if data is None:
+                continue
+            if data.users > 1:
+                obj.data = data.copy()
+                data = obj.data
+            data.transform(world)
+            obj.matrix_basis = identity
+            if obj.parent is not None:
+                obj.matrix_parent_inverse = identity
+            baked += 1
+
+        if ad is not None:
+            ad.action = saved_action
+            if saved_use_nla is not None:
+                ad.use_nla = saved_use_nla
+
+    if baked:
+        logger.info(
+            "  Baked imported transforms on %d object(s) (matrix_world → identity)",
+            baked,
+        )
+
+    bpy.context.view_layer.update()
+    return baked
+
+
+def _is_identity_matrix(m, tol=1e-5):
+    for i in range(4):
+        for j in range(4):
+            expected = 1.0 if i == j else 0.0
+            if abs(m[i][j] - expected) > tol:
+                return False
+    return True
 
 
 def _find_actions(armature):

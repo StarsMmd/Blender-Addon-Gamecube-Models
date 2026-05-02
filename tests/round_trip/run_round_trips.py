@@ -52,6 +52,7 @@ from importer.phases.parse.parse import parse_sections
 from importer.phases.describe.describe import describe_scene
 from importer.phases.plan.plan import plan_scene as plan_ir_to_br
 from importer.phases.build_blender.build_blender import build_blender_scene
+from importer.phases.post_process.post_process import bake_imported_transforms
 from exporter.phases.describe.describe import describe_scene as describe_blender_to_br
 from exporter.phases.plan.plan import plan_scene as plan_br_to_ir
 from exporter.phases.compose.compose import compose_scene
@@ -122,7 +123,16 @@ def build_in_blender(br_scene, options=None):
     # the scene to read back.
     options.setdefault("import_lights", True)
     options.setdefault("import_cameras", True)
-    return build_blender_scene(br_scene, bpy.context, options)
+    results = build_blender_scene(br_scene, bpy.context, options)
+    # Mirror the import-side bake so describe-back doesn't trip the
+    # exporter's `validate_baked_transforms` check. Production imports
+    # via `Importer.run()` invoke post_process, which calls this same
+    # helper; the round-trip runner skips post_process to keep IBI / BBB
+    # focused on pure build → describe fidelity, so we run just the bake
+    # explicitly here.
+    if results:
+        bake_imported_transforms([r['armature'] for r in results])
+    return results
 
 
 def describe_back_to_br():
