@@ -29,7 +29,7 @@ def plan_meshes(ir_model):
         br_instances: list[BRMeshInstance].
         br_materials: list[BRMaterial] — deduped shader graphs.
     """
-    mesh_keys_with_color_anim = _collect_color_animated_mesh_keys(ir_model)
+    mesh_ids_with_color_anim = _collect_color_animated_mesh_ids(ir_model)
     model_name = ir_model.name or "Model"
     mesh_digits = len(str(max(len(ir_model.meshes) - 1, 0)))
 
@@ -39,19 +39,19 @@ def plan_meshes(ir_model):
     color_anim_by_material_key = {}
     for i, ir_mesh in enumerate(ir_model.meshes):
         parent_bone_name = _lookup_parent_bone_name(ir_mesh.parent_bone_index, ir_model.bones)
-        mesh_key = _make_mesh_key(i, mesh_digits, parent_bone_name)
-        has_color_anim = mesh_key in mesh_keys_with_color_anim
+        mesh_id = _make_mesh_id(i, mesh_digits, parent_bone_name)
+        has_color_anim = mesh_id in mesh_ids_with_color_anim
         material_key = _material_dedup_key(ir_mesh)
         if material_key is not None and has_color_anim:
             color_anim_by_material_key[material_key] = True
-        mesh_rows.append((i, ir_mesh, parent_bone_name, mesh_key, material_key))
+        mesh_rows.append((i, ir_mesh, parent_bone_name, mesh_id, material_key))
 
     # Second pass: dedup materials. For each unique material_key, call
     # plan_material once. Build index map so meshes can reference their
     # material by index.
     br_materials = []
     material_index_by_key = {}
-    for i, ir_mesh, _parent_name, _mesh_key, material_key in mesh_rows:
+    for i, ir_mesh, _parent_name, _mesh_id, material_key in mesh_rows:
         if material_key is None:
             continue
         if material_key in material_index_by_key:
@@ -69,11 +69,11 @@ def plan_meshes(ir_model):
 
     # Third pass: emit BRMesh per IRMesh, pointing at the deduped material.
     br_meshes = []
-    for i, ir_mesh, parent_bone_name, mesh_key, material_key in mesh_rows:
+    for i, ir_mesh, parent_bone_name, mesh_id, material_key in mesh_rows:
         material_index = material_index_by_key.get(material_key) if material_key else None
         br_meshes.append(BRMesh(
             name='%s_mesh_%s' % (model_name, ir_mesh.name),
-            mesh_key=mesh_key,
+            id=mesh_id,
             vertices=list(ir_mesh.vertices),
             faces=[list(face) for face in ir_mesh.faces],
             uv_layers=[
@@ -160,11 +160,11 @@ def _material_dedup_key(ir_mesh):
     return (id(ir_mesh.material), ir_mesh.cull_front, ir_mesh.cull_back)
 
 
-def _collect_color_animated_mesh_keys(ir_model):
+def _collect_color_animated_mesh_ids(ir_model):
     """Mesh keys whose materials need a DiffuseColor fcurve target.
 
     In: ir_model (IRModel).
-    Out: set[str] of mesh_key strings (matches BRMesh.mesh_key format) for
+    Out: set[str] of mesh_id strings (matches BRMesh.id format) for
          every mesh whose bone_animations include any diffuse RGB keyframe.
     """
     keys = set()
@@ -186,7 +186,7 @@ def _lookup_parent_bone_name(parent_bone_index, bones):
     return bones[parent_bone_index].name
 
 
-def _make_mesh_key(index, digit_width, parent_bone_name):
+def _make_mesh_id(index, digit_width, parent_bone_name):
     """Stable mesh key used to bind material-animation tracks to their mesh.
 
     In: index (int); digit_width (int, padding); parent_bone_name (str|None).

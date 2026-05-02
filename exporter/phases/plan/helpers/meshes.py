@@ -66,6 +66,7 @@ def plan_meshes(br_meshes, br_materials, ir_bones, logger=StubLogger()):
             parent_bone_index=parent_bone_index,
             cull_front=getattr(br_mesh, '_cull_front', False),
             cull_back=getattr(br_mesh, '_cull_back', False),
+            id=br_mesh.id,
         ))
 
     logger.info("  Planned %d IRMesh(es) from BR", len(ir_meshes))

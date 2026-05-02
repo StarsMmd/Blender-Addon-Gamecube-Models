@@ -24,7 +24,7 @@ def build_bone_animations(br_actions, armature, options, logger=StubLogger(), ma
 
     In: br_actions (list[BRAction]); armature (bpy.types.Object, armature);
         options (dict, reads 'max_frame'); logger (Logger);
-        material_lookup (dict[str, bpy.types.Material]|None, keyed by mesh_key).
+        material_lookup (dict[str, bpy.types.Material]|None, keyed by id).
     Out: (list[bpy.types.Action], dict[bpy.types.Material, int]) — Actions in
          the order given + slot index map for material animations.
     """

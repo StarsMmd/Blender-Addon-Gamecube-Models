@@ -29,8 +29,8 @@ class BRVertexGroup:
 @dataclass
 class BRMesh:
     """Geometry + metadata for one Blender mesh object."""
-    name: str  # Blender object / mesh-data name
-    mesh_key: str  # stable id shared with material animation tracks
+    name: str  # Blender object / mesh-data name (display label, may collide / be edited)
+    id: str  # opaque stable id used by material animation tracks (foreign key)
     vertices: list[tuple[float, float, float]]
     faces: list[list[int]]
     uv_layers: list[BRUVLayer] = field(default_factory=list)

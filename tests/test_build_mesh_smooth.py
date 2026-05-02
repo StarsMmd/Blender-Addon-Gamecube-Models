@@ -46,7 +46,7 @@ def _build_args(n_polys):
 def _make_br_mesh(**overrides):
     defaults = dict(
         name="m0",
-        mesh_key="mesh_0_unknown",
+        id="mesh_0_unknown",
         vertices=[(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)],
         faces=[[0, 1, 2], [0, 2, 3]],
         normals=None,

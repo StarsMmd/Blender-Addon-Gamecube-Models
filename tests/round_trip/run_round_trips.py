@@ -429,7 +429,7 @@ _SKIP_FIELDS = {
     # independently for their own binding purposes; identity across a
     # build → describe round-trip is not a fidelity concern, only that
     # the bindings work *within* each side.
-    'mesh_key',           # BRMesh: binds material-anim tracks
+    'id',                 # IRMesh / BRMesh: opaque foreign-key target
     'cache_key',          # BRImage: dedup identity for build-side image reuse
     'dedup_key',          # BRMaterial: dedup identity for build-side material reuse
     'material_mesh_name', # IR/BRMaterialTrack: foreign key into mesh list

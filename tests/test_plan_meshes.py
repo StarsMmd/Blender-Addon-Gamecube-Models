@@ -148,14 +148,14 @@ class TestPlanMeshes:
         assert isinstance(br_meshes[0], BRMesh)
         m = br_meshes[0]
         assert m.name == 'rig_mesh_body'
-        assert m.mesh_key == 'mesh_0_Root'
+        assert m.id == 'mesh_0_Root'
         assert m.parent_bone_name == 'Root'
         assert m.is_hidden is False
         assert m.material_index is None  # no IR material was supplied
         assert br_instances == []
         assert br_materials == []
 
-    def test_mesh_key_uses_zero_padded_index(self):
+    def test_id_uses_zero_padded_index(self):
         """Mesh keys must sort stably — width driven by total count."""
         ir = IRModel(
             name="rig",
@@ -164,9 +164,9 @@ class TestPlanMeshes:
         )
         br_meshes, _, _ = plan_meshes(ir)
         # 12 meshes → indices need 2 digits
-        assert br_meshes[0].mesh_key == 'mesh_00_Root'
-        assert br_meshes[9].mesh_key == 'mesh_09_Root'
-        assert br_meshes[10].mesh_key == 'mesh_10_Root'
+        assert br_meshes[0].id == 'mesh_00_Root'
+        assert br_meshes[9].id == 'mesh_09_Root'
+        assert br_meshes[10].id == 'mesh_10_Root'
 
     def test_out_of_range_parent_bone_index_becomes_none(self):
         ir = IRModel(
@@ -176,7 +176,7 @@ class TestPlanMeshes:
         )
         br_meshes, _, _ = plan_meshes(ir)
         assert br_meshes[0].parent_bone_name is None
-        assert br_meshes[0].mesh_key == 'mesh_0_unknown'
+        assert br_meshes[0].id == 'mesh_0_unknown'
 
     def test_meshes_without_material_get_none_index(self):
         """Meshes with no IR material → ``material_index=None``, no BRMaterials."""

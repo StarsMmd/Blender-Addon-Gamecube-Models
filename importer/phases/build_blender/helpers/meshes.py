@@ -21,7 +21,7 @@ def build_meshes(br_model, armature, context, logger=StubLogger()):
 
     In: br_model (BRModel); armature (bpy.types.Object);
         context (Blender context); logger (Logger).
-    Out: dict[str, bpy.types.Material] — mesh_key → material, consumed later
+    Out: dict[str, bpy.types.Material] — id → material, consumed later
          by the animation baker to bind material-animation fcurves.
     """
     image_cache = {}
@@ -40,8 +40,8 @@ def build_meshes(br_model, armature, context, logger=StubLogger()):
         mesh_objects.append(mesh_obj)
 
         if mat is not None:
-            material_lookup[br_mesh.mesh_key] = mat
-            logger.debug("  material_lookup['%s'] = '%s'", br_mesh.mesh_key, mat.name)
+            material_lookup[br_mesh.id] = mat
+            logger.debug("  material_lookup['%s'] = '%s'", br_mesh.id, mat.name)
 
     instance_count = 0
     for instance in br_model.mesh_instances:
