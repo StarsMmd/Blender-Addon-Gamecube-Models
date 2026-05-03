@@ -15,7 +15,7 @@ The exporter writes a Blender scene to a `.dat` or `.pkx` binary that can be use
 3. [**Run the preparation script**](#3-preparation-script) — run `scripts/prepare_for_export.py` to set up camera, lights, weights, textures, and PKX metadata.
 4. [**Edit export properties**](#4-export-properties) — assign animations to PKX slots, adjust camera, set metadata.
 5. [**Run the script again**](#5-refine-and-re-run) — re-run to auto-derive animation timing from your slot assignments.
-6. [**Export**](#6-export) — File > Export > Gamecube model (.dat or .pkx).
+6. [**Export**](#6-export) — File > Export > Gamecube model (`.dat`, `.pkx`, or replace into an existing `.fsys`).
 
 ---
 
@@ -311,11 +311,29 @@ After the first script run:
 
 **File > Export > Gamecube model (.dat)**
 
-Choose the output file location and set the file extension:
-- **`.dat`** — standalone model file
-- **`.pkx`** — PKX container with game metadata (species ID, animation slots, shiny params). Built from scratch using the PKX metadata set via the preparation script.
+Choose the output file location and set the file extension. Three output formats are supported, and the file extension you type into the export dialog selects between them:
 
-> **Animations and output size.** A `.dat` export includes **every** action attached to the armature in the scene, since `.dat` has no PKX-style slot table to tell the exporter which actions matter. Animation keyframes are a major contributor to file size, so before exporting to `.dat` delete any actions you don't need. A `.pkx` export only writes the actions that are referenced by a battle-animation slot (set via the PKX panel during the [preparation](#3-preparation-script) / [refine](#5-refine-and-re-run) steps); other actions in the scene are ignored.
+### `.dat` — standalone model file
+
+A bare DAT model with no wrapper. Does not require a previous file at the chosen path; one is created from scratch on every export. `.dat` is the format most commonly used directly for **overworld models** (NPCs, map props, scenery actors). As an aside: even an overworld `.dat` still needs to be packaged into a `.fsys` archive before the game can load it.
+
+### `.pkx` — standalone PKX container
+
+A PKX file (DAT model + PKX header carrying species ID, animation slots, shiny params, body map). PKX is the format used for both **Pokémon and trainer models** in battle scenes and the summary screen. Does not require a previous file at the chosen path; built from scratch using the PKX metadata set via the [preparation script](#3-preparation-script). When the output extension is `.pkx`, the exporter refuses to run if the scene's armature is missing the PKX metadata custom properties — re-run the [preparation script](#3-preparation-script) to populate them.
+
+### `.fsys` — replace the model inside an existing FSYS archive
+
+Replaces the single model entry inside an FSYS archive while preserving every other entry. This is **the fastest way to test a model in-game** because the resulting FSYS drops straight into a Dolphin disc dump (see [How to Use the New Model in Game](#how-to-use-the-new-model-in-game) below), with no ISO rebuild required.
+
+**Requirements:**
+
+- The chosen path must point to an **existing `.fsys` file**.
+- The archive must contain **exactly one model entry** (`.dat` or `.pkx`). Archives with zero model entries (no slot to replace) or two-or-more model entries (ambiguous which slot to replace) are rejected.
+- If the entry is a `.pkx`, the scene must carry PKX metadata on its armature (same requirement as a direct `.pkx` export).
+
+**Best base files to use:** from the retail games, the most useful FSYS targets are the **`pkx_*.fsys`** archives. These each contain a single PKX entry — a Pokémon or trainer model used in **battle scenes and the summary screen** (overworld NPC models live in different archives and are not currently a supported target). Pick the `pkx_*.fsys` whose Pokémon you want to replace, point the exporter at it, and the model swap is complete in one step.
+
+> **Animations and output size.** A `.dat` export includes **every** action attached to the armature in the scene, since `.dat` has no PKX-style slot table to tell the exporter which actions matter. Animation keyframes are a major contributor to file size, so before exporting to `.dat` delete any actions you don't need. A `.pkx` (and `.fsys`-with-pkx) export only writes the actions that are referenced by a battle-animation slot (set via the PKX panel during the [preparation](#3-preparation-script) / [refine](#5-refine-and-re-run) steps); other actions in the scene are ignored.
 
 ---
 
@@ -371,6 +389,30 @@ Either approach works — pick whichever fits the rest of your editing. Open the
 
 ## How to Use the New Model in Game
 
-> This section is a work in progress.
+The fastest path from a finished Blender scene to seeing your model running in-game is:
 
-For guidance on replacing model files in a game ISO, visit the community Discord: www.discord.gg/xCPjjnv
+1. Export to **`.fsys`** (replacing a `pkx_*.fsys` from the retail game — see [`.fsys` — replace the model inside an existing FSYS archive](#fsys--replace-the-model-inside-an-existing-fsys-archive) above).
+2. Run the modified game in **Dolphin** straight from a folder dump of the ISO — no ISO rebuild needed.
+
+This works because Dolphin can boot a game directly from `main.dol` plus the disc's `files/` tree on disk. Replacing one of the FSYS archives in that tree is a file overwrite; the next launch reads the new data.
+
+### Step-by-step: dump the ISO and run from a folder
+
+> **Use a legally-obtained, self-owned ROM only.** Dump the disc you own.
+
+1. **Get Dolphin.** Install the latest stable build from [dolphin-emu.org](https://dolphin-emu.org).
+2. **Add your ROM to the game list.** Launch Dolphin. Open **Config → Paths**, click **Add**, and pick the folder containing your legally-dumped ISO. Close the dialog — your game appears in the main window's game list.
+3. **Open the disc's contents.** In the main window's game list, right-click the game → **Properties** → switch to the **Filesystem** tab.
+4. **Extract the entire disc to a folder.** In the Filesystem tab, right-click the **Disc** node at the top of the tree → **Extract Entire Disc…**. Pick an empty folder to extract into (e.g. `~/Pokemon-XD-Dump/`). Wait for the extraction to finish — depending on disc size and drive speed, this takes a few minutes. The result is a `sys/` folder (containing `main.dol`) and a `files/` folder (containing every game asset, including the FSYS archives).
+5. **Find the FSYS archives.** Inside the dumped folder, navigate to `files/`. The `pkx_*.fsys` archives live there (exact subdirectory varies by game — search the tree for files matching that pattern). Each `pkx_*.fsys` contains one Pokémon/trainer model.
+6. **Make a backup.** Before replacing anything, copy the `pkx_*.fsys` you plan to overwrite to a safe spot so you can restore it later.
+7. **Export from Blender.** In the export dialog, navigate to the folder containing the `pkx_*.fsys` you want to replace, **double-click that file** to select it as the output target, and click Export. The plugin overwrites the archive in place, with the original entry replaced by your model.
+8. **Boot from `main.dol`.** In your file browser, **double-click `sys/main.dol`** inside the dumped folder. Dolphin opens and launches the game using `main.dol` plus the surrounding `files/` tree — including your modified FSYS — without ever rebuilding the ISO. Subsequent edits to the FSYS take effect on the next launch.
+
+To revert a model, copy the backup back over the modified FSYS.
+
+### When `.fsys` doesn't fit your use case
+
+The `.fsys` flow is built around the `pkx_*.fsys` archives that hold battle-screen and summary-screen Pokémon/trainer models. Other model categories — overworld NPCs, map geometry, room props, cutscene actors — live in differently-shaped archives that this flow does not target.
+
+For those cases, visit the community Discord and start a support thread with details on the model you're trying to replace: [www.discord.gg/xCPjjnv](https://discord.gg/xCPjjnv).

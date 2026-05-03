@@ -7,8 +7,14 @@ import os
 
 try:
     from ....shared.helpers.logger import StubLogger
+    from ....shared.helpers.fsys_writer import (
+        is_fsys, parse_fsys_summary, find_model_entries, MODEL_TYPE_PKX,
+    )
 except (ImportError, SystemError):
     from shared.helpers.logger import StubLogger
+    from shared.helpers.fsys_writer import (
+        is_fsys, parse_fsys_summary, find_model_entries, MODEL_TYPE_PKX,
+    )
 
 
 MAX_VERTEX_WEIGHTS = 4
@@ -32,12 +38,13 @@ def pre_process(context, filepath, options=None, logger=StubLogger()):
 
     logger.info("=== Export Pre-Process: Validation ===")
 
-    _validate_output_path(filepath, logger)
+    ext, fsys_inner_kind = _validate_output_path(filepath, logger)
     _validate_scene(context, logger)
     _validate_baked_transforms(context, logger)
     _validate_vertex_weight_count(context, logger)
     _validate_texture_sizes(context, logger)
     _validate_anim_timings(context, logger)
+    _validate_pkx_metadata(context, ext, fsys_inner_kind, logger)
 
     logger.info("=== Export Pre-Process complete ===")
 
@@ -45,13 +52,127 @@ def pre_process(context, filepath, options=None, logger=StubLogger()):
 def _validate_output_path(filepath, logger):
     """Check the output path is valid for export.
 
-    Both .dat and .pkx output are supported:
     - .dat: always written from scratch.
-    - .pkx: if PKX metadata exists on the armature (from prepare_for_export.py),
-      builds a new PKX from scratch. Otherwise injects into an existing file,
-      or falls back to a default XD header.
+    - .pkx: if PKX metadata exists on the armature, builds a new PKX from
+      scratch. Otherwise injects into an existing file, or falls back to
+      a default XD header.
+    - .fsys: must be an existing file containing exactly one model entry
+      (.dat or .pkx). The model entry will be replaced; all other entries
+      are preserved verbatim.
+
+    Returns (ext, fsys_inner_kind):
+        ext: 'dat' | 'pkx' | 'fsys' (other extensions are treated as 'dat').
+        fsys_inner_kind: 'dat' | 'pkx' for fsys outputs, else None.
     """
+    ext = filepath.rsplit('.', 1)[-1].lower() if '.' in filepath else ''
+    if ext == 'fsys':
+        inner = _validate_fsys_target(filepath, logger)
+        logger.info("  Output path OK: %s (FSYS, inner=%s)", filepath, inner)
+        return ext, inner
     logger.info("  Output path OK: %s", filepath)
+    return ext, None
+
+
+def _validate_fsys_target(filepath, logger):
+    """Validate the .fsys output target and return the inner model kind.
+
+    Raises ValueError with a friendly message for each failed check.
+    Returns 'pkx' or 'dat' identifying what kind of model entry will be
+    replaced.
+    """
+    problems = []
+    if not os.path.exists(filepath):
+        problems.append(
+            "FSYS output requires an existing archive to inject into "
+            "(found no file at %s). Create the FSYS by running the game "
+            "or use a tool such as GoD-Tool to author one, then re-export."
+            % filepath
+        )
+        raise ValueError(_format_fsys_problems(filepath, problems))
+
+    try:
+        with open(filepath, 'rb') as f:
+            raw = f.read()
+    except OSError as e:
+        raise ValueError("Could not read FSYS file at %s: %s" % (filepath, e))
+
+    if not is_fsys(raw):
+        problems.append(
+            "File at %s does not begin with the 'FSYS' magic bytes — it "
+            "isn't an FSYS archive." % filepath
+        )
+        raise ValueError(_format_fsys_problems(filepath, problems))
+
+    try:
+        entries = parse_fsys_summary(raw)
+    except ValueError as e:
+        raise ValueError("Could not parse FSYS at %s: %s" % (filepath, e))
+
+    model_entries = find_model_entries(entries)
+    if len(model_entries) == 0:
+        problems.append(
+            "FSYS at %s contains no model entries (.dat or .pkx). "
+            "There is no model slot to replace." % filepath
+        )
+    elif len(model_entries) > 1:
+        names = ", ".join(e.filename for e in model_entries)
+        problems.append(
+            "FSYS at %s contains %d model entries (%s). Exactly one "
+            "model entry is required so the exporter can pick the slot "
+            "to replace unambiguously."
+            % (filepath, len(model_entries), names)
+        )
+    if problems:
+        raise ValueError(_format_fsys_problems(filepath, problems))
+
+    inner = model_entries[0]
+    logger.info("  FSYS target OK: replacing %s entry '%s' (compressed=%s)",
+                inner.model_kind, inner.filename, inner.is_compressed)
+    return inner.model_kind
+
+
+def _format_fsys_problems(filepath, problems):
+    bullet = "\n  - "
+    return ("Cannot export to FSYS at %s — fix the following:%s%s"
+            % (filepath, bullet, bullet.join(problems)))
+
+
+def _validate_pkx_metadata(context, ext, fsys_inner_kind, logger):
+    """If we're emitting a PKX (directly or via FSYS), require an armature
+    that carries the PKX header metadata custom properties.
+
+    Without `dat_pkx_format`, `extract_pkx_header` returns None and the
+    package phase would either fall back to a default XD header or fail
+    to produce a usable PKX — neither is what the user asked for when
+    they pointed at a real .pkx / .fsys-with-pkx target.
+    """
+    needs_pkx = (ext == 'pkx') or (ext == 'fsys' and fsys_inner_kind == MODEL_TYPE_PKX)
+    if not needs_pkx:
+        return
+
+    try:
+        import bpy
+    except ImportError:
+        bpy = None
+    scene = getattr(context, 'scene', None)
+    objects = list(scene.objects) if scene is not None else (
+        list(bpy.data.objects) if bpy is not None else []
+    )
+    armatures = [o for o in objects if getattr(o, 'type', None) == 'ARMATURE']
+    if not armatures:
+        raise ValueError(
+            "PKX output requires an armature with PKX header metadata, "
+            "but the scene has no armature."
+        )
+    if not any(a.get('dat_pkx_format') in ('XD', 'COLOSSEUM') for a in armatures):
+        names = ", ".join(a.name for a in armatures) or "<none>"
+        raise ValueError(
+            "PKX output requires an armature with PKX header metadata "
+            "(custom property 'dat_pkx_format' set to 'XD' or "
+            "'COLOSSEUM'). Run scripts/prepare_for_export.py against this "
+            ".blend to populate the metadata. Armatures inspected: " + names
+        )
+    logger.info("  PKX metadata OK")
 
 
 def _validate_scene(context, logger):

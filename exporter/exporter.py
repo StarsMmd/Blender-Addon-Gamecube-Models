@@ -5,6 +5,24 @@ except (ImportError, SystemError):
     from shared.helpers.logger import StubLogger
 
 from .phases.pre_process.pre_process import pre_process
+
+try:
+    from ..shared.helpers.fsys_writer import parse_fsys_summary, find_model_entries
+except (ImportError, SystemError):
+    from shared.helpers.fsys_writer import parse_fsys_summary, find_model_entries
+
+
+def _resolve_fsys_inner_ext(filepath):
+    """Peek at the FSYS to find the model entry's kind ('dat'|'pkx').
+
+    Pre-process already validated this file; here we just want the inner
+    extension so the describe phase makes the right self-containment
+    decisions.
+    """
+    with open(filepath, 'rb') as f:
+        raw = f.read()
+    model_entries = find_model_entries(parse_fsys_summary(raw))
+    return model_entries[0].model_kind if model_entries else 'dat'
 from .phases.describe.describe import describe_scene
 from .phases.plan.plan import plan_scene
 from .phases.compose.compose import compose_scene
@@ -49,7 +67,11 @@ class Exporter:
         # Extension tells Phase 1 whether to drop the prep-script's
         # auto-generated preview lights/camera — we only strip those when
         # writing a bare .dat. A .pkx export keeps them for self-containment.
+        # For .fsys output we resolve to the inner model kind so describe
+        # makes the same self-containment choice as a direct .dat / .pkx.
         output_ext = filepath.rsplit('.', 1)[-1].lower() if '.' in filepath else ''
+        if output_ext == 'fsys':
+            output_ext = _resolve_fsys_inner_ext(filepath)
 
         # Phase 1 — Describe Blender Scene: Blender context → BRScene
         br_scene, shiny_params, pkx_header = describe_scene(
