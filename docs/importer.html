@@ -61,35 +61,16 @@
         saved as a single file (the ROM, also called an ISO).</p>
 
         <div class="callout">
-            <strong>Important:</strong> only dump a disc you legally own. Downloading ROMs from the
-            internet is piracy and not supported by this project. The rest of this guide assumes you
-            have your own legally-obtained dump.
+            <strong>Important:</strong> only dump a disc you legally own. Piracy is not supported.
+            If you don't have your own legally-obtained dump do not continue with this process.
         </div>
 
-        <h3>What you need</h3>
-
-        <ul>
-            <li>The physical Pokémon Colosseum or XD disc.</li>
-            <li>A way to read GameCube discs — either a modded Wii running a homebrew app like
-            <strong>CleanRip</strong>, or a Linux/Windows PC with a DVD drive capable of reading the
-            disc (most modern drives can't; older drives sometimes can).</li>
-            <li>Space for the dump: roughly 1.5 GB per disc.</li>
-        </ul>
-
-        <h3>Recommended method: Wii + CleanRip</h3>
-
-        <p>The most reliable method for most people is a softmodded Wii running CleanRip. CleanRip
-        reads the disc and saves the dump straight to an SD card or USB drive. Detailed walkthroughs
-        of softmodding a Wii and using CleanRip are widely available online — search for
-        <em>"CleanRip GameCube"</em> for current step-by-step guides maintained by the homebrew
-        community.</p>
-
-        <p>The output of CleanRip is an <code>.iso</code> (sometimes <code>.gcm</code>) file — that's
-        your ROM, and what the rest of this guide refers to.</p>
-
-        <p class="stub-note">A detailed CleanRip walkthrough is planned for a future revision of this
-        page. For now, please follow community guides — they're kept more up to date than we can
-        manage here.</p>
+        <div class="callout">
+            <strong>Note:</strong> ripping the ROM itself isn't covered in this guide — try
+            searching the internet for a guide on how to do that. The output is an
+            <code>.iso</code> (sometimes <code>.gcm</code>) file, which is what the rest of this
+            guide refers to.
+        </div>
 
         <h2 id="extracting-models">3. Getting model files from the ROM</h2>
 
@@ -152,44 +133,65 @@
             <figcaption>Right-click the <strong>Disc</strong> entry and pick <strong>Extract Entire Disc…</strong>.</figcaption>
         </figure>
 
-        <figure class="screenshot">
-            <img src="images/importer/dolphin/dolphin-pick-output-folder.png" alt="Choose output folder for extraction">
-            <figcaption>Pick (or create) an empty folder to extract into. It needs roughly 1.5 GB of space.</figcaption>
-        </figure>
-
         <h3>Step 5 — Find the model files</h3>
 
         <p>Inside the folder you extracted to, you'll find two subfolders: <code>sys/</code> (system
         files) and <code>files/</code> (game data). The model files live inside <code>files/</code>,
-        packaged into archives ending in <code>.fsys</code>.</p>
+        usually packaged into archives ending in <code>.fsys</code>. Different kinds of model live
+        in different archives:</p>
 
-        <p>In <strong>Pokémon Colosseum</strong> and <strong>Pokémon XD: Gale of Darkness</strong>,
-        the most useful archives are the ones whose names start with <code>pkx_</code> — for
-        example <code>pkx_001.fsys</code>, <code>pkx_002.fsys</code>, and so on. Each one holds a
-        single Pokémon or trainer battle model.</p>
+        <table>
+            <thead>
+                <tr>
+                    <th>Model type</th>
+                    <th>File extension</th>
+                    <th>Where to find it</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Pokémon and trainer battle models</td>
+                    <td><code>.pkx</code></td>
+                    <td>Inside <code>pkx_*.fsys</code> archives (e.g. <code>pkx_001.fsys</code>).</td>
+                </tr>
+                <tr>
+                    <td>Map / scene models</td>
+                    <td><code>.rdat</code></td>
+                    <td>Inside map archives such as <code>M1_out.fsys</code>.</td>
+                </tr>
+                <tr>
+                    <td>Overworld models (NPCs, props)</td>
+                    <td><code>.dat</code></td>
+                    <td>Inside the same map archives, and inside <code>people_archive.fsys</code> and a few others.</td>
+                </tr>
+                <tr>
+                    <td>Battle-move animations</td>
+                    <td><code>.wzx</code></td>
+                    <td>Inside <code>wzx_*.fsys</code> archives.</td>
+                </tr>
+                <tr>
+                    <td>Cameras</td>
+                    <td><code>.cam</code></td>
+                    <td>Usually inside the map archives too.</td>
+                </tr>
+            </tbody>
+        </table>
 
-        <figure class="screenshot">
-            <img src="images/importer/dolphin/dolphin-files-folder.png" alt="The files folder structure">
-            <figcaption>Inside your dump, the <code>files/</code> folder holds every game asset.</figcaption>
-        </figure>
-
-        <figure class="screenshot">
-            <img src="images/importer/dolphin/dolphin-fsys-location.png" alt="pkx_*.fsys archives in the files folder">
-            <figcaption>The <code>pkx_*.fsys</code> archives are the ones you'll point Blender at.</figcaption>
-        </figure>
+        <p><code>.fsys</code> archives themselves can also be loaded directly by the plugin — any
+        models contained in the archive are imported straight into the Blender scene.</p>
 
         <div class="callout">
-            <strong>Tip:</strong> the number in the filename roughly corresponds to the National
-            Pokédex number, but isn't a perfect 1:1 — there are skips and rearrangements. The
-            community Discord has lists mapping filename to Pokémon if you can't find the one
-            you want.
+            <strong>Tip:</strong> for <code>pkx_*.fsys</code> the number in the filename roughly
+            corresponds to the National Pokédex number, but isn't a perfect 1:1 — there are skips
+            and rearrangements. The community Discord has lists mapping filename to Pokémon if you
+            can't find the one you want.
         </div>
 
         <h3>Step 6 — Extract the model from inside the archive</h3>
 
-        <p>The <code>.fsys</code> file is itself an archive — it contains a single <code>.pkx</code>
-        (or <code>.dat</code>) file alongside other related data. You have two ways to get the
-        model file out of it:</p>
+        <p>An <code>.fsys</code> file is itself an archive — it can contain multiple files of
+        different types (models, textures, animations, and other data) bundled together. Think of
+        it as the game's equivalent of a <code>.zip</code> file.</p>
 
         <ul>
             <li><strong>Easiest — let Blender unpack it.</strong> The importer reads <code>.fsys</code>
@@ -203,8 +205,12 @@
             companion data the archive carries).</li>
         </ul>
 
-        <p>For most users, letting Blender unpack the <code>.fsys</code> automatically is the
-        simplest path. Use the FSYS Tool if you want to inspect or back up the contents first.</p>
+        <div class="callout">
+            <strong>Note:</strong> the <a href="fsys-tool.html">FSYS Tool</a> is helpful when you
+            only want to load specific models out of a large archive. Unpacking the
+            <code>.fsys</code> is also necessary if you plan to repack it later — for example,
+            after swapping out one of the models inside with a new one you exported with the plugin.
+        </div>
 
         <h2 id="importing-model">4. Importing a model</h2>
 
@@ -234,11 +240,6 @@
             <li><code>.wzx</code> — battle-move animation files (animation data only, no mesh).</li>
             <li><code>.cam</code> — camera data.</li>
         </ul>
-
-        <figure class="screenshot">
-            <img src="images/importer/import/file-browser.png" alt="File browser with model files">
-            <figcaption>Pick the model file you want to import.</figcaption>
-        </figure>
 
         <h3>Step 3 — Choose your import options</h3>
 
@@ -313,6 +314,17 @@
             <figcaption>The model loaded into Blender, with its armature and meshes ready to edit.</figcaption>
         </figure>
 
+        <h3>Step 5 — Switch the viewport to Material Preview</h3>
+
+        <p>By default Blender shows the model in solid shading, so textures and materials don't
+        appear. In the top-right corner of the 3D viewport, click the third sphere icon
+        (<strong>Material Preview</strong>) to see the model with its textures applied.</p>
+
+        <figure class="screenshot">
+            <img src="images/importer/import/material-preview.png" alt="Material Preview shading mode in the viewport header">
+            <figcaption>Switching the viewport to <strong>Material Preview</strong> reveals the model's textures and materials.</figcaption>
+        </figure>
+
         <h3>What got imported</h3>
 
         <ul>
@@ -337,10 +349,9 @@
         the small icon in the top-left corner of any editor and pick <strong>Dope Sheet</strong>,
         then in the Dope Sheet's mode dropdown (also top-left) switch to <strong>Action Editor</strong>.</p>
 
-        <figure class="screenshot">
-            <img src="images/importer/animations/setup-workspace-result.png" alt="Workspace with Action Editor open">
-            <figcaption>The auto-arranged workspace: 3D viewport on top, Action Editor on the bottom.</figcaption>
-        </figure>
+        <p>The auto-arranged workspace puts the 3D viewport on the left and the Action Editor on
+        the right. You may need to scroll the Action Editor's menu bar to the side to see the list
+        of animations.</p>
 
         <figure class="screenshot">
             <img src="images/importer/animations/action-editor.png" alt="Action Editor panel">

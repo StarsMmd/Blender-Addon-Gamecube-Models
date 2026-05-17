@@ -109,7 +109,7 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
             "max_frame": 10000,
             "filepath": path,
             "import_lights": self.import_lights,
-            "import_cameras": self.import_cameras,
+            "import_cameras": self.import_cameras or filename.lower().endswith('.cam'),
             "include_shiny": True,
             "game": self.game,
             "colo_xd_kind": self.colo_xd_kind if self.game == 'COLO_XD' else None,
