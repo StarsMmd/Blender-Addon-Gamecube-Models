@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blender HAL DAT Model Addon</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="theme.js"></script>
+</head>
+<body>
+    <header class="site-header">
+        <div class="container">
+            <a href="index.html" class="site-title">Blender HAL DAT Model Addon</a>
+            <nav class="site-nav">
+                <a href="index.html">Home</a>
+                <a href="importer.html">Importer</a>
+                <a href="exporter.html">Exporter</a>
+                <a href="fsys-tool.html">FSYS Tool</a>
+                <button class="theme-toggle" type="button" aria-label="Toggle light / dark mode" title="Toggle light / dark mode">
+                    <span class="icon-dark">☀️</span><span class="icon-light">🌙</span>
+                </button>
+            </nav>
+        </div>
+    </header>
+
+    <main class="container">
+        <h1>Blender HAL DAT Model Addon</h1>
+
+        <p>A Blender addon for importing and exporting GameCube <code>.dat</code> models.
+        Built primarily for <strong>Pokémon Colosseum</strong> and <strong>Pokémon XD: Gale of Darkness</strong>,
+        with partial compatibility for other games that use the HAL DAT model format such as
+        <em>Super Smash Bros. Melee</em>, <em>Kirby Air Ride</em>,
+        <em>Chibi-Robo! Plug Into Adventure!</em> and <em>Killer7</em>.</p>
+
+        <p><strong>What you can do with it:</strong></p>
+        <ul>
+            <li>Open Pokémon models from Colosseum and XD inside Blender — with their bones, animations, textures, and shiny colors all intact.</li>
+            <li>Edit those models — change shapes, textures, animations, or replace them with something completely custom.</li>
+            <li>Save the edited model back out as a file the game can read, and play with it in-game.</li>
+            <li>Save models from any source or custom models back out as files the game can read, and play with them in-game.</li>
+        </ul>
+
+        <p><strong>Supported file types:</strong>
+        <code>.dat</code>, <code>.fdat</code>, <code>.rdat</code>, <code>.pkx</code>, <code>.fsys</code>, <code>.wzx</code>, <code>.cam</code>.
+        Don't worry if those don't mean anything to you — the importer and exporter guides explain when you'll meet each one.</p>
+
+        <p><strong>Target Blender version:</strong> 4.5.7 LTS (a specific release of Blender — see below).</p>
+
+        <h2 id="installing-blender">Installing Blender</h2>
+
+        <p>Blender is the free 3D software this addon plugs into. The addon is built and tested against
+        <strong>Blender 4.5.7 LTS</strong>, so use that exact version. <strong>Other versions may behave unexpectedly
+        or fail to load the addon at all.</strong></p>
+
+        <h3>Step 1 — Download Blender 4.5.7 LTS</h3>
+
+        <p>Go to <a href="https://www.blender.org/download/lts/">blender.org/download/lts</a> and pick the
+        <strong>4.5 LTS</strong> download for your operating system (Windows, macOS, or Linux). LTS stands for
+        "Long Term Support" — it's the version Blender keeps stable for years.</p>
+
+        <figure class="screenshot">
+            <img src="images/installation/blender-download-page.png" alt="Blender LTS download page">
+            <figcaption>The Blender LTS download page. Pick the 4.5 LTS download for your platform.</figcaption>
+        </figure>
+
+        <h3>Step 2 — Run the installer</h3>
+
+        <p>Open the file you just downloaded and follow the prompts. On Windows it's a standard installer;
+        on macOS, drag the Blender app into your Applications folder; on Linux, extract the archive somewhere
+        and run the <code>blender</code> binary.</p>
+
+        <figure class="screenshot">
+            <img src="images/installation/blender-installer.png" alt="Blender installer running">
+            <figcaption>The installer running. Accept the defaults unless you have a reason to change them.</figcaption>
+        </figure>
+
+        <h3>Step 3 — Launch Blender</h3>
+
+        <p>Open Blender. You'll see a splash screen, then the default scene with a cube in the middle.
+        You can dismiss the splash by clicking anywhere outside it.</p>
+
+        <figure class="screenshot">
+            <img src="images/installation/blender-first-launch.png" alt="Blender first launch screen">
+            <figcaption>Blender's default scene — the cube, light, and camera you'll delete later when prepping a model.</figcaption>
+        </figure>
+
+        <h2 id="installing-plugin">Installing the plugin</h2>
+
+        <p>The plugin is distributed as a <code>.zip</code> file you drag into Blender. There's nothing else
+        to install — once enabled, the import and export options appear in Blender's <strong>File</strong> menu.</p>
+
+        <h3>Step 1 — Download the plugin</h3>
+
+        <p>Grab the latest plugin <code>.zip</code> from the
+        <a href="https://github.com/StarsMmd/Blender-Addon-Gamecube-Models">project's GitHub page</a>.
+        On GitHub, click the green <strong>Code</strong> button and choose <strong>Download ZIP</strong>.</p>
+
+        <figure class="screenshot">
+            <img src="images/installation/github-download-zip.png" alt="GitHub Code button with Download ZIP option">
+            <figcaption>On the GitHub page, click <strong>Code → Download ZIP</strong>.</figcaption>
+        </figure>
+
+        <h3>Step 2 — Open Blender's Extensions preferences</h3>
+
+        <p>In Blender, open the <strong>Edit</strong> menu at the top of the window, then choose
+        <strong>Preferences…</strong>. In the window that opens, click <strong>Get Extensions</strong> in the
+        left-hand list.</p>
+
+        <figure class="screenshot">
+            <img src="images/installation/blender-extensions-tab.png" alt="Extensions section of Preferences">
+            <figcaption>The Extensions panel inside Preferences.</figcaption>
+        </figure>
+
+        <h3>Step 3 — Install the <code>.zip</code></h3>
+
+        <p>You have two options:</p>
+
+        <ul>
+            <li><strong>Drag and drop:</strong> drag the downloaded <code>.zip</code> from your file browser
+            directly onto the Blender window. Blender will pop up a dialog asking to install — confirm it.</li>
+            <li><strong>Install from disk:</strong> in the Extensions panel, click the small dropdown in the top-right
+            corner (next to the search box) and pick <strong>Install from Disk…</strong>. Browse to the
+            <code>.zip</code> file and select it.</li>
+        </ul>
+
+        <figure class="screenshot">
+            <img src="images/installation/blender-install-from-disk.png" alt="Install from Disk menu">
+            <figcaption>The "Install from Disk…" option lives in the dropdown next to the search box.</figcaption>
+        </figure>
+
+        <h3>Step 4 — Confirm the addon is enabled</h3>
+
+        <p>After installing, the addon shows up in the Extensions list with a checkbox next to its name.
+        Make sure the checkbox is ticked. Close the Preferences window.</p>
+
+        <figure class="screenshot">
+            <img src="images/installation/blender-addon-enabled.png" alt="Addon enabled in extensions list">
+            <figcaption>When the checkbox is ticked, the addon is active and ready to use.</figcaption>
+        </figure>
+
+        <p>To verify it worked, open the <strong>File</strong> menu at the top of Blender. You should see a
+        <strong>Gamecube model (.dat)</strong> entry under both <strong>Import</strong> and <strong>Export</strong>.</p>
+
+        <div class="callout">
+            <strong>Note:</strong> Blender only loads the addon once at startup. If you update the
+            plugin later, fully quit and relaunch Blender for the new version to take effect.
+        </div>
+
+        <h2>Get Started</h2>
+
+        <div class="card-grid">
+            <a class="card" href="importer.html">
+                <h3>Importing models &rarr;</h3>
+                <p>Open Pokémon and other GameCube models in Blender. Skeleton, meshes, materials,
+                textures, animations, and shiny variants — all loaded automatically.</p>
+            </a>
+            <a class="card" href="exporter.html">
+                <h3>Exporting models &rarr;</h3>
+                <p>Save a Blender scene back to a <code>.dat</code> or <code>.pkx</code> the game can load.
+                Works for models you imported here, as well as custom models from other sources.</p>
+            </a>
+        </div>
+
+        <h2>Particles</h2>
+
+        <p>A handful of Pokémon in Colosseum and XD carry built-in particle effects (flames, mist, smoke).
+        Full particle support is a work in progress and intended to be available in a future release —
+        the addon can read these from the file, but doesn't yet bring them into Blender as editable particle
+        systems, and doesn't export them back out. Plain models without particles work normally.</p>
+
+        <p>The Pokémon affected are mostly fire-, gas-, and mist-themed: Moltres, Articuno, the Charmander
+        line, Gastly, Magmar, Magcargo, Torkoal, Koffing, Weezing, and Vaporeon (plus a few shiny variants).</p>
+
+        <h2>Community</h2>
+
+        <p>If you're interested in reverse engineering the Pokémon games on the GameCube and Wii consoles,
+        join us on Discord: <a href="https://discord.gg/xCPjjnv">discord.gg/xCPjjnv</a>.
+        That's also the best place to ask for help if you get stuck — there are people who can walk you
+        through specific problems with your model or scene.</p>
+    </main>
+
+    <footer class="site-footer">
+        Original implementation by Made &middot; Source on <a href="https://github.com/StarsMmd/Blender-Addon-Gamecube-Models">GitHub</a>
+    </footer>
+</body>
+</html>
