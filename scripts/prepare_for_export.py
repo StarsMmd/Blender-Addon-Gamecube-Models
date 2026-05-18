@@ -21,7 +21,16 @@ The script operates on all objects in the scene — no selection required:
   7. Downscales textures larger than 512×512 proportionally, then
      auto-selects GX texture formats for all armature textures
   8. Inserts shiny filter nodes into all materials (identity defaults, toggle off)
-  9. Creates standard battle lighting (1 ambient + 3 directional)
+  9. Authors two helper actions per armature for in-game smoke testing:
+       - `auto_animation_dummy` — two-frame identity pose (placeholder for
+         empty slots; the game requires at least two keyframes per channel)
+       - `auto_animation_spin` — 60-frame full revolution around the rig's
+         vertical axis on the root bone, with frame 0 == frame 60 (mod 2π)
+         so the loop closes cleanly
+     These are not assigned to any PKX slot — pick them by hand in the PKX
+     Metadata panel only when smoke-testing a model. They should be ignored
+     for normal authoring.
+ 10. Creates standard battle lighting (1 ambient + 3 directional)
 
 After running, the scene can be exported via File > Export > Gamecube model (.dat).
 
@@ -648,6 +657,79 @@ def derive_timing(armature):
 
 
 # ---------------------------------------------------------------------------
+# Test animations
+# ---------------------------------------------------------------------------
+#
+# Two helper actions are authored per armature for in-game smoke-testing:
+#
+#   auto_animation_dummy — two-frame identity pose (placeholder for slots
+#                          whose real action isn't ready yet).
+#   auto_animation_spin  — 60-frame full revolution around the rig's
+#                          vertical axis on the root bone, with the end
+#                          keyframe at 2π so the loop closes cleanly back
+#                          to 0° on frame 0.
+#
+# Neither action is assigned to a PKX slot — users hand-pick them in the
+# PKX Metadata panel only when smoke-testing. They are created after
+# apply_pkx_metadata() so the slot auto-fill never selects them.
+
+_TEST_ANIM_DUMMY = "auto_animation_dummy"
+_TEST_ANIM_SPIN = "auto_animation_spin"
+
+
+def _new_action_with_object_slot(name):
+    action = bpy.data.actions.new(name)
+    action.use_fake_user = True
+    slot = action.slots.new('OBJECT', 'Armature')
+    action.slots.active = slot
+    return action
+
+
+def prepare_test_animations(armature):
+    """Author two helper actions on `armature` for in-game smoke testing.
+
+    Returns the number of actions that were newly created.
+    """
+    if not armature.data.bones:
+        return 0
+    root_name = armature.data.bones[0].name
+    rot_path = 'pose.bones["%s"].rotation_euler' % root_name
+    created = 0
+
+    if _TEST_ANIM_DUMMY not in bpy.data.actions:
+        action = _new_action_with_object_slot(_TEST_ANIM_DUMMY)
+        for axis in range(3):
+            fc = action.fcurves.new(rot_path, index=axis)
+            fc.keyframe_points.add(2)
+            for i, frame in enumerate((0.0, 1.0)):
+                kp = fc.keyframe_points[i]
+                kp.co = (frame, 0.0)
+                kp.interpolation = 'LINEAR'
+        created += 1
+
+    if _TEST_ANIM_SPIN not in bpy.data.actions:
+        action = _new_action_with_object_slot(_TEST_ANIM_SPIN)
+        # Sample 90° quarters so a renderer that interpolates raw fcurve
+        # values (linearly, between euler endpoints) traces the full circle
+        # rather than oscillating from 0 to 2π and back.
+        steps = [(0.0, 0.0),
+                 (15.0, math.pi * 0.5),
+                 (30.0, math.pi),
+                 (45.0, math.pi * 1.5),
+                 (60.0, math.pi * 2.0)]
+        for axis in range(3):
+            fc = action.fcurves.new(rot_path, index=axis)
+            fc.keyframe_points.add(len(steps))
+            for i, (frame, angle) in enumerate(steps):
+                kp = fc.keyframe_points[i]
+                kp.co = (frame, angle if axis == 1 else 0.0)
+                kp.interpolation = 'LINEAR'
+        created += 1
+
+    return created
+
+
+# ---------------------------------------------------------------------------
 # Texture sizing
 # ---------------------------------------------------------------------------
 
@@ -1012,13 +1094,16 @@ def _shiny_insert_stage(nodes, links, target_node, target_input,
     gn.node_tree = node_group
     gn.name = group_name
     links.new(source_out, gn.inputs[0])
-    mix = nodes.new('ShaderNodeMixRGB')
+    mix = nodes.new('ShaderNodeMix')
+    mix.data_type = 'RGBA'
     mix.blend_type = 'MIX'
+    mix.clamp_factor = True
     mix.name = mix_name
+    # ShaderNodeMix RGBA socket layout: Factor=0, A=6, B=7, Result=output 2.
     mix.inputs[0].default_value = 0.0
-    links.new(source_out, mix.inputs[1])
-    links.new(gn.outputs[0], mix.inputs[2])
-    links.new(mix.outputs[0], target_input)
+    links.new(source_out, mix.inputs[6])
+    links.new(gn.outputs[0], mix.inputs[7])
+    links.new(mix.outputs[2], target_input)
     # Driver for shiny toggle
     mix.inputs[0].default_value = 0.0
     dd = mix.inputs[0].driver_add("default_value")
@@ -1331,6 +1416,28 @@ def _split_rigid_from_envelope(mesh_obj, armature, bone_names):
                 bone_vertices[bn].add(vi)
 
     return created
+
+
+def _cull_unused_material_slots(armature):
+    """Remove material slots from each child mesh that no polygon references.
+
+    Returns the total number of slots stripped across all child meshes.
+    """
+    removed = 0
+    for child in armature.children:
+        if child.type != 'MESH' or child.data is None:
+            continue
+        used = {p.material_index for p in child.data.polygons}
+        for idx in reversed(range(len(child.material_slots))):
+            if idx in used:
+                continue
+            bpy.ops.object.select_all(action='DESELECT')
+            child.select_set(True)
+            bpy.context.view_layer.objects.active = child
+            child.active_material_index = idx
+            bpy.ops.object.material_slot_remove()
+            removed += 1
+    return removed
 
 
 # ---------------------------------------------------------------------------
@@ -1780,6 +1887,13 @@ if __name__ == "__main__" or True:
         if split:
             print("  Split meshes into %d regions on '%s'" % (split, arm.name))
 
+        # Strip material slots that no polygon references — split-style ops
+        # leave the full slot list copied onto each new mesh, and the unused
+        # entries still pull their materials into the EEVEE compile graph.
+        culled_slots = _cull_unused_material_slots(arm)
+        if culled_slots:
+            print("  Culled %d unused material slot(s) on '%s'" % (culled_slots, arm.name))
+
         # PKX metadata
         if arm.get("dat_pkx_format"):
             print("  Armature '%s' already has PKX metadata (skipped)" % arm.name)
@@ -1805,6 +1919,12 @@ if __name__ == "__main__" or True:
         shiny_count = prepare_shiny_filter(arm)
         if shiny_count:
             print("  Shiny filter added to %d material(s) on '%s'" % (shiny_count, arm.name))
+
+        # Test animations (auto_animation_dummy + auto_animation_spin) —
+        # smoke-test placeholders, not auto-assigned to any PKX slot.
+        test_anim_count = prepare_test_animations(arm)
+        if test_anim_count:
+            print("  Created %d test animation(s) for '%s'" % (test_anim_count, arm.name))
 
     # 6. Scene lights (ambient + 3 directional)
     light_count = prepare_lights()
