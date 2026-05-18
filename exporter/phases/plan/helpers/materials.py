@@ -369,10 +369,63 @@ def _alpha_wire_has_transparency(view, to_node, to_input, threshold=0.5,
 # Texture layers
 # ---------------------------------------------------------------------------
 
+# Destination (node_type, input_socket) pairs that consume a colour signal.
+# Reaching one of these from a ShaderNodeTexImage's `Color` output means the
+# texture contributes to the surface colour, so it should become a TObj.
+_COLOR_SINK_INPUTS = frozenset({
+    ('ShaderNodeBsdfPrincipled', 'Base Color'),
+    ('ShaderNodeBsdfPrincipled', 'Emission Color'),
+    ('ShaderNodeBsdfPrincipled', 'Subsurface Color'),
+    ('ShaderNodeEmission', 'Color'),
+    ('ShaderNodeBsdfDiffuse', 'Color'),
+    ('ShaderNodeBsdfTransparent', 'Color'),
+})
+
+# Nodes whose colour output is a function of their colour inputs — keep
+# walking through them. Excludes NormalMap/Bump (output is a normal vector,
+# not colour), SeparateColor/SeparateRGB and Math (decompose / numeric), and
+# anything else that turns colour into something non-colour.
+_COLOR_PASSTHROUGH_NODES = frozenset({
+    'ShaderNodeMixRGB', 'ShaderNodeMix',
+    'ShaderNodeInvert', 'ShaderNodeGamma',
+    'ShaderNodeHueSaturation', 'ShaderNodeBrightContrast',
+    'ShaderNodeRGBCurve',
+})
+
+
+def _tex_node_feeds_color(view, tex_node_name):
+    """True if the TexImage's Color output reaches a colour-consuming
+    socket (e.g. Base Color, Emission Color) through colour-preserving
+    nodes only. PBR aux maps (Normal, Roughness, Metallic, AO) hit
+    BSDF inputs that aren't in the sink set, so they return False —
+    GX has no use for them."""
+    visited = set()
+    stack = [tex_node_name]
+    while stack:
+        cur = stack.pop()
+        if cur in visited:
+            continue
+        visited.add(cur)
+        for link in view.outgoing_from(cur):
+            target = view.nodes_by_name.get(link.to_node)
+            if target is None:
+                continue
+            if (target.node_type, link.to_input) in _COLOR_SINK_INPUTS:
+                return True
+            if target.node_type in _COLOR_PASSTHROUGH_NODES:
+                stack.append(target.name)
+    return False
+
+
 def _extract_texture_layers(view, logger, image_cache):
     tex_nodes = _order_texture_nodes(view)
+    color_tex_nodes = [t for t in tex_nodes if _tex_node_feeds_color(view, t.name)]
+    if len(color_tex_nodes) < len(tex_nodes):
+        dropped = [t.name for t in tex_nodes if t not in color_tex_nodes]
+        logger.debug("    dropped %d non-colour texture node(s): %s",
+                     len(dropped), dropped)
     layers = []
-    for layer_index, tex_node in enumerate(tex_nodes):
+    for layer_index, tex_node in enumerate(color_tex_nodes):
         layer = _describe_texture_node(view, tex_node, layer_index, image_cache)
         if layer is not None:
             layers.append(layer)
