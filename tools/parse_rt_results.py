@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Parse `tests/round_trip/run_round_trips.py` output into the markdown
-tables we paste into `documentation/round_trip_test_progress.md`.
+tables we paste into `technical-docs/round_trip_test_progress.md`.
 
 Reads either the live per-model lines (`absol... NBN=…  NIN=…  BBB=…  IBI=…  BNB=…`)
 or the final summary table — last occurrence wins. Emits one table per

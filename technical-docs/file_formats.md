@@ -1,6 +1,6 @@
 # File Format Specifications
 
-Binary format references for GameCube SysDolphin files used by Pokémon Colosseum and XD: Gale of Darkness. All multi-byte values are **big-endian** (GameCube native byte order).
+Binary format references for HAL DAT model files (GameCube) used by Pokémon Colosseum and XD: Gale of Darkness. All multi-byte values are **big-endian** (GameCube native byte order).
 
 ---
 
@@ -416,7 +416,7 @@ A different container format used by some XD files. Uses 16 subsections of 0x3C 
 
 ## DAT Model Binary
 
-The DAT format is the core SysDolphin model container used across GameCube games. Documented separately in the codebase's node system and IR specification. Key structural elements:
+The DAT format is HAL Laboratory's model container used across GameCube games. Documented separately in the codebase's node system and IR specification. Key structural elements:
 
 ### DAT Header (32 bytes)
 
@@ -431,7 +431,7 @@ The DAT format is the core SysDolphin model container used across GameCube games
 
 After the header: data block, relocation table (root_count × u32 offsets), root entries (root_count × {node_offset, string_offset}), reference entries (ref_count × {node_offset, string_offset}), string table.
 
-See `documentation/ir_specification.md` for the full node hierarchy.
+See `technical-docs/ir_specification.md` for the full node hierarchy.
 
 ---
 

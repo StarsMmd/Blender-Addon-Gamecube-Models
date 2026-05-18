@@ -194,6 +194,7 @@ The script:
 - Downscales any texture larger than 512×512 proportionally (UVs are in normalized [0, 1] space in Blender so no UV remapping is needed), then auto-selects GX texture formats based on image content
 - Applies stub PKX metadata (species ID, animation slots, shiny params, body map)
 - Inserts shiny filter preview nodes into all materials
+- Authors two helper actions per armature — `auto_animation_dummy` (two-frame identity pose) and `auto_animation_spin` (60-frame full revolution around the rig's vertical axis). Available for in-game smoke testing via the PKX Metadata panel; ignore them during normal authoring
 
 Models imported through the DAT plugin already have these properties set.
 

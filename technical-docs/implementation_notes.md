@@ -214,4 +214,4 @@ Code comments in `exporter/`, `importer/`, `shared/`, `scripts/`, `tools/` descr
 - Quote empirical measurements from in-game tests.
 - Describe the debugging narrative that led to a fix.
 
-Any such information belongs in `documentation/` (usually this file or `exporter_setup.md`). The rationale is that code comments age out faster than the code they annotate — a specific model that motivated a fix is rarely the right mental model for the next person encountering the code, and an empirical measurement gets stale the moment the code changes shape.
+Any such information belongs in `technical-docs/` (usually this file or `exporter_setup.md`). The rationale is that code comments age out faster than the code they annotate — a specific model that motivated a fix is rarely the right mental model for the next person encountering the code, and an empirical measurement gets stale the moment the code changes shape.

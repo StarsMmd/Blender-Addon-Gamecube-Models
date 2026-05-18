@@ -41,7 +41,7 @@ _RULES_OTHER = [
 
 # Kirby Air Ride — suffix-based convention derived from a full scan of the
 # retail dump's public symbol tables. See the section-name analysis in
-# documentation/implementation_notes.md and the DataGroup decode in
+# technical-docs/implementation_notes.md and the DataGroup decode in
 # memory/reference_kar_disassembly.md.
 _RULES_KIRBY_AIR_RIDE = [
     ('exact', 'scene_data', 'SceneData'),

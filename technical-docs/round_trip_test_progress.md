@@ -37,7 +37,7 @@ Plan IR → BR via the importer's plan, build into Blender via the importer's bu
 
 ### Binary → Node tree → Binary (BNB)
 
-Parse a DAT binary, write it back, and compare the output bytes against the input using a fuzzy 4-byte word matching algorithm. This measures binary-level fidelity — whether the output file would be byte-identical to the input. Exact 1:1 binary matches are a stretch goal that will require matching the original SysDolphin compiler's layout conventions (alignment, node ordering, padding). A high BNB score is purely aesthetic — it has no functional benefit. NBN determines the practical accuracy of the exporter.
+Parse a DAT binary, write it back, and compare the output bytes against the input using a fuzzy 4-byte word matching algorithm. This measures binary-level fidelity — whether the output file would be byte-identical to the input. Exact 1:1 binary matches are a stretch goal that will require matching the original HAL DAT compiler's layout conventions (alignment, node ordering, padding). A high BNB score is purely aesthetic — it has no functional benefit. NBN determines the practical accuracy of the exporter.
 
 ### What round-trips deliberately ignore
 
@@ -240,4 +240,4 @@ python3 -m pytest tests/test_write_roundtrip.py -v
 
 **NBN** — Pointer resolution edge cases and alignment differences in DATBuilder. Functionally correct (field values match).
 
-**BNB** — Layout differences from DATBuilder's node ordering and alignment conventions vs the original SysDolphin compiler.
+**BNB** — Layout differences from DATBuilder's node ordering and alignment conventions vs the original HAL DAT compiler.

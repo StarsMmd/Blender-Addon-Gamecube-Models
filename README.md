@@ -1,6 +1,6 @@
-# Blender SysDolphin Addon
+# Blender HAL DAT Model Addon
 
-A Blender addon for importing and exporting GameCube `.dat` models. This addon is currently developed predominantly for `Pokemon Colosseum` and `Pokemon XD: Gale of Darkness` but may have some compatibility with other games that use the format (based on the SysDolphin library) such as `Super Smash Bros. Melee`, `Kirby Air Ride`, `Chibi-Robo! Plug Into Adventure!` and `Killer7`.
+A Blender addon for importing and exporting GameCube `.dat` models. This addon is currently developed predominantly for `Pokemon Colosseum` and `Pokemon XD: Gale of Darkness` but may have some compatibility with other games that use the format (based on HAL Laboratory's DAT model format) such as `Super Smash Bros. Melee`, `Kirby Air Ride`, `Chibi-Robo! Plug Into Adventure!` and `Killer7`.
 
 Original implementation provided by Made.
 
@@ -40,17 +40,17 @@ For `.pkx` Pokémon models, shiny color parameters are always extracted and a to
 
 15 battle models ship with embedded GPT1 particle data — the flame-, gas- and mist-themed Pokémon (Moltres, Articuno, Charmander/Charmeleon/Charizard, Gastly, Magmar, Magcargo, Torkoal, Koffing, Weezing, Vaporeon, plus the three shiny variants `rare_fire`, `rare_freezer`, `rare_lizardon`).
 
-Particle import and export are not currently supported but are planned for the future. See [Implementation Notes — Particles (GPT1)](documentation/implementation_notes.md#particles-gpt1) for the technical details and outstanding investigation.
+Particle import and export are not currently supported but are planned for the future. See [Implementation Notes — Particles (GPT1)](technical-docs/implementation_notes.md#particles-gpt1) for the technical details and outstanding investigation.
 
 ## Shiny Variants
 
 When importing `.pkx` Pokemon models, the addon extracts shiny color parameters from the file header and builds a toggleable shader filter into the imported materials. Select the armature and find the **Shiny Variant** panel in **Properties > Object Properties** to toggle the shiny appearance and edit channel routing and brightness parameters.
 
-Not every Pokemon has shiny parameters — some use a separate model for their shiny form instead. See [Shiny Variants](documentation/shiny_variants.md) for technical details.
+Not every Pokemon has shiny parameters — some use a separate model for their shiny form instead. See [Shiny Variants](technical-docs/shiny_variants.md) for technical details.
 
 ## Exporting
 
-The exporter writes a Blender scene to a `.dat` or `.pkx` binary. See the [Exporter Setup](documentation/exporter_setup.md) guide for the full workflow — from scene preparation through export.
+The exporter writes a Blender scene to a `.dat` or `.pkx` binary. See the [Exporter Setup](technical-docs/exporter_setup.md) guide for the full workflow — from scene preparation through export.
 
 For models not imported through this plugin, run `scripts/prepare_for_export.py` first to set up camera, lights, weight optimization, and PKX metadata.
 
@@ -150,7 +150,7 @@ exporter/
     describe_blender/      # Empty deprecation stubs (pending file deletion)
 
 legacy/                    # Pre-refactor importer (available via "Use Legacy" toggle)
-documentation/             # Pipeline docs, API reference, compatibility table, IR spec
+technical-docs/            # Pipeline docs, API reference, compatibility table, IR spec
 tests/                     # pytest suite (no game files required)
 tests/round_trip/          # Round-trip tests with real model files (requires bpy)
 ```
@@ -194,22 +194,22 @@ python3 tests/round_trip/run_round_trips.py path/to/models/
 python3 tests/round_trip/run_round_trips.py path/to/model.pkx -v
 ```
 
-See [Round-Trip Test Progress](documentation/round_trip_test_progress.md) for per-model scores and test type explanations.
+See [Round-Trip Test Progress](technical-docs/round_trip_test_progress.md) for per-model scores and test type explanations.
 
 ## Documentation
 
-Detailed documentation lives in the `documentation/` folder:
+Detailed documentation lives in the `technical-docs/` folder:
 
-- [**Blender API Usage**](documentation/blender_api_usage.md) — reference for Blender Python API patterns used in the addon
-- [**Compatibility Table**](documentation/compatibility_table.md) — feature support across different games and file types
-- [**Exporter Setup**](documentation/exporter_setup.md) — supported features and usage guide for the exporter (WIP)
-- [**File Formats**](documentation/file_formats.md) — binary format specs for DAT, GX textures, WZX, PKX, and GPT1
-- [**IR Specification**](documentation/ir_specification.md) — the Intermediate Representation dataclass hierarchy (output of Phase 4)
-- [**BR Specification**](documentation/br_specification.md) — the Blender Representation dataclass hierarchy (output of Phase 5a, Plan)
-- [**Implementation Notes**](documentation/implementation_notes.md) — architectural decisions, runtime invariants, and policies
-- [**Round-Trip Test Progress**](documentation/round_trip_test_progress.md) — NBN/NIN/IBI/BNB test results per model
-- [**Scripts**](documentation/scripts.md) — standalone Blender scripts and how to run them
-- [**Shiny Variants**](documentation/shiny_variants.md) — how the game stores shiny color data and how the addon implements it
+- [**Blender API Usage**](technical-docs/blender_api_usage.md) — reference for Blender Python API patterns used in the addon
+- [**Compatibility Table**](technical-docs/compatibility_table.md) — feature support across different games and file types
+- [**Exporter Setup**](technical-docs/exporter_setup.md) — supported features and usage guide for the exporter (WIP)
+- [**File Formats**](technical-docs/file_formats.md) — binary format specs for DAT, GX textures, WZX, PKX, and GPT1
+- [**IR Specification**](technical-docs/ir_specification.md) — the Intermediate Representation dataclass hierarchy (output of Phase 4)
+- [**BR Specification**](technical-docs/br_specification.md) — the Blender Representation dataclass hierarchy (output of Phase 5a, Plan)
+- [**Implementation Notes**](technical-docs/implementation_notes.md) — architectural decisions, runtime invariants, and policies
+- [**Round-Trip Test Progress**](technical-docs/round_trip_test_progress.md) — NBN/NIN/IBI/BNB test results per model
+- [**Scripts**](technical-docs/scripts.md) — standalone Blender scripts and how to run them
+- [**Shiny Variants**](technical-docs/shiny_variants.md) — how the game stores shiny color data and how the addon implements it
 
 ## Community
 

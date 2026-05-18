@@ -1,6 +1,6 @@
 # DAT Feature Compatibility Table
 
-This table tracks every feature in the GameCube SysDolphin `.dat` format and its support status across the import/export pipeline phases.
+This table tracks every feature in the HAL DAT `.dat` model format and its support status across the import/export pipeline phases.
 
 **Legend:**
 - ✅ Fully implemented
