@@ -4,6 +4,8 @@ A Blender addon for importing and exporting GameCube `.dat` models. This addon i
 
 Original implementation provided by Made.
 
+📖 **[Read the full usage documentation](https://starsmmd.github.io/Blender-Addon-Gamecube-Models/)** — installation, importer/exporter walkthroughs, and the FSYS tool.
+
 **Supported file extensions:** `.dat`, `.fdat`, `.rdat`, `.pkx`, `.fsys`, `.wzx`, `.cam`
 
 **Target Blender version:** 4.5.7 LTS
@@ -22,7 +24,7 @@ See the [Importer guide](docs/importer.html) for the full walkthrough — from e
 
 ## Particles (GPT1)
 
-15 battle models ship with embedded GPT1 particle data — the flame-, gas- and mist-themed Pokémon (Moltres, Articuno, Charmander/Charmeleon/Charizard, Gastly, Magmar, Magcargo, Torkoal, Koffing, Weezing, Vaporeon, plus the three shiny variants `rare_fire`, `rare_freezer`, `rare_lizardon`).
+Some battle models ship with embedded GPT1 particle data — the flame-, gas- and mist-themed Pokémon (Moltres, Articuno, Charmander/Charmeleon/Charizard, Gastly, Magmar, Magcargo, Torkoal, Koffing, Weezing, Vaporeon, plus the three shiny variants `rare_fire`, `rare_freezer`, `rare_lizardon`).
 
 Particle import and export are not currently supported but are planned for the future. See [Implementation Notes — Particles (GPT1)](technical-docs/implementation_notes.md#particles-gpt1) for the technical details and outstanding investigation.
 

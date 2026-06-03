@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Installation &middot; Blender HAL DAT Model Addon</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="theme.js"></script>
+</head>
+<body>
+    <header class="site-header">
+        <div class="container">
+            <a href="index.html" class="site-title">Blender HAL DAT Model Addon</a>
+            <nav class="site-nav">
+                <a href="index.html">Home</a>
+                <a href="installation.html">Installation</a>
+                <a href="importer.html">Importer</a>
+                <a href="exporter.html">Exporter</a>
+                <a href="fsys-tool.html">FSYS Tool</a>
+                <button class="theme-toggle" type="button" aria-label="Toggle light / dark mode" title="Toggle light / dark mode">
+                    <span class="icon-dark">☀️</span><span class="icon-light">🌙</span>
+                </button>
+            </nav>
+        </div>
+    </header>
+
+    <main class="container">
+        <h1>Installation</h1>
+
+        <p>Two steps: install Blender itself, then install this addon into Blender.</p>
+
+        <nav class="toc">
+            <h2>Contents</h2>
+            <ol>
+                <li><a href="#installing-blender">Installing Blender</a></li>
+                <li><a href="#installing-plugin">Installing the plugin</a></li>
+            </ol>
+        </nav>
+
+        <h2 id="installing-blender">1. Installing Blender</h2>
+
+        <p>Blender is the free 3D software this addon plugs into. The addon is built and tested against
+        <strong>Blender 4.5.7 LTS</strong>, so use that exact version. <strong>Other versions may behave unexpectedly
+        or fail to load the addon at all.</strong></p>
+
+        <h3>Step 1 — Download Blender 4.5.7 LTS</h3>
+
+        <p>Go to <a href="https://www.blender.org/download/lts/">blender.org/download/lts</a> and pick the
+        <strong>4.5 LTS</strong> download for your operating system (Windows, macOS, or Linux). LTS stands for
+        "Long Term Support" — it's the version Blender keeps stable for years.</p>
+
+        <figure class="screenshot">
+            <img src="images/installation/blender-download-page.png" alt="Blender LTS download page">
+            <figcaption>The Blender LTS download page. Pick the 4.5 LTS download for your platform.</figcaption>
+        </figure>
+
+        <h3>Step 2 — Run the installer</h3>
+
+        <p>Open the file you just downloaded and follow the prompts. On Windows it's a standard installer;
+        on macOS, drag the Blender app into your Applications folder; on Linux, extract the archive somewhere
+        and run the <code>blender</code> binary.</p>
+
+        <figure class="screenshot">
+            <img src="images/installation/blender-installer.png" alt="Blender installer running">
+            <figcaption>The installer running. Accept the defaults unless you have a reason to change them.</figcaption>
+        </figure>
+
+        <h3>Step 3 — Launch Blender</h3>
+
+        <p>Open Blender. You'll see a splash screen, then the default scene with a cube in the middle.
+        You can dismiss the splash by clicking anywhere outside it.</p>
+
+        <figure class="screenshot">
+            <img src="images/installation/blender-first-launch.png" alt="Blender first launch screen">
+            <figcaption>Blender's default scene — the cube, light, and camera you'll delete later when prepping a model.</figcaption>
+        </figure>
+
+        <h2 id="installing-plugin">2. Installing the plugin</h2>
+
+        <p>The plugin is distributed as a <code>.zip</code> file you drag into Blender. There's nothing else
+        to install — once enabled, the import and export options appear in Blender's <strong>File</strong> menu.</p>
+
+        <h3>Step 1 — Download the plugin</h3>
+
+        <p>Grab the latest plugin <code>.zip</code> from the
+        <a href="https://github.com/StarsMmd/Blender-Addon-Gamecube-Models">project's GitHub page</a>.
+        On GitHub, click the green <strong>Code</strong> button and choose <strong>Download ZIP</strong>.</p>
+
+        <figure class="screenshot">
+            <img src="images/installation/github-download-zip.png" alt="GitHub Code button with Download ZIP option">
+            <figcaption>On the GitHub page, click <strong>Code → Download ZIP</strong>.</figcaption>
+        </figure>
+
+        <h3>Step 2 — Open Blender's Extensions preferences</h3>
+
+        <p>In Blender, open the <strong>Edit</strong> menu at the top of the window, then choose
+        <strong>Preferences…</strong>. In the window that opens, click <strong>Get Extensions</strong> in the
+        left-hand list.</p>
+
+        <figure class="screenshot">
+            <img src="images/installation/blender-extensions-tab.png" alt="Extensions section of Preferences">
+            <figcaption>The Extensions panel inside Preferences.</figcaption>
+        </figure>
+
+        <h3>Step 3 — Install the <code>.zip</code></h3>
+
+        <p>You have two options:</p>
+
+        <ul>
+            <li><strong>Drag and drop:</strong> drag the downloaded <code>.zip</code> from your file browser
+            directly onto the Blender window. Blender will pop up a dialog asking to install — confirm it.</li>
+            <li><strong>Install from disk:</strong> in the Extensions panel, click the small dropdown in the top-right
+            corner (next to the search box) and pick <strong>Install from Disk…</strong>. Browse to the
+            <code>.zip</code> file and select it.</li>
+        </ul>
+
+        <figure class="screenshot">
+            <img src="images/installation/blender-install-from-disk.png" alt="Install from Disk menu">
+            <figcaption>The "Install from Disk…" option lives in the dropdown next to the search box.</figcaption>
+        </figure>
+
+        <h3>Step 4 — Confirm the addon is enabled</h3>
+
+        <p>After installing, the addon shows up in the Extensions list with a checkbox next to its name.
+        Make sure the checkbox is ticked. Close the Preferences window.</p>
+
+        <figure class="screenshot">
+            <img src="images/installation/blender-addon-enabled.png" alt="Addon enabled in extensions list">
+            <figcaption>When the checkbox is ticked, the addon is active and ready to use.</figcaption>
+        </figure>
+
+        <p>To verify it worked, open the <strong>File</strong> menu at the top of Blender. You should see a
+        <strong>Gamecube model (.dat)</strong> entry under both <strong>Import</strong> and <strong>Export</strong>.</p>
+
+        <div class="callout">
+            <strong>Note:</strong> Blender only loads the addon once at startup. If you update the
+            plugin later, fully quit and relaunch Blender for the new version to take effect.
+        </div>
+
+        <p><a href="index.html">&larr; Back to home</a></p>
+    </main>
+
+    <footer class="site-footer">
+        Original implementation by Made &middot; Source on <a href="https://github.com/StarsMmd/Blender-Addon-Gamecube-Models">GitHub</a>
+    </footer>
+</body>
+</html>
