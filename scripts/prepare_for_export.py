@@ -12,15 +12,25 @@ The script operates on all objects in the scene — no selection required:
      introduce, drifting bones away from mesh vertices the further you
      walk down the bone chain.
   2. Creates a Debug_Camera if none exists (the PKX camera appears to be
-     unused by the game engine; kept for format fidelity pending a confirmed
-     camera-less export test — see CLAUDE.md TODO)
+     unused by the game engine; kept for format fidelity pending a
+     confirmed camera-less export test)
   3. Limits vertex bone weights to 3 per vertex (GameCube constraint)
   4. Splits oversized meshes by body region if >25 estimated PObjects
   5. Applies default PKX metadata to all armatures that don't have it
   6. Auto-derives animation timing from action durations
-  7. Auto-selects GX texture formats for all armature textures
+  7. Downscales textures larger than 512×512 proportionally, then
+     auto-selects GX texture formats for all armature textures
   8. Inserts shiny filter nodes into all materials (identity defaults, toggle off)
-  9. Creates standard battle lighting (1 ambient + 3 directional)
+  9. Authors two helper actions per armature for in-game smoke testing:
+       - `auto_animation_dummy` — two-frame identity pose (placeholder for
+         empty slots; the game requires at least two keyframes per channel)
+       - `auto_animation_spin` — 60-frame full revolution around the rig's
+         vertical axis on the root bone, with frame 0 == frame 60 (mod 2π)
+         so the loop closes cleanly
+     These are not assigned to any PKX slot — pick them by hand in the PKX
+     Metadata panel only when smoke-testing a model. They should be ignored
+     for normal authoring.
+ 10. Creates standard battle lighting (1 ambient + 3 directional)
 
 After running, the scene can be exported via File > Export > Gamecube model (.dat).
 
@@ -65,11 +75,10 @@ def _apply_world_to_data(obj, world):
     level operations — they don't go through bpy.ops, don't require the
     object to be selected/active/visible, and don't need any particular
     context. Critically for armatures, `Armature.transform()` correctly
-    scales bone lengths along with head positions; the previous
-    edit-mode `bone.matrix = world @ bone.matrix` approach left lengths
-    unchanged, which collapsed the whole skeleton into a tiny region
-    (Greninja's 0.01 scale piled all 100+ bones on top of each other,
-    visible as "a couple of giant bones").
+    scales bone lengths along with head positions; the alternative
+    edit-mode `bone.matrix = world @ bone.matrix` approach leaves lengths
+    unchanged, which on a small-scale rig collapses the whole skeleton
+    into a tiny region.
 
     Returns True if data was mutated, False if obj has no applicable data.
     """
@@ -149,17 +158,16 @@ def bake_transforms():
       1. `Armature.transform()` while the action is evaluating leaves the
          pose-matrix cache stale — even after view_layer.update(), pose
          evaluation reads the old rest matrix and produces wildly wrong
-         bone positions (Greninja: pose-bone Waist ended up at world Y=94
-         instead of Y=0.06). Fix: mute the action and reset all pose-bone
-         TRS to identity *before* baking, restore *after*.
+         bone positions. Fix: mute the action and reset all pose-bone TRS
+         to identity *before* baking, restore *after*.
 
       2. PoseBone.location values are in bone-local rest-frame coordinates.
          Pre-bake, the bone's rest frame is scaled by the armature's world
-         scale (e.g. 0.01 for Greninja); a pose-loc of 50 means 0.5 m of
-         world translation. Post-bake the rest frame has scale 1.0; the
-         same 50 now means 50 m. Fix: multiply every pose.bones[].location
-         fcurve keyframe by the armature's pre-bake scale factor. Pose
-         rotations and scales are dimensionless and need no adjustment.
+         scale; a pose-loc of 50 on a scale-0.01 rig means 0.5 m of world
+         translation. Post-bake the rest frame has scale 1.0; the same 50
+         now means 50 m. Fix: multiply every pose.bones[].location fcurve
+         keyframe by the armature's pre-bake scale factor. Pose rotations
+         and scales are dimensionless and need no adjustment.
 
     Also handles per-view-layer hidden objects (`hide_get() == True`) by
     temporarily unhiding them, since several Blender ops — and even
@@ -256,12 +264,10 @@ def bake_transforms():
     # ------------------------------------------------------------------
     # Step 2b: replace each bone's display with a 1 cm cube custom shape.
     # OCTAHEDRAL/BBONE/STICK all extend the bone display along its full
-    # head→tail length — for Greninja's 95 cm Origin bone that's a 95 cm-
-    # tall display element, visually dominant over the 1.7 m mesh. A
-    # custom_shape with use_custom_shape_bone_size=False renders a fixed-
-    # size cube at each joint regardless of bone length, restoring the
-    # tidy "tiny markers" look the pre-bake 0.01-scale armature gave by
-    # accident.
+    # head→tail length — on a rig with long root bones the display element
+    # becomes visually dominant over the mesh itself. A custom_shape with
+    # use_custom_shape_bone_size=False renders a fixed-size cube at each
+    # joint regardless of bone length, giving a consistent marker display.
     bone_marker = _ensure_bone_marker_object()
     for arm in armatures:
         for pb in arm.pose.bones:
@@ -350,7 +356,7 @@ def bake_transforms():
 # most likely a SysDolphin-era debug/preview camera that the format
 # preserves but the game ignores. We still emit one to keep the DAT
 # structure identical to official models until a camera-less export is
-# confirmed working in-game.
+# confirmed non-breaking.
 
 DEBUG_CAMERA_NAME = "Debug_Camera"
 DEBUG_CAMERA_TARGET = "Debug_Camera_target"
@@ -474,6 +480,25 @@ def _find_head_bone(armature):
     return ""
 
 
+def _first_bone_action_name(armature):
+    """Name of the first action whose fcurves drive this armature's pose bones,
+    or `""` when the rig has no actions yet.
+
+    Matches the exporter's own action-discovery logic in
+    `describe_bone_animations` so the slot default lines up with what will
+    actually get exported as DAT[0] under slot-ordered enumeration.
+    """
+    prefix = armature.name.split('_skeleton_')[0] if '_skeleton_' in armature.name else armature.name
+    for action in bpy.data.actions:
+        if action.name.startswith(prefix + '_'):
+            return action.name
+        if action.id_root == 'OBJECT':
+            for fc in action.fcurves:
+                if fc.data_path.startswith('pose.bones['):
+                    return action.name
+    return ""
+
+
 def apply_pkx_metadata(armature, format='XD', model_type='POKEMON', species_id=0):
     """Apply default PKX metadata to an armature."""
     is_xd = (format == 'XD')
@@ -496,14 +521,15 @@ def apply_pkx_metadata(armature, format='XD', model_type='POKEMON', species_id=0
     armature["dat_pkx_flag_no_root_anim"] = False
     armature["dat_pkx_flag_bit7"] = False
 
-    # Shiny registered properties — set identity defaults
+    # Shiny registered properties — cyclic RGB swap (R→G→B→R) with a warm
+    # brightness boost, so fresh exports ship with a visible shiny variant.
     armature.dat_pkx_shiny = False
-    armature.dat_pkx_shiny_route_r = '0'
-    armature.dat_pkx_shiny_route_g = '1'
-    armature.dat_pkx_shiny_route_b = '2'
+    armature.dat_pkx_shiny_route_r = '2'
+    armature.dat_pkx_shiny_route_g = '0'
+    armature.dat_pkx_shiny_route_b = '1'
     armature.dat_pkx_shiny_route_a = '3'
-    armature.dat_pkx_shiny_brightness_r = 0.0
-    armature.dat_pkx_shiny_brightness_g = 0.0
+    armature.dat_pkx_shiny_brightness_r = 0.2
+    armature.dat_pkx_shiny_brightness_g = 0.2
     armature.dat_pkx_shiny_brightness_b = 0.0
 
     # --- Sub-animations (all inactive) ---
@@ -533,12 +559,25 @@ def apply_pkx_metadata(armature, format='XD', model_type='POKEMON', species_id=0
     # Slot types: 0=idle(loop), 8=damage(hit), 9=damageB(compound), 10=faint(hit), rest=action
     _SLOT_TYPES = {0: "loop", 8: "hit_reaction", 9: "compound", 10: "hit_reaction"}
 
+    # Point slots 0-10 at a single default action so core states (idle,
+    # physical/special attacks, damage, faint) resolve to the same DAT
+    # animation. With the exporter's slot-ordered enumeration this action
+    # becomes DAT[0] and every assigned slot's anim_index lands at 0 —
+    # a sane baseline for arbitrary models that don't yet have per-slot
+    # actions authored. Slots 11-16 (Extra 1-4, Special C, Take Flight)
+    # are per-species and often unused; leave them unassigned so the
+    # author has to opt in explicitly.
+    default_action = _first_bone_action_name(armature)
+
     for i in range(anim_count):
         prefix = "dat_pkx_anim_%02d" % i
         anim_type = _SLOT_TYPES.get(i, "action")
+        slot_action = default_action if i <= 10 else ""
 
         armature[prefix + "_type"] = anim_type
-        armature[prefix + "_sub_0_anim"] = ""
+        armature[prefix + "_sub_0_anim"] = slot_action
+        if anim_type == "compound":
+            armature[prefix + "_sub_1_anim"] = slot_action
         armature[prefix + "_sub_count"] = 2 if anim_type == "compound" else 1
         armature[prefix + "_damage_flags"] = 0
         armature[prefix + "_terminator"] = 3 if is_xd else 1
@@ -556,12 +595,19 @@ def apply_pkx_metadata(armature, format='XD', model_type='POKEMON', species_id=0
 
 
 def _get_action_duration(action_name):
-    """Get an action's duration in seconds (frame count / 60fps). Returns 0 if not found."""
+    """Get an action's duration in seconds (frame count / 30 fps).
+
+    HSD AOBJs advance at 30 animation-units/second on XD (verified by
+    matching `AOBJ.end_frame / 30` against every game-native PKX header
+    `timing_1` value). The importer samples `range(end_frame)` so the
+    last keyframe lands at `end_frame - 1`; we add 1 back so the derived
+    duration equals the stored timing exactly.
+    """
     action = bpy.data.actions.get(action_name)
     if not action or not action.fcurves:
         return 0.0
     max_frame = max(kp.co[0] for fc in action.fcurves for kp in fc.keyframe_points)
-    return max_frame / 60.0
+    return (max_frame + 1) / 30.0
 
 
 def derive_timing(armature):
@@ -608,6 +654,128 @@ def derive_timing(armature):
         updated += 1
 
     return updated
+
+
+# ---------------------------------------------------------------------------
+# Test animations
+# ---------------------------------------------------------------------------
+#
+# Two helper actions are authored per armature for in-game smoke-testing:
+#
+#   auto_animation_dummy — two-frame identity pose (placeholder for slots
+#                          whose real action isn't ready yet).
+#   auto_animation_spin  — 60-frame full revolution around the rig's
+#                          vertical axis on the root bone, with the end
+#                          keyframe at 2π so the loop closes cleanly back
+#                          to 0° on frame 0.
+#
+# Neither action is assigned to a PKX slot — users hand-pick them in the
+# PKX Metadata panel only when smoke-testing. They are created after
+# apply_pkx_metadata() so the slot auto-fill never selects them.
+
+_TEST_ANIM_DUMMY = "auto_animation_dummy"
+_TEST_ANIM_SPIN = "auto_animation_spin"
+
+
+def _new_action_with_object_slot(name):
+    action = bpy.data.actions.new(name)
+    action.use_fake_user = True
+    slot = action.slots.new('OBJECT', 'Armature')
+    action.slots.active = slot
+    return action
+
+
+def prepare_test_animations(armature):
+    """Author two helper actions on `armature` for in-game smoke testing.
+
+    Returns the number of actions that were newly created.
+    """
+    if not armature.data.bones:
+        return 0
+    root_name = armature.data.bones[0].name
+    rot_path = 'pose.bones["%s"].rotation_euler' % root_name
+    created = 0
+
+    if _TEST_ANIM_DUMMY not in bpy.data.actions:
+        action = _new_action_with_object_slot(_TEST_ANIM_DUMMY)
+        for axis in range(3):
+            fc = action.fcurves.new(rot_path, index=axis)
+            fc.keyframe_points.add(2)
+            for i, frame in enumerate((0.0, 1.0)):
+                kp = fc.keyframe_points[i]
+                kp.co = (frame, 0.0)
+                kp.interpolation = 'LINEAR'
+        created += 1
+
+    if _TEST_ANIM_SPIN not in bpy.data.actions:
+        action = _new_action_with_object_slot(_TEST_ANIM_SPIN)
+        # Sample 90° quarters so a renderer that interpolates raw fcurve
+        # values (linearly, between euler endpoints) traces the full circle
+        # rather than oscillating from 0 to 2π and back.
+        steps = [(0.0, 0.0),
+                 (15.0, math.pi * 0.5),
+                 (30.0, math.pi),
+                 (45.0, math.pi * 1.5),
+                 (60.0, math.pi * 2.0)]
+        for axis in range(3):
+            fc = action.fcurves.new(rot_path, index=axis)
+            fc.keyframe_points.add(len(steps))
+            for i, (frame, angle) in enumerate(steps):
+                kp = fc.keyframe_points[i]
+                kp.co = (frame, angle if axis == 1 else 0.0)
+                kp.interpolation = 'LINEAR'
+        created += 1
+
+    return created
+
+
+# ---------------------------------------------------------------------------
+# Texture sizing
+# ---------------------------------------------------------------------------
+
+MAX_TEXTURE_DIM = 512
+
+
+def prepare_texture_sizes(armature):
+    """Downscale any texture larger than MAX_TEXTURE_DIM on either axis.
+
+    Scales proportionally so the larger dimension becomes MAX_TEXTURE_DIM.
+    UVs are in normalized [0, 1] space in Blender, so no UV remap is needed.
+
+    Returns the number of images that were rescaled.
+    """
+    images_seen = set()
+    count = 0
+
+    for child in armature.children:
+        if child.type != 'MESH':
+            continue
+        for slot in child.material_slots:
+            if not slot.material or not slot.material.use_nodes:
+                continue
+            for node in slot.material.node_tree.nodes:
+                if node.bl_idname != 'ShaderNodeTexImage' or not node.image:
+                    continue
+                img = node.image
+                if img.name in images_seen:
+                    continue
+                images_seen.add(img.name)
+
+                w, h = img.size[0], img.size[1]
+                if w <= MAX_TEXTURE_DIM and h <= MAX_TEXTURE_DIM:
+                    continue
+                if w == 0 or h == 0:
+                    continue
+
+                ratio = min(MAX_TEXTURE_DIM / w, MAX_TEXTURE_DIM / h)
+                new_w = max(1, int(w * ratio))
+                new_h = max(1, int(h * ratio))
+                img.scale(new_w, new_h)
+                count += 1
+                print("    %s: %dx%d -> %dx%d" %
+                      (img.name, w, h, new_w, new_h))
+
+    return count
 
 
 # ---------------------------------------------------------------------------
@@ -689,7 +857,7 @@ def prepare_texture_formats(armature):
                     images_seen.add(img.name)
 
                     # Skip textures that already have a format set
-                    if hasattr(img, 'dat_gx_format') and img.dat_gx_format != 'AUTO':
+                    if img.dat_gx_format != 'AUTO':
                         continue
 
                     fmt = _analyze_texture(img)
@@ -764,12 +932,12 @@ def _shiny_build_route_group(routing, name):
     comb = group.nodes.new('ShaderNodeCombineColor')
     comb.mode = 'RGB'
     for i in range(3):
-        if routing[i] in srcs:
-            group.links.new(srcs[routing[i]], comb.inputs[i])
-        else:
-            v = group.nodes.new('ShaderNodeValue')
-            v.outputs[0].default_value = 0.0
-            group.links.new(v.outputs[0], comb.inputs[i])
+        # On GX the 4th source is alpha, but the shiny preview only carries
+        # an RGB Color socket — alpha isn't available to route in. Fall back
+        # to identity for that slot so "Alpha" reads as "leave this channel
+        # alone" instead of silently zeroing it.
+        source = srcs.get(routing[i], srcs[i])
+        group.links.new(source, comb.inputs[i])
     group.links.new(comb.outputs[0], go.inputs[0])
     _shiny_auto_layout(group.nodes, group.links, output_type='GROUP_OUTPUT')
     return group
@@ -811,8 +979,51 @@ def _shiny_build_bright_group(brightness, name):
     return group
 
 
+_SHINY_ALBEDO_KEYS = ('albedo', 'basecolor', 'diffuse', 'color')
+
+
+def _shiny_albedo_rank(name):
+    """Lower = more likely to be the albedo input. Names are normalised by
+    stripping spaces/underscores so 'BaseColor', 'base color', and
+    'base_color' all match. Unmatched names rank last.
+    """
+    lname = name.lower().replace('_', '').replace(' ', '')
+    for i, key in enumerate(_SHINY_ALBEDO_KEYS):
+        if key in lname:
+            return i
+    return len(_SHINY_ALBEDO_KEYS)
+
+
+def _shiny_find_color_input_via_group(group_node):
+    """Pick the outer input on `group_node` most likely to be the albedo
+    feed: name matches albedo/basecolor/diffuse/color AND its material-
+    level chain contains a texture.
+
+    Topology-agnostic on purpose — shader packs like PokemonShaderbyChicoEevee
+    route the Principled BSDF's Base Color through fresnel/rim-light mixes
+    that never trace back to the actual albedo input, so a DFS from
+    Principled.Base Color would miss it. The artist-facing input name is
+    the only reliable signal for which outer socket is the albedo.
+    """
+    if group_node.node_tree is None:
+        return None
+    textured = [s for s in group_node.inputs
+                if not _shiny_no_texture_in_color_chain(s)
+                and _shiny_albedo_rank(s.name) < len(_SHINY_ALBEDO_KEYS)]
+    if not textured:
+        return None
+    textured.sort(key=lambda s: _shiny_albedo_rank(s.name))
+    return textured[0]
+
+
 def _shiny_find_color_input(nodes):
-    """Find the main color input on the output shader."""
+    """Find the main color input on the output shader.
+
+    Prefers a top-level Principled/Emission; otherwise recurses into
+    ShaderNodeGroup instances so shader packs like PokemonShaderbyChicoEevee
+    that wrap a Principled BSDF behind a custom group still get shiny
+    nodes spliced onto whichever outer group input carries the albedo.
+    """
     for node in nodes:
         if node.type == 'BSDF_PRINCIPLED':
             bc = node.inputs['Base Color']
@@ -821,6 +1032,11 @@ def _shiny_find_color_input(nodes):
     for node in nodes:
         if node.type == 'EMISSION':
             return node, node.inputs['Color']
+    for node in nodes:
+        if node.bl_idname == 'ShaderNodeGroup' and node.node_tree:
+            outer = _shiny_find_color_input_via_group(node)
+            if outer is not None:
+                return node, outer
     for node in nodes:
         if node.type == 'BSDF_PRINCIPLED':
             return node, node.inputs['Base Color']
@@ -878,13 +1094,16 @@ def _shiny_insert_stage(nodes, links, target_node, target_input,
     gn.node_tree = node_group
     gn.name = group_name
     links.new(source_out, gn.inputs[0])
-    mix = nodes.new('ShaderNodeMixRGB')
+    mix = nodes.new('ShaderNodeMix')
+    mix.data_type = 'RGBA'
     mix.blend_type = 'MIX'
+    mix.clamp_factor = True
     mix.name = mix_name
+    # ShaderNodeMix RGBA socket layout: Factor=0, A=6, B=7, Result=output 2.
     mix.inputs[0].default_value = 0.0
-    links.new(source_out, mix.inputs[1])
-    links.new(gn.outputs[0], mix.inputs[2])
-    links.new(mix.outputs[0], target_input)
+    links.new(source_out, mix.inputs[6])
+    links.new(gn.outputs[0], mix.inputs[7])
+    links.new(mix.outputs[2], target_input)
     # Driver for shiny toggle
     mix.inputs[0].default_value = 0.0
     dd = mix.inputs[0].driver_add("default_value")
@@ -1199,6 +1418,28 @@ def _split_rigid_from_envelope(mesh_obj, armature, bone_names):
     return created
 
 
+def _cull_unused_material_slots(armature):
+    """Remove material slots from each child mesh that no polygon references.
+
+    Returns the total number of slots stripped across all child meshes.
+    """
+    removed = 0
+    for child in armature.children:
+        if child.type != 'MESH' or child.data is None:
+            continue
+        used = {p.material_index for p in child.data.polygons}
+        for idx in reversed(range(len(child.material_slots))):
+            if idx in used:
+                continue
+            bpy.ops.object.select_all(action='DESELECT')
+            child.select_set(True)
+            bpy.context.view_layer.objects.active = child
+            child.active_material_index = idx
+            bpy.ops.object.material_slot_remove()
+            removed += 1
+    return removed
+
+
 # ---------------------------------------------------------------------------
 # Scene lights
 # ---------------------------------------------------------------------------
@@ -1367,6 +1608,39 @@ def _prop_row(layout, label, value):
     row = layout.row()
     row.label(text="%s:" % label)
     row.label(text=str(value))
+
+
+_GX_FORMAT_ITEMS = [
+    ('AUTO', 'AUTO (Pick based on content)', 'Let the exporter choose a format'),
+    ('CMPR', 'CMPR (Compressed)', 'S3TC/DXT1 compressed — best for most textures'),
+    ('RGBA8', 'RGBA8 (Full Quality)', '32-bit full quality RGBA'),
+    ('RGB565', 'RGB565 (No Alpha)', '16-bit RGB, no alpha'),
+    ('RGB5A3', 'RGB5A3 (RGB+Alpha)', '16-bit with optional alpha'),
+    ('I4', 'I4 (Grayscale 4-bit)', '4-bit grayscale'),
+    ('I8', 'I8 (Grayscale 8-bit)', '8-bit grayscale (intensity = alpha)'),
+    ('IA4', 'IA4 (Intensity+Alpha 4-bit)', '4-bit intensity + 4-bit alpha'),
+    ('IA8', 'IA8 (Intensity+Alpha 8-bit)', '8-bit intensity + 8-bit alpha'),
+    ('C4', 'C4 (4-bit Palette)', 'Palette indexed, up to 16 colors'),
+    ('C8', 'C8 (8-bit Palette)', 'Palette indexed, up to 256 colors'),
+]
+
+
+def _register_image_props():
+    """Register `dat_gx_format` on bpy.types.Image if not already registered.
+
+    Mirrors the addon's definition in BlenderPlugin.py so the prep script
+    works even when the addon is disabled or its register() hasn't run in
+    the current session (e.g. after a botched script reload).
+    """
+    if hasattr(bpy.types.Image, 'dat_gx_format'):
+        return
+    from bpy.props import EnumProperty
+    bpy.types.Image.dat_gx_format = EnumProperty(
+        name="GX Texture Format",
+        description="GX texture format used when exporting this texture. Auto selects based on pixel content.",
+        items=_GX_FORMAT_ITEMS,
+        default='AUTO',
+    )
 
 
 def _register_pkx_panel():
@@ -1570,6 +1844,7 @@ if __name__ == "__main__" or True:
 
     # 0. Register panel + properties if the addon isn't loaded
     _register_pkx_panel()
+    _register_image_props()
 
     # 1. Bake loc/rot/scale on armatures + child meshes. Must run before
     #    anything else so subsequent prep + the exporter itself see clean
@@ -1592,10 +1867,12 @@ if __name__ == "__main__" or True:
             print("    %s: longest bone = %.3f, max mesh vertex = %.3f"
                   % (arm.name, longest, v))
 
-    # 2. Camera
-    cam_created = prepare_camera()
-    if not cam_created:
-        print("  Debug camera already exists")
+    # 2. Camera — disabled: both XD and Colosseum disassemblies show no
+    # consumer of the PKX camera. Keep prepare_camera() available until a
+    # camera-less PKX export is confirmed non-breaking.
+    # cam_created = prepare_camera()
+    # if not cam_created:
+    #     print("  Debug camera already exists")
 
     # 2-4. Per-armature steps: PKX metadata, timing, texture formats
     armatures = [obj for obj in bpy.data.objects if obj.type == 'ARMATURE']
@@ -1610,6 +1887,13 @@ if __name__ == "__main__" or True:
         if split:
             print("  Split meshes into %d regions on '%s'" % (split, arm.name))
 
+        # Strip material slots that no polygon references — split-style ops
+        # leave the full slot list copied onto each new mesh, and the unused
+        # entries still pull their materials into the EEVEE compile graph.
+        culled_slots = _cull_unused_material_slots(arm)
+        if culled_slots:
+            print("  Culled %d unused material slot(s) on '%s'" % (culled_slots, arm.name))
+
         # PKX metadata
         if arm.get("dat_pkx_format"):
             print("  Armature '%s' already has PKX metadata (skipped)" % arm.name)
@@ -1621,6 +1905,11 @@ if __name__ == "__main__" or True:
         if timing_count:
             print("  Derived timing for %d animation slot(s) on '%s'" % (timing_count, arm.name))
 
+        # Texture sizes (downscale >512 before format analysis)
+        size_count = prepare_texture_sizes(arm)
+        if size_count:
+            print("  Downscaled %d texture(s) on '%s'" % (size_count, arm.name))
+
         # Texture formats
         fmt_count = prepare_texture_formats(arm)
         if fmt_count:
@@ -1630,6 +1919,12 @@ if __name__ == "__main__" or True:
         shiny_count = prepare_shiny_filter(arm)
         if shiny_count:
             print("  Shiny filter added to %d material(s) on '%s'" % (shiny_count, arm.name))
+
+        # Test animations (auto_animation_dummy + auto_animation_spin) —
+        # smoke-test placeholders, not auto-assigned to any PKX slot.
+        test_anim_count = prepare_test_animations(arm)
+        if test_anim_count:
+            print("  Created %d test animation(s) for '%s'" % (test_anim_count, arm.name))
 
     # 6. Scene lights (ambient + 3 directional)
     light_count = prepare_lights()

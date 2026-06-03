@@ -66,6 +66,54 @@ def _alloc_base_pointer():
     return bp
 
 
+def _material_dedup_key(ir_material):
+    """Hashable structural signature of an IRMaterial.
+
+    Two IRMaterials with the same signature render identically and so
+    should share one MObj + DObject on export. We key on content (not
+    `id(...)`) because the importer sometimes creates distinct Blender
+    materials from structurally-identical source MObjs; keying on id
+    would leave them un-merged and produce extra DObjects on round-trip.
+
+    IRImage is hashed by (image_id, palette_id, width, height) only —
+    pixel bytes can be huge and image_id/palette_id already identify
+    unique textures on the importer side.
+    """
+    if ir_material is None:
+        return None
+
+    def _img_key(img):
+        if img is None:
+            return None
+        return (img.image_id, img.palette_id, img.width, img.height,
+                getattr(img, 'gx_format_override', None))
+
+    def _layer_key(layer):
+        return (
+            _img_key(layer.image),
+            layer.coord_type, layer.uv_index,
+            tuple(layer.rotation), tuple(layer.scale), tuple(layer.translation),
+            layer.wrap_s, layer.wrap_t, layer.repeat_s, layer.repeat_t,
+            layer.interpolation, layer.color_blend, layer.alpha_blend,
+            round(layer.blend_factor, 5) if layer.blend_factor is not None else None,
+            layer.lightmap_channel, layer.is_bump,
+            repr(layer.combiner) if layer.combiner is not None else None,
+        )
+
+    return (
+        tuple(ir_material.diffuse_color),
+        tuple(ir_material.ambient_color),
+        tuple(ir_material.specular_color),
+        round(ir_material.alpha, 5),
+        round(ir_material.shininess, 5),
+        ir_material.color_source, ir_material.alpha_source,
+        ir_material.lighting, ir_material.enable_specular,
+        ir_material.is_translucent,
+        tuple(_layer_key(l) for l in ir_material.texture_layers),
+        repr(ir_material.fragment_blending) if ir_material.fragment_blending is not None else None,
+    )
+
+
 def compose_meshes(meshes, joints, bones, logger=StubLogger()):
     """Convert IRMesh list into Mesh node chains attached to Joints.
 
@@ -283,15 +331,14 @@ def _build_pobj(ir_mesh, joints, bones, bone_name_to_index, logger):
         vertex_buffers.append(('color', clr_verts, clr_indices))
 
     # HSDLib parity: normals and vertex colors are mutually exclusive per
-    # PObject on GameCube. Verified across 8 shipped XD/Colo models
-    # (215 PObjects total): zero carry both. Until we implement per-attribute
-    # PObject splitting, warn so the user can decide whether to strip one
-    # attribute in the source scene. See CLAUDE.md TODO.
+    # PObject on GameCube. No shipped game PObject in the corpus carries
+    # both. Until we implement per-attribute PObject splitting, warn so
+    # the user can decide whether to strip one attribute in the source.
     attrs = {d.attribute for d in vertex_descs}
     if GX_VA_NRM in attrs and (GX_VA_CLR0 in attrs or GX_VA_CLR1 in attrs):
-        logger.warning("      pobj '%s': carries both NRM and CLR — zero game "
-                       "PObjects do this; one attribute will likely be ignored "
-                       "in-game", ir_mesh.name)
+        logger.warning("      pobj '%s': carries both NRM and CLR — no shipped "
+                       "game PObjects do this; one attribute will likely be "
+                       "ignored at render time", ir_mesh.name)
 
     # Determine cull flags (shared across all split PObjects)
     cull_flags = POBJ_CULLBACK

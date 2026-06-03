@@ -28,15 +28,10 @@ except (ImportError, SystemError):
 
 
 def describe_bones(root_joint, options=None, logger=None):
-    """Walk a Joint tree and produce a flat list of IRBone.
+    """Walk a Joint tree (DFS) producing a flat IRBone list and a joint→index map.
 
-    Args:
-        root_joint: Root Joint node from the parsed node tree.
-        options: dict of importer options (uses 'ik_hack').
-        logger: optional Logger instance.
-
-    Returns:
-        (list[IRBone], dict[int, int]) — bones list and joint_address→bone_index map.
+    In: root_joint (Joint, parsed root); options (dict|None, uses 'ik_hack' and 'pkx_header'); logger (Logger|None).
+    Out: tuple (list[IRBone] in DFS order, dict[int,int] mapping Joint.address → bone index).
     """
     if options is None:
         options = {}
@@ -47,6 +42,11 @@ def describe_bones(root_joint, options=None, logger=None):
 
     # Pre-count total bones to determine digit padding
     def _count_joints(joint):
+        """Recursive DFS joint count, skipping subtrees under JOBJ_INSTANCE.
+
+        In: joint (Joint).
+        Out: int — total joints visited.
+        """
         n = 1
         if joint.child and not (joint.flags & (1 << 12)):
             n += _count_joints(joint.child)
@@ -83,8 +83,13 @@ def describe_bones(root_joint, options=None, logger=None):
     def _walk(joint, parent_index, parent_data):
         """Recursively describe a Joint and its children/siblings.
 
-        parent_data is a dict with keys: scl, world_matrix, edit_matrix,
-        edit_scale_correction — or None for roots.
+        parent_data is the transform record returned by
+        _compose_bone_transforms for the parent bone — or None for roots.
+
+        In: joint (Joint); parent_index (int|None);
+            parent_data (dict|None, record from _compose_bone_transforms).
+        Out: None. ``bones`` and ``joint_to_bone_index`` are mutated in place
+             through the closure.
         """
         my_index = len(bones)
         joint_to_bone_index[joint.address] = my_index
@@ -118,50 +123,12 @@ def describe_bones(root_joint, options=None, logger=None):
                  or joint.flags & JOBJ_SPLINE)
         )
 
-        # Accumulate parent scales for aligned scale inheritance.
-        # When JOBJ_CLASSICAL_SCALING is set, the bone's own scale does NOT
-        # accumulate into the chain — only the parent's accumulated scale
-        # passes through. Confirmed in HSD_JObjMakeMatrix.s: the flag
-        # causes a direct copy of parent accumulated_scale, skipping the
-        # multiplication by own scale.
-        if parent_data:
-            if joint.flags & JOBJ_CLASSICAL_SCALING:
-                accumulated_scale = parent_data['scl']
-            else:
-                accumulated_scale = tuple(
-                    joint.scale[i] * parent_data['scl'][i] for i in range(3)
-                )
-            parent_scl = parent_data['scl']
-        else:
-            accumulated_scale = tuple(joint.scale)
-            parent_scl = None
-
-        # Scale position to meters
         scaled_position = tuple(p * GC_TO_METERS for p in joint.position)
-
-        # Build local SRT matrix (with scaled position)
-        local_matrix = compile_srt_matrix(
-            joint.scale, joint.rotation, scaled_position, parent_scl
+        record = _compose_bone_transforms(
+            joint.scale, joint.rotation, scaled_position,
+            bool(joint.flags & JOBJ_CLASSICAL_SCALING),
+            parent_data,
         )
-
-        # Compute world matrix
-        if parent_data:
-            world_matrix = parent_data['world_matrix'] @ local_matrix
-        else:
-            world_matrix = local_matrix
-
-        # Compute normalized matrices for rest-pose binding
-        normalized_world = world_matrix.normalized()
-        if parent_data:
-            normalized_local = parent_data['edit_matrix'].inverted() @ normalized_world
-            scale_correction = (
-                parent_data['edit_scale_correction']
-                @ local_matrix.normalized().inverted()
-                @ local_matrix
-            )
-        else:
-            normalized_local = normalized_world
-            scale_correction = local_matrix.normalized().inverted() @ local_matrix
 
         # Get inverse bind matrix if present, scaling translation to meters
         inverse_bind = None
@@ -188,22 +155,17 @@ def describe_bones(root_joint, options=None, logger=None):
             is_hidden=bool(joint.flags & JOBJ_HIDDEN),
             inherit_scale=ScaleInheritance.ALIGNED,
             ik_shrink=ik_shrink,
-            world_matrix=matrix_to_list(world_matrix),
-            local_matrix=matrix_to_list(local_matrix),
-            normalized_world_matrix=matrix_to_list(normalized_world),
-            normalized_local_matrix=matrix_to_list(normalized_local),
-            scale_correction=matrix_to_list(scale_correction),
-            accumulated_scale=accumulated_scale,
+            world_matrix=matrix_to_list(record['world']),
+            local_matrix=matrix_to_list(record['local']),
+            normalized_world_matrix=matrix_to_list(record['normalized_world']),
+            normalized_local_matrix=matrix_to_list(record['normalized_local']),
+            scale_correction=matrix_to_list(record['scale_correction']),
+            accumulated_scale=record['accumulated_scale'],
         )
         bones.append(bone)
 
-        # Data passed to children
-        my_data = {
-            'scl': accumulated_scale,
-            'world_matrix': world_matrix,
-            'edit_matrix': normalized_world,
-            'edit_scale_correction': scale_correction,
-        }
+        # Data passed to children (same shape as _compose_bone_transforms input)
+        my_data = record
 
         # Recurse into children (skip instances)
         if joint.child and not (joint.flags & JOBJ_INSTANCE):
@@ -222,7 +184,11 @@ def describe_bones(root_joint, options=None, logger=None):
 
 
 def _set_instance_refs(joint, bones, jtb):
-    """Set instance_child_bone_index for JOBJ_INSTANCE bones."""
+    """Set instance_child_bone_index on bones whose Joint has the JOBJ_INSTANCE flag.
+
+    In: joint (Joint, recursed); bones (list[IRBone], mutated in place); jtb (dict[int,int], joint addr→bone idx).
+    Out: None — mutates `bones` entries.
+    """
     if joint.flags & JOBJ_INSTANCE and joint.child:
         my_idx = jtb.get(joint.address)
         child_idx = jtb.get(joint.child.address)
@@ -234,92 +200,173 @@ def _set_instance_refs(joint, bones, jtb):
         _set_instance_refs(joint.next, bones, jtb)
 
 
-def fix_near_zero_bone_matrices(bones, bone_animations, logger=None):
-    """Recompute world matrices for bones with near-zero rest scale.
+NEAR_ZERO_SCALE_EPSILON = 0.001
 
-    When a bone has near-zero scale at rest, its world matrix has near-zero
-    columns. Children's world matrices collapse to the parent's position.
-    This fixes them by substituting the "visible scale" found in animation
-    keyframes, then cascading corrected world matrices to all descendants.
 
-    Must run AFTER both describe_bones and describe_bone_animations, since
-    visible scales come from animation keyframe data.
+def _compose_bone_transforms(own_scale, rotation, position, classical_scaling, parent):
+    """Compose the full bone transform record given parent state.
 
-    Args:
-        bones: list[IRBone] — mutated in-place.
-        bone_animations: list[IRBoneAnimationSet] from describe_bone_animations.
-        logger: optional Logger instance.
+    In: own_scale (3-tuple float, GC scale); rotation (3-tuple float, Euler radians); position (3-tuple float, meters); classical_scaling (bool, JOBJ_CLASSICAL_SCALING); parent (dict|None with keys accumulated_scale/world/normalized_world/scale_correction).
+    Out: dict with keys 'local','world','normalized_world','normalized_local','scale_correction' (Matrix) and 'accumulated_scale' (3-tuple float).
     """
-    nz = 0.001
+    parent_accum = parent['accumulated_scale'] if parent else None
 
-    # Find bones with near-zero rest scale
-    near_zero = set()
-    for i, bone in enumerate(bones):
-        if any(abs(bone.scale[c]) < nz for c in range(3)):
-            near_zero.add(i)
+    if parent_accum is None:
+        accumulated = tuple(own_scale)
+    elif classical_scaling:
+        accumulated = tuple(parent_accum)
+    else:
+        accumulated = tuple(own_scale[c] * parent_accum[c] for c in range(3))
 
+    local = compile_srt_matrix(own_scale, rotation, position, parent_accum)
+    local_rot_only_inv = local.normalized().inverted()
+
+    if parent is None:
+        world = local
+        normalized_world = world.normalized()
+        normalized_local = normalized_world
+        scale_correction = local_rot_only_inv @ local
+    else:
+        world = parent['world'] @ local
+        normalized_world = world.normalized()
+        normalized_local = parent['normalized_world'].inverted() @ normalized_world
+        scale_correction = parent['scale_correction'] @ local_rot_only_inv @ local
+
+    return {
+        'local': local,
+        'world': world,
+        'normalized_world': normalized_world,
+        'normalized_local': normalized_local,
+        'scale_correction': scale_correction,
+        'accumulated_scale': accumulated,
+    }
+
+
+def compute_model_visible_scales(bones, bone_animations):
+    """Build a model-wide visible-scale table for bones with near-zero rest scale.
+
+    In: bones (list[IRBone]); bone_animations (list[IRBoneAnimationSet]).
+    Out: dict[int, tuple[float,float,float]] keyed by bone index, |value|≥1.0 per axis (sign preserved); empty if no near-zero bones.
+    """
+    nz = NEAR_ZERO_SCALE_EPSILON
+
+    near_zero = {
+        i for i, bone in enumerate(bones)
+        if any(abs(bone.scale[c]) < nz for c in range(3))
+    }
     if not near_zero:
-        return
+        return {}
 
-    # Scan animation keyframes for visible scales
-    visible_scales = {}  # {bone_index: (sx, sy, sz)}
+    # Max absolute scale per channel across every animation.
+    observed = {i: [0.0, 0.0, 0.0] for i in near_zero}
     for anim_set in bone_animations:
         for track in anim_set.tracks:
             if track.bone_index not in near_zero:
                 continue
-            if track.bone_index in visible_scales:
-                continue
-            best = [None, None, None]
+            row = observed[track.bone_index]
             for ch in range(3):
                 for kf in track.scale[ch]:
-                    if abs(kf.value) >= nz and best[ch] is None:
-                        best[ch] = kf.value
-            if all(v is not None for v in best):
-                visible_scales[track.bone_index] = tuple(best)
+                    mag = abs(kf.value)
+                    if mag >= nz and mag > row[ch]:
+                        row[ch] = mag
 
+    # Per-channel fallback to 1.0 where no animation revealed a visible value.
+    # Keep the sign of the original rest scale when available (preserves
+    # handedness) but never let magnitude go below 1.0.
+    visible_scales = {}
+    for i, row in observed.items():
+        rest = bones[i].scale
+        resolved = []
+        for ch in range(3):
+            if row[ch] >= nz:
+                sign = -1.0 if rest[ch] < 0 else 1.0
+                resolved.append(sign * row[ch])
+            else:
+                resolved.append(1.0 if rest[ch] >= 0 else -1.0)
+        visible_scales[i] = tuple(resolved)
+    return visible_scales
+
+
+def fix_near_zero_bone_matrices(bones, bone_animations, logger=None):
+    """Rebind world matrices for near-zero rest-scale bones and cascade to descendants.
+
+    In: bones (list[IRBone], mutated in place); bone_animations (list[IRBoneAnimationSet], track rest matrices also mutated); logger (Logger|None).
+    Out: None — bones and tracks updated to use visible scales so rest matrices stay invertible.
+    """
+    visible_scales = compute_model_visible_scales(bones, bone_animations)
     if not visible_scales:
         return
 
-    # Determine which bones need world matrix recomputation:
-    # near-zero bones with visible scales AND all their descendants
-    needs_recompute = set()
-    for idx in visible_scales:
-        needs_recompute.add(idx)
-    # Add all descendants of corrected bones
+    # Rewrite each track's rest_local_matrix to the same model-wide visible
+    # scale, so animations that keep the bone hidden throughout still get a
+    # stable (invertible) rest for basis computation.
+    for anim_set in bone_animations:
+        for track in anim_set.tracks:
+            vis = visible_scales.get(track.bone_index)
+            if vis is None:
+                continue
+            rest_local = compile_srt_matrix(vis, track.rest_rotation, track.rest_position)
+            track.rest_local_matrix = matrix_to_list(rest_local)
+
+    # Descendant cascade: subtree under any rebound bone needs world recomputation.
+    needs_recompute = set(visible_scales)
     for i, bone in enumerate(bones):
         if bone.parent_index in needs_recompute:
             needs_recompute.add(i)
 
     if logger:
-        logger.debug("  fix_near_zero_bone_matrices: %d near-zero, %d with visible scale, %d to recompute",
-                     len(near_zero), len(visible_scales), len(needs_recompute))
+        logger.debug("  fix_near_zero_bone_matrices: %d rebound, %d descendants",
+                     len(visible_scales), len(needs_recompute) - len(visible_scales))
 
-    # Walk top-down (bones are in DFS order = parent before child)
+    # Top-down rebuild: descendants' local_matrix was computed with the
+    # aligned-scale correction against the original tiny accumulated parent
+    # scale (dividing by tiny → huge local entries), so we have to rebuild
+    # the full transform record, not just the world matrix. Walking in DFS
+    # order (parent before child) means `rebound[parent]` is already set
+    # when we reach a child; bones outside `needs_recompute` fall through
+    # the `_parent_record` helper to their pre-rebind stored values.
+    rebound = {}  # bone_index → transform record from _compose_bone_transforms
+
+    def _parent_record(parent_index):
+        """Return the parent's transform record, preferring any rebound value.
+
+        In: parent_index (int|None).
+        Out: dict with keys accumulated_scale, world, normalized_world,
+             scale_correction — or None for roots. Falls back to constructing
+             a record from the stored (pre-rebind) bone when the parent isn't
+             in ``rebound`` yet.
+        """
+        if parent_index is None:
+            return None
+        if parent_index in rebound:
+            return rebound[parent_index]
+        p = bones[parent_index]
+        return {
+            'accumulated_scale': p.accumulated_scale,
+            'world': Matrix(p.world_matrix),
+            'normalized_world': Matrix(p.normalized_world_matrix),
+            'scale_correction': Matrix(p.scale_correction),
+        }
+
     for i in range(len(bones)):
         if i not in needs_recompute:
             continue
-
         bone = bones[i]
 
-        if i in visible_scales:
-            # Recompute local matrix with visible scale
-            vis = visible_scales[i]
-            local = compile_srt_matrix(vis, bone.rotation, bone.position)
-        else:
-            # Descendant of a corrected bone — keep own local matrix
-            local = Matrix(bone.local_matrix)
+        own_scale = visible_scales[i] if i in visible_scales else bone.scale
+        record = _compose_bone_transforms(
+            own_scale, bone.rotation, bone.position,
+            bool(bone.flags & JOBJ_CLASSICAL_SCALING),
+            _parent_record(bone.parent_index),
+        )
 
-        # Recompute world matrix from (potentially corrected) parent
-        if bone.parent_index is not None:
-            parent_world = Matrix(bones[bone.parent_index].world_matrix)
-        else:
-            parent_world = Matrix.Identity(4)
-
-        world = parent_world @ local
-        normalized_world = world.normalized()
-
-        bone.world_matrix = matrix_to_list(world)
-        bone.normalized_world_matrix = matrix_to_list(normalized_world)
+        bone.local_matrix = matrix_to_list(record['local'])
+        bone.world_matrix = matrix_to_list(record['world'])
+        bone.normalized_world_matrix = matrix_to_list(record['normalized_world'])
+        bone.normalized_local_matrix = matrix_to_list(record['normalized_local'])
+        bone.scale_correction = matrix_to_list(record['scale_correction'])
+        bone.accumulated_scale = record['accumulated_scale']
+        rebound[i] = record
 
         if i in visible_scales and logger:
             logger.leniency("near_zero_bone_rescued",

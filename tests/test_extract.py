@@ -240,3 +240,76 @@ def test_fsys_wzx_entry_extracted():
     assert len(entries) == 1
     assert entries[0][0] == dat
     assert 'effect' in entries[0][1].filename
+
+
+# ---------------------------------------------------------------------------
+# Kirby Air Ride "A2" multi-asset container detection
+# ---------------------------------------------------------------------------
+
+def _build_a2_container(entry_names):
+    """Build a minimal A2-style container: file_size=0 sentinel, count, TOC, names."""
+    n = len(entry_names)
+    # TOC entries (end_offset, name_offset) at u32[5..5+2n)
+    # Names live immediately after the TOC.
+    header = struct.pack('>5I', 0, n, 0, 0, 0)
+    toc = b''
+    names_block = b''
+    name_base = 20 + n * 8  # start of name block
+    cursor = name_base
+    for i, name in enumerate(entry_names):
+        name_bytes = name.encode('ascii') + b'\x00'
+        toc += struct.pack('>II', 0x10000 + i * 0x100, cursor)  # fake end_offset, real name_offset
+        names_block += name_bytes
+        cursor += len(name_bytes)
+    # Pad out to something larger so offsets look plausible
+    body = b'\x00' * 0x20000
+    return header + toc + names_block + body
+
+
+def test_a2_container_rejected_under_kar_game():
+    """Kirby Air Ride A2 containers are detected and rejected in extract."""
+    a2 = _build_a2_container(['AC0002.tm', 'KIRBY.tm', 'STAR1500.tm'])
+    with pytest.raises(ValueError, match="multi-asset container"):
+        extract_dat(a2, 'A2Kirby.dat', options={'game': 'KIRBY_AIR_RIDE'})
+
+
+def test_a2_container_preview_names_in_error():
+    """The rejection message mentions the first entry names so the user can tell what was in the file."""
+    a2 = _build_a2_container(['bar.tex', 'base0.tex', 'base1.tex'])
+    with pytest.raises(ValueError, match=r"bar\.tex.*base0\.tex"):
+        extract_dat(a2, 'A2Window.dat', options={'game': 'KIRBY_AIR_RIDE'})
+
+
+def test_a2_container_rejected_regardless_of_game():
+    """The A2 signature is distinctive enough that the check runs unconditionally — no real HAL DAT trips it, so we don't gate on game."""
+    a2 = _build_a2_container(['AC0002.tm'])
+    with pytest.raises(ValueError, match="multi-asset container"):
+        extract_dat(a2, 'A2Kirby.dat', options={'game': 'COLO_XD'})
+    with pytest.raises(ValueError, match="multi-asset container"):
+        extract_dat(a2, 'A2Kirby.dat')  # no options at all
+
+
+def test_normal_dat_not_flagged_as_a2_under_kar():
+    """A legitimate HAL DAT (file_size != 0) is not mis-detected as an A2 container."""
+    # Minimal HAL DAT with file_size set to actual length
+    dat = struct.pack('>5I', 64, 0, 0, 0, 0) + b'\x00' * 44
+    entries = extract_dat(dat, 'EmScarfy.dat', options={'game': 'KIRBY_AIR_RIDE'})
+    assert len(entries) == 1
+    assert entries[0][0] == dat
+
+
+def test_a2_inline_name_variant_rejected():
+    """A2a2dBG_*-style containers embed names inline rather than via a name-offset table.
+
+    The detector recognises them by the same file_size=0 signature plus a
+    string sweep over the head of the file, so it should reject this layout
+    just like the offset-table variant.
+    """
+    header = struct.pack('>5I', 0, 2, 24, 60, 38)
+    # Single offset, then two null-terminated names inline
+    body = struct.pack('>I', 0xC41BC)
+    body += b'a2dBG_000F.tm\x00a2dBG_0100.tm\x00'
+    body += b'\x00' * 0x1000
+    a2 = header + body
+    with pytest.raises(ValueError, match=r"a2dBG_000F\.tm.*a2dBG_0100\.tm"):
+        extract_dat(a2, 'A2a2dBG_000F.dat')

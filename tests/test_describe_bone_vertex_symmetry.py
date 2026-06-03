@@ -2,17 +2,17 @@
 
 `_validate_baked_transforms` is the first thing `describe_blender_scene`
 runs. It guarantees every armature and child mesh has identity
-matrix_world before any decompose/recompose path runs on the bones —
-which is what made Greninja's mesh drift away from its skeleton further
-down the chain (root non-uniform scale + rotation produced a sheared
-root world matrix; SRT decompose dropped the shear; vertex matmul kept
-it; the two paths disagreed by exactly that shear, scaled by the bone's
-distance from the root).
+matrix_world before any decompose/recompose path runs on the bones. A
+non-uniform scale combined with rotation on the armature produces a
+sheared root world matrix; SRT decomposition of that matrix drops the
+shear while direct vertex matmul keeps it, so the bone and vertex
+transform paths disagree by exactly that shear, scaled by each bone's
+distance from the root.
 
 Pre-baking via the prep script eliminates the asymmetry at its source.
 This test pins the rejection at the validation boundary so a future
 regression in the prep script (or a user who skips it) gets a loud,
-specific error instead of a silently garbled in-game model.
+specific error instead of silently garbled output.
 """
 import math
 
@@ -22,13 +22,16 @@ pytest.importorskip("mathutils")
 
 from mathutils import Matrix
 
-from exporter.phases.describe_blender.describe_blender import (
-    _check_baked_transforms,
+from exporter.phases.describe.helpers.scene import (
+    check_baked_transforms as _check_baked_transforms,
     _is_identity_matrix,
 )
 from exporter.phases.pre_process.pre_process import (
+    MAX_TEXTURE_DIM,
     MAX_VERTEX_WEIGHTS,
+    _check_texture_sizes,
     _check_vertex_weight_count,
+    _check_baked_transforms as _preprocess_check_baked_transforms,
 )
 
 
@@ -86,6 +89,49 @@ class TestCheckBakedTransforms:
             _check_baked_transforms([arm], {arm: []})
 
 
+class TestPreProcessBakedTransforms:
+    """The pre-process check fires before the pipeline starts. Same condition
+    as the describe-side check, but a clearer multi-line error message:
+    counts armatures vs meshes separately, samples a few names, and shows
+    both remediation paths (prep script + manual Apply All Transforms)."""
+
+    def test_clean_scene_passes(self):
+        arm = _MockObj('Armature', Matrix.Identity(4))
+        mesh = _MockObj('Body', Matrix.Identity(4))
+        _preprocess_check_baked_transforms([arm], {arm: [mesh]})
+
+    def test_error_separates_armature_and_mesh_counts(self):
+        arm = _MockObj('rig', Matrix.Diagonal((2.0, 2.0, 2.0, 1.0)))
+        meshes = [_MockObj('m_%03d' % i, Matrix.Translation((i + 1, 0, 0)))
+                  for i in range(20)]
+        with pytest.raises(ValueError) as excinfo:
+            _preprocess_check_baked_transforms([arm], {arm: meshes})
+        msg = str(excinfo.value)
+        assert "1 armature(s)" in msg
+        assert "20 mesh(es)" in msg
+        assert "rig" in msg
+        # Only first 3 mesh names sampled — the user shouldn't get a wall of names.
+        assert "m_000" in msg and "m_002" in msg
+        assert "m_010" not in msg
+
+    def test_error_lists_remediation_paths(self):
+        arm = _MockObj('rig', Matrix.Diagonal((2.0, 1.0, 1.0, 1.0)))
+        with pytest.raises(ValueError) as excinfo:
+            _preprocess_check_baked_transforms([arm], {arm: []})
+        msg = str(excinfo.value)
+        assert "prepare_for_export.py" in msg
+        assert "Apply > All Transforms" in msg
+
+    def test_only_meshes_unbaked(self):
+        arm = _MockObj('rig', Matrix.Identity(4))
+        meshes = [_MockObj('a', Matrix.Translation((1, 0, 0)))]
+        with pytest.raises(ValueError) as excinfo:
+            _preprocess_check_baked_transforms([arm], {arm: meshes})
+        msg = str(excinfo.value)
+        assert "armature" not in msg.lower() or "mesh" in msg.lower()
+        assert "1 mesh(es)" in msg
+
+
 class _MockVertexGroup:
     def __init__(self, weight):
         self.weight = weight
@@ -141,6 +187,39 @@ class TestCheckVertexWeightCount:
 
     def test_constant_matches_envelope_hardware_limit(self):
         assert MAX_VERTEX_WEIGHTS == 4
+
+
+class TestCheckTextureSizes:
+    def test_at_cap_ok(self):
+        _check_texture_sizes([('Body.png', 512, 512)])
+
+    def test_under_cap_ok(self):
+        _check_texture_sizes([('Eye.png', 128, 64), ('Body.png', 256, 256)])
+
+    def test_over_cap_width_rejected(self):
+        with pytest.raises(ValueError, match="exceed GameCube cap"):
+            _check_texture_sizes([('Body.png', 1024, 512)])
+
+    def test_over_cap_height_rejected(self):
+        with pytest.raises(ValueError, match="exceed GameCube cap"):
+            _check_texture_sizes([('Body.png', 512, 1024)])
+
+    def test_error_mentions_prepare_script(self):
+        with pytest.raises(ValueError, match="prepare_for_export"):
+            _check_texture_sizes([('Body.png', 2048, 2048)])
+
+    def test_sample_offender_in_error(self):
+        with pytest.raises(ValueError, match=r"Hair\.png \(1024x1024\)"):
+            _check_texture_sizes([
+                ('Body.png', 256, 256),
+                ('Hair.png', 1024, 1024),
+            ])
+
+    def test_empty_list_ok(self):
+        _check_texture_sizes([])
+
+    def test_constant_matches_documented_cap(self):
+        assert MAX_TEXTURE_DIM == 512
 
 
 class TestIsIdentityMatrix:

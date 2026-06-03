@@ -19,14 +19,10 @@ _LIGHT_TYPE_MAP = {
 
 
 def describe_light(light_node, light_index=0):
-    """Convert a Light node to IRLight.
+    """Convert a parsed Light node to an IRLight (positions in meters, color [0,1]).
 
-    Args:
-        light_node: Parsed Light node (from LightSet or SceneData).
-        light_index: Index for naming.
-
-    Returns:
-        IRLight or None if the light type is unsupported.
+    In: light_node (Light, parsed); light_index (int, ≥0, used in name when light has no name).
+    Out: IRLight|None — None if the LObj type is not in {AMBIENT,INFINITE,POINT,SPOT}.
     """
     light_type_flag = light_node.flags & LOBJ_TYPE_MASK
     ir_type = _LIGHT_TYPE_MAP.get(light_type_flag)

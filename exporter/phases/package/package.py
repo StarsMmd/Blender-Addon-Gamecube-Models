@@ -12,10 +12,18 @@ try:
     from ....shared.helpers.pkx import PKXContainer
     from ....shared.helpers.pkx_header import PKXHeader
     from ....shared.helpers.logger import StubLogger
+    from ....shared.helpers.fsys_writer import (
+        parse_fsys_summary, find_model_entries, rebuild_fsys_replacing,
+        MODEL_TYPE_PKX,
+    )
 except (ImportError, SystemError):
     from shared.helpers.pkx import PKXContainer
     from shared.helpers.pkx_header import PKXHeader
     from shared.helpers.logger import StubLogger
+    from shared.helpers.fsys_writer import (
+        parse_fsys_summary, find_model_entries, rebuild_fsys_replacing,
+        MODEL_TYPE_PKX,
+    )
 
 
 def package_output(dat_bytes, filepath, options=None, logger=StubLogger(),
@@ -44,6 +52,8 @@ def package_output(dat_bytes, filepath, options=None, logger=StubLogger(),
 
     if ext == 'pkx':
         final_bytes = _package_pkx(dat_bytes, filepath, shiny_params, pkx_header, logger)
+    elif ext == 'fsys':
+        final_bytes = _package_fsys(dat_bytes, filepath, shiny_params, pkx_header, logger)
     else:
         final_bytes = dat_bytes
 
@@ -121,6 +131,37 @@ def _build_pkx_from_header(dat_bytes, header, shiny_params, logger):
                 "XD" if header.is_xd else "Colosseum",
                 pkx.header_size, len(dat_bytes), len(final))
     return final
+
+
+def _package_fsys(dat_bytes, filepath, shiny_params, pkx_header, logger):
+    """Replace the single model entry inside an existing FSYS archive.
+
+    The pre_process phase already validated that the file exists, has the
+    FSYS magic, and contains exactly one model entry. We re-parse here to
+    locate that entry, build the appropriate payload (raw DAT or wrapped
+    PKX) matching the entry's file type, and re-emit the archive with
+    that entry replaced. Other entries' bytes are preserved verbatim.
+    """
+    with open(filepath, 'rb') as f:
+        raw = f.read()
+
+    entries = parse_fsys_summary(raw)
+    model_entries = find_model_entries(entries)
+    target = model_entries[0]
+
+    if target.model_kind == MODEL_TYPE_PKX:
+        payload = _package_pkx(dat_bytes, filepath, shiny_params, pkx_header, logger)
+        logger.info("  Built PKX payload for FSYS slot '%s': %d bytes",
+                    target.filename, len(payload))
+    else:
+        payload = dat_bytes
+        logger.info("  Using DAT payload for FSYS slot '%s': %d bytes",
+                    target.filename, len(payload))
+
+    rebuilt = rebuild_fsys_replacing(raw, target.index, payload)
+    logger.info("  FSYS rebuilt: %d entries, %d bytes (was %d)",
+                len(entries), len(rebuilt), len(raw))
+    return rebuilt
 
 
 def _inject_into_existing(dat_bytes, filepath, shiny_params, logger):

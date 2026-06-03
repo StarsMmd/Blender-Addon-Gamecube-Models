@@ -31,18 +31,10 @@ _CHANNEL_MAP = {
 
 
 def describe_bone_animations(model_set, joint_to_bone_index, bones, options, logger=StubLogger(), model_name=None):
-    """Walk AnimationJoint trees and produce IRBoneAnimationSet list.
+    """Walk AnimationJoint trees parallel to the Joint tree and emit one set per animation.
 
-    Args:
-        model_set: Parsed model set with animated_joints list.
-        joint_to_bone_index: dict mapping Joint.address → bone index.
-        bones: list[IRBone] from describe_bones().
-        options: importer options dict.
-        logger: Logger instance.
-        model_name: Name to use for animation naming (defaults to root joint name).
-
-    Returns:
-        list[IRBoneAnimationSet] with decoded keyframes per bone per channel.
+    In: model_set (ModelSet-like, parsed); joint_to_bone_index (dict[int,int], joint address→bone index); bones (list[IRBone]); options (dict, may contain 'pkx_header'); logger (Logger); model_name (str|None, used as name prefix).
+    Out: list[IRBoneAnimationSet], one per animated_joint, names deduplicated and zero-padded.
     """
     animated_joints = getattr(model_set, 'animated_joints', None) or []
     root_joint = model_set.root_joint
@@ -97,7 +89,11 @@ def describe_bone_animations(model_set, joint_to_bone_index, bones, options, log
 
 
 def _is_static_pose(tracks):
-    """Return True if every keyframe channel in the tracks holds a constant value."""
+    """Return True if every keyframe channel in the tracks holds a constant value.
+
+    In: tracks (list[IRBoneTrack]).
+    Out: bool, True iff no channel has any keyframe diverging from its first by >1e-6.
+    """
     for track in tracks:
         for kf_list in (track.rotation, track.location, track.scale):
             if kf_list is None:
@@ -112,24 +108,21 @@ def _is_static_pose(tracks):
 
 
 def _build_anim_name_map(pkx_header):
-    """Build a map of animation index → semantic name from PKX metadata.
+    """Build animation index → semantic name map from PKX header slot entries.
 
-    Uses the animation slot entries and sub-animation references to produce
-    compact, human-readable names for each DAT animation index.
-
-    Returns dict[int, str] or empty dict if no PKX header.
+    In: pkx_header (PKXHeader|None, parsed PKX metadata).
+    Out: dict[int, str], animation index → compact semantic name (empty dict if no header).
     """
     if pkx_header is None:
         return {}
 
     try:
-        from .....shared.helpers.pkx_header import XD_POKEMON_ANIM_NAMES, XD_TRAINER_ANIM_NAMES
+        from .....shared.helpers.pkx_header import XD_POKEMON_ANIM_NAMES
     except (ImportError, SystemError):
-        from shared.helpers.pkx_header import XD_POKEMON_ANIM_NAMES, XD_TRAINER_ANIM_NAMES
+        from shared.helpers.pkx_header import XD_POKEMON_ANIM_NAMES
 
     is_xd = pkx_header.is_xd
-    is_trainer = is_xd and pkx_header.species_id == 0 and pkx_header.particle_orientation == 0
-    slot_names = XD_TRAINER_ANIM_NAMES if is_trainer else XD_POKEMON_ANIM_NAMES
+    slot_names = XD_POKEMON_ANIM_NAMES
 
     # Collect active slot names per animation index.
     # XD uses motion_type > 0 to indicate active entries.
@@ -173,15 +166,10 @@ def _build_anim_name_map(pkx_header):
 
 
 def _compact_anim_name(slot_names):
-    """Generate a compact animation name from a list of slot names.
+    """Compact a list of slot names into one short label using priority rules.
 
-    Rules:
-    - "Idle" (slot 0) takes absolute priority — always just "Idle"
-    - Sub-animations keep their prefix: "Sub SleepOnPose"
-    - Physical-only → "Physical", Special-only → "Special", mix → "Attack"
-    - Non-attack slots appended after (except regularly defaulting ones like Take Flight)
-    - Damage + Faint sharing → "Faint"
-    - Deduplication happens upstream after all names are generated
+    In: slot_names (list[str], may be empty; PKX slot labels like 'Idle', 'Physical', 'Sub Extra').
+    Out: str, single combined name (e.g. 'Idle', 'Attack', 'Faint', 'Sub Extra', 'Unknown' if empty).
     """
     if not slot_names:
         return 'Unknown'
@@ -239,7 +227,11 @@ def _compact_anim_name(slot_names):
 
 def _walk_parallel(anim_joint, joint, tracks, loop_flag,
                    joint_to_bone_index, bones, logger, options=None):
-    """Walk AnimationJoint and Joint trees in parallel, decoding keyframes."""
+    """Walk AnimationJoint and Joint trees in parallel, appending an IRBoneTrack per animated bone.
+
+    In: anim_joint (AnimationJoint); joint (Joint, tree-aligned with anim_joint); tracks (list[IRBoneTrack], appended in-place); loop_flag (list[bool] of length 1, mutable closure flag); joint_to_bone_index (dict[int,int]); bones (list[IRBone]); logger (Logger); options (dict|None).
+    Out: None — mutates `tracks` and `loop_flag` in place.
+    """
     bone_index = joint_to_bone_index.get(joint.address, 0)
     bone = bones[bone_index]
 
@@ -261,9 +253,14 @@ def _walk_parallel(anim_joint, joint, tracks, loop_flag,
                        joint_to_bone_index, bones, logger, options)
 
 
-def _describe_bone_track(aobj, joint, bone, bone_index, bones, logger=None, options=None):
-    """Decode all channels for one bone into an IRBoneTrack."""
-    rotation = [[], [], []]  # [X, Y, Z]
+def _decode_bone_channels(aobj, joint=None, bone=None, bones=None,
+                          logger=None, options=None):
+    """Walk the Fobj chain on `aobj` and decode keyframes per SRT/PATH channel.
+
+    In: aobj (Animation node, parsed); joint (Joint|None, only used for PATH); bone (IRBone|None, only used for PATH); bones (list[IRBone]|None); logger (Logger|None); options (dict|None).
+    Out: tuple (rotation, location, scale, spline_path) — rotation/location/scale are each length-3 lists of IRKeyframe lists [X,Y,Z] (location in meters), spline_path is IRSplinePath|None.
+    """
+    rotation = [[], [], []]
     location = [[], [], []]
     scale = [[], [], []]
     spline_path = None
@@ -271,7 +268,8 @@ def _describe_bone_track(aobj, joint, bone, bone_index, bones, logger=None, opti
     fobj = aobj.frame
     while fobj:
         if fobj.type == HSD_A_J_PATH:
-            spline_path = _extract_spline_path(aobj, joint, bone, bones, fobj, logger, options)
+            if joint is not None and bone is not None and bones is not None:
+                spline_path = _extract_spline_path(aobj, joint, bone, bones, fobj, logger, options)
 
         elif fobj.type in _CHANNEL_MAP:
             category, component = _CHANNEL_MAP[fobj.type]
@@ -280,7 +278,6 @@ def _describe_bone_track(aobj, joint, bone, bone_index, bones, logger=None, opti
             if category == 'r':
                 rotation[component] = keyframes
             elif category == 'l':
-                # Scale translation keyframes to meters
                 for kf in keyframes:
                     kf.value *= GC_TO_METERS
                     if kf.handle_left is not None:
@@ -297,32 +294,27 @@ def _describe_bone_track(aobj, joint, bone, bone_index, bones, logger=None, opti
 
         fobj = fobj.next
 
+    return rotation, location, scale, spline_path
+
+
+def _describe_bone_track(aobj, joint, bone, bone_index, bones, logger=None, options=None):
+    """Decode all channels for one bone into an IRBoneTrack with rest-pose data attached.
+
+    In: aobj (Animation node); joint (Joint, parsed); bone (IRBone); bone_index (int, ≥0); bones (list[IRBone]); logger (Logger|None); options (dict|None).
+    Out: IRBoneTrack with rotation/location/scale channels, rest_local_matrix (meters), and optional spline_path.
+    """
+    rotation, location, scale, spline_path = _decode_bone_channels(
+        aobj, joint, bone, bones, logger=logger, options=options,
+    )
+
     if spline_path and logger:
         logger.info("  PATH bone '%s' (idx=%d): %d param kf, %d control pts (type=%d)",
                     bone.name, bone_index, len(spline_path.parameter_keyframes),
                     len(spline_path.control_points), spline_path.curve_type)
 
-    # Compute the rest-pose local matrix as plain T @ R @ S (no parent_scl
-    # correction). The animated matrix in Phase 5 also uses plain T @ R @ S,
-    # so they cancel at rest (identity). Blender's ALIGNED inheritance handles
-    # parent scale propagation at evaluation time.
-    #
-    # The parent_scl correction from HSD's aligned scale inheritance is NOT
-    # applied here because it creates shear in the matrix. TRS decomposition
-    # can't represent shear, causing cascading errors in deep bone chains.
-    #
-    # Near-zero guard: bones hidden at rest (scale ≈ 0) use a "visible scale"
-    # discovered by scanning animation keyframes.
     rest_scale = tuple(joint.scale)
-    nz = 0.001
-    if any(abs(rest_scale[c]) < nz for c in range(3)):
-        vis = _find_visible_scale_in_channels(scale)
-        use_scale = vis if vis is not None else rest_scale
-    else:
-        use_scale = rest_scale
-
     scaled_pos = tuple(p * GC_TO_METERS for p in joint.position)
-    rest_local = compile_srt_matrix(use_scale, joint.rotation, scaled_pos)
+    rest_local = _compose_rest_local_matrix(joint, scale)
 
     return IRBoneTrack(
         bone_name=bone.name,
@@ -339,14 +331,33 @@ def _describe_bone_track(aobj, joint, bone, bone_index, bones, logger=None, opti
     )
 
 
+def _compose_rest_local_matrix(joint, scale_channels):
+    """Compose the bone's rest-pose local matrix (T@R@S in meters), with near-zero scale rescue.
+
+    Plain T@R@S — no parent_scl shear correction. Blender's ALIGNED inheritance
+    handles parent scale at evaluation time. For bones hidden at rest (scale ≈ 0)
+    we substitute a visible scale discovered by scanning the animation keyframes.
+
+    In: joint (Joint, parsed; reads .scale, .rotation, .position); scale_channels (list of 3 lists[IRKeyframe], scanned for visible scale).
+    Out: Matrix (4×4) — rest-pose local transform with translation in meters.
+    """
+    rest_scale = tuple(joint.scale)
+    nz = 0.001
+    if any(abs(rest_scale[c]) < nz for c in range(3)):
+        vis = _find_visible_scale_in_channels(scale_channels)
+        use_scale = vis if vis is not None else rest_scale
+    else:
+        use_scale = rest_scale
+
+    scaled_pos = tuple(p * GC_TO_METERS for p in joint.position)
+    return compile_srt_matrix(use_scale, joint.rotation, scaled_pos)
+
+
 def _find_visible_scale_in_channels(scale_channels):
-    """Find a non-zero scale from animation keyframes for a near-zero rest bone.
+    """Find a non-zero per-axis scale from animation keyframes (for near-zero rest bones).
 
-    Args:
-        scale_channels: list of 3 keyframe lists [X, Y, Z] for scale.
-
-    Returns:
-        (sx, sy, sz) tuple if a visible scale was found, else None.
+    In: scale_channels (list of 3 lists[IRKeyframe], one per axis [X,Y,Z]).
+    Out: tuple[float,float,float]|None — first non-zero (|v|≥0.001) value per axis, or None if any axis has none.
     """
     nz = 0.001
     best = [None, None, None]
@@ -361,40 +372,22 @@ def _find_visible_scale_in_channels(scale_channels):
 
 
 def _extract_spline_path(aobj, joint, bone, bones, fobj, logger, options=None):
-    """Extract spline path data from a PATH animation channel into IRSplinePath."""
+    """Extract spline path data from an HSD_A_J_PATH channel into an IRSplinePath.
+
+    In: aobj (Animation node, has .joint→spline joint); joint (Joint); bone (IRBone); bones (list[IRBone]); fobj (Frame node, the PATH channel); logger (Logger); options (dict|None).
+    Out: IRSplinePath with control points in meters, parameter keyframes, curve type, and world matrix; or None if data missing.
+    """
     path_keyframes = decode_fobjdesc(fobj, logger=logger, options=options)
     if not path_keyframes:
         return None
 
-    # The Animation object's 'joint' field points to the spline joint
     spline_joint = getattr(aobj, 'joint', None)
-    spline_node = None
-    if spline_joint and hasattr(spline_joint, 'property') and spline_joint.property:
-        prop = spline_joint.property
-        if hasattr(prop, 's1') and not isinstance(prop, int):
-            spline_node = prop
-
-    if spline_node is None or not isinstance(getattr(spline_node, 's1', None), list):
+    spline_data = _resolve_spline_node_data(spline_joint)
+    if spline_data is None:
         return None
 
-    control_points = [[c * GC_TO_METERS for c in p] for p in spline_node.s1]
-    curve_type = getattr(spline_node, 'flags', 0) >> 8
-    tension = getattr(spline_node, 'f0', 0.0) or 0.0
-    num_cvs = getattr(spline_node, 'n', 0)
-
-    # Compute world matrix for the spline joint (for curve positioning)
-    world_matrix = None
-    if spline_joint:
-        scaled_spl_pos = tuple(p * GC_TO_METERS for p in spline_joint.position)
-        spline_local = compile_srt_matrix(
-            spline_joint.scale, spline_joint.rotation, scaled_spl_pos
-        )
-        if bone.parent_index is not None:
-            parent_world = Matrix(bones[bone.parent_index].world_matrix)
-            spline_world = parent_world @ spline_local
-        else:
-            spline_world = spline_local
-        world_matrix = matrix_to_list(spline_world)
+    control_points, curve_type, tension, num_cvs = spline_data
+    world_matrix = _compose_spline_world_matrix(spline_joint, bone, bones)
 
     return IRSplinePath(
         control_points=control_points,
@@ -404,3 +397,42 @@ def _extract_spline_path(aobj, joint, bone, bones, fobj, logger, options=None):
         num_control_points=num_cvs,
         world_matrix=world_matrix,
     )
+
+
+def _resolve_spline_node_data(spline_joint):
+    """Pull spline geometry off a Joint's property (Spline node), in meters.
+
+    In: spline_joint (Joint|None, expected to have .property with .s1 control-point list).
+    Out: tuple (control_points: list[list[float]], curve_type: int, tension: float, num_control_points: int) or None when the Joint or spline node is absent.
+    """
+    if spline_joint is None or not hasattr(spline_joint, 'property') or not spline_joint.property:
+        return None
+    prop = spline_joint.property
+    if not hasattr(prop, 's1') or isinstance(prop, int):
+        return None
+    if not isinstance(prop.s1, list):
+        return None
+
+    control_points = [[c * GC_TO_METERS for c in p] for p in prop.s1]
+    curve_type = getattr(prop, 'flags', 0) >> 8
+    tension = getattr(prop, 'f0', 0.0) or 0.0
+    num_cvs = getattr(prop, 'n', 0)
+    return control_points, curve_type, tension, num_cvs
+
+
+def _compose_spline_world_matrix(spline_joint, bone, bones):
+    """Compose the world matrix for a spline joint, anchored under the owning bone's parent.
+
+    In: spline_joint (Joint|None); bone (IRBone, owning bone for parent lookup); bones (list[IRBone]).
+    Out: list[list[float]]|None — 4×4 world matrix in meters, or None if spline_joint is missing.
+    """
+    if spline_joint is None:
+        return None
+    scaled_spl_pos = tuple(p * GC_TO_METERS for p in spline_joint.position)
+    spline_local = compile_srt_matrix(spline_joint.scale, spline_joint.rotation, scaled_spl_pos)
+    if bone.parent_index is not None:
+        parent_world = Matrix(bones[bone.parent_index].world_matrix)
+        spline_world = parent_world @ spline_local
+    else:
+        spline_world = spline_local
+    return matrix_to_list(spline_world)

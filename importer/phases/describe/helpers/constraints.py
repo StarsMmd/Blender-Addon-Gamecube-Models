@@ -22,11 +22,10 @@ except (ImportError, SystemError):
 
 
 def describe_constraints(root_joint, bones, joint_to_bone_index):
-    """Extract constraints from Joint Reference chains into IR types.
+    """Extract constraints from Joint Reference chains across the whole tree.
 
-    Returns:
-        Tuple of (ik, copy_location, track_to, copy_rotation,
-                  limit_rotation, limit_location) constraint lists.
+    In: root_joint (Joint, parsed root); bones (list[IRBone]); joint_to_bone_index (dict[int,int]).
+    Out: tuple of 6 lists (ik: list[IRIKConstraint], copy_location, track_to, copy_rotation, limit_rotation, limit_location).
     """
     # Build lookup maps
     addr_to_joint = {}
@@ -68,7 +67,11 @@ def describe_constraints(root_joint, bones, joint_to_bone_index):
 
 
 def _build_addr_map(joint, result):
-    """Build {address: Joint node} map via DFS."""
+    """Build {Joint.address: Joint node} map by depth-first traversal.
+
+    In: joint (Joint, recursed); result (dict[int, Joint], populated in place).
+    Out: None — mutates `result`.
+    """
     result[joint.address] = joint
     if joint.child and not (joint.flags & JOBJ_INSTANCE):
         _build_addr_map(joint.child, result)
@@ -77,7 +80,11 @@ def _build_addr_map(joint, result):
 
 
 def _get_parent(joint, bones, jtb, addr_to_joint, bone_idx_to_addr):
-    """Get parent Joint node using IRBone parent_index."""
+    """Get the parent Joint node by routing through the IRBone parent_index.
+
+    In: joint (Joint); bones (list[IRBone]); jtb (dict[int,int]); addr_to_joint (dict[int,Joint]); bone_idx_to_addr (dict[int,int]).
+    Out: Joint|None — None if joint is root or lookup fails.
+    """
     bone_idx = jtb.get(joint.address, 0)
     parent_idx = bones[bone_idx].parent_index
     if parent_idx is None:
@@ -89,7 +96,11 @@ def _get_parent(joint, bones, jtb, addr_to_joint, bone_idx_to_addr):
 
 
 def _describe_ik(joint, bones, jtb, addr_to_joint, bone_idx_to_addr):
-    """Extract IK constraint from an effector joint."""
+    """Extract an IRIKConstraint from a JOBJ_EFFECTOR joint and its chain.
+
+    In: joint (Joint, must be effector type); bones (list[IRBone]); jtb (dict[int,int]); addr_to_joint (dict[int,Joint]); bone_idx_to_addr (dict[int,int]).
+    Out: IRIKConstraint|None — None if chain or required reference objects are missing.
+    """
     parent = _get_parent(joint, bones, jtb, addr_to_joint, bone_idx_to_addr)
     if not parent:
         return None
@@ -156,7 +167,11 @@ def _describe_ik(joint, bones, jtb, addr_to_joint, bone_idx_to_addr):
 
 
 def _describe_regular(joint, bones, jtb):
-    """Extract non-IK constraints from Reference chain."""
+    """Extract non-IK constraints (copy-loc/rot, track-to, limits) from a joint's Reference chain.
+
+    In: joint (Joint, non-effector); bones (list[IRBone]); jtb (dict[int,int]).
+    Out: tuple of 5 lists (copy_location, track_to, copy_rotation, limit_rotation, limit_location); each may be empty.
+    """
     bone_idx = jtb.get(joint.address, 0)
     bone_name = bones[bone_idx].name
 
@@ -250,7 +265,11 @@ def _describe_regular(joint, bones, jtb):
 
 
 def _bone_name_for(ref_obj, bones, jtb):
-    """Get bone name from a Reference's property Joint."""
+    """Resolve the bone name targeted by a Reference object's Joint property.
+
+    In: ref_obj (Reference|None, with .property→Joint); bones (list[IRBone]); jtb (dict[int,int]).
+    Out: str|None — bone name, or None if ref_obj is None or address not found.
+    """
     if ref_obj and hasattr(ref_obj.property, 'address'):
         idx = jtb.get(ref_obj.property.address)
         if idx is not None:

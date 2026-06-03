@@ -4,7 +4,6 @@ Builds MaterialAnimationJoint trees (parallel to Joint tree) from
 IRMaterialTrack data in each IRBoneAnimationSet. Each track maps to
 a MaterialAnimation node attached to the bone that owns the mesh.
 """
-import re
 from collections import defaultdict
 
 try:
@@ -86,13 +85,24 @@ def compose_material_animations(anim_set, bones, meshes, logger=StubLogger()):
             mesh_to_bone[mesh_idx] = bone_idx
 
     # Map id(material) → (track, material). DObjs group meshes by material
-    # identity, so the track for mesh_25's material is also the track that
-    # applies to every other IRMesh sharing that same material on the same
-    # bone. The material is carried alongside so _build_texture_animation
-    # can look up the TObj's static UV scale for the V-flip reversal.
+    # identity, so the track for one IRMesh's material is also the track
+    # that applies to every other IRMesh sharing that same material on
+    # the same bone. The material is carried alongside so
+    # `_build_texture_animation` can look up the TObj's static UV scale
+    # for the V-flip reversal.
+    #
+    # Foreign-key resolution: each track's `material_mesh_name` is an
+    # opaque mesh id (matches `IRMesh.id`). Build a one-shot id→index
+    # lookup so we don't depend on the legacy `mesh_NN_<bone>` synthetic
+    # format being parseable. Falls back to that format only when an
+    # IRMesh has no `id` set (legacy fixtures, intermediate test data).
+    mesh_id_to_index = _build_mesh_id_lookup(meshes, bones)
+
     track_by_material_id = {}
     for track in anim_set.material_tracks:
-        mesh_idx = _parse_mesh_index(track.material_mesh_name)
+        mesh_idx = mesh_id_to_index.get(track.material_mesh_name)
+        if mesh_idx is None:
+            continue
         if 0 <= mesh_idx < len(meshes):
             mat = meshes[mesh_idx].material
             if mat is not None:
@@ -156,12 +166,25 @@ def compose_material_animations(anim_set, bones, meshes, logger=StubLogger()):
     return mat_joints[roots[0]] if roots else None
 
 
-def _parse_mesh_index(material_mesh_name):
-    """Extract mesh index from material_mesh_name like 'mesh_15_Bone_103'."""
-    match = re.match(r'mesh_(\d+)_', material_mesh_name)
-    if match:
-        return int(match.group(1))
-    return 0
+def _build_mesh_id_lookup(meshes, bones):
+    """Map opaque IRMesh.id → mesh index, with a legacy fallback.
+
+    Material animation tracks reference meshes by id-string. The
+    canonical id is set on `IRMesh.id` at describe-time; for legacy
+    paths that left it unset we fabricate the same `mesh_NN_<bone>`
+    synthetic id on the fly so older IR data still binds.
+    """
+    digit_width = max(1, len(str(max(len(meshes) - 1, 0))))
+    out = {}
+    for i, mesh in enumerate(meshes):
+        mesh_id = getattr(mesh, 'id', None)
+        if not mesh_id:
+            bone_idx = mesh.parent_bone_index
+            bone_name = (bones[bone_idx].name
+                         if 0 <= bone_idx < len(bones) else 'unknown')
+            mesh_id = "mesh_%s_%s" % (str(i).zfill(digit_width), bone_name)
+        out[mesh_id] = i
+    return out
 
 
 def _build_material_animation_chain(dobj_materials, track_by_material_id, loop):

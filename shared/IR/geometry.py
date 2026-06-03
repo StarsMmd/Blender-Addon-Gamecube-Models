@@ -21,6 +21,13 @@ class IRMesh:
     local_matrix: list[list[float]] | None = None
     cull_front: bool = False
     cull_back: bool = False
+    # Opaque stable identifier used for cross-references (e.g.
+    # IRMaterialTrack.material_mesh_name → this id). Not for display.
+    # Minted at describe time and preserved through plan / merge /
+    # compose so foreign keys stay valid even if mesh ordering changes.
+    # Default None means "not yet assigned" — tests and legacy code
+    # that don't construct material-anim references can leave it unset.
+    id: str | None = None
 
 
 @dataclass

@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Importer &middot; Blender HAL DAT Model Addon</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="theme.js"></script>
+</head>
+<body>
+    <header class="site-header">
+        <div class="container">
+            <a href="index.html" class="site-title">Blender HAL DAT Model Addon</a>
+            <nav class="site-nav">
+                <a href="index.html">Home</a>
+                <a href="importer.html">Importer</a>
+                <a href="exporter.html">Exporter</a>
+                <a href="fsys-tool.html">FSYS Tool</a>
+                <button class="theme-toggle" type="button" aria-label="Toggle light / dark mode" title="Toggle light / dark mode">
+                    <span class="icon-dark">☀️</span><span class="icon-light">🌙</span>
+                </button>
+            </nav>
+        </div>
+    </header>
+
+    <main class="container">
+        <h1>Importing models</h1>
+
+        <p>This guide walks through the full end-to-end process — from dumping your own GameCube
+        ROM to viewing animations and shiny variants on an imported Pokémon model.</p>
+
+        <nav class="toc">
+            <h2>Contents</h2>
+            <ol>
+                <li><a href="#blender-setup">Blender setup</a></li>
+                <li><a href="#ripping-rom">Ripping your own GameCube ROM</a></li>
+                <li><a href="#extracting-models">Getting model files from the ROM</a></li>
+                <li><a href="#importing-model">Importing a model</a></li>
+                <li><a href="#viewing-animations">Viewing animations</a></li>
+                <li><a href="#viewing-shiny">Viewing shiny variants (Pokémon)</a></li>
+                <li><a href="#troubleshooting">Troubleshooting</a></li>
+            </ol>
+        </nav>
+
+        <h2 id="blender-setup">1. Blender setup</h2>
+
+        <p>Before following this guide, make sure Blender and the addon are installed.
+        The home page covers both steps:</p>
+
+        <ul>
+            <li><a href="index.html#installing-blender">Installing Blender</a></li>
+            <li><a href="index.html#installing-plugin">Installing the plugin</a></li>
+        </ul>
+
+        <p>Once that's done, return here and continue with step 2.</p>
+
+        <h2 id="ripping-rom">2. Ripping your own GameCube ROM</h2>
+
+        <p>To work with Pokémon Colosseum or XD models, you need a copy of the game's data on your
+        computer. The data lives on the disc, so it has to be "dumped" — read off the physical disc and
+        saved as a single file (the ROM, also called an ISO).</p>
+
+        <div class="callout">
+            <strong>Important:</strong> only dump a disc you legally own. Piracy is not supported.
+            If you don't have your own legally-obtained dump do not continue with this process.
+        </div>
+
+        <div class="callout">
+            <strong>Note:</strong> ripping the ROM itself isn't covered in this guide — try
+            searching the internet for a guide on how to do that. The output is an
+            <code>.iso</code> (sometimes <code>.gcm</code>) file, which is what the rest of this
+            guide refers to.
+        </div>
+
+        <h2 id="extracting-models">3. Getting model files from the ROM</h2>
+
+        <p>An <code>.iso</code> is a single big file. Inside it is a tree of smaller files — the actual
+        code, models, music, scripts, and everything else that makes up the game. We use the
+        <strong>Dolphin emulator</strong> to crack the ISO open and pull those files out.</p>
+
+        <h3>Step 1 — Install Dolphin</h3>
+
+        <p>Download the latest stable build of Dolphin from
+        <a href="https://dolphin-emu.org">dolphin-emu.org</a> and install it. It's free and works on
+        Windows, macOS, and Linux.</p>
+
+        <h3>Step 2 — Add your ROM to Dolphin's game list</h3>
+
+        <p>Launch Dolphin. Open the <strong>Config</strong> menu and click <strong>Paths</strong>.
+        In the dialog, click <strong>Add</strong>, then browse to the folder containing your
+        <code>.iso</code>. Close the dialog — your game will appear in Dolphin's main window.</p>
+
+        <figure class="screenshot">
+            <img src="images/importer/dolphin/dolphin-config-paths.png" alt="Dolphin Config → Paths menu">
+            <figcaption>Open <strong>Config → Paths</strong> to tell Dolphin where your ROMs live.</figcaption>
+        </figure>
+
+        <figure class="screenshot">
+            <img src="images/importer/dolphin/dolphin-add-folder.png" alt="Dolphin add folder dialog">
+            <figcaption>Click <strong>Add</strong> and pick the folder that contains your <code>.iso</code> file.</figcaption>
+        </figure>
+
+        <figure class="screenshot">
+            <img src="images/importer/dolphin/dolphin-game-list.png" alt="Dolphin main game list with Pokemon XD">
+            <figcaption>Once added, your game appears in Dolphin's main window.</figcaption>
+        </figure>
+
+        <h3>Step 3 — Open the disc's contents</h3>
+
+        <p>Right-click your game in the list and choose <strong>Properties</strong>. In the window that
+        opens, click the <strong>Filesystem</strong> tab. This shows the tree of files stored inside
+        the disc.</p>
+
+        <figure class="screenshot">
+            <img src="images/importer/dolphin/dolphin-right-click-properties.png" alt="Right-click menu showing Properties">
+            <figcaption>Right-click the game and choose <strong>Properties</strong>.</figcaption>
+        </figure>
+
+        <figure class="screenshot">
+            <img src="images/importer/dolphin/dolphin-filesystem-tab.png" alt="Filesystem tab in Properties">
+            <figcaption>The <strong>Filesystem</strong> tab shows everything packed inside the disc.</figcaption>
+        </figure>
+
+        <h3>Step 4 — Extract the disc to a folder</h3>
+
+        <p>At the top of the file tree there's an entry called <strong>Disc</strong>. Right-click it and
+        choose <strong>Extract Entire Disc…</strong>. Pick an empty folder on your computer to extract
+        into — for example, a new folder on your Desktop called <code>Pokemon-XD-Dump</code>. Wait a
+        few minutes while it extracts.</p>
+
+        <figure class="screenshot">
+            <img src="images/importer/dolphin/dolphin-extract-entire-disc.png" alt="Right-click Disc → Extract Entire Disc">
+            <figcaption>Right-click the <strong>Disc</strong> entry and pick <strong>Extract Entire Disc…</strong>.</figcaption>
+        </figure>
+
+        <h3>Step 5 — Find the model files</h3>
+
+        <p>Inside the folder you extracted to, you'll find two subfolders: <code>sys/</code> (system
+        files) and <code>files/</code> (game data). The model files live inside <code>files/</code>,
+        usually packaged into archives ending in <code>.fsys</code>. Different kinds of model live
+        in different archives:</p>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Model type</th>
+                    <th>File extension</th>
+                    <th>Where to find it</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Pokémon and trainer battle models</td>
+                    <td><code>.pkx</code></td>
+                    <td>Inside <code>pkx_&lt;name&gt;.fsys</code> archives — for Pokémon, the name is
+                    the species' Japanese name transliterated in romaji (e.g. <code>pkx_fushigidane.fsys</code>
+                    for Bulbasaur). For trainers, it's their development codename, which rarely matches
+                    the in-game name.</td>
+                </tr>
+                <tr>
+                    <td>Map / scene models</td>
+                    <td><code>.rdat</code></td>
+                    <td>Inside map archives such as <code>M1_out.fsys</code>.</td>
+                </tr>
+                <tr>
+                    <td>Overworld models (NPCs, props)</td>
+                    <td><code>.dat</code></td>
+                    <td>Inside the same map archives, and inside <code>people_archive.fsys</code> and a few others.</td>
+                </tr>
+                <tr>
+                    <td>Battle-move animations</td>
+                    <td><code>.wzx</code></td>
+                    <td>Inside <code>wzx_*.fsys</code> archives.</td>
+                </tr>
+                <tr>
+                    <td>Cameras</td>
+                    <td><code>.cam</code></td>
+                    <td>Usually inside the map archives too.</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <p><code>.fsys</code> archives themselves can also be loaded directly by the plugin — any
+        models contained in the archive are imported straight into the Blender scene.</p>
+
+        <div class="callout">
+            <strong>Tip:</strong> for <code>pkx_*.fsys</code> archives in Colosseum and XD, the name
+            in the filename is the species' Japanese name in romaji (for Pokémon) or the trainer's
+            development codename (which rarely matches the in-game name). If you're struggling to
+            find the right name, ask on the community Discord.
+        </div>
+
+        <div class="callout">
+            <strong>Note:</strong> other games (such as the Smash Bros. and Kirby titles) don't use
+            <code>.fsys</code> archives — the <code>.dat</code> model files are accessible directly
+            in the dumped files.
+        </div>
+
+        <h3>Step 6 — Extract the model from inside the archive</h3>
+
+        <p>An <code>.fsys</code> file is itself an archive — it can contain multiple files of
+        different types (models, music, scripts, and any other kind of data) compressed and bundled
+        together. Think of it as the game's equivalent of a <code>.zip</code> file.</p>
+
+        <ul>
+            <li><strong>Easiest — let Blender unpack it.</strong> The importer reads <code>.fsys</code>
+            files directly, so you can skip this step entirely and point Blender at the
+            <code>.fsys</code> in the next section.</li>
+            <li><strong>Manual — use the <a href="fsys-tool.html">FSYS Tool</a>.</strong> This page
+            has a browser-based tool that extracts <code>.fsys</code> archives without any installation.
+            Open the FSYS Tool, click the <strong>Extract</strong> tab, pick your <code>.fsys</code>
+            file, and click <strong>Extract archive</strong>. The tool downloads a <code>.zip</code>
+            you can unpack to get the individual files inside (the model itself, plus any
+            metadata the archive carries).</li>
+        </ul>
+
+        <div class="callout">
+            <strong>Note:</strong> the <a href="fsys-tool.html">FSYS Tool</a> is helpful when you
+            only want to load specific models out of a large archive. Unpacking the
+            <code>.fsys</code> is also necessary if you plan to repack it later — for example,
+            after swapping out one of the models inside with a new one you exported with the plugin.
+        </div>
+
+        <h2 id="importing-model">4. Importing a model</h2>
+
+        <p>Once the plugin is <a href="index.html#installing-plugin">installed</a> and you have
+        an <code>.fsys</code> archive (or any other supported file type) on disk, importing is a
+        single menu choice.</p>
+
+        <h3>Step 1 — Open the import dialog</h3>
+
+        <p>In Blender, open the <strong>File</strong> menu, hover over <strong>Import</strong>, and
+        click <strong>Gamecube model (.dat)</strong>. A file browser will open.</p>
+
+        <figure class="screenshot">
+            <img src="images/importer/import/file-import-menu.png" alt="File → Import → Gamecube model menu">
+            <figcaption><strong>File → Import → Gamecube model (.dat)</strong>.</figcaption>
+        </figure>
+
+        <h3>Step 2 — Pick a file</h3>
+
+        <p>Browse to the model file you want to load. The importer accepts:</p>
+
+        <ul>
+            <li><code>.fsys</code> — the archive format used for game models. Most common starting point.</li>
+            <li><code>.pkx</code> — a single Pokémon or trainer model, including shiny color info.</li>
+            <li><code>.dat</code>, <code>.fdat</code>, <code>.rdat</code> — raw model files (usually
+            already extracted from an <code>.fsys</code>).</li>
+            <li><code>.wzx</code> — battle-move animation files (animation data only, no mesh).</li>
+            <li><code>.cam</code> — camera data.</li>
+        </ul>
+
+        <h3>Step 3 — Choose your import options</h3>
+
+        <p>On the right-hand side of the file browser is a sidebar with several checkboxes and
+        dropdowns. The defaults are fine for most Pokémon Colosseum / XD models, but here's what
+        each one does:</p>
+
+        <figure class="screenshot">
+            <img src="images/importer/import/sidebar-options.png" alt="Import options sidebar">
+            <figcaption>The import options sidebar.</figcaption>
+        </figure>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Option</th>
+                    <th>Default</th>
+                    <th>What it does</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><strong>Game of Origin</strong></td>
+                    <td>Colosseum / XD</td>
+                    <td>Tells the importer which game your file came from. Pick
+                    <em>Kirby Air Ride</em>, <em>Super Smash Bros.</em>, or <em>Other</em> if
+                    your file is from one of those games instead.</td>
+                </tr>
+                <tr>
+                    <td><strong>Colo/XD Kind</strong></td>
+                    <td>PKX Pokémon</td>
+                    <td>Visible only when the previous option is Colosseum / XD. Pick
+                    <em>PKX Pokémon</em> for Pokémon models, <em>PKX Trainer</em> for trainer
+                    models, or <em>DAT Model</em> for raw <code>.dat</code> files that aren't
+                    Pokémon-related (overworld props, NPCs, etc.).</td>
+                </tr>
+                <tr>
+                    <td><strong>Setup Workspace</strong></td>
+                    <td>on</td>
+                    <td>Auto-arranges the Blender workspace for animation work: splits the
+                    viewport, opens an Action Editor (animation panel), and sets playback to end
+                    at frame 60. Leave on unless you want to keep your current layout.</td>
+                </tr>
+                <tr>
+                    <td><strong>Import Lights</strong></td>
+                    <td>off</td>
+                    <td>Most game models don't ship with lights. Turn on if you specifically
+                    need them.</td>
+                </tr>
+                <tr>
+                    <td><strong>Import Cameras</strong></td>
+                    <td>off</td>
+                    <td>Same idea — only flip this on if the file contains camera data you care
+                    about (e.g. a cutscene camera).</td>
+                </tr>
+                <tr>
+                    <td><strong>Use Legacy Importer</strong></td>
+                    <td>off</td>
+                    <td>Routes through the older import code path. For comparison/debugging only.
+                    Leave off.</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <div class="callout">
+            <strong>Note:</strong> enable <strong>Import Lights</strong> and
+            <strong>Import Cameras</strong> if you plan to re-export the model back into the game
+            after editing — this preserves the original light/camera configurations. For other use
+            cases (rendering, animation, etc.) it's more common to set up your own custom lights
+            and cameras instead.
+        </div>
+
+        <h3>Step 4 — Click Import</h3>
+
+        <p>Click the blue <strong>Import DAT</strong> button at the bottom-right of the
+        file browser. After a few seconds, the model appears in the viewport.</p>
+
+        <figure class="screenshot">
+            <img src="images/importer/import/imported-model-viewport.png" alt="Imported model in the Blender viewport">
+            <figcaption>The model loaded into Blender, with its armature and meshes ready to edit.</figcaption>
+        </figure>
+
+        <h3 id="material-preview">Step 5 — Switch the viewport to Material Preview</h3>
+
+        <p>By default Blender shows the model in solid shading, so textures and materials don't
+        appear. In the top-right corner of the 3D viewport, click the third sphere icon
+        (<strong>Material Preview</strong>) to see the model with its textures applied.</p>
+
+        <figure class="screenshot">
+            <img src="images/importer/import/material-preview.png" alt="Material Preview shading mode in the viewport header">
+            <figcaption>Switching the viewport to <strong>Material Preview</strong> reveals the model's textures and materials.</figcaption>
+        </figure>
+
+        <h3>What got imported</h3>
+
+        <ul>
+            <li><strong>The skeleton</strong> — an armature object holding every bone in its rest pose.</li>
+            <li><strong>The meshes</strong> — one Blender mesh per source mesh, parented to the armature.</li>
+            <li><strong>Materials and textures</strong> — full shader graphs are rebuilt; textures are
+            unpacked from the source file and stored in the Blender scene.</li>
+            <li><strong>Animations</strong> — one Blender Action per animation track. See the next
+            section for how to play them back.</li>
+            <li><strong>Lights and cameras</strong> — only if you ticked the corresponding option.</li>
+        </ul>
+
+        <h2 id="viewing-animations">5. Viewing animations</h2>
+
+        <p>Each animation in the source file becomes a Blender <strong>Action</strong>. Actions
+        are interchangeable animation clips you can switch between on the same armature.</p>
+
+        <h3>Step 1 — Find the Action Editor</h3>
+
+        <p>If you left <strong>Setup Workspace</strong> on, the Action Editor is already open in
+        the right panel. Otherwise, change one of your editor panels to the Action Editor: click
+        the small icon in the top-left corner of any editor and pick <strong>Dope Sheet</strong>,
+        then in the Dope Sheet's mode dropdown (also top-left) switch to <strong>Action Editor</strong>.</p>
+
+        <p>You may need to scroll the Action Editor's menu bar to the side to see the animations
+        drop-down menu.</p>
+
+        <figure class="screenshot">
+            <img src="images/importer/animations/action-editor.png" alt="Action Editor panel">
+            <figcaption>The Action Editor — every imported animation appears here as a selectable Action.</figcaption>
+        </figure>
+
+        <h3>Step 2 — Switch between actions</h3>
+
+        <p>With the armature selected, click the action name (or the small icon next to it) at the top
+        of the Action Editor. A dropdown shows every animation that was imported. Pick one — the
+        viewport updates immediately.</p>
+
+        <div class="callout">
+            <strong>Note:</strong> if the armature isn't selected before choosing an animation, the
+            animation won't change. To select the armature, click on it in the Outliner panel on
+            the right — the importer names it something like <code>darklugia_skeleton_0</code>.
+        </div>
+
+        <figure class="screenshot">
+            <img src="images/importer/animations/action-dropdown.png" alt="Action dropdown showing imported animations">
+            <figcaption>The dropdown of imported animations. Pick one to make it active.</figcaption>
+        </figure>
+
+        <h3>Step 3 — Play the animation</h3>
+
+        <p>Press the spacebar to play. The viewport plays the animation in a loop. Press spacebar
+        again to stop. The timeline at the bottom of the screen shows the current frame; drag the
+        playhead to scrub manually. You can usually see roughly how long the animation is by
+        viewing the timeline in the Action Editor above.</p>
+
+        <figure class="screenshot">
+            <img src="images/importer/animations/timeline-playback.gif" alt="Timeline with playback controls">
+            <figcaption>The timeline at the bottom of Blender. The play button and the playhead are highlighted.</figcaption>
+        </figure>
+
+        <h3>Adjusting the playback range</h3>
+
+        <p>The importer sets the timeline end frame based on the length of the first animation it
+        selects. If you switch to a longer animation and it looks cut off, edit the
+        <strong>End</strong> field in the timeline header to a higher value (e.g. 200) and play again.</p>
+
+        <figure class="screenshot">
+            <img src="images/importer/animations/playback-end-frame.png" alt="Timeline end frame field">
+            <figcaption>The <strong>End</strong> field in the timeline controls how many frames Blender plays before looping.</figcaption>
+        </figure>
+
+        <h2 id="viewing-shiny">6. Viewing shiny variants (Pokémon)</h2>
+
+        <p>For <code>.pkx</code> Pokémon models, the addon automatically reads the shiny color
+        parameters from the file and builds a toggle into the materials that you can use to
+        enable and disable the shiny colours at will.</p>
+
+        <h3>Step 1 — Select the model</h3>
+
+        <p>In the Outliner panel on the right, click the model's entry to select it.</p>
+
+        <figure class="screenshot">
+            <img src="images/importer/shiny/select-armature.png" alt="Model selected in viewport">
+            <figcaption>Select the model.</figcaption>
+        </figure>
+
+        <h3>Step 2 — Open Object Properties</h3>
+
+        <p>On the right side of Blender, in the <strong>Properties</strong> editor (the column of
+        tab icons), click the orange square icon — that's the <strong>Object Properties</strong> tab.</p>
+
+        <figure class="screenshot">
+            <img src="images/importer/shiny/object-properties-tab.png" alt="Object Properties tab icon highlighted">
+            <figcaption>The orange square icon opens the Object Properties tab.</figcaption>
+        </figure>
+
+        <h3>Step 3 — Find the Shiny Variant panel</h3>
+
+        <p>Scroll down inside Object Properties until you find a section called
+        <strong>Shiny Variant</strong>. Expand it by clicking the triangle next to its name.</p>
+
+        <figure class="screenshot">
+            <img src="images/importer/shiny/shiny-variant-panel.png" alt="Shiny Variant panel expanded">
+            <figcaption>The Shiny Variant panel with the toggle and color controls.</figcaption>
+        </figure>
+
+        <h3>Step 4 — Enable the shiny preview</h3>
+
+        <p>Click the <strong>Shiny</strong> checkbox at the top of the panel. The model's colors
+        update immediately to the shiny variant.</p>
+
+        <figure class="screenshot">
+            <img src="images/importer/shiny/shiny-toggle-on.png" alt="Shiny variant toggled on, showing alternate colors">
+            <figcaption>Shiny on — the model now shows its alternate coloration.</figcaption>
+        </figure>
+
+        <h3>Step 5 — Tweak the shiny values</h3>
+
+        <p>Inside the panel you can also tweak which color channels are routed where, and adjust
+        the brightness offset per channel. Try different configurations to preview what a custom
+        shiny would look like — the viewport updates live as you update the values.</p>
+
+        <figure class="screenshot">
+            <img src="images/importer/shiny/shiny-tweak-values.png" alt="Shiny variant panel with channel routing and brightness offsets edited">
+            <figcaption>Edit the channel routing and brightness offsets to explore custom shiny configurations.</figcaption>
+        </figure>
+
+        <div class="callout">
+            <strong>Not every Pokémon has shiny parameters.</strong> Some species use an entirely
+            separate model for their shiny form instead of a color swap. For those, the
+            <strong>Shiny Variant</strong> panel won't appear — you need to import the shiny model
+            file separately.
+        </div>
+
+        <div class="callout">
+            <strong>Note:</strong> the addon also ships with a standalone <code>add_shiny_filter.py</code>
+            script that applies the same shiny filter logic to any arbitrary model. Run it from
+            Blender's Text Editor — see the <a href="running-scripts.html">running scripts guide</a>
+            for the full walkthrough.
+        </div>
+
+        <h2 id="troubleshooting">7. Troubleshooting</h2>
+
+        <p class="stub-note">Stub — common import problems and fixes coming soon.</p>
+
+        <p>If you hit a problem the docs don't cover, ask on the community Discord:
+        <a href="https://discord.gg/xCPjjnv">discord.gg/xCPjjnv</a>. Include the file you were
+        trying to import and any error messages Blender showed (the bottom of the Blender window,
+        or <strong>Window → Toggle System Console</strong> on Windows).</p>
+
+        <p><a href="index.html">&larr; Back to home</a></p>
+    </main>
+
+    <footer class="site-footer">
+        Original implementation by Made &middot; Source on <a href="https://github.com/StarsMmd/Blender-Addon-Gamecube-Models">GitHub</a>
+    </footer>
+</body>
+</html>

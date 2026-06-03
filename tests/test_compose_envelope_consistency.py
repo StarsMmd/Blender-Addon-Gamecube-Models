@@ -222,9 +222,9 @@ class TestUndeformRoundTrip:
 # ---------------------------------------------------------------------------
 # _find_skeleton_bone must mirror importer's flag search — otherwise compose
 # un-deform and importer re-deform compute different coord matrices and rest
-# vertices drift (Greninja GLB regression: compose searched SKELETON_ROOT
-# only, importer searched SKELETON|SKELETON_ROOT, 35% of verts landed > 5cm
-# from their correct rest positions on reimport).
+# vertices drift. Compose must walk up to the nearest bone carrying either
+# SKELETON or SKELETON_ROOT; searching for SKELETON_ROOT only skips past
+# closer SKELETON bones and lands on a different coord than the importer.
 # ---------------------------------------------------------------------------
 
 class TestFindSkeletonBone:
@@ -246,7 +246,7 @@ class TestFindSkeletonBone:
         # Leaf -> SKELETON midpoint -> SKELETON_ROOT. Match must stop at
         # the midpoint, not walk all the way to the root. Compose using
         # only SKELETON_ROOT would land on bone 0 and compute a different
-        # coord than the importer (Greninja regression).
+        # coord than the importer.
         bones = self._bones_chain([JOBJ_SKELETON_ROOT, JOBJ_SKELETON, 0])
         assert _find_skeleton_bone(2, bones) == 1
 

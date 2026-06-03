@@ -1,0 +1,872 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FSYS Tool &middot; Blender HAL DAT Model Addon</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="theme.js"></script>
+    <style>
+        .tabs {
+            display: flex;
+            border-bottom: 1px solid var(--border);
+            margin-top: 1.5rem;
+        }
+        .tab {
+            padding: 0.6rem 1.2rem;
+            cursor: pointer;
+            border: 1px solid transparent;
+            border-bottom: none;
+            border-radius: 8px 8px 0 0;
+            background: transparent;
+            color: var(--fg);
+            font: inherit;
+            font-size: 1rem;
+            margin-right: 0.25rem;
+            position: relative;
+            top: 1px;
+        }
+        .tab[aria-selected="true"] {
+            border-color: var(--border);
+            background: var(--surface);
+            font-weight: 600;
+            color: var(--accent);
+        }
+        .panel {
+            border: 1px solid var(--border);
+            border-top: none;
+            padding: 1.25rem;
+            border-radius: 0 0 8px 8px;
+            background: var(--surface);
+        }
+        .panel[hidden] { display: none; }
+        .row { margin: 0.75rem 0; display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+        .row label { min-width: 9rem; }
+        .row input[type="text"] {
+            font: inherit;
+            padding: 0.4rem 0.5rem;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            background: var(--bg);
+            color: var(--fg);
+            min-width: 18rem;
+        }
+        .row input[type="file"] { color: var(--fg); }
+        .run {
+            display: block;
+            width: 100%;
+            margin-top: 1rem;
+            padding: 0.85rem;
+            font-size: 1.05rem;
+            font-weight: 600;
+            color: white;
+            background: var(--accent);
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        .run:hover:not(:disabled) { background: var(--accent-hover); }
+        .run:disabled { opacity: 0.5; cursor: not-allowed; }
+        .hint { color: var(--muted); font-size: 0.85rem; }
+        #drop {
+            margin: 0.75rem 0;
+            padding: 1.5rem;
+            border: 2px dashed var(--border);
+            border-radius: 8px;
+            text-align: center;
+            color: var(--muted);
+        }
+        #drop.over { border-color: var(--accent); color: var(--accent); background: var(--code-bg); }
+        #log {
+            margin-top: 1.25rem;
+            padding: 0.75rem;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            height: 220px;
+            overflow: auto;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 0.85rem;
+            white-space: pre-wrap;
+            background: var(--code-bg);
+            color: var(--fg);
+        }
+        #log .warn { color: #d29922; }
+        #log .err  { color: #f85149; }
+        #log .ok   { color: #56d364; }
+        :root[data-theme="light"] #log .warn { color: #854d0e; }
+        :root[data-theme="light"] #log .err  { color: #991b1b; }
+        :root[data-theme="light"] #log .ok   { color: #166534; }
+    </style>
+</head>
+<body>
+    <header class="site-header">
+        <div class="container">
+            <a href="index.html" class="site-title">Blender HAL DAT Model Addon</a>
+            <nav class="site-nav">
+                <a href="index.html">Home</a>
+                <a href="importer.html">Importer</a>
+                <a href="exporter.html">Exporter</a>
+                <a href="fsys-tool.html">FSYS Tool</a>
+                <button class="theme-toggle" type="button" aria-label="Toggle light / dark mode" title="Toggle light / dark mode">
+                    <span class="icon-dark">☀️</span><span class="icon-light">🌙</span>
+                </button>
+            </nav>
+        </div>
+    </header>
+
+    <main class="container">
+        <h1>FSYS Tool</h1>
+        <p>Extract and repack Genius Sonority <code>.fsys</code> archives directly in your browser.
+        Everything runs locally — no files leave your computer.</p>
+
+        <p>Use this tool to:</p>
+        <ul>
+            <li><strong>Extract</strong> the individual <code>.dat</code>, <code>.pkx</code>, or other
+            entries from an <code>.fsys</code> archive so you can import them into Blender.</li>
+            <li><strong>Repack</strong> a folder of edited entries back into a new <code>.fsys</code>
+            archive that you can drop into your game's <code>files/</code> tree.</li>
+        </ul>
+
+        <p>For the full workflow context, see the
+        <a href="importer.html#extracting-models">importer guide</a> or the
+        <a href="exporter.html#importing-back">"importing the model back into the game"</a>
+        section of the exporter guide.</p>
+
+        <div class="tabs" role="tablist">
+            <button class="tab" role="tab" aria-selected="true"  data-panel="panel-extract">Extract</button>
+            <button class="tab" role="tab" aria-selected="false" data-panel="panel-repack">Repack</button>
+        </div>
+
+        <section id="panel-extract" class="panel" role="tabpanel">
+            <div class="row">
+                <label for="extractInput">FSYS archive:</label>
+                <input type="file" id="extractInput" accept=".fsys">
+            </div>
+            <div class="row">
+                <label for="extractName">Output base name:</label>
+                <input type="text" id="extractName" placeholder="auto from filename">
+            </div>
+            <p class="hint">
+                Downloads a single <code>&lt;name&gt;.zip</code>. Unpack it to get a folder containing
+                every entry file alongside <code>&lt;name&gt;-manifest.json</code> — that folder is what the
+                Repack tab expects.
+            </p>
+            <button class="run" id="runExtract">Extract archive</button>
+        </section>
+
+        <section id="panel-repack" class="panel" role="tabpanel" hidden>
+            <div id="drop">Drop the extracted folder here, or use the picker below.</div>
+            <div class="row">
+                <label for="folderInput">Extracted folder:</label>
+                <input type="file" id="folderInput" webkitdirectory directory multiple>
+            </div>
+            <div class="row">
+                <label for="outputName">Output file name:</label>
+                <input type="text" id="outputName" placeholder="archive.fsys">
+            </div>
+            <p class="hint">
+                Pick (or drop) the folder that contains <code>&lt;name&gt;-manifest.json</code>.
+                Each entry's file is resolved by name from inside the same folder. The rebuilt
+                <code>.fsys</code> is downloaded under the name above.
+            </p>
+            <button class="run" id="runRepack">Repack archive</button>
+        </section>
+
+        <div id="log"></div>
+
+        <p style="margin-top: 2rem;"><a href="index.html">&larr; Back to home</a></p>
+    </main>
+
+    <footer class="site-footer">
+        Original implementation by Made &middot; Source on <a href="https://github.com/StarsMmd/Blender-Addon-Gamecube-Models">GitHub</a>
+    </footer>
+
+<script>
+"use strict";
+
+// ---------------------------------------------------------------------------
+//  Tabs
+// ---------------------------------------------------------------------------
+document.querySelectorAll(".tab").forEach(tab => {
+  tab.addEventListener("click", () => {
+    document.querySelectorAll(".tab").forEach(t => {
+      const active = t === tab;
+      t.setAttribute("aria-selected", active ? "true" : "false");
+      document.getElementById(t.dataset.panel).hidden = !active;
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+//  Logging
+// ---------------------------------------------------------------------------
+const logEl = document.getElementById("log");
+function log(msg, cls) {
+  const line = document.createElement("div");
+  if (cls) line.className = cls;
+  line.textContent = msg;
+  logEl.appendChild(line);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+function clearLog() { logEl.innerHTML = ""; }
+
+// ---------------------------------------------------------------------------
+//  File type tables (raw byte → name) for ColoXD and PBR engines.
+//  Used only for human-readable manifests; raw byte round-trips losslessly.
+// ---------------------------------------------------------------------------
+const FILE_TYPES_COLOXD = {
+  0x02:"mdat",0x04:"dat",0x06:"col",0x08:"samp",0x0a:"msg",0x0c:"fnt",
+  0x0e:"scd",0x10:"dats",0x12:"gtx",0x14:"gpt1",0x18:"cam",0x1c:"rel",
+  0x1e:"pkx",0x20:"wzx",0x22:"gpt",0x24:"gpd",0x26:"drel",0x28:"isd",
+  0x2a:"ish",0x2c:"thh",0x2e:"thd",0x30:"gsw",0x32:"atx",0x34:"bin"
+};
+const FILE_TYPES_PBR = {
+  0x02:"bin",0x04:"sdr",0x06:"odr",0x08:"mdr",0x0a:"gpd",0x0c:"gtx",
+  0x12:"scd",0x16:"fnt",0x18:"msg",0x1a:"mnr",0x20:"thh",0x22:"thd",
+  0x24:"gfl",0x28:"dckp",0x2a:"dckt",0x2e:"dcka"
+};
+function fileTypeName(raw) {
+  return FILE_TYPES_COLOXD[raw] || FILE_TYPES_PBR[raw] || "";
+}
+
+// ---------------------------------------------------------------------------
+//  LZSS (ported from GoD-Tool/Sources/Shared/Dependencies/GoDFoundation/
+//        Data/Compression/LZSSCompressor.swift; QuickBMS-derived).
+//  EI=12, EJ=4, P=2, THRESHOLD=2 — matches Genius Sonority FSYS streams.
+// ---------------------------------------------------------------------------
+const EI = 12, EJ = 4, P = 2;
+
+function lzssDecompress(input, expectedSize) {
+  let N = 1 << EI;
+  let F = 1 << EJ;
+  const slidingWindow = new Uint8Array(N);
+  let inPos = 0;
+  const out = [];
+  let r = (N - F) - 2;
+  let flags = 0;
+  N -= 1; F -= 1;
+  while (inPos < input.length) {
+    if ((flags & 0x100) === 0) flags = input[inPos++] | 0xff00;
+    if ((flags & 1) !== 0) {
+      const c = input[inPos++];
+      out.push(c); slidingWindow[r] = c; r = (r + 1) & N;
+    } else {
+      let i = input[inPos++];
+      let j = input[inPos++];
+      i |= ((j >> EJ) << 8);
+      j = (j & F) + P;
+      for (let k = 0; k <= j; k++) {
+        const c = slidingWindow[(i + k) & N];
+        out.push(c); slidingWindow[r] = c; r = (r + 1) & N;
+      }
+    }
+    flags >>>= 1;
+  }
+  const result = new Uint8Array(out);
+  if (expectedSize != null && result.length > expectedSize) return result.subarray(0, expectedSize);
+  return result;
+}
+
+function lzssCompress(input) {
+  const THRESHOLD = 2;
+  const N = 1 << EI;
+  const F = (1 << EJ) + THRESHOLD;
+  const NIL = N;
+  const textBuffer = new Uint8Array(N + F - 1);
+  let matchPosition = 0, matchLength = 0;
+  const leftChildren  = new Int32Array(N + 1);
+  const rightChildren = new Int32Array(N + 257);
+  const parents       = new Int32Array(N + 1);
+  for (let i = N + 1; i <= N + 256; i++) rightChildren[i] = NIL;
+  for (let i = 0; i < N; i++) parents[i] = NIL;
+  let inPos = 0;
+  const out = [];
+  function insertNode(node) {
+    let cmp = 1;
+    let parent = N + 1 + textBuffer[node];
+    rightChildren[node] = NIL; leftChildren[node] = NIL; matchLength = 0;
+    while (true) {
+      if (cmp >= 0) {
+        if (rightChildren[parent] !== NIL) parent = rightChildren[parent];
+        else { rightChildren[parent] = node; parents[node] = parent; return; }
+      } else {
+        if (leftChildren[parent] !== NIL) parent = leftChildren[parent];
+        else { leftChildren[parent] = node; parents[node] = parent; return; }
+      }
+      let i = 1;
+      while (i < F) {
+        cmp = textBuffer[node + i] - textBuffer[parent + i];
+        if (cmp !== 0) break; i++;
+      }
+      if (i > matchLength) {
+        matchPosition = parent; matchLength = i;
+        if (matchLength >= F) break;
+      }
+    }
+    parents[node] = parents[parent];
+    leftChildren[node] = leftChildren[parent];
+    rightChildren[node] = rightChildren[parent];
+    parents[leftChildren[parent]] = node;
+    parents[rightChildren[parent]] = node;
+    if (rightChildren[parents[parent]] === parent) rightChildren[parents[parent]] = node;
+    else leftChildren[parents[parent]] = node;
+    parents[parent] = NIL;
+  }
+  function deleteNode(node) {
+    let newChild = 0;
+    if (parents[node] === NIL) return;
+    if (rightChildren[node] === NIL) newChild = leftChildren[node];
+    else if (leftChildren[node] === NIL) newChild = rightChildren[node];
+    else {
+      newChild = leftChildren[node];
+      if (rightChildren[newChild] !== NIL) {
+        do { newChild = rightChildren[newChild]; } while (rightChildren[newChild] !== NIL);
+        rightChildren[parents[newChild]] = leftChildren[newChild];
+        parents[leftChildren[newChild]] = parents[newChild];
+        leftChildren[newChild] = leftChildren[node];
+        parents[leftChildren[node]] = newChild;
+      }
+      rightChildren[newChild] = rightChildren[node];
+      parents[rightChildren[node]] = newChild;
+    }
+    parents[newChild] = parents[node];
+    if (rightChildren[parents[node]] === node) rightChildren[parents[node]] = newChild;
+    else leftChildren[parents[node]] = newChild;
+    parents[node] = NIL;
+  }
+  let codeBuffer = [0];
+  let mask = 1;
+  let length = Math.min(F, input.length);
+  if (length === 0) return new Uint8Array(0);
+  let r = N - F;
+  let s = 0;
+  let lastMatchLength = 0;
+  for (let i = 0; i < length; i++) textBuffer[r + i] = input[inPos++];
+  for (let i = 1; i <= F; i++) insertNode(r - i);
+  insertNode(r);
+  do {
+    if (matchLength > length) matchLength = length;
+    if (matchLength <= THRESHOLD) {
+      matchLength = 1;
+      codeBuffer[0] |= mask;
+      codeBuffer.push(textBuffer[r]);
+    } else {
+      codeBuffer.push(matchPosition & 0xFF);
+      codeBuffer.push(((matchPosition >> 4) & 0xf0) | (matchLength - (THRESHOLD + 1)));
+    }
+    if (mask === 0x80) {
+      for (const b of codeBuffer) out.push(b);
+      codeBuffer = [0]; mask = 1;
+    } else mask <<= 1;
+    lastMatchLength = matchLength;
+    let lastMatchCutOff = 0;
+    for (let i = 0; i < lastMatchLength; i++) {
+      if (inPos >= input.length) break;
+      const c = input[inPos++];
+      deleteNode(s);
+      textBuffer[s] = c;
+      if (s < F - 1) textBuffer[s + N] = c;
+      s = (s + 1) % N; r = (r + 1) % N;
+      insertNode(r); lastMatchCutOff++;
+    }
+    while (lastMatchCutOff < lastMatchLength) {
+      deleteNode(s);
+      s = (s + 1) % N; r = (r + 1) % N;
+      length -= 1;
+      if (length !== 0) insertNode(r);
+      lastMatchCutOff++;
+    }
+  } while (length > 0);
+  if (codeBuffer.length > 1) for (const b of codeBuffer) out.push(b);
+  return new Uint8Array(out);
+}
+
+// ---------------------------------------------------------------------------
+//  Binary helpers (big-endian)
+// ---------------------------------------------------------------------------
+function readU32BE(b, o) { return ((b[o]<<24)|(b[o+1]<<16)|(b[o+2]<<8)|b[o+3])>>>0; }
+function readU16BE(b, o) { return ((b[o]<<8)|b[o+1]) & 0xFFFF; }
+function readCString(b, o) {
+  let e = o; while (e < b.length && b[e] !== 0) e++;
+  return new TextDecoder("utf-8").decode(b.subarray(o, e));
+}
+function writeU32BE(v, o, x) { v.setUint32(o, x >>> 0, false); }
+function writeU16BE(v, o, x) { v.setUint16(o, x & 0xFFFF, false); }
+
+// ---------------------------------------------------------------------------
+//  FSYS parse + build
+//
+//  Layout from GoD-Tool/Sources/Shared/Core/Engines/GeniusSonority/
+//              File Formats/FSYSArchive.swift
+//
+//  Header (0x60): 'FSYS', unknown1, group_id, entry_count, flags,
+//                 unknown2..4, file_size, pad 0x1C, metadata_list_ptr,
+//                 file_names_ptr, file_data_ptr, pad 0x14.
+//  Metadata (0x30 per entry): u16 identifier, u8 file_type, pad,
+//    u32 data_address, uncompressed_size, flags, pad, file_size, pad,
+//    full_filename_ptr, file_type_index, filename_ptr, pad 8.
+// ---------------------------------------------------------------------------
+const HEADER_SIZE = 0x60;
+const META_SIZE   = 0x30;
+const FOOTER_SIZE = 0x20;
+
+function parseFSYS(buf) {
+  if (buf.length < HEADER_SIZE) throw new Error("File too small to be FSYS");
+  const magic = readCString(buf.subarray(0, 4), 0);
+  if (magic !== "FSYS") throw new Error("Not an FSYS archive (magic = " + magic + ")");
+  const unknown1     = readU32BE(buf, 0x04);
+  const groupID      = readU32BE(buf, 0x08);
+  const entryCount   = readU32BE(buf, 0x0C);
+  const flags        = readU32BE(buf, 0x10);
+  const unknown2     = readU32BE(buf, 0x14);
+  const unknown3     = readU32BE(buf, 0x18);
+  const unknown4     = readU32BE(buf, 0x1C);
+  const metaListPtr  = readU32BE(buf, 0x40);
+
+  const flagBits = {
+    unknownFlag1: (flags & 0x80000000) !== 0,
+    unknownFlag2: (flags & 0x40000000) !== 0,
+    debugFlag:    (flags & 0x1) !== 0,
+  };
+
+  const metaAddresses = [];
+  for (let i = 0; i < entryCount; i++) metaAddresses.push(readU32BE(buf, metaListPtr + i * 4));
+  let slotSize = 0x70;
+  if (metaAddresses.length >= 2) slotSize = metaAddresses[1] - metaAddresses[0];
+
+  const entries = [];
+  for (let i = 0; i < entryCount; i++) {
+    const mOff = metaAddresses[i];
+    const identifier    = readU16BE(buf, mOff + 0x00);
+    const fileTypeRaw   = buf[mOff + 0x02];
+    const dataAddress   = readU32BE(buf, mOff + 0x04);
+    const uncSize       = readU32BE(buf, mOff + 0x08);
+    const entryFlags    = readU32BE(buf, mOff + 0x0C);
+    const fileSize_     = readU32BE(buf, mOff + 0x14);
+    const fullNamePtr   = readU32BE(buf, mOff + 0x1C);
+    const fileTypeIndex = readU32BE(buf, mOff + 0x20);
+    const namePtr       = readU32BE(buf, mOff + 0x24);
+    const isCompressed  = (entryFlags & 0x80000000) !== 0;
+    const entryName     = readCString(buf, namePtr);
+    const fullFilename  = fullNamePtr !== 0 ? readCString(buf, fullNamePtr) : "";
+
+    let entryData = buf.subarray(dataAddress, dataAddress + fileSize_);
+    if (isCompressed) {
+      const lzMagic = readCString(entryData.subarray(0, 4), 0);
+      if (lzMagic !== "LZSS") throw new Error("Bad LZSS header on entry " + entryName);
+      const lzUnc  = readU32BE(entryData, 4);
+      const lzSize = readU32BE(entryData, 8);
+      entryData = lzssDecompress(entryData.subarray(16, lzSize), lzUnc);
+    }
+    entries.push({
+      name: entryName,
+      fileType: fileTypeName(fileTypeRaw),
+      fileTypeRaw,
+      fileTypeIndex,
+      identifier,
+      compress: isCompressed,
+      includesFullFilename: fullNamePtr !== 0,
+      fullFilename,
+      data: entryData,
+    });
+  }
+  return { groupID, unknown1, unknown2, unknown3, unknown4, flagBits, fileMetaDataSlotSize: slotSize, entries };
+}
+
+function align(n, a) { return (n + (a - 1)) & ~(a - 1); }
+
+function buildFSYS(manifest, entryDataMap) {
+  const entries = manifest.entries;
+  const debugFlag = manifest.flagBits.debugFlag;
+
+  const nameBytes = entries.map(e => new TextEncoder().encode(e.name + "\0"));
+  const fullNameBytes = entries.map(e => {
+    if (!debugFlag) return new Uint8Array(0);
+    const s = e.fullFilename || e.filename || e.name;
+    return new TextEncoder().encode(s + "\0");
+  });
+
+  let cursor = HEADER_SIZE;
+  const offsetTableAddress = cursor;
+  cursor += align(entries.length * 4, 0x10);
+  const stringTableAddress = cursor;
+  const nameOffsets = [];
+  for (const nb of nameBytes) { nameOffsets.push(cursor); cursor += nb.length; }
+  const fullNameOffsets = [];
+  for (const fb of fullNameBytes) {
+    if (debugFlag) { fullNameOffsets.push(cursor); cursor += fb.length; }
+    else fullNameOffsets.push(0);
+  }
+  cursor = align(cursor, 0x10);
+
+  const slotSize = manifest.fileMetaDataSlotSize || 0x70;
+  const firstMetaAddress = cursor;
+  cursor += slotSize * entries.length;
+  cursor = align(cursor, 0x20);
+  const firstDataAddress = cursor;
+
+  const payloads = entries.map(e => {
+    const raw = entryDataMap.get(e.filename);
+    if (!raw) throw new Error("Missing entry file: " + e.filename);
+    if (e.compress) {
+      const compressed = lzssCompress(raw);
+      const total = compressed.length + 16;
+      const buf = new Uint8Array(total);
+      const v = new DataView(buf.buffer);
+      buf.set(new TextEncoder().encode("LZSS"), 0);
+      writeU32BE(v, 4, raw.length);
+      writeU32BE(v, 8, total);
+      writeU32BE(v, 12, 0);
+      buf.set(compressed, 16);
+      return { bytes: buf, uncompressedSize: raw.length, fileSize: total };
+    }
+    return { bytes: raw, uncompressedSize: raw.length, fileSize: raw.length };
+  });
+
+  const entryAddresses = [];
+  let dataCursor = firstDataAddress;
+  for (const p of payloads) {
+    entryAddresses.push(dataCursor);
+    dataCursor += p.bytes.length;
+    dataCursor = align(dataCursor, 0x20);
+  }
+  const totalSize = dataCursor + FOOTER_SIZE;
+
+  const out = new Uint8Array(totalSize);
+  const view = new DataView(out.buffer);
+
+  out.set(new TextEncoder().encode("FSYS"), 0);
+  writeU32BE(view, 0x04, manifest.unknown1 >>> 0);
+  writeU32BE(view, 0x08, manifest.groupID  >>> 0);
+  writeU32BE(view, 0x0C, entries.length);
+  const flagWord =
+    (manifest.flagBits.unknownFlag1 ? 0x80000000 : 0) |
+    (manifest.flagBits.unknownFlag2 ? 0x40000000 : 0) |
+    (manifest.flagBits.debugFlag    ? 0x1        : 0);
+  writeU32BE(view, 0x10, flagWord >>> 0);
+  writeU32BE(view, 0x14, manifest.unknown2 >>> 0);
+  writeU32BE(view, 0x18, manifest.unknown3 >>> 0);
+  writeU32BE(view, 0x1C, manifest.unknown4 >>> 0);
+  writeU32BE(view, 0x20, totalSize);
+  writeU32BE(view, 0x40, offsetTableAddress);
+  writeU32BE(view, 0x44, stringTableAddress);
+  writeU32BE(view, 0x48, firstDataAddress);
+
+  for (let i = 0; i < entries.length; i++) out.set(nameBytes[i], nameOffsets[i]);
+  if (debugFlag) for (let i = 0; i < entries.length; i++) out.set(fullNameBytes[i], fullNameOffsets[i]);
+
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i];
+    const p = payloads[i];
+    const mOff = firstMetaAddress + i * slotSize;
+    writeU16BE(view, mOff + 0x00, e.identifier >>> 0);
+    out[mOff + 0x02] = e.fileTypeRaw & 0xFF;
+    writeU32BE(view, mOff + 0x04, entryAddresses[i]);
+    writeU32BE(view, mOff + 0x08, p.uncompressedSize);
+    writeU32BE(view, mOff + 0x0C, e.compress ? 0x80000000 : 0);
+    writeU32BE(view, mOff + 0x14, p.fileSize);
+    writeU32BE(view, mOff + 0x1C, fullNameOffsets[i]);
+    const typeIdx = (typeof e.fileTypeIndex === "number") ? e.fileTypeIndex : (e.fileTypeRaw >>> 1);
+    writeU32BE(view, mOff + 0x20, typeIdx >>> 0);
+    writeU32BE(view, mOff + 0x24, nameOffsets[i]);
+    writeU32BE(view, offsetTableAddress + i * 4, mOff);
+    out.set(p.bytes, entryAddresses[i]);
+  }
+  out.set(new TextEncoder().encode("FSYS"), totalSize - 4);
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+//  Minimal STORED-only ZIP writer (no compression, no external deps).
+//  Implements the parts of PKZip APPNOTE 4.5 needed for plain readers.
+// ---------------------------------------------------------------------------
+const CRC32_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+function crc32(bytes) {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) c = CRC32_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+function makeZip(files) {
+  // files: [{ path: string, bytes: Uint8Array }]
+  const localChunks = [];
+  const centralChunks = [];
+  let offset = 0;
+  for (const f of files) {
+    const nameBytes = new TextEncoder().encode(f.path);
+    const crc = crc32(f.bytes);
+    const size = f.bytes.length;
+
+    const localHeader = new Uint8Array(30 + nameBytes.length);
+    const lv = new DataView(localHeader.buffer);
+    lv.setUint32(0,  0x04034b50, true);
+    lv.setUint16(4,  20, true);   // version needed
+    lv.setUint16(6,  0,  true);   // flags
+    lv.setUint16(8,  0,  true);   // method = stored
+    lv.setUint16(10, 0,  true);   // mod time
+    lv.setUint16(12, 0x21, true); // mod date (1980-01-01)
+    lv.setUint32(14, crc,  true);
+    lv.setUint32(18, size, true);
+    lv.setUint32(22, size, true);
+    lv.setUint16(26, nameBytes.length, true);
+    lv.setUint16(28, 0, true);
+    localHeader.set(nameBytes, 30);
+    localChunks.push(localHeader, f.bytes);
+
+    const central = new Uint8Array(46 + nameBytes.length);
+    const cv = new DataView(central.buffer);
+    cv.setUint32(0,  0x02014b50, true);
+    cv.setUint16(4,  20, true);
+    cv.setUint16(6,  20, true);
+    cv.setUint16(8,  0,  true);
+    cv.setUint16(10, 0,  true);
+    cv.setUint16(12, 0,  true);
+    cv.setUint16(14, 0x21, true);
+    cv.setUint32(16, crc,  true);
+    cv.setUint32(20, size, true);
+    cv.setUint32(24, size, true);
+    cv.setUint16(28, nameBytes.length, true);
+    cv.setUint16(30, 0, true);
+    cv.setUint16(32, 0, true);
+    cv.setUint16(34, 0, true);
+    cv.setUint16(36, 0, true);
+    cv.setUint32(38, 0, true);
+    cv.setUint32(42, offset, true);
+    central.set(nameBytes, 46);
+    centralChunks.push(central);
+
+    offset += localHeader.length + f.bytes.length;
+  }
+  const centralStart = offset;
+  let centralSize = 0;
+  for (const c of centralChunks) centralSize += c.length;
+
+  const eocd = new Uint8Array(22);
+  const ev = new DataView(eocd.buffer);
+  ev.setUint32(0,  0x06054b50, true);
+  ev.setUint16(8,  files.length, true);
+  ev.setUint16(10, files.length, true);
+  ev.setUint32(12, centralSize, true);
+  ev.setUint32(16, centralStart, true);
+
+  const total = centralStart + centralSize + 22;
+  const out = new Uint8Array(total);
+  let pos = 0;
+  for (const c of localChunks)   { out.set(c, pos); pos += c.length; }
+  for (const c of centralChunks) { out.set(c, pos); pos += c.length; }
+  out.set(eocd, pos);
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+//  UI glue
+// ---------------------------------------------------------------------------
+function downloadBlob(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// ----- Extract --------------------------------------------------------------
+document.getElementById("runExtract").addEventListener("click", async () => {
+  clearLog();
+  const fileInput = document.getElementById("extractInput");
+  const file = fileInput.files[0];
+  if (!file) { log("Pick a .fsys file first.", "err"); return; }
+
+  const baseName = (document.getElementById("extractName").value.trim()
+                    || file.name.replace(/\.fsys$/i, ""));
+
+  try {
+    log("Reading " + file.name + " (" + file.size + " bytes)…");
+    const buf = new Uint8Array(await file.arrayBuffer());
+    const archive = parseFSYS(buf);
+    log("Parsed " + archive.entries.length + " entries, groupID=" + archive.groupID + ", slot size=0x" + archive.fileMetaDataSlotSize.toString(16));
+
+    // Decide unique on-disk filenames before building the manifest.
+    const seen = new Map();
+    for (const e of archive.entries) {
+      const base = e.fullFilename || (e.name + (e.fileType ? "." + e.fileType : ""));
+      const n = (seen.get(base) || 0) + 1;
+      seen.set(base, n);
+      if (n === 1) e.filename = base;
+      else {
+        const dot = base.lastIndexOf(".");
+        e.filename = dot < 0 ? base + "_" + n : base.slice(0, dot) + "_" + n + base.slice(dot);
+      }
+    }
+
+    const manifestName = baseName + "-manifest.json";
+    const manifest = buildManifest(archive, file.name, manifestName);
+    for (let i = 0; i < archive.entries.length; i++) {
+      manifest.entries[i].path = archive.entries[i].filename;
+    }
+
+    log("Packaging " + baseName + ".zip with " + archive.entries.length + " files + " + manifestName + "…");
+    const zipFiles = [
+      { path: baseName + "/" + manifestName, bytes: new TextEncoder().encode(JSON.stringify(manifest, null, 2)) },
+    ];
+    for (const e of archive.entries) {
+      zipFiles.push({ path: baseName + "/" + e.filename, bytes: e.data });
+    }
+    const zip = makeZip(zipFiles);
+    downloadBlob(new Blob([zip], { type: "application/zip" }), baseName + ".zip");
+    log("Downloaded " + baseName + ".zip — unzip it and pass the folder to Repack.", "ok");
+  } catch (e) {
+    log("Error: " + e.message, "err");
+    console.error(e);
+  }
+});
+
+function buildManifest(archive, sourceName, manifestName) {
+  return {
+    formatVersion: 1,
+    sourceFile: sourceName,
+    manifestName: manifestName,
+    groupID: archive.groupID,
+    unknown1: archive.unknown1,
+    unknown2: archive.unknown2,
+    unknown3: archive.unknown3,
+    unknown4: archive.unknown4,
+    flagBits: archive.flagBits,
+    fileMetaDataSlotSize: archive.fileMetaDataSlotSize,
+    entries: archive.entries.map(e => ({
+      name: e.name,
+      fileType: e.fileType,
+      fileTypeRaw: e.fileTypeRaw,
+      fileTypeIndex: e.fileTypeIndex,
+      identifier: e.identifier,
+      compress: e.compress,
+      includesFullFilename: e.includesFullFilename,
+      fullFilename: e.fullFilename,
+      filename: e.filename,
+      path: "",
+    })),
+  };
+}
+
+// ----- Repack ---------------------------------------------------------------
+
+// Folder source: a Map<basename, File>. Populated by either the folder picker
+// or by drag-drop. Manifest is auto-discovered as the first '*-manifest.json'
+// or 'manifest.json' file in the folder.
+let folderFiles = new Map();
+
+function setFolderFiles(fileList) {
+  folderFiles = new Map();
+  for (const f of fileList) {
+    const path = f.webkitRelativePath || f._path || f.name;
+    const base = path.split("/").pop();
+    folderFiles.set(base, f);
+  }
+  const drop = document.getElementById("drop");
+  const manifestName = findManifestName();
+  if (manifestName) {
+    drop.textContent = "Loaded " + folderFiles.size + " files (manifest: " + manifestName + ")";
+    // Auto-fill the output name once a manifest is in.
+    folderFiles.get(manifestName).text().then(text => {
+      try {
+        const m = JSON.parse(text);
+        const out = document.getElementById("outputName");
+        if (!out.value) out.value = m.sourceFile || "archive.fsys";
+      } catch (_) { /* user will see error at run time */ }
+    });
+  } else {
+    drop.textContent = "Loaded " + folderFiles.size + " files but no *-manifest.json was found. Drop a different folder.";
+  }
+}
+
+function findManifestName() {
+  let suffixHit = null, exactHit = null;
+  for (const name of folderFiles.keys()) {
+    if (/-manifest\.json$/i.test(name)) suffixHit = suffixHit || name;
+    if (name.toLowerCase() === "manifest.json") exactHit = name;
+  }
+  return suffixHit || exactHit;
+}
+
+document.getElementById("folderInput").addEventListener("change", (ev) => {
+  setFolderFiles(ev.target.files);
+});
+
+// Drag-drop: walk the dropped entries. Safari & Firefox both support
+// DataTransferItem.webkitGetAsEntry for folder drops.
+const dropZone = document.getElementById("drop");
+["dragenter","dragover"].forEach(ev => dropZone.addEventListener(ev, e => { e.preventDefault(); dropZone.classList.add("over"); }));
+["dragleave","drop"].forEach(ev => dropZone.addEventListener(ev, e => { e.preventDefault(); dropZone.classList.remove("over"); }));
+dropZone.addEventListener("drop", async (e) => {
+  const items = e.dataTransfer.items;
+  if (!items || !items.length) return;
+  const collected = [];
+  async function walk(entry, prefix) {
+    if (entry.isFile) {
+      const file = await new Promise((res, rej) => entry.file(res, rej));
+      file._path = prefix + file.name;
+      collected.push(file);
+    } else if (entry.isDirectory) {
+      const reader = entry.createReader();
+      const entries = await new Promise((res, rej) => {
+        const all = [];
+        const readBatch = () => reader.readEntries(batch => {
+          if (!batch.length) res(all);
+          else { all.push(...batch); readBatch(); }
+        }, rej);
+        readBatch();
+      });
+      for (const child of entries) await walk(child, prefix + entry.name + "/");
+    }
+  }
+  for (const item of items) {
+    const entry = item.webkitGetAsEntry && item.webkitGetAsEntry();
+    if (entry) await walk(entry, "");
+  }
+  setFolderFiles(collected);
+});
+
+document.getElementById("runRepack").addEventListener("click", async () => {
+  clearLog();
+  const outputName = document.getElementById("outputName").value.trim();
+  if (folderFiles.size === 0) { log("Drop or pick the extracted folder first.", "err"); return; }
+  if (!outputName) { log("Enter an output file name (e.g. common.fsys).", "err"); return; }
+
+  try {
+    const manifestName = findManifestName();
+    if (!manifestName) throw new Error("No *-manifest.json found in the selected folder.");
+    const manifestFile = folderFiles.get(manifestName);
+    const manifest = JSON.parse(await manifestFile.text());
+    log("Manifest " + manifestName + " loaded: " + manifest.entries.length + " entries.");
+
+    const dataMap = new Map();
+    for (const e of manifest.entries) {
+      const key = e.path || e.filename || e.name;
+      const f = folderFiles.get(key);
+      if (!f) throw new Error("Missing entry file in folder: " + key);
+      dataMap.set(e.filename || e.name, new Uint8Array(await f.arrayBuffer()));
+    }
+
+    log("Building FSYS…");
+    const out = buildFSYS(manifest, dataMap);
+    log("Built " + out.length + " bytes.", "ok");
+
+    downloadBlob(new Blob([out], { type: "application/octet-stream" }), outputName);
+    log("Downloaded " + outputName + ".", "ok");
+  } catch (e) {
+    log("Error: " + e.message, "err");
+    console.error(e);
+  }
+});
+
+log("Ready.", "ok");
+</script>
+</body>
+</html>

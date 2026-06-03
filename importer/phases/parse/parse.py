@@ -15,16 +15,10 @@ except (ImportError, SystemError):
 
 
 def parse_sections(dat_bytes, section_map, options, logger=StubLogger()):
-    """Parse DAT bytes into node trees using the section map.
+    """Parse DAT bytes into node trees, typing each section via the section map.
 
-    Args:
-        dat_bytes: Raw DAT binary (no container header).
-        section_map: dict of {section_name: node_type_name} from Phase 2.
-        options: Importer options dict.
-        logger: Logger instance.
-
-    Returns:
-        list of SectionInfo with parsed root nodes.
+    In: dat_bytes (bytes, raw DAT, no container header); section_map (dict[str,str], section_name→node_type from Phase 2); options (dict, importer options); logger (Logger, defaults to StubLogger).
+    Out: list[SectionInfo], one per recognized section with `.root_node` populated.
     """
     stream = io.BytesIO(dat_bytes)
 

@@ -18,14 +18,10 @@ except (ImportError, SystemError):
 
 
 def describe_particles(gpt1_data, logger=StubLogger()):
-    """Convert raw GPT1 bytes into an IRParticleSystem.
+    """Convert raw GPT1 bytes into an IRParticleSystem with disassembled instructions and decoded textures.
 
-    Args:
-        gpt1_data: Raw GPT1 file bytes.
-        logger: Logger instance.
-
-    Returns:
-        IRParticleSystem, or None if parsing fails.
+    In: gpt1_data (bytes, may be empty); logger (Logger).
+    Out: IRParticleSystem|None — None if data empty or GPT1 parse fails.
     """
     if not gpt1_data:
         return None
@@ -83,22 +79,10 @@ def describe_particles(gpt1_data, logger=StubLogger()):
 
 def _decode_particle_texture(gpt1_data, gx_format, width, height,
                               data_offset, texture_offsets, tex_idx, logger):
-    """Decode a GX-format particle texture into RGBA pixels.
+    """Decode a GX-format particle texture into RGBA pixels via shared decode_texture().
 
-    Uses the shared gx_texture.decode_texture() codec.
-
-    Args:
-        gpt1_data: Complete GPT1 file bytes.
-        gx_format: GX texture format ID (0=I4, 1=I8, ..., 0xE=CMPR).
-        width: Texture width in pixels.
-        height: Texture height in pixels.
-        data_offset: Base offset of texture data from GPT1 start.
-        texture_offsets: Per-texture offsets from TXG start.
-        tex_idx: Index of the texture to decode.
-        logger: Logger instance.
-
-    Returns:
-        bytes — RGBA pixel data (width * height * 4 bytes), or empty bytes on failure.
+    In: gpt1_data (bytes); gx_format (int, 0x0..0xE); width (int, ≥0, pixels); height (int, ≥0, pixels); data_offset (int, byte offset from GPT1 start); texture_offsets (list[int], TXG-relative); tex_idx (int, ≥0); logger (Logger).
+    Out: bytes — RGBA pixels (width*height*4 bytes); empty bytes on unsupported format/oob/decode failure.
     """
     if width == 0 or height == 0:
         return b''

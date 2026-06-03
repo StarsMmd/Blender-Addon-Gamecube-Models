@@ -47,17 +47,29 @@ SUPPORTED_MNEMONICS = frozenset([
 
 
 def instruction_node_name(mnemonic: str, index: int) -> str:
-    """Return the frame-node name for a given (mnemonic, instruction_index)."""
+    """Return the frame-node name for a given (mnemonic, instruction_index).
+
+    In: mnemonic (str); index (int).
+    Out: str — '{INSTRUCTION_NODE_PREFIX}{mnemonic}_iNNN'.
+    """
     return f'{INSTRUCTION_NODE_PREFIX}{mnemonic}_i{index:03d}'
 
 
 def serialize_args(args: dict) -> str:
-    """Serialize an args dict as a stable JSON string for `node.label`."""
+    """Serialize an args dict as a stable JSON string for ``node.label``.
+
+    In: args (dict, JSON-serialisable).
+    Out: str, JSON with sorted keys and compact separators.
+    """
     return json.dumps(args, sort_keys=True, separators=(',', ':'))
 
 
 def deserialize_args(label: str) -> dict:
-    """Parse an args dict from a `node.label` that was set by serialize_args."""
+    """Parse an args dict from a ``node.label`` that was set by serialize_args.
+
+    In: label (str).
+    Out: dict; empty on missing or malformed JSON.
+    """
     if not label:
         return {}
     try:
@@ -67,7 +79,11 @@ def deserialize_args(label: str) -> dict:
 
 
 def parse_instruction_node_name(name: str):
-    """Parse `gpt1_MNEMONIC_iNNN` → (mnemonic, index) or None."""
+    """Parse ``gpt1_MNEMONIC_iNNN`` → (mnemonic, index) or None.
+
+    In: name (str).
+    Out: tuple[str, int] | None.
+    """
     if not name.startswith(INSTRUCTION_NODE_PREFIX):
         return None
     rest = name[len(INSTRUCTION_NODE_PREFIX):]
@@ -85,17 +101,12 @@ def parse_instruction_node_name(name: str):
 
 def build_instruction_frame(tree, instruction: ParticleInstruction,
                             index: int, age_threshold: int):
-    """Add one NodeFrame representing a bytecode instruction to `tree`.
+    """Add one NodeFrame representing a bytecode instruction to ``tree``.
 
-    Args:
-        tree: bpy.types.GeometryNodeTree to add the frame to.
-        instruction: The ParticleInstruction being recorded.
-        index: Position in the generator's instruction list (for ordering).
-        age_threshold: Cumulative age (in frames) at which the instruction
-            fires. Set on a custom property of the frame.
-
-    Returns:
-        The created NodeFrame.
+    In: tree (bpy.types.GeometryNodeTree); instruction (ParticleInstruction);
+        index (int, position in the generator's instruction list);
+        age_threshold (int, cumulative age in frames at which it fires).
+    Out: bpy.types.NodeFrame — the created frame, already added to ``tree``.
     """
     frame = tree.nodes.new('NodeFrame')
     frame.name = instruction_node_name(instruction.mnemonic, index)
@@ -115,8 +126,10 @@ def build_instruction_frame(tree, instruction: ParticleInstruction,
 def read_instruction_frames(tree):
     """Walk a GeometryNodeTree and recover the bytecode instruction list.
 
-    Returns:
-        list[ParticleInstruction] — in instruction_index (bytecode) order.
+    In: tree (bpy.types.GeometryNodeTree).
+    Out: list[ParticleInstruction] — in instruction_index (bytecode) order.
+         ``offset``, ``opcode``, and ``raw_bytes`` are placeholders (0/b'')
+         because they aren't recoverable from the Blender-side representation.
     """
     frames = []
     for node in tree.nodes:
@@ -143,6 +156,11 @@ def read_instruction_frames(tree):
 
 
 def _color_for_mnemonic(mnemonic):
+    """Pick a deterministic RGB hint color for a NodeFrame by mnemonic family.
+
+    In: mnemonic (str).
+    Out: tuple[float, float, float] — RGB in 0..1 (default grey for unknowns).
+    """
     palette = {
         'LIFETIME':       (0.25, 0.25, 0.25),
         'LIFETIME_TEX':   (0.25, 0.30, 0.40),

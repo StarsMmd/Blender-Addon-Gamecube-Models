@@ -22,6 +22,14 @@ class DATParser(BinaryReader):
 	DAT_header_length = 32
 
 	def __init__(self, stream, options, logger=None):
+		"""Construct a DATParser, read the archive header, and build the relocation table.
+
+		In: stream (file-like object, binary); options (dict, parser options
+		    e.g. 'section_names', 'section_map', 'print_tree');
+		    logger (Logger|None, defaults to StubLogger).
+		Out: None. Populates ``header``, ``relocation_table``,
+		     ``nodes_cache_by_offset`` as side effects.
+		"""
 		super().__init__(stream)
 
 		self.options = options
@@ -38,6 +46,12 @@ class DATParser(BinaryReader):
 
 
 	def parseSections(self):
+		"""Parse every section listed in the archive header into a node tree.
+
+		In: (self).
+		Out: None. ``self.sections`` is populated with SectionInfo instances
+		     whose ``root_node`` is the parsed Node tree (or Dummy fallback).
+		"""
 		self.sections = []
 		section_names_to_include = self.options.get("section_names") or []
 		section_map = self.options.get("section_map")
@@ -79,12 +93,30 @@ class DATParser(BinaryReader):
 
 
 	def _startOffset(self, relative_to_header):
+		"""Absolute byte offset to add to addresses to locate data in the stream.
+
+		In: relative_to_header (bool, True if addresses are post-archive-header).
+		Out: int — file_start_offset + (32 if relative_to_header else 0).
+		"""
 		return self.file_start_offset + (self.DAT_header_length if relative_to_header else 0)
 
 	def getTypeLength(self, field_type):
+		"""Delegate to the Nodes.FieldTypes length table.
+
+		In: field_type (str, type name).
+		Out: int, bytes for that type.
+		"""
 		return get_type_length(field_type)
 
 	def read(self, field_type, address, offset=0, relative_to_header=True, whence='start'):
+		"""Read any field type (primitive, pointer, array, or Node subclass).
+
+		In: field_type (str); address (int); offset (int, default 0);
+		    relative_to_header (bool, default True);
+		    whence (str, 'start'/'current'/'end', default 'start').
+		Out: primitive value, parsed Node instance, list of values, or None
+		     for null pointers / unrecognised types.
+		"""
 		self.logger.debug("reading field type: %s at: 0x%X", field_type, address + offset + self._startOffset(relative_to_header))
 
 		if isBracketedType(field_type):
@@ -173,9 +205,17 @@ class DATParser(BinaryReader):
 		else:
 			return None
 
-	# Used by node objects to read their fields and set the properties on the node.
-	# Pass in a set of fields to the fields argument to use those instead of the ones set on the node.
 	def parseNode(self, node, fields=None, relative_to_header=True):
+		"""Load a node's fields from the binary stream at node.address.
+
+		Used by node objects to read their fields and set the attributes on
+		the instance. Callers may pass in an override ``fields`` list (e.g.
+		for primitive struct sub-sections) instead of ``node.fields``.
+
+		In: node (Node subclass instance); fields (list|None, overrides
+		    node.fields when provided); relative_to_header (bool, default True).
+		Out: None. The node's attributes are populated in place.
+		"""
 		if not node:
 			return
 

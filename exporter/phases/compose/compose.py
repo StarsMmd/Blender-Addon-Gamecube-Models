@@ -121,81 +121,246 @@ def compose_scene(ir_scene, options=None, logger=StubLogger()):
 
 
 def _compose_bound_box(model, logger):
-    """Create a BoundBox node with per-frame AABBs computed from mesh vertices.
+    """Create a BoundBox node with one true skinned AABB per frame.
 
-    Computes a single axis-aligned bounding box encompassing all mesh
-    vertices and replicates it for each frame of each animation set.
-    The static AABB is correct for the rest pose; per-frame animated
-    AABBs would require evaluating the skeleton at each frame.
+    Game-native PKXs ship one AABB per animation frame, updated to
+    reflect skeletal deformation each frame. We compute the tight AABB
+    by running linear-blend skinning on every mesh vertex at every
+    frame of every animation set. For each vertex-bone pair we
+    pre-compute `inv_bind[bone] @ vertex_rest_world`, then per frame
+    combine those with the bones' animated world matrices.
 
-    The BoundBox fields are:
-        anim_set_count: number of animation sets
-        unknown: frame count of the first animation set (end_frame + 1)
-        raw_aabb_data: one AABB (24 bytes) per frame across all sets
-
-    Args:
-        model: IRModel with meshes and bone_animations populated.
-        logger: Logger instance.
-
-    Returns:
-        BoundBox node, or None if no meshes.
+    Returns BoundBox node or None if no meshes.
     """
     import struct
+    try:
+        from ....shared.helpers.math_shim import Matrix
+        from ....shared.IR.enums import SkinType
+    except (ImportError, SystemError):
+        from shared.helpers.math_shim import Matrix
+        from shared.IR.enums import SkinType
 
     if not model.meshes:
         return None
 
-    # Compute AABB from all mesh vertices
-    min_x = min_y = min_z = float('inf')
-    max_x = max_y = max_z = float('-inf')
-
-    for mesh in model.meshes:
-        for v in mesh.vertices:
-            min_x = min(min_x, v[0])
-            min_y = min(min_y, v[1])
-            min_z = min(min_z, v[2])
-            max_x = max(max_x, v[0])
-            max_y = max(max_y, v[1])
-            max_z = max(max_z, v[2])
-
-    if min_x == float('inf'):
+    skin_samples = _build_skin_samples(model, SkinType)
+    if not skin_samples:
         return None
 
-    # Add a small margin to avoid zero-size boxes
-    margin = 0.1
-    min_x -= margin
-    min_y -= margin
-    min_z -= margin
-    max_x += margin
-    max_y += margin
-    max_z += margin
-
-    # Compute per-animation-set frame counts
     anim_sets = model.bone_animations or []
     anim_count = max(1, len(anim_sets))
+
+    aabb_blobs = []
     frame_counts = []
-    for anim_set in anim_sets:
-        max_ef = max((int(t.end_frame) for t in anim_set.tracks), default=0)
-        frame_counts.append(max_ef + 1)
-    if not frame_counts:
-        frame_counts = [1]
 
-    # TODO: game originals animate the AABB per-frame (e.g. sirnight ships
-    # 545 distinct AABBs across 569 frames). We currently replicate one
-    # static rest-pose AABB across every frame of every anim set — correct
-    # in scale now that the pre-pass runs, but still coarse for culling.
-    # Per-frame AABBs require sampling each animation's pose at frame F
-    # and transforming mesh vertices through the skeleton.
-    total_frames = sum(frame_counts)
-    aabb_bytes = struct.pack('>ffffff', min_x, min_y, min_z, max_x, max_y, max_z)
-    raw_data = aabb_bytes * total_frames
+    if not anim_sets:
+        rest_world = _rest_bone_world_matrices(model)
+        mn, mx = _compute_skinned_aabb(skin_samples, rest_world)
+        aabb_blobs.append(struct.pack('>ffffff', mn[0], mn[1], mn[2], mx[0], mx[1], mx[2]))
+        frame_counts.append(1)
+    else:
+        for anim_set in anim_sets:
+            max_ef = max((int(t.end_frame) for t in anim_set.tracks), default=1)
+            # Animation plays over inclusive range [0, end_frame], so emit
+            # (end_frame + 1) AABBs per set to match game-native PKXs.
+            frame_count = max(1, max_ef + 1)
+            frame_counts.append(frame_count)
+            for f in range(frame_count):
+                world = _animated_bone_world_matrices(model, anim_set, f)
+                mn, mx = _compute_skinned_aabb(skin_samples, world)
+                aabb_blobs.append(struct.pack('>ffffff',
+                                              mn[0], mn[1], mn[2],
+                                              mx[0], mx[1], mx[2]))
 
+    raw_data = b''.join(aabb_blobs)
     bb = BoundBox(address=None, blender_obj=None)
     bb.anim_set_count = anim_count
     bb.first_anim_frame_count = frame_counts[0]
     bb.raw_aabb_data = raw_data
 
-    logger.info("    Bound box: min=(%.2f,%.2f,%.2f) max=(%.2f,%.2f,%.2f), %d set(s), %d total frames",
-                min_x, min_y, min_z, max_x, max_y, max_z, anim_count, total_frames)
+    total_frames = sum(frame_counts)
+    logger.info("    Bound box: %d set(s), %d total frames (per-frame skinned, %d samples)",
+                anim_count, total_frames, len(skin_samples))
 
     return bb
+
+
+def _rest_bone_world_matrices(model):
+    """Return per-bone rest world matrices as `Matrix` objects."""
+    try:
+        from ....shared.helpers.math_shim import Matrix
+    except (ImportError, SystemError):
+        from shared.helpers.math_shim import Matrix
+    out = []
+    for b in model.bones:
+        if b.world_matrix:
+            out.append(Matrix(b.world_matrix))
+        else:
+            out.append(Matrix.Identity(4))
+    return out
+
+
+def _build_skin_samples(model, SkinType):
+    """Return one entry per mesh vertex: a list of
+    `(bone_idx, weight, local_rest_Vector)` tuples.
+
+    `local_rest = inv_bind[bone_idx] @ vertex_rest_world`. Skinning at
+    frame f is then `sum_b weight_b * anim_world[b] @ local_rest_b`.
+    Pre-computing `inv_bind @ vertex` here turns each per-frame vertex
+    evaluation into one matrix-vector multiply per weight.
+    """
+    try:
+        from ....shared.helpers.math_shim import Matrix, Vector
+    except (ImportError, SystemError):
+        from shared.helpers.math_shim import Matrix, Vector
+
+    n_bones = len(model.bones)
+    if n_bones == 0:
+        return []
+
+    bone_name_to_index = {b.name: i for i, b in enumerate(model.bones)}
+    rest_world = _rest_bone_world_matrices(model)
+
+    inv_bind = []
+    for i, b in enumerate(model.bones):
+        if b.inverse_bind_matrix:
+            inv_bind.append(Matrix(b.inverse_bind_matrix))
+        else:
+            try:
+                inv_bind.append(rest_world[i].inverted())
+            except ValueError:
+                inv_bind.append(Matrix.Identity(4))
+
+    samples = []
+    for mesh in model.meshes:
+        bw = mesh.bone_weights
+
+        weighted_map = None
+        if bw and bw.type == SkinType.WEIGHTED and bw.assignments:
+            weighted_map = {}
+            for v_idx, pairs in bw.assignments:
+                resolved = []
+                total_w = 0.0
+                for bone_name, w in pairs:
+                    b_idx = bone_name_to_index.get(bone_name)
+                    if b_idx is not None and w > 0.0:
+                        resolved.append((b_idx, float(w)))
+                        total_w += float(w)
+                if resolved and total_w > 0.0:
+                    # Normalise weights so the AABB isn't skewed by
+                    # non-unit-sum assignments.
+                    weighted_map[v_idx] = [(bi, w / total_w) for bi, w in resolved]
+
+        default_bone = mesh.parent_bone_index if 0 <= mesh.parent_bone_index < n_bones else 0
+        if bw and bw.type in (SkinType.SINGLE_BONE, SkinType.RIGID) and bw.bone_name:
+            named = bone_name_to_index.get(bw.bone_name)
+            if named is not None:
+                default_bone = named
+
+        for v_idx, v in enumerate(mesh.vertices):
+            v_world = Vector((float(v[0]), float(v[1]), float(v[2])))
+            entries = None
+            if weighted_map is not None:
+                assigned = weighted_map.get(v_idx)
+                if assigned:
+                    entries = [(bi, w, inv_bind[bi] @ v_world) for bi, w in assigned]
+            if entries is None:
+                entries = [(default_bone, 1.0, inv_bind[default_bone] @ v_world)]
+            samples.append(entries)
+
+    return samples
+
+
+def _compute_skinned_aabb(skin_samples, world_matrices):
+    """Reduce `skin_samples` against `world_matrices` → (min, max) tuples."""
+    mn = [float('inf')] * 3
+    mx = [float('-inf')] * 3
+    for entries in skin_samples:
+        if len(entries) == 1:
+            b_idx, _w, lv = entries[0]
+            p = world_matrices[b_idx] @ lv
+            px, py, pz = p[0], p[1], p[2]
+        else:
+            px = py = pz = 0.0
+            for b_idx, w, lv in entries:
+                p = world_matrices[b_idx] @ lv
+                px += w * p[0]
+                py += w * p[1]
+                pz += w * p[2]
+        if px < mn[0]: mn[0] = px
+        if px > mx[0]: mx[0] = px
+        if py < mn[1]: mn[1] = py
+        if py > mx[1]: mx[1] = py
+        if pz < mn[2]: mn[2] = pz
+        if pz > mx[2]: mx[2] = pz
+    return mn, mx
+
+
+def _eval_channel(keyframes, frame, default):
+    """Linear interpolation of an IRKeyframe list at `frame`. Matches
+    the game's HSD_FObjInterpretAnim behaviour (raw fadds between
+    keyframes). Constant-clamped outside the key range."""
+    if not keyframes:
+        return default
+    if len(keyframes) == 1:
+        return keyframes[0].value
+    if frame <= keyframes[0].frame:
+        return keyframes[0].value
+    if frame >= keyframes[-1].frame:
+        return keyframes[-1].value
+    # Walk to find the bracketing pair.
+    for i in range(len(keyframes) - 1):
+        a, b = keyframes[i], keyframes[i + 1]
+        if a.frame <= frame <= b.frame:
+            span = b.frame - a.frame
+            if span <= 0:
+                return a.value
+            t = (frame - a.frame) / span
+            return a.value + t * (b.value - a.value)
+    return keyframes[-1].value
+
+
+def _animated_bone_world_matrices(model, anim_set, frame):
+    """Evaluate each bone's world-space transform at `frame` under
+    `anim_set`. Returns a list of 4x4 Matrix objects (one per bone).
+
+    Bones without a track in this anim_set fall back to their rest
+    local SRT. Parent chain propagates via matrix multiplication.
+    """
+    try:
+        from ....shared.helpers.math_shim import compile_srt_matrix
+    except (ImportError, SystemError):
+        from shared.helpers.math_shim import compile_srt_matrix
+
+    track_by_bone = {t.bone_index: t for t in anim_set.tracks}
+    world = [None] * len(model.bones)
+    for i, bone in enumerate(model.bones):
+        track = track_by_bone.get(i)
+        if track is not None:
+            rx = _eval_channel(track.rotation[0], frame, bone.rotation[0])
+            ry = _eval_channel(track.rotation[1], frame, bone.rotation[1])
+            rz = _eval_channel(track.rotation[2], frame, bone.rotation[2])
+            lx = _eval_channel(track.location[0], frame, bone.position[0])
+            ly = _eval_channel(track.location[1], frame, bone.position[1])
+            lz = _eval_channel(track.location[2], frame, bone.position[2])
+            sx = _eval_channel(track.scale[0], frame, bone.scale[0])
+            sy = _eval_channel(track.scale[1], frame, bone.scale[1])
+            sz = _eval_channel(track.scale[2], frame, bone.scale[2])
+        else:
+            rx, ry, rz = bone.rotation
+            lx, ly, lz = bone.position
+            sx, sy, sz = bone.scale
+        local = compile_srt_matrix((sx, sy, sz), (rx, ry, rz), (lx, ly, lz))
+        parent = bone.parent_index
+        if parent is not None and 0 <= parent < i and world[parent] is not None:
+            world[i] = world[parent] @ local
+        else:
+            world[i] = local
+    return world
+
+
+def _animated_bone_positions(model, anim_set, frame):
+    """Thin wrapper over `_animated_bone_world_matrices` returning just
+    the translation component of each bone's animated world matrix."""
+    world = _animated_bone_world_matrices(model, anim_set, frame)
+    return [(m[0][3], m[1][3], m[2][3]) for m in world]

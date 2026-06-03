@@ -285,7 +285,7 @@ def test_body_map_keys_cover_all_16_slots():
 
     for rel in (
         'importer/phases/post_process/post_process.py',
-        'exporter/phases/describe_blender/describe_blender.py',
+        'exporter/phases/describe/helpers/scene.py',
         'BlenderPlugin.py',
     ):
         src = (addon_root / rel).read_text()

@@ -18,6 +18,25 @@ class PObject(Node):
     ]
     display_list_chunk_size = 32
 
+    def find_attribute_index(self, attribute):
+        """Return the vertex_list index of the first vertex matching `attribute`.
+
+        In: attribute (int, GX_VA_* constant).
+        Out: int|None — None if no vertex with that attribute exists.
+        """
+        for i, vertex in enumerate(self.vertex_list.vertices):
+            if vertex.attribute == attribute:
+                return i
+        return None
+
+    def pobj_type_flag(self):
+        """Return the PObject's skin type flag bits (POBJ_SKIN/ENVELOPE/SHAPEANIM).
+
+        In: (none — derived from self.flags).
+        Out: int, the masked POBJ_TYPE_MASK bits of self.flags.
+        """
+        return self.flags & POBJ_TYPE_MASK
+
     # Fields with 'next' replaced by a raw uint to avoid recursive linked-list parsing.
     _iterative_fields = [
         ('name', 'string'),

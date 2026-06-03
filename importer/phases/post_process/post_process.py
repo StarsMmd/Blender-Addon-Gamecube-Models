@@ -1,11 +1,21 @@
-"""Phase 6 — Post-Processing: reset poses, select first animation, apply shiny filters.
+"""Phase 6 — Post-Processing: bake transforms, reset poses, select first
+animation, apply shiny filters.
 
 Runs after either the new IR pipeline (Phase 5) or the legacy importer.
 Operates entirely on Blender objects — no dependency on earlier phases.
 
-Shiny filter injection is handled here as a post-processing step, independent
-of what happened in earlier phases. Like the standalone shiny script, this phase
-can inject shiny shaders into any model's materials given the raw PKX parameters.
+Bakes the importer's Y-up→Z-up viewing rotation into bone + child-mesh
+data so each `matrix_world` arrives at identity (mirrors
+`scripts/prepare_for_export.py:bake_transforms()`). Re-exports through
+the prep script find the data already baked and skip that step. The
+exporter itself now composes `matrix_world` / `matrix_basis` on the
+fly inside describe + plan, so this bake is convenience rather than
+correctness — but production scenes still benefit from arriving in
+canonical Z-up native form.
+
+Shiny filter injection is also handled here, independent of earlier
+phases. Like the standalone shiny script, this phase can inject shiny
+shaders into any model's materials given the raw PKX parameters.
 """
 import bpy
 
@@ -15,8 +25,15 @@ except (ImportError, SystemError):
     from shared.helpers.logger import StubLogger
 
 
+_COLO_XD_KIND_TO_MODEL_TYPE = {
+    'PKX_POKEMON': 'POKEMON',
+    'PKX_TRAINER': 'TRAINER',
+    'DAT_MODEL': None,  # Pokémon/Trainer distinction does not apply
+}
+
+
 def post_process(armature_names, shiny_params=None, options=None, logger=StubLogger(),
-                 build_results=None, pkx_header=None):
+                 build_results=None, pkx_header=None, colo_xd_kind=None):
     """Post-process imported models: reset poses, select animations, apply shiny, store PKX metadata.
 
     Args:
@@ -36,6 +53,22 @@ def post_process(armature_names, shiny_params=None, options=None, logger=StubLog
     include_shiny = True if options is None else options.get("include_shiny", True)
     selected_actions = []
 
+    # Bake the importer's Y-up→Z-up viewing rotation into the bone +
+    # mesh data so each `matrix_world` is identity. Mirrors the prep
+    # script's `bake_transforms()` step — running it here means a re-export
+    # through `scripts/prepare_for_export.py` finds the data already
+    # baked and noops that step. Also lets the round-trip runner's IBI
+    # / BBB scoring pass the exporter's baked-transforms validator.
+    if build_results:
+        bake_targets = [r['armature'] for r in build_results]
+    else:
+        bake_targets = [
+            obj for name in armature_names
+            for obj in [bpy.data.objects.get(name)]
+            if obj is not None and obj.type == 'ARMATURE'
+        ]
+    bake_imported_transforms(bake_targets, logger=logger)
+
     if build_results:
         # New pipeline path: use actions directly from Phase 5
         for result in build_results:
@@ -52,7 +85,9 @@ def post_process(armature_names, shiny_params=None, options=None, logger=StubLog
                 _apply_shiny(armature, shiny_params, logger)
 
             if pkx_header is not None:
-                _store_pkx_metadata(armature, pkx_header, logger, actions=actions)
+                model_type = _COLO_XD_KIND_TO_MODEL_TYPE.get(colo_xd_kind, 'POKEMON')
+                _store_pkx_metadata(armature, pkx_header, logger, actions=actions,
+                                    model_type=model_type)
     else:
         # Legacy path: discover actions by name matching
         logger.info("  Armatures: %s", armature_names)
@@ -71,7 +106,9 @@ def post_process(armature_names, shiny_params=None, options=None, logger=StubLog
                 _apply_shiny(armature, shiny_params, logger)
 
             if pkx_header is not None:
-                _store_pkx_metadata(armature, pkx_header, logger, actions=actions)
+                model_type = _COLO_XD_KIND_TO_MODEL_TYPE.get(colo_xd_kind, 'POKEMON')
+                _store_pkx_metadata(armature, pkx_header, logger, actions=actions,
+                                    model_type=model_type)
 
     scene = bpy.context.scene
     if selected_actions:
@@ -85,8 +122,113 @@ def post_process(armature_names, shiny_params=None, options=None, logger=StubLog
     logger.info("=== Phase 6 complete ===")
 
 
+def bake_imported_transforms(armatures, logger=StubLogger()):
+    """Bake each armature's `matrix_world` into bone + child-mesh data so
+    the imported scene arrives with identity `matrix_world`.
+
+    The plan phase sets `armature.matrix_basis` to a π/2 X-rotation —
+    a "viewing rotation" that lets the importer keep raw Y-up GameCube
+    bone matrices verbatim while still rendering Z-up in the viewport.
+    Baking that rotation into the data makes the imported scene's
+    canonical form match what `scripts/prepare_for_export.py:
+    bake_transforms()` produces, so a re-export through the prep script
+    finds the data already baked and skips its own bake step.
+
+    The exporter now composes `matrix_world` / `matrix_basis` on the
+    fly inside describe + plan (see `exporter/phases/describe/helpers/
+    meshes.py` and `exporter/phases/plan/helpers/armature.py`), so the
+    bake is no longer required for the exporter's `validate_baked_transforms`
+    safety net to pass — but baking on import keeps the scene in a
+    canonical state, which is what users expect of an "imported and
+    ready to edit" model.
+
+    Animations are preserved transparently. `Armature.transform(M)`
+    rotates every bone's rest world by M consistently, so for any
+    non-root bone `new_rest_local = (M @ parent_world)⁻¹ @ (M @ bone_world)
+    = old_rest_local` — the M's cancel through the parent chain. Pose-bone
+    keyframes are interpreted against the unchanged rest_local, so no
+    keyframe transformation is needed. Root bones don't carry pose-loc
+    fcurves in practice (or pose-loc on root is zero on imported models).
+
+    The bake is also safe with respect to scale: this is called only on
+    freshly-imported armatures whose `matrix_basis` is a pure rotation
+    (no scale, no translation), so `Armature.transform`'s known
+    Blender-4.5 translation-drop bug doesn't apply.
+
+    In: armatures (iterable of bpy.types.Object); logger.
+    Out: int — number of objects baked.
+    """
+    from mathutils import Matrix as _Matrix
+    identity = _Matrix.Identity(4)
+    baked = 0
+
+    for arm in armatures:
+        if arm is None or arm.type != 'ARMATURE':
+            continue
+        if _is_identity_matrix(arm.matrix_world):
+            continue
+
+        # Mute any action that's been assigned so depsgraph re-evaluation
+        # during the bake doesn't read stale pose state.
+        ad = arm.animation_data
+        saved_action = ad.action if ad else None
+        saved_use_nla = ad.use_nla if ad else None
+        if ad:
+            ad.action = None
+            ad.use_nla = False
+
+        # Capture world matrices BEFORE any mutation. matrix_world is
+        # cached and re-reading it after a sibling object is baked
+        # returns half-stale values.
+        targets = [(arm, arm.matrix_world.copy())]
+        for obj in bpy.data.objects:
+            if obj.parent is arm and obj.type == 'MESH':
+                targets.append((obj, obj.matrix_world.copy()))
+
+        for obj, world in targets:
+            data = getattr(obj, 'data', None)
+            if data is None:
+                continue
+            if data.users > 1:
+                obj.data = data.copy()
+                data = obj.data
+            data.transform(world)
+            obj.matrix_basis = identity
+            if obj.parent is not None:
+                obj.matrix_parent_inverse = identity
+            baked += 1
+
+        if ad is not None:
+            ad.action = saved_action
+            if saved_use_nla is not None:
+                ad.use_nla = saved_use_nla
+
+    if baked:
+        logger.info(
+            "  Baked imported transforms on %d object(s) (matrix_world → identity)",
+            baked,
+        )
+
+    bpy.context.view_layer.update()
+    return baked
+
+
+def _is_identity_matrix(m, tol=1e-5):
+    for i in range(4):
+        for j in range(4):
+            expected = 1.0 if i == j else 0.0
+            if abs(m[i][j] - expected) > tol:
+                return False
+    return True
+
+
 def _find_actions(armature):
-    """Find all actions that have an OBJECT slot targeting this armature."""
+    """Find all actions that have an OBJECT slot targeting this armature.
+
+    In: armature (bpy.types.Object).
+    Out: list[bpy.types.Action]; includes a name-prefix fallback for legacy
+         actions that lack a slot handle.
+    """
     actions = []
     for action in bpy.data.actions:
         for slot in action.slots:
@@ -107,6 +249,9 @@ def _find_material_slot_indices(armature, actions):
 
     Looks at the first action's MATERIAL slots and matches them to materials
     in the scene by name.
+
+    In: armature (bpy.types.Object, unused); actions (list[bpy.types.Action]).
+    Out: dict[bpy.types.Material, int].
     """
     if not actions:
         return {}
@@ -127,6 +272,11 @@ def _select_first_action(armature, actions, mat_slot_indices, pkx_header=None):
 
     Uses the PKX header's idle animation index (entry 0) if available,
     otherwise falls back to the first action with '_Idle' in the name.
+
+    In: armature (bpy.types.Object); actions (list[bpy.types.Action]);
+        mat_slot_indices (dict[bpy.types.Material, int]);
+        pkx_header (PKXHeader|None).
+    Out: bpy.types.Action|None — the selected active action.
     """
     if not armature.animation_data or not actions:
         return None
@@ -211,142 +361,194 @@ def _apply_shiny(armature, shiny_params, logger):
         logger.info("  Inserted shiny filter into %d material(s) on %s", count, armature.name)
 
 
-def _store_pkx_metadata(armature, pkx_header, logger, actions=None):
-    """Store PKX header fields as custom properties on the armature.
+_ANIM_TYPE_NAMES = {2: "loop", 3: "hit_reaction", 4: "action", 5: "compound"}
+_SUB_ANIM_TRIGGERS = {0: "sleep_on", 1: "sleep_off", 2: "extra", 3: "unused"}
+_SUB_ANIM_TYPES = {0: "none", 1: "simple", 2: "targeted"}
 
-    Uses dat_pkx_* naming convention. Bone indices are resolved to bone names
-    using the armature's bone list. Animation indices are resolved to action
-    names when the actions list is available.
+# Body map descriptive names (index → property suffix). Slots 0-7 are the
+# engine body parts; slots 8-15 are extended attachment slots used by
+# particle generators. See `ModelSequence::GetPart` in the XD disassembly.
+_BODY_MAP_KEYS = [
+    "root", "head", "center", "body_3", "neck", "head_top",
+    "limb_a", "limb_b",
+    "secondary_8", "secondary_9", "secondary_10", "secondary_11",
+    "attach_a", "attach_b", "attach_c", "attach_d",
+]
 
-    Args:
-        armature: The Blender armature object.
-        pkx_header: PKXHeader instance from extract phase.
-        logger: Logger instance.
-        actions: list of Blender Actions in DAT animation order (from Phase 5).
+
+def _derive_pkx_custom_props(pkx_header, actions=None, bone_names=None, model_type=None):
+    """Derive the dat_pkx_* property dict for a PKX header. Pure: no bpy.
+
+    In: pkx_header (PKXHeader); actions (sequence with .name|None, DAT order); bone_names (sequence[str]|None, DAT bone order); model_type (str|None, "POKEMON"|"TRAINER" — user-specified at import time; None means the import is a raw .dat model and the Pokémon/Trainer distinction does not apply).
+    Out: dict[str, value] — all properties to write to the armature.
     """
-    try:
-        from ....shared.helpers.pkx_header import BODY_MAP_NAMES
-    except (ImportError, SystemError):
-        from shared.helpers.pkx_header import BODY_MAP_NAMES
+    name_resolver = _build_action_name_resolver(actions)
+    bone_resolver = _build_bone_name_resolver(bone_names)
 
-    h = pkx_header
+    props = {}
+    props.update(_derive_preamble_props(pkx_header, bone_resolver))
+    if model_type is None:
+        props.pop("dat_pkx_model_type", None)
+    else:
+        props["dat_pkx_model_type"] = model_type
+    props.update(_derive_sub_anim_props(pkx_header, name_resolver, bone_resolver))
 
-    # Build DAT animation index → action name mapping
-    _index_to_action = {}
-    if actions:
-        for idx, action in enumerate(actions):
-            _index_to_action[idx] = action.name
+    first_active = pkx_header.anim_entries[0] if pkx_header.anim_entries else None
+    if first_active:
+        props.update(_derive_body_map_props(first_active, bone_resolver))
 
-    def _action_name_for_index(anim_idx):
-        """Resolve a DAT animation index to an action name, or empty string."""
-        return _index_to_action.get(anim_idx, "")
+    props["dat_pkx_anim_count"] = len(pkx_header.anim_entries)
+    for i, entry in enumerate(pkx_header.anim_entries):
+        props.update(_derive_anim_entry_props(i, entry, first_active, name_resolver, bone_resolver))
 
-    _ANIM_TYPE_NAMES = {2: "loop", 3: "hit_reaction", 4: "action", 5: "compound"}
-    _SUB_ANIM_TRIGGERS = {0: "sleep_on", 1: "sleep_off", 2: "extra", 3: "unused"}
-    _SUB_ANIM_TYPES = {0: "none", 1: "simple", 2: "targeted"}
+    return props
 
-    # Body map descriptive names (index → property suffix). Slots 0-7 are
-    # the well-known engine body parts; slots 8-15 are extended slots used
-    # for particle-generator attachment on effect-themed Pokémon (Moltres,
-    # Ghastly, Articuno, Vaporeon…). See `ModelSequence::GetPart` in the XD
-    # disassembly — every particle-attach path resolves a slot 0-15 into
-    # `anim_entry.body_map_bones[slot]`. Callers pass the slot literal from
-    # game code, so we can't map generators to slots automatically, but we
-    # surface the bones so the user can reattach generator meshes.
-    _BODY_MAP_KEYS = [
-        "root", "head", "center", "body_3", "neck", "head_top",
-        "limb_a", "limb_b",
-        "secondary_8", "secondary_9", "secondary_10", "secondary_11",
-        "attach_a", "attach_b", "attach_c", "attach_d",
-    ]
 
-    # --- Preamble ---
-    armature["dat_pkx_format"] = "XD" if h.is_xd else "COLOSSEUM"
-    armature["dat_pkx_species_id"] = h.species_id
-    armature["dat_pkx_particle_orientation"] = h.particle_orientation
-    armature["dat_pkx_distortion_param"] = h.distortion_param
-    armature["dat_pkx_distortion_type"] = h.distortion_type
-    armature["dat_pkx_model_type"] = "TRAINER" if h.species_id == 0 and h.particle_orientation == 0 else "POKEMON"
+def _build_action_name_resolver(actions):
+    """Build a closure that maps a DAT animation index to an action name (or "").
 
-    # Flags as individual booleans
-    armature["dat_pkx_flag_flying"] = bool(h.flags & 0x01)
-    armature["dat_pkx_flag_skip_frac_frames"] = bool(h.flags & 0x04)
-    armature["dat_pkx_flag_no_root_anim"] = bool(h.flags & 0x40)
-    armature["dat_pkx_flag_bit7"] = bool(h.flags & 0x80)
+    In: actions (sequence with .name|None).
+    Out: callable (int) -> str.
+    """
+    index_to_name = {idx: a.name for idx, a in enumerate(actions or [])}
+    def resolve(anim_idx):
+        """In: anim_idx (int). Out: str — action.name or '' if out of range."""
+        return index_to_name.get(anim_idx, "")
+    return resolve
 
-    # Head bone (resolved to name)
-    bones = armature.data.bones
-    bone_list = list(bones)
-    armature["dat_pkx_head_bone"] = _bone_name_for_index(bone_list, h.head_bone_index)
 
-    # --- Sub-animations (was "part_anim_data") ---
+def _build_bone_name_resolver(bone_names):
+    """Build a closure that maps a bone index to a bone name (or "" for out-of-range).
+
+    In: bone_names (sequence[str]|None).
+    Out: callable (int) -> str.
+    """
+    bones = list(bone_names) if bone_names else []
+    def resolve(idx):
+        """In: idx (int). Out: str — bone name or '' if out-of-range or negative."""
+        if idx < 0 or idx >= len(bones):
+            return ""
+        return bones[idx]
+    return resolve
+
+
+def _derive_preamble_props(h, bone_resolver):
+    """Derive the dat_pkx_* preamble properties (format, species, flags, head bone).
+
+    In: h (PKXHeader); bone_resolver (callable int->str).
+    Out: dict[str, value] of preamble keys only.
+    """
+    return {
+        "dat_pkx_format": h.format_label,
+        "dat_pkx_species_id": h.species_id,
+        "dat_pkx_particle_orientation": h.particle_orientation,
+        "dat_pkx_distortion_param": h.distortion_param,
+        "dat_pkx_distortion_type": h.distortion_type,
+        "dat_pkx_flag_flying": h.flag_flying,
+        "dat_pkx_flag_skip_frac_frames": h.flag_skip_frac_frames,
+        "dat_pkx_flag_no_root_anim": h.flag_no_root_anim,
+        "dat_pkx_flag_bit7": h.flag_bit7,
+        "dat_pkx_head_bone": bone_resolver(h.head_bone_index),
+    }
+
+
+def _derive_sub_anim_props(h, name_resolver, bone_resolver):
+    """Derive the dat_pkx_sub_anim_* properties (XD: PartAnimData; Colo: colo_part_anim_refs).
+
+    In: h (PKXHeader); name_resolver (callable int->str); bone_resolver (callable int->str).
+    Out: dict[str, value] of sub-anim keys only.
+    """
+    props = {}
     if h.is_xd:
         for i, pad in enumerate(h.part_anim_data):
             prefix = "dat_pkx_sub_anim_%d" % i
-            armature[prefix + "_type"] = _SUB_ANIM_TYPES.get(pad.has_data, "unknown")
-            armature[prefix + "_trigger"] = _SUB_ANIM_TRIGGERS.get(i, "unknown")
-            armature[prefix + "_anim_ref"] = _action_name_for_index(pad.anim_index_ref) if pad.has_data > 0 else ""
-            if pad.has_data == 2:
-                # Targeted: store bone names (filter out 0xFF)
-                bone_indices = [b for b in pad.bone_config if b != 0xFF]
-                bone_names = [_bone_name_for_index(bone_list, idx) for idx in bone_indices]
-                armature[prefix + "_bones"] = ', '.join(bone_names) if bone_names else ""
+            props[prefix + "_type"] = _SUB_ANIM_TYPES.get(pad.has_data, "unknown")
+            props[prefix + "_trigger"] = _SUB_ANIM_TRIGGERS.get(i, "unknown")
+            props[prefix + "_anim_ref"] = name_resolver(pad.anim_index_ref) if pad.is_active else ""
+            if pad.is_targeted:
+                names = [bone_resolver(idx) for idx in pad.active_bone_indices()]
+                props[prefix + "_bones"] = ', '.join(names) if names else ""
     else:
         for i in range(3):
             prefix = "dat_pkx_sub_anim_%d" % i
             ref = h.colo_part_anim_refs[i]
-            armature[prefix + "_type"] = "simple" if ref >= 0 else "none"
-            armature[prefix + "_trigger"] = _SUB_ANIM_TRIGGERS.get(i, "unknown")
-            armature[prefix + "_anim_ref"] = _action_name_for_index(ref) if ref >= 0 else ""
+            props[prefix + "_type"] = "simple" if ref >= 0 else "none"
+            props[prefix + "_trigger"] = _SUB_ANIM_TRIGGERS.get(i, "unknown")
+            props[prefix + "_anim_ref"] = name_resolver(ref) if ref >= 0 else ""
+    return props
 
-    # --- Body map bones ---
-    first_active = h.anim_entries[0] if h.anim_entries else None
-    if first_active:
-        for j in range(len(_BODY_MAP_KEYS)):
-            bone_idx = first_active.body_map_bones[j]
-            key = "dat_pkx_body_%s" % _BODY_MAP_KEYS[j]
-            armature[key] = _bone_name_for_index(bone_list, bone_idx)
 
-    # --- Animation entries ---
-    armature["dat_pkx_anim_count"] = len(h.anim_entries)
-    for i, entry in enumerate(h.anim_entries):
-        prefix = "dat_pkx_anim_%02d" % i
-        armature[prefix + "_type"] = _ANIM_TYPE_NAMES.get(entry.anim_type, str(entry.anim_type))
-        armature[prefix + "_sub_count"] = entry.sub_anim_count
-        armature[prefix + "_damage_flags"] = _clamp_int32(entry.damage_flags)
-        armature[prefix + "_timing_1"] = entry.timing[0]
-        armature[prefix + "_timing_2"] = entry.timing[1]
-        armature[prefix + "_timing_3"] = entry.timing[2]
-        armature[prefix + "_timing_4"] = entry.timing[3]
-        armature[prefix + "_terminator"] = _clamp_int32(entry.terminator)
+def _derive_body_map_props(first_active, bone_resolver):
+    """Derive the model-level dat_pkx_body_* slots from the first active anim entry.
 
-        for s in range(min(len(entry.sub_anims), 3)):
-            sub = entry.sub_anims[s]
-            # motion_type is derived at export from slot type + action presence;
-            # not stored as a custom property. Use it here only to decide which
-            # sub-anims get action name resolution.
-            if sub.motion_type > 0:
-                armature[prefix + "_sub_%d_anim" % s] = _action_name_for_index(sub.anim_index)
-            else:
-                armature[prefix + "_sub_%d_anim" % s] = ""
+    In: first_active (AnimMetadataEntry); bone_resolver (callable int->str).
+    Out: dict[str, str] — one entry per body-map slot key.
+    """
+    return {
+        "dat_pkx_body_%s" % key: bone_resolver(first_active.body_map_bones[j])
+        for j, key in enumerate(_BODY_MAP_KEYS)
+    }
 
-        # Per-entry body map overrides (only when different from model-level,
-        # and only for the game-relevant slots 0-7).
-        if first_active and entry.body_map_bones[:len(_BODY_MAP_KEYS)] != first_active.body_map_bones[:len(_BODY_MAP_KEYS)]:
-            for j in range(len(_BODY_MAP_KEYS)):
-                if entry.body_map_bones[j] != first_active.body_map_bones[j]:
-                    bone_name = _bone_name_for_index(bone_list, entry.body_map_bones[j])
-                    armature[prefix + "_body_%s" % _BODY_MAP_KEYS[j]] = bone_name
 
-    # --- Property descriptions ---
+def _derive_anim_entry_props(i, entry, first_active, name_resolver, bone_resolver):
+    """Derive properties for a single animation entry (timing, sub-anims, body overrides).
+
+    In: i (int, ≥0, slot index); entry (AnimMetadataEntry); first_active (AnimMetadataEntry|None, model-level reference for body-map override detection); name_resolver (callable int->str); bone_resolver (callable int->str).
+    Out: dict[str, value] of dat_pkx_anim_NN_* keys (and per-entry body overrides where present).
+    """
+    prefix = "dat_pkx_anim_%02d" % i
+    props = {
+        prefix + "_type": _ANIM_TYPE_NAMES.get(entry.anim_type, str(entry.anim_type)),
+        prefix + "_sub_count": entry.sub_anim_count,
+        prefix + "_damage_flags": _clamp_int32(entry.damage_flags),
+        prefix + "_timing_1": entry.timing[0],
+        prefix + "_timing_2": entry.timing[1],
+        prefix + "_timing_3": entry.timing[2],
+        prefix + "_timing_4": entry.timing[3],
+        prefix + "_terminator": _clamp_int32(entry.terminator),
+    }
+
+    for s in range(min(len(entry.sub_anims), 3)):
+        sub = entry.sub_anims[s]
+        props[prefix + "_sub_%d_anim" % s] = name_resolver(sub.anim_index) if sub.is_active else ""
+
+    if first_active and entry.body_map_bones[:len(_BODY_MAP_KEYS)] != first_active.body_map_bones[:len(_BODY_MAP_KEYS)]:
+        for j, key in enumerate(_BODY_MAP_KEYS):
+            if entry.body_map_bones[j] != first_active.body_map_bones[j]:
+                props[prefix + "_body_%s" % key] = bone_resolver(entry.body_map_bones[j])
+
+    return props
+
+
+def _store_pkx_metadata(armature, pkx_header, logger, actions=None, model_type=None):
+    """Store PKX header fields as custom properties on the armature.
+
+    In: armature (bpy.types.Object); pkx_header (PKXHeader);
+        logger (Logger); actions (sequence[Action]|None, for anim name resolution);
+        model_type (str|None, "POKEMON"|"TRAINER" — user-specified at import
+        time. None for raw .dat models, where the Pokémon/Trainer distinction
+        does not apply).
+    Out: None; custom properties are written to the armature.
+    """
+    bone_names = [b.name for b in armature.data.bones]
+    props = _derive_pkx_custom_props(pkx_header, actions=actions, bone_names=bone_names,
+                                      model_type=model_type)
+    for key, value in props.items():
+        armature[key] = value
+
     _add_property_descriptions(armature)
 
     logger.info("  Stored PKX metadata on %s: format=%s, species=%d, %d anim entries",
-                armature.name, armature["dat_pkx_format"], h.species_id, len(h.anim_entries))
+                armature.name, armature["dat_pkx_format"], pkx_header.species_id,
+                len(pkx_header.anim_entries))
 
 
 def _add_property_descriptions(armature):
-    """Add tooltip descriptions to all PKX custom properties."""
+    """Add tooltip descriptions to all PKX custom properties.
+
+    In: armature (bpy.types.Object, with PKX custom props already set).
+    Out: None; ``id_properties_ui`` descriptions updated where supported.
+    """
     descriptions = {
         "dat_pkx_format": "PKX container format: XD or COLOSSEUM. Determines header layout and timing format.",
         "dat_pkx_species_id": "Pokédex species number. Set to 0 for trainer or generic models.",
@@ -378,6 +580,9 @@ def _clamp_int32(value):
 
     Values like 0xCDCDCDCD (debug heap fill) exceed Python's C int limit.
     Treat them as 0 since they represent uninitialized data.
+
+    In: value (int, 0..0xFFFFFFFF).
+    Out: int within signed int32 range (or 0 for values above 0x7FFFFFFF).
     """
     if value > 0x7FFFFFFF:
         return 0
@@ -385,19 +590,33 @@ def _clamp_int32(value):
 
 
 def _bone_name_for_index(bone_list, index):
-    """Resolve a bone index to a bone name. Returns '' for -1 or out-of-range."""
+    """Resolve a bone index to a bone name. Returns '' for -1 or out-of-range.
+
+    In: bone_list (sequence with .name attribute per item); index (int).
+    Out: str, bone name or ''.
+    """
     if index < 0 or index >= len(bone_list):
         return ""
     return bone_list[index].name
 
 
 def _register_action_sync_handler(armature, mat_slot_indices):
-    """Register a depsgraph handler that syncs material actions when the armature's action changes."""
+    """Register a depsgraph handler that syncs material actions when the
+    armature's action changes.
+
+    In: armature (bpy.types.Object); mat_slot_indices (dict[Material, int]).
+    Out: None; the handler is appended to ``bpy.app.handlers.depsgraph_update_post``.
+    """
     armature_name = armature.name
     mat_info = [(mat.name, slot_idx) for mat, slot_idx in mat_slot_indices.items()]
     last_action = [armature.animation_data.action]
 
     def on_depsgraph_update(scene):
+        """Sync linked material actions whenever the armature's action changes.
+
+        In: scene (bpy.types.Scene, argument passed by Blender's handler).
+        Out: None; each Material's animation_data.action is re-assigned.
+        """
         arm = bpy.data.objects.get(armature_name)
         if not arm or not arm.animation_data or not arm.animation_data.action:
             return

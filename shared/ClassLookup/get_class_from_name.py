@@ -17,6 +17,9 @@ def get_class_from_name(name):
     from ..Nodes.Classes.RootNodes import ArchiveHeader, BoundBox, SceneData, SectionInfo
     from ..Nodes.Classes.Shape import ShapeAnimation, ShapeAnimationJoint, ShapeAnimationMesh, ShapeIndexTri, ShapeSet
     from ..Nodes.Classes.Texture import Image, Palette, Texture, TextureAnimation, TextureLOD, TextureTEV
+    from ..Nodes.Classes.Kirby.KirbyDataGroup import KirbyDataGroup
+    from ..Nodes.Classes.Kirby.KirbyModelVariant import KirbyModelVariant
+    from ..Nodes.Classes.Kirby.KirbyModelRef import KirbyModelRef
 
     CLASS_NAMES = {
         "Animation": Animation,
@@ -82,7 +85,10 @@ def get_class_from_name(name):
         "Texture": Texture,
         "TextureAnimation": TextureAnimation,
         "TextureLOD": TextureLOD,
-        "TextureTEV": TextureTEV
+        "TextureTEV": TextureTEV,
+        "KirbyDataGroup": KirbyDataGroup,
+        "KirbyModelVariant": KirbyModelVariant,
+        "KirbyModelRef": KirbyModelRef,
     }
 
     return CLASS_NAMES.get(name)

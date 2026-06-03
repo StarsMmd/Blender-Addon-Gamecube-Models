@@ -77,6 +77,10 @@ def _populate_route_group(group, routing):
     Only RGB channels are routed — the game's GXSetTevSwapModeTable remaps
     R/G/B/A but alpha routing is always identity (route_a=3) and has no
     visual effect since brightness alpha is forced to 0xFF.
+
+    In: group (bpy.types.ShaderNodeTree, mutated);
+        routing (sequence[int, int, int, int], per-channel source index 0-3).
+    Out: None.
     """
     nodes = group.nodes
     links = group.links
@@ -130,6 +134,10 @@ def _populate_bright_group(group, brightness):
     but Blender's shader nodes operate in linear space. To match the game's
     visual output, we convert linear→sRGB before multiplying, then sRGB→linear
     after: Gamma(1/2.2) → Multiply → Gamma(2.2).
+
+    In: group (bpy.types.ShaderNodeTree, mutated);
+        brightness (tuple[float, float, float]).
+    Out: None.
     """
     nodes = group.nodes
     links = group.links
@@ -205,6 +213,9 @@ def rebuild_shiny_node_group(armature):
     """Rebuild both shiny node groups from the armature's registered properties.
 
     Called when the dat_pkx_shiny toggle or any routing/brightness property changes.
+
+    In: armature (bpy.types.Object, reads dat_pkx_shiny_route_* and brightness_*).
+    Out: None; updates the ShinyRoute and ShinyBright node groups in place.
     """
     # Read from registered properties (already synced to custom props by callback)
     try:
@@ -292,7 +303,16 @@ def insert_shiny_filter(material, route_group, bright_group, armature, logger=No
 
 def _insert_stage_at_input(nodes, links, target_node, target_input,
                             node_group, group_name, mix_name, armature):
-    """Insert a shiny stage between a source and a shader input."""
+    """Insert a shiny stage between a source and a shader input.
+
+    In: nodes / links (material node_tree collections, mutated);
+        target_node (bpy.types.ShaderNode, downstream consumer);
+        target_input (bpy socket on target_node);
+        node_group (bpy.types.ShaderNodeTree, route or bright group);
+        group_name / mix_name (str, names for the new ShaderNodeGroup + MixRGB);
+        armature (bpy.types.Object, driver source).
+    Out: None.
+    """
     source_link = None
     for link in links:
         if link.to_node == target_node and link.to_socket == target_input:
@@ -342,6 +362,9 @@ def _has_no_texture_in_color_chain(target_input):
 
     An unlinked ``target_input`` (default-valued Base Color) is also treated
     as "no texture" — the chain is a pure constant and behaves the same way.
+
+    In: target_input (bpy socket).
+    Out: bool — True if no image texture is reachable upstream.
     """
     if not target_input.is_linked:
         return True
@@ -365,7 +388,15 @@ def _has_no_texture_in_color_chain(target_input):
 
 
 def _find_color_input(nodes):
-    """Find the main color input on the output shader."""
+    """Find the main color input on the output shader.
+
+    Preference order: (a) linked Base Color on Principled BSDF;
+    (b) Color input on Emission shader; (c) unlinked Base Color on
+    Principled BSDF.
+
+    In: nodes (bpy_prop_collection of shader nodes).
+    Out: tuple(bpy.types.ShaderNode|None, bpy socket|None, bool is_emission).
+    """
     for node in nodes:
         if node.type == 'BSDF_PRINCIPLED':
             base_color = node.inputs['Base Color']
@@ -384,7 +415,11 @@ def _find_color_input(nodes):
 
 
 def _add_shiny_driver(factor_input, armature):
-    """Add a driver to a mix node's Factor input driven by armature.dat_pkx_shiny."""
+    """Add a driver to a mix node's Factor input driven by armature.dat_pkx_shiny.
+
+    In: factor_input (bpy socket); armature (bpy.types.Object).
+    Out: None.
+    """
     factor_input.default_value = 0.0
     driver_data = factor_input.driver_add("default_value")
     driver = driver_data.driver

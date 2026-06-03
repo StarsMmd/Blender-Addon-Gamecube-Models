@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Running scripts &middot; Blender HAL DAT Model Addon</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="theme.js"></script>
+</head>
+<body>
+    <header class="site-header">
+        <div class="container">
+            <a href="index.html" class="site-title">Blender HAL DAT Model Addon</a>
+            <nav class="site-nav">
+                <a href="index.html">Home</a>
+                <a href="importer.html">Importer</a>
+                <a href="exporter.html">Exporter</a>
+                <a href="fsys-tool.html">FSYS Tool</a>
+                <button class="theme-toggle" type="button" aria-label="Toggle light / dark mode" title="Toggle light / dark mode">
+                    <span class="icon-dark">☀️</span><span class="icon-light">🌙</span>
+                </button>
+            </nav>
+        </div>
+    </header>
+
+    <main class="container">
+        <h1>Running scripts in Blender</h1>
+
+        <p>The addon ships with several standalone Python scripts in its
+        <code>scripts/</code> folder — small utilities for tasks like applying shiny filters,
+        preparing a custom model for export, or setting texture formats. They aren't bundled into
+        the addon's UI; you run them by hand inside Blender's <strong>Text Editor</strong>. This
+        page walks through the process.</p>
+
+        <nav class="toc">
+            <h2>Contents</h2>
+            <ol>
+                <li><a href="#open-text-editor">Open a Text Editor window</a></li>
+                <li><a href="#locate-scripts">Find the plugin's <code>scripts/</code> folder</a></li>
+                <li><a href="#load-script">Load the script you want to run</a></li>
+                <li><a href="#run-script">Run the script</a></li>
+            </ol>
+        </nav>
+
+        <h2 id="open-text-editor">1. Open a Text Editor window</h2>
+
+        <p>Blender's interface is made of "editors" — panels you can swap between editor types.
+        To run a script you need a <strong>Text Editor</strong> panel.</p>
+
+        <h3>Option A — Repurpose an existing panel</h3>
+
+        <p>Pick any panel you don't need right now (the Outliner, the Timeline, etc.). Click the
+        small editor-type icon in its top-left corner and choose <strong>Text Editor</strong>
+        from the menu.</p>
+
+        <h3>Option B — Split a new panel off the viewport</h3>
+
+        <p>If you'd rather keep your current layout intact, you can split a fresh panel:</p>
+
+        <ol>
+            <li>Hover the cursor near the edge of any existing panel (a corner works best —
+            the cursor changes to a crosshair).</li>
+            <li>Click and drag inwards. A new panel splits off from the one you grabbed.</li>
+            <li>In the new panel's top-left corner, click the editor-type icon and pick
+            <strong>Text Editor</strong>.</li>
+        </ol>
+
+        <p>To merge a panel back later, right-click the border between two panels and choose
+        <strong>Join Areas</strong>, then click the one you want to absorb.</p>
+
+        <h2 id="locate-scripts">2. Find the plugin's <code>scripts/</code> folder</h2>
+
+        <p>Blender installs extensions into a per-user folder. The exact path depends on your
+        operating system and which Blender version you're running. With Blender 4.5 LTS and the
+        default install location, the addon's <code>scripts/</code> folder is at:</p>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Platform</th>
+                    <th>Path</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Windows</td>
+                    <td><code>%APPDATA%\Blender Foundation\Blender\4.5\extensions\user_default\colo_xd\scripts\</code></td>
+                </tr>
+                <tr>
+                    <td>macOS</td>
+                    <td><code>~/Library/Application Support/Blender/4.5/extensions/user_default/colo_xd/scripts/</code></td>
+                </tr>
+                <tr>
+                    <td>Linux</td>
+                    <td><code>~/.config/blender/4.5/extensions/user_default/colo_xd/scripts/</code></td>
+                </tr>
+            </tbody>
+        </table>
+
+        <p>If you installed Blender as a portable build (extracted from a <code>.zip</code> /
+        <code>.tar.xz</code> rather than the installer), the extensions folder sits next to the
+        Blender binary instead — look for <code>4.5/extensions/user_default/colo_xd/scripts/</code>
+        under your portable folder.</p>
+
+        <p>Useful scripts that live in this folder:</p>
+
+        <ul>
+            <li><code>add_shiny_filter.py</code> — apply the shiny color filter to any model.</li>
+            <li><code>remove_shiny_filter.py</code> — strip the shiny filter back off.</li>
+            <li><code>prepare_for_export.py</code> — full prep pass for custom / imported-from-elsewhere
+            models before exporting (weights, textures, lights, metadata).</li>
+            <li><code>set_texture_formats.py</code> — auto-pick GX texture formats per image.</li>
+            <li><code>add_ambient_lighting.py</code> — drop in standard battle lighting.</li>
+        </ul>
+
+        <div class="callout">
+            <strong>Note:</strong> the scripts are self-contained Python files — they only
+            depend on <code>bpy</code>, <code>math</code>, and the Python standard library. You
+            can copy one out to your Desktop and edit it freely if you want a custom variant.
+        </div>
+
+        <h2 id="load-script">3. Load the script into the Text Editor</h2>
+
+        <p>In your new Text Editor panel:</p>
+
+        <ol>
+            <li>Click the <strong>Open</strong> button in the editor's header (folder icon, or
+            <strong>Text → Open Text Block</strong> from the menu).</li>
+            <li>Browse to the <code>scripts/</code> folder from the table above.</li>
+            <li>Pick the script you want and click <strong>Open Text</strong>.</li>
+        </ol>
+
+        <p>The script's source code now fills the panel. You don't need to read or edit it —
+        but you can if you want to tweak its behaviour.</p>
+
+        <h2 id="run-script">4. Run the script</h2>
+
+        <p>With the script loaded, click the <strong>Run Script</strong> button in the editor's
+        header (the ▶ play icon), or press <kbd>Alt</kbd>+<kbd>P</kbd> while hovering over the
+        panel. The script runs against whatever scene is currently loaded.</p>
+
+        <p>Any output the script prints goes to Blender's system console:</p>
+
+        <ul>
+            <li><strong>Windows:</strong> open <strong>Window → Toggle System Console</strong>
+            before running.</li>
+            <li><strong>macOS / Linux:</strong> launch Blender from a terminal so its output
+            stays visible in that terminal.</li>
+        </ul>
+
+        <div class="callout">
+            <strong>Tip:</strong> if you'll be running scripts often, the
+            <strong>Scripting</strong> workspace (tabs along the top of Blender's window)
+            pre-arranges a viewport, a Text Editor, and a Python console — saves you doing the
+            split by hand each time.
+        </div>
+
+        <p><a href="index.html">&larr; Back to home</a></p>
+    </main>
+
+    <footer class="site-footer">
+        Original implementation by Made &middot; Source on <a href="https://github.com/StarsMmd/Blender-Addon-Gamecube-Models">GitHub</a>
+    </footer>
+</body>
+</html>

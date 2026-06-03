@@ -1,6 +1,6 @@
-# Blender SysDolphin Addon
+# Blender HAL DAT Model Addon
 
-A Blender addon for importing and exporting GameCube `.dat` models. This addon is currently developed predominantly for `Pokemon Colosseum` and `Pokemon XD: Gale of Darkness` but may have some compatibility with other games that use the format (based on the SysDolphin library) such as `Super Smash Bros. Melee`, `Kirby Air Ride`, `Chibi-Robo! Plug Into Adventure!` and `Killer7`.
+A Blender addon for importing and exporting GameCube `.dat` models. This addon is currently developed predominantly for `Pokemon Colosseum` and `Pokemon XD: Gale of Darkness` but may have some compatibility with other games that use the format (based on HAL Laboratory's DAT model format) such as `Super Smash Bros. Melee`, `Kirby Air Ride`, `Chibi-Robo! Plug Into Adventure!` and `Killer7`.
 
 Original implementation provided by Made.
 
@@ -16,61 +16,64 @@ This addon uses Blender's extensions system. Compress the contents of this repos
 
 ## Importing
 
-- **File > Import > Gamecube model (.dat)** — select one or more `.dat` / `.pkx` / `.fsys` / `.wzx` files
-- Imports skeleton, meshes, materials, textures, animations, lights, cameras, and constraints
-- `.pkx` files automatically extract PKX metadata for animation naming and shiny variants
-- `.fsys` archives are unpacked and each contained model is imported separately
+Open a model via **File > Import > Gamecube model (.dat)**. The importer reads `.dat`, `.fdat`, `.rdat`, `.pkx`, `.fsys`, `.wzx`, and `.cam` files, and brings in the skeleton, meshes, materials, textures, animations, lights, cameras, and (for `.pkx` Pokémon) the shiny variant toggle.
 
-### Importer Options
-
-The file-browser sidebar exposes these toggles:
-
-| Toggle | Default | Purpose |
-|---|---|---|
-| **IK Hack** | on | Shrink bones to 1e-3 so Blender's IK solver behaves correctly. |
-| **Write Logs** | on | Write per-import logs to `$TMPDIR/blender_dat_import/<model>/`. Warnings and leniencies always print to the terminal regardless of this setting. |
-| **Setup Workspace** | on | Split the viewport, open an Action Editor, set playback end to frame 60. |
-| **Import Lights** | off | Import `LightSet` nodes as Blender lights (AMBIENT/SUN/POINT/SPOT). |
-| **Import Cameras** | off | Import `CameraSet` nodes as Blender cameras (static + animated). |
-| **Include Shiny Variant** | on | For `.pkx` files, extract shiny color parameters and build a toggleable shader filter. |
-| **Use Legacy Importer** | off | Route through the pre-refactor pipeline instead of the IR pipeline. For comparison only. |
-| **Strict Mirror Mode** | off | Refuse to silently heal malformed input. Use when diagnosing re-exported models — see below. |
-
-#### Strict Mirror Mode
-
-The importer normally heals edge-case data so it renders cleanly in Blender: it rescues near-zero-scale bones using animation keyframes, fabricates white vertex colors when `CLR0` is absent, falls back to rigid skinning when an envelope-typed mesh lacks `PNMTXIDX`, and drops cameras with unknown projection flags. These workarounds mask bugs in re-exported models — a file that crashes or renders garbage in-game often still loads fine here.
-
-Strict Mirror Mode disables that healing for fault classes the game engine cannot tolerate. It raises on:
-
-- Envelope weight chains longer than the game's 10-weight-per-vertex cap
-- Missing `PNMTXIDX` on a mesh whose flags claim envelope skinning
-- Cameras with unknown projection type or missing eye/target positions
-
-and skips near-zero-scale bone rescue so broken skeletons collapse visibly instead of being silently repaired. Use it when a re-exported model looks fine in Blender but misbehaves in-game: the exception message points at the exact PObj address / camera index the game would also choke on.
-
-Leniency warnings print to the terminal with strict mode **off** too — the toggle only controls whether the importer *fails* on them. Each import also writes a `dat_leniencies` list onto the armature as a custom property, so you can inspect healing history in the N-panel → Object Properties → Custom Properties.
+See the [Importer guide](docs/importer.html) for the full walkthrough — from extracting model files out of a ROM through to playing animations and toggling shiny variants in Blender.
 
 ## Particles (GPT1)
 
 15 battle models ship with embedded GPT1 particle data — the flame-, gas- and mist-themed Pokémon (Moltres, Articuno, Charmander/Charmeleon/Charizard, Gastly, Magmar, Magcargo, Torkoal, Koffing, Weezing, Vaporeon, plus the three shiny variants `rare_fire`, `rare_freezer`, `rare_lizardon`).
 
-**Particle import and export are both disabled in this release.** The GPT1 parser, disassembler, IR types, and compose-side assembler are all in place and unit-tested, but no Blender objects are created from the data. The blocker is the **generator → bone binding**: we have not been able to locate the table or code path that pairs each generator in a model's GPT1 with the body-map slot it renders from. Our investigation ruled out the HSD `JOBJ_PTCL` flag (unset on all 15 models), `_particleJObjCallback`, the PKX header body map (a bone lookup table, not a binding), WZX move files (carry move/attack effects only), the common.rel index table, and the DOL data section around `PKXPokemonModels`. See [CLAUDE.md](CLAUDE.md#particle-importgpt1) for pointers to what's left to check.
-
-Visualising generators at the armature origin without a correct bone attachment looked misleading in practice (every flame floating in the wrong place), so the import stub logs generator/texture counts on the armature but creates nothing in the scene. Re-exported `.pkx` files drop the GPT1 region — keep the original file around if you need to preserve effects.
+Particle import and export are not currently supported but are planned for the future. See [Implementation Notes — Particles (GPT1)](technical-docs/implementation_notes.md#particles-gpt1) for the technical details and outstanding investigation.
 
 ## Shiny Variants
 
 When importing `.pkx` Pokemon models, the addon extracts shiny color parameters from the file header and builds a toggleable shader filter into the imported materials. Select the armature and find the **Shiny Variant** panel in **Properties > Object Properties** to toggle the shiny appearance and edit channel routing and brightness parameters.
 
-Not every Pokemon has shiny parameters — some use a separate model for their shiny form instead. See [Shiny Variants](documentation/shiny_variants.md) for technical details.
+Not every Pokemon has shiny parameters — some use a separate model for their shiny form instead. See [Shiny Variants](technical-docs/shiny_variants.md) for technical details.
 
 ## Exporting
 
-The exporter writes a Blender scene to a `.dat` or `.pkx` binary. See the [Exporter Setup](documentation/exporter_setup.md) guide for the full workflow — from scene preparation through export.
+The exporter writes a Blender scene back to a `.dat` or `.pkx` binary the game can load. Works for models that came in through this plugin and for custom or third-party models prepared via `scripts/prepare_for_export.py`.
 
-For models not imported through this plugin, run `scripts/prepare_for_export.py` first to set up camera, lights, weight optimization, and PKX metadata.
+See the [Exporter guide](docs/exporter.html) for the full workflow — scene preparation, export options, and getting your model back into the game. For implementation details and the supported-feature matrix, see [Exporter Setup](technical-docs/exporter_setup.md).
 
 ## Developer Instructions
+
+### Local Development Setup
+
+**Goal:** install the addon into Blender, find the on-disk install location, and edit files there so changes pick up after a restart.
+
+1. **Clone the repository.** The same `git` commands work on macOS, Linux, and Windows (Git Bash, PowerShell, or Command Prompt — all accept this syntax once Git for Windows is installed).
+   ```bash
+   git clone https://github.com/StarsMmd/Blender-Addon-Gamecube-Models.git
+   cd Blender-Addon-Gamecube-Models
+   ```
+
+2. **Build a Blender extension `.zip`.** Compress the **contents** of the repo (not the parent folder), so the resulting zip's top level is the addon files (`__init__.py`, `blender_manifest.toml`, `BlenderPlugin.py`, etc.).
+   ```bash
+   # macOS / Linux
+   cd /path/to/colo_xd
+   zip -r ../colo_xd.zip . -x ".git/*" "__pycache__/*"
+
+   # Windows (PowerShell)
+   Compress-Archive -Path * -DestinationPath ..\colo_xd.zip
+   ```
+
+3. **Install in Blender.** Open Blender 4.5.7 LTS, then:
+   - **Edit > Preferences > Get Extensions > drop-down (top right) > Install from Disk…** and select the `.zip`.
+   - Or simply drag the `.zip` into a Blender window.
+
+4. **Find the on-disk install location.** Blender unpacks extensions into a per-OS user-default folder:
+   | OS | Default extensions folder |
+   |---|---|
+   | macOS | `~/Library/Application Support/Blender/4.5/extensions/user_default/` |
+   | Windows | `%APPDATA%\Blender Foundation\Blender\4.5\extensions\user_default\` |
+   | Linux | `~/.config/blender/4.5/extensions/user_default/` |
+
+   Inside that folder, the addon lives in a sub-directory named after the manifest's `id` (here: `gamecube_dat_model`) — or after whatever folder name the `.zip` extracted to. Edit files **at this location** for changes to affect the running addon.
+
+5. **Restart Blender after every code change.** Blender loads extension modules once at startup; reloading without a restart will not pick up edits to the addon's Python files. If a change doesn't take effect, fully quit and relaunch Blender (closing the window is sometimes not enough — use *Blender > Quit* on macOS, or kill the process if the launcher menu won't accept input).
 
 ### Dependencies
 
@@ -106,12 +109,14 @@ importer/
     extract/               # Phase 1: container detection, PKX header stripping
     route/                 # Phase 2: section name -> node type mapping
     parse/                 # Phase 3: binary -> node trees (DATParser)
-    describe/              # Phase 4: node trees -> IR dataclasses
-    build_blender/         # Phase 5: IR -> Blender objects
+    describe/              # Phase 4: node trees -> IR (platform-agnostic)
+    plan/                  # Phase 5a: IR -> BR (Blender-specialised, pure)
+    build_blender/         # Phase 5b: BR -> Blender objects (bpy executor only)
     post_process/          # Phase 6: reset poses, select animations, apply shiny
 
 shared/
   IR/                      # Intermediate Representation dataclasses
+  BR/                      # Blender Representation dataclasses (shader graphs, etc.)
   Nodes/                   # Node class definitions (parsing + writing only, no bpy)
   Constants/               # HSD/GX format constants
   helpers/                 # Binary I/O, logging, math utilities, PKX container, sRGB
@@ -119,14 +124,17 @@ shared/
 exporter/
   exporter.py              # Pipeline entry point: Exporter.run()
   phases/
-    pre_process/           # Pre-process: validate output path + scene
-    describe_blender/      # Phase 1: Blender -> IR dataclasses
-    compose/               # Phase 2: IR -> node trees
-    serialize/             # Phase 3: node trees -> DAT bytes (DATBuilder)
-    package/               # Phase 4: DAT bytes -> final output (.dat or .pkx)
+    pre_process/           # Validate output path + scene (baked transforms,
+                           #   weight/texture caps, anim timings)
+    describe/              # Phase 1: Blender -> BR (only phase that touches bpy)
+    plan/                  # Phase 2: BR -> IR (pure)
+    compose/               # Phase 3: IR -> node trees
+    serialize/             # Phase 4: node trees -> DAT bytes (DATBuilder)
+    package/               # Phase 5: DAT bytes -> final output (.dat or .pkx)
+    describe_blender/      # Empty deprecation stubs (pending file deletion)
 
 legacy/                    # Pre-refactor importer (available via "Use Legacy" toggle)
-documentation/             # Pipeline docs, API reference, compatibility table, IR spec
+technical-docs/            # Pipeline docs, API reference, compatibility table, IR spec
 tests/                     # pytest suite (no game files required)
 tests/round_trip/          # Round-trip tests with real model files (requires bpy)
 ```
@@ -143,7 +151,7 @@ python3 CommandLineInterface.py model.dat
 python3 CommandLineInterface.py model.dat -v
 ```
 
-The CLI entry point is `CommandLineInterface.py` (invoked via `__main__.py`). Without `bpy` installed, the pipeline runs phases 1-4 (parse and describe) and outputs the IR without creating Blender objects.
+The CLI entry point is `CommandLineInterface.py` (invoked via `__main__.py`). Without `bpy` installed, the pipeline runs phases 1-5a (parse, describe, and plan) and outputs the BR without creating Blender objects.
 
 ### Running Tests
 
@@ -170,20 +178,22 @@ python3 tests/round_trip/run_round_trips.py path/to/models/
 python3 tests/round_trip/run_round_trips.py path/to/model.pkx -v
 ```
 
-See [Round-Trip Test Progress](documentation/round_trip_test_progress.md) for per-model scores and test type explanations.
+See [Round-Trip Test Progress](technical-docs/round_trip_test_progress.md) for per-model scores and test type explanations.
 
 ## Documentation
 
-Detailed documentation lives in the `documentation/` folder:
+Detailed documentation lives in the `technical-docs/` folder:
 
-- [**Blender API Usage**](documentation/blender_api_usage.md) — reference for Blender Python API patterns used in the addon
-- [**Compatibility Table**](documentation/compatibility_table.md) — feature support across different games and file types
-- [**Exporter Setup**](documentation/exporter_setup.md) — supported features and usage guide for the exporter (WIP)
-- [**File Formats**](documentation/file_formats.md) — binary format specs for DAT, GX textures, WZX, PKX, and GPT1
-- [**IR Specification**](documentation/ir_specification.md) — the Intermediate Representation dataclass hierarchy and design principles
-- [**Round-Trip Test Progress**](documentation/round_trip_test_progress.md) — NBN/NIN/IBI/BNB test results per model
-- [**Scripts**](documentation/scripts.md) — standalone Blender scripts and how to run them
-- [**Shiny Variants**](documentation/shiny_variants.md) — how the game stores shiny color data and how the addon implements it
+- [**Blender API Usage**](technical-docs/blender_api_usage.md) — reference for Blender Python API patterns used in the addon
+- [**Compatibility Table**](technical-docs/compatibility_table.md) — feature support across different games and file types
+- [**Exporter Setup**](technical-docs/exporter_setup.md) — supported features and usage guide for the exporter (WIP)
+- [**File Formats**](technical-docs/file_formats.md) — binary format specs for DAT, GX textures, WZX, PKX, and GPT1
+- [**IR Specification**](technical-docs/ir_specification.md) — the Intermediate Representation dataclass hierarchy (output of Phase 4)
+- [**BR Specification**](technical-docs/br_specification.md) — the Blender Representation dataclass hierarchy (output of Phase 5a, Plan)
+- [**Implementation Notes**](technical-docs/implementation_notes.md) — architectural decisions, runtime invariants, and policies
+- [**Round-Trip Test Progress**](technical-docs/round_trip_test_progress.md) — NBN/NIN/IBI/BNB test results per model
+- [**Scripts**](technical-docs/scripts.md) — standalone Blender scripts and how to run them
+- [**Shiny Variants**](technical-docs/shiny_variants.md) — how the game stores shiny color data and how the addon implements it
 
 ## Community
 

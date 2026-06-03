@@ -39,6 +39,13 @@ def apply_color_tracks(track, material, fcurves, max_frame, logger):
 
     IR stores sRGB color values — linearize RGB channels for Blender's
     shader nodes. Alpha is not linearized.
+
+    In: track (BRMaterialTrack); material (bpy.types.Material — must contain
+        a DiffuseColor / AlphaValue node); fcurves (bpy_prop_collection, an
+        action.fcurves or channelbag.fcurves); max_frame (int, unused);
+        logger (Logger).
+    Out: None. Adds fcurves targeting ``node_tree.nodes[name].outputs[0].
+         default_value``; CYCLES modifier when track.loop.
     """
     for field_name, (node_name, index, needs_linearize) in COLOR_TRACK_MAP.items():
         keyframes = getattr(track, field_name)
@@ -70,6 +77,12 @@ def apply_texture_uv_tracks(track, material, fcurves, logger):
 
     The IR stores V-flipped translation_v values (standard bottom-left origin),
     so no coordinate correction is needed here — values are written directly.
+
+    In: track (BRMaterialTrack); material (bpy.types.Material — must contain a
+        TexMapping_N node for every animated texture index);
+        fcurves (bpy_prop_collection); logger (Logger).
+    Out: None. Adds fcurves targeting the matching Mapping node's inputs
+        (translation/scale/rotation) with bezier handles preserved.
     """
     for uv_track in track.texture_uv_tracks:
         mapping_node = find_mapping_node(material, uv_track.texture_index)
@@ -103,7 +116,12 @@ def apply_texture_uv_tracks(track, material, fcurves, logger):
 
 
 def find_mapping_node(material, texture_index):
-    """Find the Mapping shader node for a given texture index."""
+    """Find the Mapping shader node for a given texture index.
+
+    In: material (bpy.types.Material); texture_index (int).
+    Out: bpy.types.ShaderNode; raises ValueError with the actual node
+         names if ``TexMapping_{texture_index}`` isn't present.
+    """
     target_name = 'TexMapping_%d' % texture_index
     node = material.node_tree.nodes.get(target_name)
     if not node:

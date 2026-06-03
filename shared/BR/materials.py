@@ -1,0 +1,71 @@
+from __future__ import annotations
+from dataclasses import dataclass, field
+
+
+@dataclass
+class BRImage:
+    """Image data ready to populate ``bpy.data.images``.
+
+    Build uses ``cache_key`` to dedup across materials — multiple BRMaterials
+    can reference the same image via their BRNode.image_ref, and only one
+    bpy image is created.
+    """
+    name: str
+    width: int
+    height: int
+    pixels: bytes                      # raw RGBA uint8
+    cache_key: tuple                   # (image_id, palette_id) — dedup identity
+    alpha_mode: str = 'CHANNEL_PACKED'
+    pack: bool = True
+    gx_format_override: str | None = None  # stored on bpy_image.dat_gx_format
+
+
+@dataclass
+class BRNode:
+    """One shader node spec — a direct mirror of a bpy shader node.
+
+    ``node_type`` is the Blender bl_idname (e.g. ``ShaderNodeMath``).
+    ``properties`` are type-specific attributes set via ``setattr`` on the
+    bpy node (e.g. ``{'operation': 'ADD', 'use_clamp': True}``).
+    ``input_defaults`` sets the ``default_value`` of input sockets, keyed
+    by socket index or name. Linked inputs override defaults at evaluation.
+    ``image_ref`` is populated only for ``ShaderNodeTexImage`` nodes.
+    """
+    node_type: str
+    name: str
+    properties: dict[str, object] = field(default_factory=dict)
+    input_defaults: dict[object, object] = field(default_factory=dict)
+    image_ref: BRImage | None = None
+    location: tuple[float, float] | None = None
+
+
+@dataclass
+class BRLink:
+    """One graph link — socket-to-socket connection between two BRNodes."""
+    from_node: str           # BRNode.name
+    from_output: object      # int or str
+    to_node: str
+    to_input: object
+
+
+@dataclass
+class BRNodeGraph:
+    """A shader node graph: nodes + links. No implicit output — the
+    ShaderNodeOutputMaterial is an explicit node in ``nodes``."""
+    nodes: list[BRNode] = field(default_factory=list)
+    links: list[BRLink] = field(default_factory=list)
+
+
+@dataclass
+class BRMaterial:
+    """One Blender material spec: name + graph + material-level Blender
+    properties. Every decision about how to construct the shader is
+    baked in; the build phase is a mechanical walker.
+    """
+    name: str
+    node_graph: BRNodeGraph
+    use_backface_culling: bool = False
+    blend_method: str | None = None       # 'OPAQUE' / 'HASHED' / 'BLEND'
+    # Dedup key used by build to share one bpy material between meshes.
+    # A plan-time constructed tuple like (id(ir_material), cull_f, cull_b).
+    dedup_key: object = None

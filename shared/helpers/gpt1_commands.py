@@ -3,7 +3,7 @@
 Decodes the variable-length command sequences embedded in GPT1 generator
 definitions into structured instruction lists.
 
-See documentation/file_formats.md for the full opcode table.
+See technical-docs/file_formats.md for the full opcode table.
 """
 import struct
 from dataclasses import dataclass, field

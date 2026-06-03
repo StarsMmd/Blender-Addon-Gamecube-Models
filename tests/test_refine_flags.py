@@ -7,13 +7,26 @@ other meshes. This test pins that rule down.
 """
 from shared.IR.skeleton import IRBone
 from shared.IR.geometry import IRMesh, IRBoneWeights
-from shared.IR.enums import ScaleInheritance, SkinType
+from shared.IR.material import IRMaterial
+from shared.IR.enums import ScaleInheritance, SkinType, ColorSource, LightingModel
 from shared.Constants.hsd import (
     JOBJ_SKELETON, JOBJ_SKELETON_ROOT, JOBJ_ENVELOPE_MODEL,
-    JOBJ_LIGHTING, JOBJ_OPA, JOBJ_HIDDEN,
+    JOBJ_LIGHTING, JOBJ_OPA, JOBJ_XLU,
+    JOBJ_ROOT_OPA, JOBJ_ROOT_XLU,
+    JOBJ_HIDDEN,
 )
-from exporter.phases.describe_blender.describe_blender import _refine_bone_flags
+from exporter.phases.plan.helpers.scene import refine_bone_flags as _refine_bone_flags
 from shared.helpers.logger import StubLogger
+
+
+def _make_material(is_translucent):
+    return IRMaterial(
+        diffuse_color=(1, 1, 1, 1), ambient_color=(0, 0, 0, 1),
+        specular_color=(0, 0, 0, 1), alpha=1.0, shininess=0.0,
+        color_source=ColorSource.MATERIAL, alpha_source=ColorSource.MATERIAL,
+        lighting=LightingModel.LIT, enable_specular=False,
+        is_translucent=is_translucent,
+    )
 
 
 def _identity_4x4():
@@ -40,7 +53,10 @@ def _make_bone(name, parent_index=None, mesh_indices=None, is_hidden=False):
     )
 
 
-def _make_mesh(name, parent_bone_index, bone_weights=None, is_hidden=False):
+def _make_mesh(name, parent_bone_index, bone_weights=None, is_hidden=False,
+               translucent=False, material=None):
+    if material is None and translucent:
+        material = _make_material(is_translucent=True)
     return IRMesh(
         name=name,
         vertices=[(0, 0, 0)],
@@ -48,7 +64,7 @@ def _make_mesh(name, parent_bone_index, bone_weights=None, is_hidden=False):
         uv_layers=[],
         color_layers=[],
         normals=None,
-        material=None,
+        material=material,
         bone_weights=bone_weights,
         is_hidden=is_hidden,
         parent_bone_index=parent_bone_index,
@@ -115,3 +131,51 @@ class TestRefineBoneFlags:
         assert bones[1].flags & JOBJ_HIDDEN != 0
         assert bones[1].flags & JOBJ_SKELETON == 0
         assert bones[1].flags & (JOBJ_LIGHTING | JOBJ_OPA) != 0
+
+    # --- Alpha-cutout (TEXEDGE) is preserved on round-trip ---
+    #
+    # Game-native PKXs flag alpha-cutout materials (eyes, wings, fur
+    # edges) with JOBJ_TEXEDGE, not JOBJ_XLU. JOBJ_XLU (true
+    # alpha-blending) has a documented in-game invisibility issue and
+    # no game-native PKX in the corpus uses it. _refine_bone_flags
+    # therefore maps IRMaterial.is_translucent → JOBJ_TEXEDGE +
+    # JOBJ_ROOT_TEXEDGE and leaves JOBJ_XLU / JOBJ_ROOT_XLU unused.
+
+    def test_bone_owning_alpha_cutout_material_gets_texedge(self):
+        from shared.Constants.hsd import JOBJ_TEXEDGE
+        bones = [
+            _make_bone("root"),
+            _make_bone("eye_bone", parent_index=0, mesh_indices=[0]),
+        ]
+        meshes = [_make_mesh("eye", parent_bone_index=1, translucent=True)]
+
+        _refine_bone_flags(bones, meshes, StubLogger())
+
+        assert bones[1].flags & JOBJ_TEXEDGE != 0, (
+            "alpha-cutout mesh → bone must carry JOBJ_TEXEDGE; flags=%#x" % bones[1].flags
+        )
+        assert bones[1].flags & JOBJ_XLU == 0, (
+            "JOBJ_XLU is reserved for true alpha-blending; game-native "
+            "PKXs never use it for alpha-cutout textures. flags=%#x" % bones[1].flags
+        )
+        assert bones[1].flags & JOBJ_OPA == 0, (
+            "pure-alpha-cutout bone should not also be JOBJ_OPA; flags=%#x" % bones[1].flags
+        )
+
+    def test_root_texedge_propagates_for_alpha_cutout_descendant(self):
+        from shared.Constants.hsd import JOBJ_TEXEDGE, JOBJ_ROOT_TEXEDGE
+        bones = [
+            _make_bone("root"),
+            _make_bone("spine", parent_index=0),
+            _make_bone("mesh_bone", parent_index=1, mesh_indices=[0]),
+        ]
+        meshes = [_make_mesh("m", parent_bone_index=2, translucent=True)]
+
+        _refine_bone_flags(bones, meshes, StubLogger())
+
+        assert bones[0].flags & JOBJ_ROOT_TEXEDGE != 0
+        assert bones[1].flags & JOBJ_ROOT_TEXEDGE != 0
+        assert bones[2].flags & JOBJ_TEXEDGE != 0
+        # No opaque mesh anywhere → no ROOT_OPA chain.
+        assert bones[0].flags & JOBJ_ROOT_OPA == 0
+        assert bones[1].flags & JOBJ_ROOT_OPA == 0

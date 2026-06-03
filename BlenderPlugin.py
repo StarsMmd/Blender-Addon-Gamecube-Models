@@ -28,25 +28,49 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
                           description="File path used for importing the HSD file",
                           type=bpy.types.OperatorFileListElement)
     directory: StringProperty(subtype="DIR_PATH")
-    ik_hack: BoolProperty(default=True, name='IK Hack',
-                         description='Shrinks Bones down to 1e-3 to make IK work properly.')
-    write_logs: BoolProperty(default=True, name='Write Logs',
-                            description='Write import logs to a temp file for debugging.')
+    game: EnumProperty(
+        name='Game of Origin',
+        description='Which game the .dat file was extracted from. Selects the section-name → node-type routing rules.',
+        items=[
+            ('COLO_XD', 'Colosseum / XD', 'Pokémon Colosseum and Pokémon XD: Gale of Darkness'),
+            ('KIRBY_AIR_RIDE', 'Kirby Air Ride', 'Kirby Air Ride'),
+            ('SMASH_BROS', 'Super Smash Bros.', 'Super Smash Bros. Melee'),
+            ('OTHER', 'Other', 'Unknown / unsupported game — falls back to Colosseum / XD routing rules'),
+        ],
+        default='COLO_XD',
+    )
+    colo_xd_kind: EnumProperty(
+        name='Colo/XD Kind',
+        description='What kind of Colosseum/XD container is being imported. PKX models carry a header that selects animation-slot labels; raw .dat models do not.',
+        items=[
+            ('PKX_POKEMON', 'PKX Pokémon', 'A PKX whose animation slots follow Pokémon battle-move conventions'),
+            ('PKX_TRAINER', 'PKX Trainer', 'A PKX whose animation slots follow trainer-pose conventions'),
+            ('DAT_MODEL', 'DAT Model', 'A raw .dat model with no PKX header — Pokémon/Trainer distinction does not apply'),
+        ],
+        default='PKX_POKEMON',
+    )
     setup_workspace: BoolProperty(default=True, name='Setup Workspace',
                                  description='Split the viewport and open an Action Editor. Sets playback end frame to 60.')
     import_lights: BoolProperty(default=False, name='Import Lights',
                                description='Import light sets from the model file.')
     import_cameras: BoolProperty(default=False, name='Import Cameras',
                                 description='Import cameras from the model file.')
-    include_shiny: BoolProperty(default=True, name='Include Shiny Variant',
-                               description='Extract shiny color parameters from PKX files and add a toggleable shiny filter to materials.')
     use_legacy: BoolProperty(default=False, name='Use Legacy Importer',
                             description='Use the old import pipeline instead of the new Intermediate Representation pipeline.')
-    strict_mirror: BoolProperty(default=False, name='Strict Mirror Mode',
-                               description='Refuse to silently heal malformed input. Makes bugs from re-exported models reproducible in Blender.')
 
     filename_ext = ".dat"
     filter_glob: StringProperty(default="*.fdat;*.dat;*.rdat;*.pkx;*.fsys;*.wzx;*.cam", options={'HIDDEN'})
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, "game")
+        if self.game == 'COLO_XD':
+            layout.prop(self, "colo_xd_kind")
+        layout.prop(self, "setup_workspace")
+        layout.prop(self, "import_lights")
+        layout.prop(self, "import_cameras")
+        if self.game == 'COLO_XD':
+            layout.prop(self, "use_legacy")
 
     def execute(self, context):
         if self.files and self.directory:
@@ -78,19 +102,17 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
         filename = os.path.basename(path)
         model_name = filename.split('.')[0] if filename else "unknown"
 
-        if self.write_logs:
-            logger = Logger(model_name=model_name)
-        else:
-            logger = StubLogger()
+        logger = Logger(model_name=model_name)
 
         options = {
-            "ik_hack": self.ik_hack,
+            "ik_hack": True,
             "max_frame": 10000,
             "filepath": path,
             "import_lights": self.import_lights,
-            "import_cameras": self.import_cameras,
-            "include_shiny": self.include_shiny,
-            "strict_mirror": self.strict_mirror,
+            "import_cameras": self.import_cameras or filename.lower().endswith('.cam'),
+            "include_shiny": True,
+            "game": self.game,
+            "colo_xd_kind": self.colo_xd_kind if self.game == 'COLO_XD' else None,
         }
 
         if bpy.ops.object.select_all.poll():
@@ -108,15 +130,15 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
         filename = os.path.basename(path)
         entries = extract_dat(raw_bytes, filename)
 
-        legacy_import_hsd.ikhack = self.ik_hack
+        legacy_import_hsd.ikhack = True
         legacy_import_hsd.anim_max_frame = 10000
-        legacy_import_hsd.write_logs = self.write_logs
+        legacy_import_hsd.write_logs = True
         legacy_import_hsd.import_lights = self.import_lights
 
         options = {"include_shiny": False}
 
         for dat_bytes, metadata in entries:
-            section_map = route_sections(dat_bytes)
+            section_map = route_sections(dat_bytes, game=self.game)
 
             # Record which armatures exist before the legacy import so we can
             # diff afterwards to find newly created ones for Phase 6
@@ -382,7 +404,8 @@ class DAT_PT_PKXPanel(bpy.types.Panel):
         _draw_enum_dropdown(box, obj, "dat_pkx_format", _FORMAT_ITEMS, label="Format:")
         if "dat_pkx_species_id" in obj:
             box.prop(obj, '["dat_pkx_species_id"]', text="Species ID")
-        _draw_enum_dropdown(box, obj, "dat_pkx_model_type", _MODEL_TYPE_ITEMS, label="Model Type:")
+        if "dat_pkx_model_type" in obj:
+            _draw_enum_dropdown(box, obj, "dat_pkx_model_type", _MODEL_TYPE_ITEMS, label="Model Type:")
         if "dat_pkx_head_bone" in obj:
             box.prop_search(obj, '["dat_pkx_head_bone"]', obj.data, "bones", text="Head Bone")
         if "dat_pkx_particle_orientation" in obj:
@@ -586,15 +609,15 @@ _dat_props = [
     )),
     ('dat_pkx_shiny_route_r', EnumProperty(
         name="Route R", description="Which source color channel feeds the Red output",
-        items=_SHINY_CHANNEL_ITEMS, default='0', update=_on_shiny_param_update,
+        items=_SHINY_CHANNEL_ITEMS, default='2', update=_on_shiny_param_update,
     )),
     ('dat_pkx_shiny_route_g', EnumProperty(
         name="Route G", description="Which source color channel feeds the Green output",
-        items=_SHINY_CHANNEL_ITEMS, default='1', update=_on_shiny_param_update,
+        items=_SHINY_CHANNEL_ITEMS, default='0', update=_on_shiny_param_update,
     )),
     ('dat_pkx_shiny_route_b', EnumProperty(
         name="Route B", description="Which source color channel feeds the Blue output",
-        items=_SHINY_CHANNEL_ITEMS, default='2', update=_on_shiny_param_update,
+        items=_SHINY_CHANNEL_ITEMS, default='1', update=_on_shiny_param_update,
     )),
     ('dat_pkx_shiny_route_a', EnumProperty(
         name="Route A", description="Which source color channel feeds the Alpha output",
@@ -602,11 +625,11 @@ _dat_props = [
     )),
     ('dat_pkx_shiny_brightness_r', FloatProperty(
         name="Brightness R", description="Red brightness: -1 = black, 0 = unchanged, 1 = 2× bright",
-        default=0.0, min=-1.0, max=1.0, step=1, precision=3, update=_on_shiny_param_update,
+        default=0.2, min=-1.0, max=1.0, step=1, precision=3, update=_on_shiny_param_update,
     )),
     ('dat_pkx_shiny_brightness_g', FloatProperty(
         name="Brightness G", description="Green brightness: -1 = black, 0 = unchanged, 1 = 2× bright",
-        default=0.0, min=-1.0, max=1.0, step=1, precision=3, update=_on_shiny_param_update,
+        default=0.2, min=-1.0, max=1.0, step=1, precision=3, update=_on_shiny_param_update,
     )),
     ('dat_pkx_shiny_brightness_b', FloatProperty(
         name="Brightness B", description="Blue brightness: -1 = black, 0 = unchanged, 1 = 2× bright. Alpha brightness is forced to maximum by the game",

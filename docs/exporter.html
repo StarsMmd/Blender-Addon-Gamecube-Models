@@ -1,0 +1,766 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Exporter &middot; Blender HAL DAT Model Addon</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="theme.js"></script>
+</head>
+<body>
+    <header class="site-header">
+        <div class="container">
+            <a href="index.html" class="site-title">Blender HAL DAT Model Addon</a>
+            <nav class="site-nav">
+                <a href="index.html">Home</a>
+                <a href="importer.html">Importer</a>
+                <a href="exporter.html">Exporter</a>
+                <a href="fsys-tool.html">FSYS Tool</a>
+                <button class="theme-toggle" type="button" aria-label="Toggle light / dark mode" title="Toggle light / dark mode">
+                    <span class="icon-dark">☀️</span><span class="icon-light">🌙</span>
+                </button>
+            </nav>
+        </div>
+    </header>
+
+    <main class="container">
+        <h1>Exporting models</h1>
+
+        <p>This guide walks through the full end-to-end process — from sourcing a model
+        all the way to viewing your custom export running in the game.</p>
+
+        <div class="callout">
+            <strong>Note:</strong> the exporter is a work in progress. It produces working models
+            for Pokémon Colosseum and XD, but the output is occasionally buggy and in rare cases can
+            crash the game. Round-trip fidelity is high for character/Pokémon models; some map and
+            scene features aren't yet supported on the export side.
+        </div>
+
+        <nav class="toc">
+            <h2>Contents</h2>
+            <ol>
+                <li><a href="#blender-setup">Blender setup</a></li>
+                <li><a href="#getting-model">Getting a model</a></li>
+                <li><a href="#scene-setup">Setting up the scene</a></li>
+                <li><a href="#compatibility">Checking compatibility</a></li>
+                <li><a href="#preparing">Preparing the model</a></li>
+                <li><a href="#exporting">Exporting the model</a></li>
+                <li><a href="#importing-back">Importing the model back into the game</a></li>
+                <li><a href="#troubleshooting">Troubleshooting</a></li>
+            </ol>
+        </nav>
+
+        <h2 id="blender-setup">1. Blender setup</h2>
+
+        <p>Before following this guide, make sure Blender and the addon are installed.
+        The home page covers both steps:</p>
+
+        <ul>
+            <li><a href="index.html#installing-blender">Installing Blender</a></li>
+            <li><a href="index.html#installing-plugin">Installing the plugin</a></li>
+        </ul>
+
+        <p>Once that's done, return here and continue with step 2.</p>
+
+        <h2 id="getting-model">2. Getting a model</h2>
+
+        <p>The exporter works with any Blender scene that has a single armature with meshes parented
+        to it. There are three common ways to end up with one:</p>
+
+        <h3>Option A — Edit an existing game model</h3>
+
+        <p>The simplest path. Follow the <a href="importer.html">importer guide</a> to load a Pokémon
+        Colosseum or XD model, then edit it directly in Blender (re-texture, re-pose, retopologise,
+        whatever you like). All the metadata the exporter needs (animation slots, shiny params, body
+        map) is already set on the armature, so you can skip most of the prep work later.</p>
+
+        <figure class="screenshot">
+            <img src="images/exporter/getting-model/outliner-imported.png" alt="Outliner showing imported Pokemon model">
+            <figcaption>An imported model in the Outliner — armature + meshes, ready to edit.</figcaption>
+        </figure>
+
+        <h3>Option B — Import a model from another source</h3>
+
+        <p>This can be other Pokémon games, other game series, or models from anywhere else. Many
+        modern Pokémon titles (Sun/Moon onwards, Sword/Shield, Legends Arceus, Scarlet/Violet, etc.)
+        have community-maintained rips available as <code>.glb</code> or <code>.fbx</code> files,
+        and the same formats are used widely outside Pokémon too. Blender opens these natively —
+        use <strong>File → Import → glTF 2.0 (.glb/.gltf)</strong> or
+        <strong>File → Import → FBX (.fbx)</strong>.</p>
+
+        <figure class="screenshot">
+            <img src="images/exporter/getting-model/file-import-glb.png" alt="File Import glTF menu">
+            <figcaption>Importing a <code>.glb</code> rip via <strong>File → Import → glTF 2.0</strong>.</figcaption>
+        </figure>
+
+        <p>Rips from other games arrive without any of the metadata the exporter expects. The
+        <a href="#preparing">preparation step</a> below adds it automatically.</p>
+
+        <div class="callout">
+            <strong>Stylized-face characters:</strong> GLB rips of modern Pokémon (and Splatoon,
+            Fire Emblem, Xenoblade, etc.) often have small black discs floating in front of the eyes.
+            These are "eye masks" — animation helpers that don't survive the export. You'll need to
+            select the mesh, enter Edit Mode (<kbd>Tab</kbd>), press <kbd>P</kbd> to separate by loose
+            parts, then delete the small disc-shaped meshes in front of each eye.
+        </div>
+
+        <h3>Option C — Build a model from scratch</h3>
+
+        <p>Fully custom models work too. The constraints are the same as for any rip: you need an
+        armature, meshes parented to it, materials with image textures, and a face count well under
+        the game's limits. See <a href="#compatibility">Checking compatibility</a> for the full
+        feature list.</p>
+
+        <h2 id="scene-setup">3. Setting up the scene</h2>
+
+        <p>The exporter writes the <strong>entire Blender scene</strong> to the output file (with one
+        narrow exception: hidden cameras are skipped). That means before you export, the scene needs
+        to contain <em>only</em> the things you want in the game model. This step is about cleaning
+        up.</p>
+
+        <h3>Step 1 — Delete the default cube, light, and camera</h3>
+
+        <p>When you opened Blender, it created a default scene with a Cube, a Light, and a Camera.
+        If you're working with a freshly imported model, these may or may not still be around —
+        either way, delete them.</p>
+
+        <p>In the Outliner (top-right panel), click on each unwanted object and press <kbd>X</kbd>
+        in the viewport (or <strong>Delete</strong> on the keyboard) to remove it. Alternatively,
+        right-click the object and choose <strong>Delete</strong> from the drop-down menu. Confirm
+        the deletion if Blender asks.</p>
+
+        <div class="callout">
+            <strong>Tip:</strong> you can change Blender's startup settings so that new projects no
+            longer include the default cube, camera, and light. Set up an empty scene the way you'd
+            like, then go to <strong>File → Defaults → Save Startup File</strong>.
+        </div>
+
+        <figure class="screenshot">
+            <img src="images/exporter/scene-setup/delete-default-cube.png" alt="Default cube selected, about to delete">
+            <figcaption>Select the default Cube, Light, and Camera and delete them with <kbd>X</kbd>.</figcaption>
+        </figure>
+
+        <h3>Step 2 — Confirm the scene structure</h3>
+
+        <p>Import the model as described in <a href="#getting-model">section 2</a> and make any
+        desired modifications.</p>
+
+        <p>What should remain is one <strong>Armature</strong> with the model's meshes <strong>parented
+        to it</strong>. In the Outliner, the armature is the entry with a stick-figure icon; meshes
+        appear nested underneath it (click the triangle to the left of the armature to expand).</p>
+
+        <figure class="screenshot">
+            <img src="images/exporter/scene-setup/outliner-tree.png" alt="Outliner with armature parent and mesh children">
+            <figcaption>A correctly structured scene: one armature with all meshes as its children.</figcaption>
+        </figure>
+
+        <div class="callout">
+            <strong>Note:</strong> depending on where you got the model from you'll probably not
+            need to worry about parenting. If a mesh isn't parented to the armature, the exporter
+            will ignore it. To parent a mesh: click the mesh in the viewport, hold <kbd>Shift</kbd>
+            and click the armature (so the armature is the last selected, "active" object —
+            usually highlighted brighter), then press <kbd>Ctrl</kbd>+<kbd>P</kbd> and pick
+            <strong>Armature Deform</strong>.
+        </div>
+
+        <div class="callout">
+            <strong>Note:</strong> switch the viewport shading to
+            <a href="importer.html#material-preview">Material Preview</a> so the colours and textures
+            are visible while you work with the model.
+        </div>
+
+        <h3>Step 3 — Make sure the model faces the right way</h3>
+
+        <p>In Blender, your model should be standing upright (Z is up) and facing along the negative
+        Y axis (toward the default camera position when looking from front). If the model is lying
+        on its side or facing backwards, rotate the armature to fix it.</p>
+
+        <p>It's common for other software to use the Y axis as the up axis. If the model is lying
+        on the ground, then it's most likely that a rotation of 90 degrees around the X axis will
+        convert it to Blender's Z-up coordinates: select the armature, press <kbd>R</kbd>,
+        <kbd>X</kbd>, type <code>90</code>, and press <kbd>Enter</kbd>.</p>
+
+        <p>To rotate more generally: select the armature, press <kbd>R</kbd>, then optionally an
+        axis key (<kbd>X</kbd>, <kbd>Y</kbd>, or <kbd>Z</kbd>), type the angle in degrees (e.g.
+        <code>90</code>), and press <kbd>Enter</kbd>.</p>
+
+        <figure class="screenshot">
+            <img src="images/exporter/scene-setup/rotate-armature.gif" alt="Rotating the armature">
+            <figcaption>Rotating with <kbd>R</kbd> → axis key → angle → <kbd>Enter</kbd>.</figcaption>
+        </figure>
+
+        <figure class="screenshot">
+            <img src="images/exporter/scene-setup/face-front.png" alt="Model facing the correct direction">
+            <figcaption>The model should be upright and facing forward (toward the viewer when looking from front view).</figcaption>
+        </figure>
+
+        <div class="callout">
+            <strong>Note:</strong> the button circled in the image above can be used to hide or show
+            a model's bones. The bones aren't visible in game so you don't need to worry about how
+            they look. However, the armature may not be selectable (for things like rotation or
+            selecting animations) if the bones are hidden.
+        </div>
+
+        <h3>Step 4 — Scale the model to match real-world dimensions</h3>
+
+        <p>Blender measures things in metres. The plugin expects the model to be sized like the real
+        thing — for Pokémon, that's the species' official height. A scale mismatch shows up in-game
+        as a Pokémon that's tiny or enormous compared to the rest of the cast.</p>
+
+        <ol>
+            <li>Click the armature in the viewport.</li>
+            <li>Press <kbd>N</kbd> to open the sidebar on the right of the viewport.</li>
+            <li>Switch to the <strong>Item</strong> tab. The <strong>Dimensions</strong> section
+            shows the model's current X / Y / Z size in metres.</li>
+        </ol>
+
+        <figure class="screenshot">
+            <img src="images/exporter/scene-setup/n-panel-dimensions.png" alt="N-panel showing Dimensions">
+            <figcaption>The N-panel (<kbd>N</kbd>) shows the model's current dimensions.</figcaption>
+        </figure>
+
+        <p>Look up the Pokémon's official height (Bulbapedia is a good source). For most Pokémon,
+        match the <strong>Z dimension</strong> (height) to the official metres value. For long
+        serpentine Pokémon like Gyarados or Rayquaza, the official "height" is actually body length —
+        use the <strong>Y dimension</strong> instead.</p>
+
+        <p>To scale: with the armature selected, press <kbd>S</kbd>, type the scale factor (e.g.
+        <code>0.5</code> to halve all 3 dimensions at the same time), and press <kbd>Enter</kbd>.</p>
+
+        <figure class="screenshot">
+            <img src="images/exporter/scene-setup/scale-armature.png" alt="Scaling the armature">
+            <figcaption>Scaling the armature with <kbd>S</kbd> → type factor → <kbd>Enter</kbd>.</figcaption>
+        </figure>
+
+        <div class="callout">
+            <strong>Note:</strong> zoom in or out after scaling to view the model properly again.
+        </div>
+
+        <div class="callout">
+            <strong>Note:</strong> depending on the model's pose (such as snake-like Pokémon being
+            curled up), the height or length may not be a 1:1 conversion and some judgment may be
+            required to determine the size to use. It can be helpful to import an existing Pokémon
+            from the game side-by-side as a comparison — just remember to delete it before exporting.
+        </div>
+
+        <h2 id="compatibility">4. Checking compatibility</h2>
+
+        <p>The exporter understands a specific subset of Blender features. Anything outside that
+        subset is either ignored or — for limits like polygon count — can cause the model to fail
+        to load in-game. This section walks through what's supported, organised the way Blender
+        itself groups things.</p>
+
+        <div class="callout">
+            <strong>Note:</strong> if you don't understand what some of these mean, you can ignore
+            this step and just try things out to see if it works.
+        </div>
+
+        <p><strong>Legend:</strong>
+        <span class="support-badge yes">✓ Supported</span>
+        <span class="support-badge partial">⚠ Partial</span>
+        <span class="support-badge no">✗ Not supported</span></p>
+
+        <h3>Scene objects</h3>
+
+        <p>What kinds of Blender objects the exporter pays attention to.</p>
+
+        <table>
+            <thead><tr><th>Object type</th><th>Support</th><th>Notes</th></tr></thead>
+            <tbody>
+                <tr><td>Armature</td><td><span class="support-badge yes">✓</span></td>
+                    <td>Each armature in the scene becomes one model in the output file.</td></tr>
+                <tr><td>Mesh (parented to armature)</td><td><span class="support-badge yes">✓</span></td>
+                    <td>Has to be parented to an armature, otherwise it's ignored.</td></tr>
+                <tr><td>Mesh (not parented)</td><td><span class="support-badge no">✗</span></td>
+                    <td>Parent it to the armature first.</td></tr>
+                <tr><td>Camera (Perspective)</td><td><span class="support-badge yes">✓</span></td>
+                    <td>Position, field of view, clip planes, and Track To target are exported.</td></tr>
+                <tr><td>Camera (Orthographic)</td><td><span class="support-badge yes">✓</span></td>
+                    <td>Ortho scale is written into the field-of-view slot.</td></tr>
+                <tr><td>Camera (Panoramic)</td><td><span class="support-badge no">✗</span></td>
+                    <td>No GameCube equivalent.</td></tr>
+                <tr><td>Light (Sun)</td><td><span class="support-badge yes">✓</span></td>
+                    <td>Color, direction, brightness.</td></tr>
+                <tr><td>Light (Point)</td><td><span class="support-badge yes">✓</span></td>
+                    <td>Color, position.</td></tr>
+                <tr><td>Light (Spot)</td><td><span class="support-badge yes">✓</span></td>
+                    <td>Color, position, target.</td></tr>
+                <tr><td>Light (Area)</td><td><span class="support-badge no">✗</span></td>
+                    <td>No GameCube equivalent.</td></tr>
+                <tr><td>Empty</td><td><span class="support-badge no">✗</span></td>
+                    <td>Empties are only meaningful internally (camera/light targets).</td></tr>
+                <tr><td>Curves / Text / Volumes</td><td><span class="support-badge no">✗</span></td>
+                    <td>Convert to mesh first (<strong>Object → Convert → Mesh</strong>).</td></tr>
+            </tbody>
+        </table>
+
+        <h3>Mesh data</h3>
+
+        <p>The geometry, UVs, and color information attached to your meshes.</p>
+
+        <table>
+            <thead><tr><th>Feature</th><th>Support</th><th>Notes</th></tr></thead>
+            <tbody>
+                <tr><td>Vertices &amp; faces</td><td><span class="support-badge yes">✓</span></td>
+                    <td>All faces are triangulated automatically on export.</td></tr>
+                <tr><td>Normals (auto)</td><td><span class="support-badge yes">✓</span></td>
+                    <td>Per-vertex normals are exported.</td></tr>
+                <tr><td>Custom split normals</td><td><span class="support-badge yes">✓</span></td>
+                    <td>Read from mesh loops.</td></tr>
+                <tr><td>UV maps</td><td><span class="support-badge yes">✓</span></td>
+                    <td>Up to 8 UV layers per mesh (GameCube hardware limit).</td></tr>
+                <tr><td>Vertex colors</td><td><span class="support-badge yes">✓</span></td>
+                    <td>Float-color attribute layers.</td></tr>
+                <tr><td>Multi-material meshes</td><td><span class="support-badge yes">✓</span></td>
+                    <td>Auto-split per material slot on export.</td></tr>
+                <tr><td>Shape keys (morph targets)</td><td><span class="support-badge no">✗</span></td>
+                    <td>Not yet implemented.</td></tr>
+            </tbody>
+        </table>
+
+        <h3>Skinning</h3>
+
+        <p>How meshes attach to bones for animation.</p>
+
+        <table>
+            <thead><tr><th>Feature</th><th>Support</th><th>Notes</th></tr></thead>
+            <tbody>
+                <tr><td>Vertex groups (multi-bone)</td><td><span class="support-badge yes">✓</span></td>
+                    <td>Standard skinned envelope. The prep script limits to 3 influences per
+                    vertex and quantises weights to 10% steps for GameCube efficiency.</td></tr>
+                <tr><td>Vertex groups (single bone)</td><td><span class="support-badge yes">✓</span></td>
+                    <td>Rigid bind — all verts attached to one bone.</td></tr>
+                <tr><td>No vertex groups</td><td><span class="support-badge yes">✓</span></td>
+                    <td>Mesh is bound to whichever bone it's parented to.</td></tr>
+                <tr><td>Armature modifier</td><td><span class="support-badge yes">✓</span></td>
+                    <td>Required for skinning to work.</td></tr>
+            </tbody>
+        </table>
+
+        <h3>Materials</h3>
+
+        <p>The Principled BSDF shader plus image textures cover almost everything the exporter can
+        handle. Procedural textures and custom node groups are ignored — bake to image if you need
+        them.</p>
+
+        <table>
+            <thead><tr><th>Feature</th><th>Support</th><th>Notes</th></tr></thead>
+            <tbody>
+                <tr><td>Principled BSDF — Base Color</td><td><span class="support-badge yes">✓</span></td>
+                    <td>Diffuse color.</td></tr>
+                <tr><td>Principled BSDF — Specular Tint</td><td><span class="support-badge yes">✓</span></td>
+                    <td>Reverse-mapped to absolute specular color.</td></tr>
+                <tr><td>Principled BSDF — Alpha</td><td><span class="support-badge no">✗</span></td>
+                    <td>Every material is exported as opaque. See note below.</td></tr>
+                <tr><td>Image Texture node</td><td><span class="support-badge yes">✓</span></td>
+                    <td>All GameCube texture formats supported.</td></tr>
+                <tr><td>Texture alpha channel</td><td><span class="support-badge partial">⚠</span></td>
+                    <td>Image alpha is encoded faithfully (for hard-edged cutouts like the ring
+                    around an iris), but the material itself is always opaque.</td></tr>
+                <tr><td>Procedural textures (Noise, Checker, etc.)</td><td><span class="support-badge no">✗</span></td>
+                    <td>Bake to image texture first.</td></tr>
+                <tr><td>Custom node groups</td><td><span class="support-badge no">✗</span></td>
+                    <td>Only specific nodes the exporter recognises are read.</td></tr>
+            </tbody>
+        </table>
+
+        <div class="callout">
+            <strong>About transparency:</strong> the exporter always writes materials as fully
+            opaque, regardless of the Principled BSDF's <strong>Alpha</strong> slider or whether
+            you've connected a texture alpha channel. Author your model assuming every material is
+            solid. Soft fringes (feathery edges, wispy fabric) need to be hard-edged geometry
+            instead.
+        </div>
+
+        <h3>Animations</h3>
+
+        <table>
+            <thead><tr><th>Feature</th><th>Support</th><th>Notes</th></tr></thead>
+            <tbody>
+                <tr><td>Bone actions (location / rotation / scale)</td><td><span class="support-badge yes">✓</span></td>
+                    <td>Both Euler and Quaternion rotation modes are supported.</td></tr>
+                <tr><td>Material color &amp; alpha actions</td><td><span class="support-badge yes">✓</span></td>
+                    <td>Animated material properties.</td></tr>
+                <tr><td>Texture UV scroll / scale</td><td><span class="support-badge yes">✓</span></td>
+                    <td>Animated texture offset and scale.</td></tr>
+                <tr><td>Camera animations</td><td><span class="support-badge yes">✓</span></td>
+                    <td>Position, target, FOV, roll, clip planes.</td></tr>
+                <tr><td>NLA strips</td><td><span class="support-badge yes">✓</span></td>
+                    <td>Actions referenced by NLA strips are exported.</td></tr>
+                <tr><td>Shape key actions</td><td><span class="support-badge no">✗</span></td>
+                    <td>Not yet implemented.</td></tr>
+                <tr><td>Drivers</td><td><span class="support-badge no">✗</span></td>
+                    <td>Bake to keyframes first.</td></tr>
+            </tbody>
+        </table>
+
+        <h3>Constraints</h3>
+
+        <table>
+            <thead><tr><th>Constraint</th><th>Support</th><th>Notes</th></tr></thead>
+            <tbody>
+                <tr><td>Inverse Kinematics (IK)</td><td><span class="support-badge yes">✓</span></td>
+                    <td>Chain length and pole target.</td></tr>
+                <tr><td>Copy Location</td><td><span class="support-badge yes">✓</span></td><td></td></tr>
+                <tr><td>Copy Rotation</td><td><span class="support-badge yes">✓</span></td><td></td></tr>
+                <tr><td>Track To</td><td><span class="support-badge yes">✓</span></td><td></td></tr>
+                <tr><td>Limit Rotation</td><td><span class="support-badge yes">✓</span></td>
+                    <td>Min/max per axis.</td></tr>
+                <tr><td>Limit Location</td><td><span class="support-badge yes">✓</span></td>
+                    <td>Min/max per axis.</td></tr>
+                <tr><td>Other constraints</td><td><span class="support-badge no">✗</span></td>
+                    <td>Ignored — no GameCube equivalent.</td></tr>
+            </tbody>
+        </table>
+
+        <h3>Hardware limits</h3>
+
+        <p>Even when every feature you use is supported, the GameCube has hard runtime limits the
+        model must stay under. The exporter rejects scenes that violate these (with a clear error
+        message); the preparation script in the next step handles most of them automatically.</p>
+
+        <table>
+            <thead><tr><th>Limit</th><th>Value</th><th>Notes</th></tr></thead>
+            <tbody>
+                <tr><td>Texture size</td><td>≤ 512&times;512 px</td>
+                    <td>Larger textures are downscaled by the prep script.</td></tr>
+                <tr><td>Bone weights per vertex</td><td>≤ 4</td>
+                    <td>Prep script caps to 3 by default to leave headroom.</td></tr>
+                <tr><td>Polygon count</td><td>~15,000 faces (rough)</td>
+                    <td>Higher counts may still work — the upper boundary isn't precisely measured.</td></tr>
+                <tr><td>File size</td><td>~500 KB (target)</td>
+                    <td>Original Pokémon range from 65–430 KB. Bigger files may not load.</td></tr>
+                <tr><td>Animation timing offset</td><td>0</td>
+                    <td>Actions must start at frame 0.</td></tr>
+                <tr><td>Armature world transform</td><td>Identity</td>
+                    <td>All transforms applied (no scale, rotation, or translation on the
+                    armature object itself). The <a href="#preparing">prep script</a> handles this
+                    automatically.</td></tr>
+            </tbody>
+        </table>
+
+        <h2 id="preparing">5. Preparing the model</h2>
+
+        <p>The <strong>preparation script</strong> handles the bulk of the prep work automatically
+        and should be run in all cases. For models you imported through this addon, most of the
+        prep work is already done — but the script should still be run. For models from anywhere
+        else (GLB rips, custom models), it handles much more.</p>
+
+        <h3>Step 1 — Open the Scripting workspace</h3>
+
+        <p>At the top of Blender, click the <strong>Scripting</strong> tab in the workspace bar.
+        The layout changes to show a text editor, an interactive console, and an info log.</p>
+
+        <figure class="screenshot">
+            <img src="images/exporter/preparing/scripting-workspace.png" alt="Blender Scripting workspace">
+            <figcaption>Click the <strong>Scripting</strong> tab at the top of Blender to switch workspaces.</figcaption>
+        </figure>
+
+        <h3>Step 2 — Open the preparation script</h3>
+
+        <p>In the text editor at the top of the workspace, click <strong>Open</strong> and browse
+        to <code>scripts/prepare_for_export.py</code> inside the plugin's installation folder.</p>
+
+        <p>To find the plugin's installation folder:</p>
+
+        <ul>
+            <li><strong>macOS:</strong> <code>~/Library/Application Support/Blender/4.5/extensions/user_default/</code></li>
+            <li><strong>Windows:</strong> <code>%APPDATA%\Blender Foundation\Blender\4.5\extensions\user_default\</code></li>
+            <li><strong>Linux:</strong> <code>~/.config/blender/4.5/extensions/user_default/</code></li>
+        </ul>
+
+        <figure class="screenshot">
+            <img src="images/exporter/preparing/open-script.png" alt="Open script in Blender text editor">
+            <figcaption>Open <code>prepare_for_export.py</code> from the plugin's <code>scripts/</code> folder.</figcaption>
+        </figure>
+
+        <h3>Step 3 — Run the script</h3>
+
+        <p>With the script open, click the <strong>Run Script</strong> button (or press
+        <kbd>Alt</kbd>+<kbd>P</kbd> with the cursor inside the script). Wait a few seconds — the
+        info log at the bottom will show what it did.</p>
+
+        <figure class="screenshot">
+            <img src="images/exporter/preparing/run-script.png" alt="Run Script button highlighted">
+            <figcaption>The <strong>Run Script</strong> button — or press <kbd>Alt</kbd>+<kbd>P</kbd>.</figcaption>
+        </figure>
+
+        <h3>What the script does</h3>
+
+        <ul>
+            <li><strong>Joins all child meshes</strong> of each armature into one mesh — this dramatically
+            reduces the chance of hitting the game's "too many surfaces" limit.</li>
+            <li><strong>Caps bone weights</strong> at 3 per vertex and rounds weights to 10% steps.</li>
+            <li><strong>Adds the 4 battle lights</strong> the game expects (one ambient + three sun lights).</li>
+            <li><strong>Downscales oversized textures</strong> to 512×512 or smaller, then picks the
+            best GameCube texture format for each one.</li>
+            <li><strong>Creates a placeholder camera</strong> (the game doesn't actually use it).</li>
+            <li><strong>Adds PKX metadata</strong> to the armature (species ID, animation slots,
+            shiny params, body map) — visible afterward in the <strong>PKX Metadata</strong> panel
+            on the armature.</li>
+            <li><strong>Inserts shiny preview nodes</strong> into materials so you can toggle the
+            shiny appearance in Blender.</li>
+            <li><strong>Authors two helper actions</strong> — an identity pose and a 60-frame spin —
+            useful for smoke-testing the export.</li>
+        </ul>
+
+        <div class="callout">
+            <strong>Note:</strong> if you're exporting to an overworld <code>.dat</code> model,
+            skip to <a href="#exporting">section 6</a>. The remaining prep steps are only required
+            for <code>.pkx</code> models.
+        </div>
+
+        <h3>Step 4 — Set the PKX metadata</h3>
+
+        <p>Select the armature and open the <strong>Properties</strong> editor's <strong>Object
+        Properties</strong> tab (orange square icon). Scroll down to the <strong>PKX Metadata</strong>
+        panel.</p>
+
+        <figure class="screenshot">
+            <img src="images/exporter/preparing/pkx-metadata-panel.png" alt="PKX Metadata panel on armature">
+            <figcaption>The PKX Metadata panel — set species ID, format (XD vs Colosseum), and animation slot assignments.</figcaption>
+        </figure>
+
+        <p>Key things to set:</p>
+
+        <ul>
+            <li><strong>Format</strong> — <code>XD</code> or <code>COLOSSEUM</code>, depending on
+            the target game.</li>
+            <li><strong>Model Type</strong> — <code>POKEMON</code> or <code>TRAINER</code>.</li>
+            <li><strong>Head Bone</strong> — the bone the camera locks to (auto-detected by name;
+            verify it's correct).</li>
+            <li><strong>Animation slots</strong> — see below.</li>
+            <li><strong>Shiny properties</strong> — set the channel routing and brightness offsets,
+            and preview what the shiny will look like in the viewport.</li>
+        </ul>
+
+        <div class="callout">
+            <strong>Note:</strong> <strong>Species ID</strong> (the Pokédex number of the Pokémon
+            you're replacing) is optional.
+        </div>
+
+        <h3>Step 5 — Set the body map</h3>
+
+        <p>The body map tells the game where on your model to attach particle effects, status icons
+        (sleep Z's, confusion stars), and the camera target. Set these in the <strong>Body Map</strong>
+        section of the PKX Metadata panel.</p>
+
+        <figure class="screenshot">
+            <img src="images/exporter/preparing/body-map-section.png" alt="Body Map section of PKX Metadata">
+            <figcaption>The Body Map — pick the bone for each slot.</figcaption>
+        </figure>
+
+        <p>Bone slots:</p>
+
+        <ul>
+            <li><strong>Root</strong> — the root bone (auto-filled).</li>
+            <li><strong>Head</strong> — the bone the in-game camera follows. The most important slot
+            to get right. The prep script tries to auto-detect by name but verify it.</li>
+            <li><strong>Center</strong> — the model's centre of mass.</li>
+            <li><strong>Body 3</strong> — unknown, set to origin for now.</li>
+            <li><strong>Neck</strong></li>
+            <li><strong>Head Top</strong></li>
+            <li><strong>Limb Left</strong>, <strong>Limb Right</strong> — usually the left and right
+            arms, or closest equivalent.</li>
+            <li><strong>Secondary 8–11</strong> — leave empty.</li>
+            <li><strong>Attach A–D</strong> — leave empty.</li>
+        </ul>
+
+        <div class="callout">
+            <strong>Note:</strong> some models come with names provided for each bone. If not,
+            they'll likely just be numbered bones, and you'll need to select the bones individually
+            in the viewport to find the name of the bone at each required body part.
+        </div>
+
+        <h3>Step 6 — Assign actions to animation slots</h3>
+
+        <p>Pokémon battle models have 17 animation slots. Each slot gets a Blender Action assigned
+        to it.</p>
+
+        <table>
+            <thead><tr><th>Slot</th><th>Used for</th></tr></thead>
+            <tbody>
+                <tr><td>Idle</td><td>Default stance — also the fallback for moves with no animation.</td></tr>
+                <tr><td>Physical A</td><td>Most physical-damaging moves.</td></tr>
+                <tr><td>Special A</td><td>Most special-damaging moves.</td></tr>
+                <tr><td>Damage</td><td>Hit reaction (taking damage).</td></tr>
+                <tr><td>Faint</td><td>Fainting / KO animation.</td></tr>
+                <tr><td>Physical B–E, Special B–C</td>
+                    <td>Variants triggered by specific moves (Magnitude, Triple Kick, Weather Ball, etc.). E.g. progressively more intense variants of the animation. You can set these to the same as the A variant.</td></tr>
+                <tr><td>Remaining slots</td>
+                    <td>Other animation slots — suggested to leave empty.</td></tr>
+            </tbody>
+        </table>
+
+        <p>In the PKX Metadata panel, click the dropdown next to each slot and pick the matching
+        Action.</p>
+
+        <figure class="screenshot">
+            <img src="images/exporter/preparing/assign-action-slot.png" alt="Action assignment dropdown in PKX panel">
+            <figcaption>Click the dropdown next to a slot and pick the matching Action.</figcaption>
+        </figure>
+
+        <div class="callout">
+            <strong>Note:</strong> the timings for the animations can be left unset for now —
+            they'll be automatically assigned in step 7.
+        </div>
+
+        <h3>Step 7 — Re-run the script</h3>
+
+        <p>After assigning actions, run the script again. It auto-derives animation timing values
+        from the action durations you assigned. The timings can be adjusted afterward if necessary,
+        but in most cases the auto-assigned values should be fine.</p>
+
+        <h2 id="exporting">6. Exporting the model</h2>
+
+        <p>Once the scene is set up and prepared, the export itself is a single menu choice.</p>
+
+        <h3>Step 1 — Open the export dialog</h3>
+
+        <p>In Blender, open the <strong>File</strong> menu, hover over <strong>Export</strong>, and
+        click <strong>Gamecube model (.dat)</strong>.</p>
+
+        <figure class="screenshot">
+            <img src="images/exporter/exporting/file-export-menu.png" alt="File Export Gamecube model menu">
+            <figcaption><strong>File → Export → Gamecube model (.dat)</strong>.</figcaption>
+        </figure>
+
+        <h3>Step 2 — Pick output format and location</h3>
+
+        <p>Type the filename and choose the extension based on what you want:</p>
+
+        <table>
+            <thead><tr><th>Extension</th><th>Use for</th></tr></thead>
+            <tbody>
+                <tr>
+                    <td><code>.dat</code></td>
+                    <td>A bare model file with no header. Used for overworld props and NPCs.
+                    Includes <em>every</em> action in the scene, so delete unused actions first or
+                    the file will be huge.</td>
+                </tr>
+                <tr>
+                    <td><code>.pkx</code></td>
+                    <td>A Pokémon or trainer battle model, with the header carrying animation
+                    slots, shiny colors, body map, and species ID. Requires the PKX metadata set
+                    in step 5 above.</td>
+                </tr>
+                <tr>
+                    <td><code>.fsys</code></td>
+                    <td>Replace the model inside an existing <code>.fsys</code> archive. The
+                    <strong>fastest way to test in-game</strong> — see the next section. Double-click
+                    an existing <code>.fsys</code> in the export dialog to overwrite it.</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h3>Step 3 — Click Export</h3>
+
+        <p>The export takes a few seconds. When it finishes, you'll have a usable model file at the
+        path you chose. The next section covers getting it into the game.</p>
+
+        <h3>Known limitations</h3>
+
+        <ul>
+            <li>Map / scene models lose features the exporter doesn't yet support (fog, lighting,
+            collision data).</li>
+            <li>Particle (GPT1) effects are not exported.</li>
+            <li>Optimisations automatically applied by the preparation script may create visual issues.</li>
+        </ul>
+
+        <h2 id="importing-back">7. Importing the model back into the game</h2>
+
+        <p>You have a model file. Now you need to get it back into a playable copy of the game.
+        The flow uses Dolphin's "boot from folder" feature — no ISO rebuild needed — together
+        with the project's browser-based <a href="fsys-tool.html">FSYS Tool</a> for swapping the
+        model into an existing archive.</p>
+
+        <h3>Step 1 — Extract the game's filesystem (one-time setup)</h3>
+
+        <p>Follow the <a href="importer.html#extracting-models">importer's file system extraction
+        guide</a> to extract the game's contents to a folder. If you already did this for the
+        importer walkthrough, you can reuse the same folder.</p>
+
+        <h3>Step 2 — Find the <code>.fsys</code> you want to replace</h3>
+
+        <p>Inside the extracted folder, navigate to the <code>files/</code> subfolder. Find the
+        <code>pkx_*.fsys</code> archive for the Pokémon or trainer you want to overwrite.</p>
+
+        <h3>Step 3 — Back up the original</h3>
+
+        <p>Before overwriting anything, copy the <code>.fsys</code> file to a safe place. If your
+        export doesn't work in-game, you can restore the original by copying the backup back.</p>
+
+        <h3>Step 4 — Choose your replacement method</h3>
+
+        <p>Pick whichever fits your situation:</p>
+
+        <h4>Method A — Direct <code>.fsys</code> export from Blender (simplest)</h4>
+
+        <p>If the archive you're replacing has exactly one model entry inside it (true for every
+        <code>pkx_*.fsys</code>), Blender can write the modified archive in one step.</p>
+
+        <ol>
+            <li>In Blender, run the export (<a href="#exporting">step 6</a>).</li>
+            <li>In the file dialog, navigate to the folder containing the <code>.fsys</code> you
+            want to replace.</li>
+            <li><strong>Double-click the existing file</strong> in the dialog — this picks it as the
+            output target.</li>
+            <li>Click <strong>Export</strong>.</li>
+        </ol>
+
+        <p>The plugin overwrites the archive in place, replacing the original model entry with
+        yours and preserving every other entry in the archive.</p>
+
+        <h4>Method B — Use the FSYS Tool (extract / swap / repack)</h4>
+
+        <p>For archives with more than one model entry, archives where you want to inspect or
+        modify other files alongside the model, or when you just prefer working with loose files,
+        use the project's <a href="fsys-tool.html">FSYS Tool</a>. It runs entirely in your browser
+        — no installation, no upload, everything stays local.</p>
+
+        <ol>
+            <li><strong>Export your model from Blender as <code>.pkx</code></strong> (or <code>.dat</code>),
+            not <code>.fsys</code>. Save it somewhere you can find it.</li>
+            <li><strong>Open the <a href="fsys-tool.html">FSYS Tool</a></strong> in your browser.</li>
+            <li><strong>Switch to the Extract tab.</strong> Pick the <code>.fsys</code> archive
+            you want to modify and click <strong>Extract archive</strong>. The tool downloads a
+            <code>.zip</code> file — unpack it to get a folder containing every entry from the
+            archive, plus a <code>&lt;name&gt;-manifest.json</code> describing the layout.</li>
+            <li><strong>Swap the model.</strong> Inside the unpacked folder, find the entry file
+            corresponding to the model (typically the <code>.pkx</code> or <code>.dat</code> file).
+            <strong>Delete it and replace it with your exported model</strong>, keeping the exact
+            same filename. The manifest doesn't need to be edited — only the file content.</li>
+            <li><strong>Switch to the Repack tab.</strong> Drag the folder into the drop zone (or
+            use the picker), set the output filename to match the original (e.g.
+            <code>pkx_065.fsys</code>), and click <strong>Repack archive</strong>. A new
+            <code>.fsys</code> downloads.</li>
+            <li><strong>Drop it into the game's <code>files/</code> folder</strong>, overwriting the
+            original (which you already backed up in step 3).</li>
+        </ol>
+
+        <h3>Step 5 — Boot the modified game from <code>main.dol</code></h3>
+
+        <p>In your file browser, open the extracted folder, go into <code>sys/</code>, and
+        <strong>double-click <code>main.dol</code></strong>. Dolphin launches the game using your
+        modified files — without needing to rebuild the ISO.</p>
+
+        <figure class="screenshot">
+            <img src="images/exporter/importing-back/main-dol-launch.gif" alt="Launching main.dol from sys folder">
+            <figcaption>Double-click <code>sys/main.dol</code> to boot the modified game.</figcaption>
+        </figure>
+
+<h2 id="troubleshooting">8. Troubleshooting</h2>
+
+        <p>If you hit a problem the docs don't cover, ask on the community Discord:
+        <a href="https://discord.gg/xCPjjnv">discord.gg/xCPjjnv</a>. Include screenshots of your
+        scene (Outliner + Material Properties at minimum), the exact error message Blender showed,
+        and the model file you tried to export.</p>
+
+        <p><a href="index.html">&larr; Back to home</a></p>
+    </main>
+
+    <footer class="site-footer">
+        Original implementation by Made &middot; Source on <a href="https://github.com/StarsMmd/Blender-Addon-Gamecube-Models">GitHub</a>
+    </footer>
+</body>
+</html>
