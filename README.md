@@ -16,25 +16,9 @@ This addon uses Blender's extensions system. Compress the contents of this repos
 
 ## Importing
 
-- **File > Import > Gamecube model (.dat)** — select one or more `.dat` / `.pkx` / `.fsys` / `.wzx` files
-- Imports skeleton, meshes, materials, textures, animations, lights, cameras, and constraints
-- `.pkx` files automatically extract PKX metadata for animation naming and shiny variants
-- `.fsys` archives are unpacked and each contained model is imported separately
+Open a model via **File > Import > Gamecube model (.dat)**. The importer reads `.dat`, `.fdat`, `.rdat`, `.pkx`, `.fsys`, `.wzx`, and `.cam` files, and brings in the skeleton, meshes, materials, textures, animations, lights, cameras, and (for `.pkx` Pokémon) the shiny variant toggle.
 
-### Importer Options
-
-The file-browser sidebar exposes these toggles:
-
-| Toggle | Default | Purpose |
-|---|---|---|
-| **Game of Origin** | Colosseum / XD | Selects the section-name → node-type routing rules. Pick *Kirby Air Ride* for Kirby Air Ride dumps, *Super Smash Bros.* for Melee dumps, or *Other* to fall back to the Colosseum / XD rules for unknown games. |
-| **Colo/XD Kind** | PKX Pokémon | (Visible only when *Game of Origin* is Colosseum / XD.) Picks the animation-slot label set: *PKX Pokémon* (battle-move conventions), *PKX Trainer* (trainer-pose conventions), or *DAT Model* (raw `.dat`, no PKX header). |
-| **Setup Workspace** | on | Split the viewport, open an Action Editor, set playback end to frame 60. |
-| **Import Lights** | off | Import `LightSet` nodes as Blender lights (AMBIENT/SUN/POINT/SPOT). |
-| **Import Cameras** | off | Import `CameraSet` nodes as Blender cameras (static + animated). |
-| **Use Legacy Importer** | off | (Visible only when *Game of Origin* is Colosseum / XD.) Route through the pre-refactor pipeline instead of the IR pipeline. For comparison only. |
-
-For `.pkx` Pokémon models, shiny color parameters are always extracted and a toggleable shader filter is added to the imported materials — there's no per-import opt-out. Toggle the resulting filter on/off via the **Shiny Variant** panel on the imported armature (see [Shiny Variants](#shiny-variants)).
+See the [Importer guide](docs/importer.html) for the full walkthrough — from extracting model files out of a ROM through to playing animations and toggling shiny variants in Blender.
 
 ## Particles (GPT1)
 
@@ -50,9 +34,9 @@ Not every Pokemon has shiny parameters — some use a separate model for their s
 
 ## Exporting
 
-The exporter writes a Blender scene to a `.dat` or `.pkx` binary. See the [Exporter Setup](technical-docs/exporter_setup.md) guide for the full workflow — from scene preparation through export.
+The exporter writes a Blender scene back to a `.dat` or `.pkx` binary the game can load. Works for models that came in through this plugin and for custom or third-party models prepared via `scripts/prepare_for_export.py`.
 
-For models not imported through this plugin, run `scripts/prepare_for_export.py` first to set up camera, lights, weight optimization, and PKX metadata.
+See the [Exporter guide](docs/exporter.html) for the full workflow — scene preparation, export options, and getting your model back into the game. For implementation details and the supported-feature matrix, see [Exporter Setup](technical-docs/exporter_setup.md).
 
 ## Developer Instructions
 

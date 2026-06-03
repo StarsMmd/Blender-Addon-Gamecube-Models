@@ -75,7 +75,7 @@
         <h2 id="extracting-models">3. Getting model files from the ROM</h2>
 
         <p>An <code>.iso</code> is a single big file. Inside it is a tree of smaller files — the actual
-        models, music, scripts, and everything else that makes up the game. We use the
+        code, models, music, scripts, and everything else that makes up the game. We use the
         <strong>Dolphin emulator</strong> to crack the ISO open and pull those files out.</p>
 
         <h3>Step 1 — Install Dolphin</h3>
@@ -86,13 +86,13 @@
 
         <h3>Step 2 — Add your ROM to Dolphin's game list</h3>
 
-        <p>Launch Dolphin. Open the <strong>Config</strong> menu and click <strong>Paths…</strong>.
+        <p>Launch Dolphin. Open the <strong>Config</strong> menu and click <strong>Paths</strong>.
         In the dialog, click <strong>Add</strong>, then browse to the folder containing your
         <code>.iso</code>. Close the dialog — your game will appear in Dolphin's main window.</p>
 
         <figure class="screenshot">
             <img src="images/importer/dolphin/dolphin-config-paths.png" alt="Dolphin Config → Paths menu">
-            <figcaption>Open <strong>Config → Paths…</strong> to tell Dolphin where your ROMs live.</figcaption>
+            <figcaption>Open <strong>Config → Paths</strong> to tell Dolphin where your ROMs live.</figcaption>
         </figure>
 
         <figure class="screenshot">
@@ -152,7 +152,10 @@
                 <tr>
                     <td>Pokémon and trainer battle models</td>
                     <td><code>.pkx</code></td>
-                    <td>Inside <code>pkx_*.fsys</code> archives (e.g. <code>pkx_001.fsys</code>).</td>
+                    <td>Inside <code>pkx_&lt;name&gt;.fsys</code> archives — for Pokémon, the name is
+                    the species' Japanese name transliterated in romaji (e.g. <code>pkx_fushigidane.fsys</code>
+                    for Bulbasaur). For trainers, it's their development codename, which rarely matches
+                    the in-game name.</td>
                 </tr>
                 <tr>
                     <td>Map / scene models</td>
@@ -181,17 +184,23 @@
         models contained in the archive are imported straight into the Blender scene.</p>
 
         <div class="callout">
-            <strong>Tip:</strong> for <code>pkx_*.fsys</code> the number in the filename roughly
-            corresponds to the National Pokédex number, but isn't a perfect 1:1 — there are skips
-            and rearrangements. The community Discord has lists mapping filename to Pokémon if you
-            can't find the one you want.
+            <strong>Tip:</strong> for <code>pkx_*.fsys</code> archives in Colosseum and XD, the name
+            in the filename is the species' Japanese name in romaji (for Pokémon) or the trainer's
+            development codename (which rarely matches the in-game name). If you're struggling to
+            find the right name, ask on the community Discord.
+        </div>
+
+        <div class="callout">
+            <strong>Note:</strong> other games (such as the Smash Bros. and Kirby titles) don't use
+            <code>.fsys</code> archives — the <code>.dat</code> model files are accessible directly
+            in the dumped files.
         </div>
 
         <h3>Step 6 — Extract the model from inside the archive</h3>
 
         <p>An <code>.fsys</code> file is itself an archive — it can contain multiple files of
-        different types (models, textures, animations, and other data) bundled together. Think of
-        it as the game's equivalent of a <code>.zip</code> file.</p>
+        different types (models, music, scripts, and any other kind of data) compressed and bundled
+        together. Think of it as the game's equivalent of a <code>.zip</code> file.</p>
 
         <ul>
             <li><strong>Easiest — let Blender unpack it.</strong> The importer reads <code>.fsys</code>
@@ -202,7 +211,7 @@
             Open the FSYS Tool, click the <strong>Extract</strong> tab, pick your <code>.fsys</code>
             file, and click <strong>Extract archive</strong>. The tool downloads a <code>.zip</code>
             you can unpack to get the individual files inside (the model itself, plus any
-            companion data the archive carries).</li>
+            metadata the archive carries).</li>
         </ul>
 
         <div class="callout">
@@ -304,9 +313,17 @@
             </tbody>
         </table>
 
+        <div class="callout">
+            <strong>Note:</strong> enable <strong>Import Lights</strong> and
+            <strong>Import Cameras</strong> if you plan to re-export the model back into the game
+            after editing — this preserves the original light/camera configurations. For other use
+            cases (rendering, animation, etc.) it's more common to set up your own custom lights
+            and cameras instead.
+        </div>
+
         <h3>Step 4 — Click Import</h3>
 
-        <p>Click the blue <strong>Import Gamecube Model</strong> button at the bottom-right of the
+        <p>Click the blue <strong>Import DAT</strong> button at the bottom-right of the
         file browser. After a few seconds, the model appears in the viewport.</p>
 
         <figure class="screenshot">
@@ -314,7 +331,7 @@
             <figcaption>The model loaded into Blender, with its armature and meshes ready to edit.</figcaption>
         </figure>
 
-        <h3>Step 5 — Switch the viewport to Material Preview</h3>
+        <h3 id="material-preview">Step 5 — Switch the viewport to Material Preview</h3>
 
         <p>By default Blender shows the model in solid shading, so textures and materials don't
         appear. In the top-right corner of the 3D viewport, click the third sphere icon
@@ -345,13 +362,12 @@
         <h3>Step 1 — Find the Action Editor</h3>
 
         <p>If you left <strong>Setup Workspace</strong> on, the Action Editor is already open in
-        the bottom panel. Otherwise, change one of your editor panels to the Action Editor: click
+        the right panel. Otherwise, change one of your editor panels to the Action Editor: click
         the small icon in the top-left corner of any editor and pick <strong>Dope Sheet</strong>,
         then in the Dope Sheet's mode dropdown (also top-left) switch to <strong>Action Editor</strong>.</p>
 
-        <p>The auto-arranged workspace puts the 3D viewport on the left and the Action Editor on
-        the right. You may need to scroll the Action Editor's menu bar to the side to see the list
-        of animations.</p>
+        <p>You may need to scroll the Action Editor's menu bar to the side to see the animations
+        drop-down menu.</p>
 
         <figure class="screenshot">
             <img src="images/importer/animations/action-editor.png" alt="Action Editor panel">
@@ -364,6 +380,12 @@
         of the Action Editor. A dropdown shows every animation that was imported. Pick one — the
         viewport updates immediately.</p>
 
+        <div class="callout">
+            <strong>Note:</strong> if the armature isn't selected before choosing an animation, the
+            animation won't change. To select the armature, click on it in the Outliner panel on
+            the right — the importer names it something like <code>darklugia_skeleton_0</code>.
+        </div>
+
         <figure class="screenshot">
             <img src="images/importer/animations/action-dropdown.png" alt="Action dropdown showing imported animations">
             <figcaption>The dropdown of imported animations. Pick one to make it active.</figcaption>
@@ -373,18 +395,19 @@
 
         <p>Press the spacebar to play. The viewport plays the animation in a loop. Press spacebar
         again to stop. The timeline at the bottom of the screen shows the current frame; drag the
-        playhead to scrub manually.</p>
+        playhead to scrub manually. You can usually see roughly how long the animation is by
+        viewing the timeline in the Action Editor above.</p>
 
         <figure class="screenshot">
-            <img src="images/importer/animations/timeline-playback.png" alt="Timeline with playback controls">
+            <img src="images/importer/animations/timeline-playback.gif" alt="Timeline with playback controls">
             <figcaption>The timeline at the bottom of Blender. The play button and the playhead are highlighted.</figcaption>
         </figure>
 
         <h3>Adjusting the playback range</h3>
 
-        <p>The importer sets the timeline to end at frame 60 by default — long enough for most
-        animations. If an animation is longer than that and looks cut off, edit the <strong>End</strong>
-        field in the timeline header to a higher value (e.g. 200) and play again.</p>
+        <p>The importer sets the timeline end frame based on the length of the first animation it
+        selects. If you switch to a longer animation and it looks cut off, edit the
+        <strong>End</strong> field in the timeline header to a higher value (e.g. 200) and play again.</p>
 
         <figure class="screenshot">
             <img src="images/importer/animations/playback-end-frame.png" alt="Timeline end frame field">
@@ -394,17 +417,16 @@
         <h2 id="viewing-shiny">6. Viewing shiny variants (Pokémon)</h2>
 
         <p>For <code>.pkx</code> Pokémon models, the addon automatically reads the shiny color
-        parameters from the file and builds a toggle into the materials. There's no per-import
-        opt-out — the toggle is just always available.</p>
+        parameters from the file and builds a toggle into the materials that you can use to
+        enable and disable the shiny colours at will.</p>
 
-        <h3>Step 1 — Select the armature</h3>
+        <h3>Step 1 — Select the model</h3>
 
-        <p>In the 3D viewport, click on the armature (any bone will do), or click its entry in the
-        Outliner panel on the right.</p>
+        <p>In the Outliner panel on the right, click the model's entry to select it.</p>
 
         <figure class="screenshot">
-            <img src="images/importer/shiny/select-armature.png" alt="Armature selected in viewport">
-            <figcaption>Select the model's armature.</figcaption>
+            <img src="images/importer/shiny/select-armature.png" alt="Model selected in viewport">
+            <figcaption>Select the model.</figcaption>
         </figure>
 
         <h3>Step 2 — Open Object Properties</h3>
@@ -427,16 +449,25 @@
             <figcaption>The Shiny Variant panel with the toggle and color controls.</figcaption>
         </figure>
 
-        <h3>Step 4 — Toggle the shiny appearance</h3>
+        <h3>Step 4 — Enable the shiny preview</h3>
 
         <p>Click the <strong>Shiny</strong> checkbox at the top of the panel. The model's colors
-        update immediately. Inside the panel you can also tweak which color channels are routed
-        where, and adjust the brightness offset per channel — useful if you want to preview what
-        a custom shiny would look like.</p>
+        update immediately to the shiny variant.</p>
 
         <figure class="screenshot">
             <img src="images/importer/shiny/shiny-toggle-on.png" alt="Shiny variant toggled on, showing alternate colors">
             <figcaption>Shiny on — the model now shows its alternate coloration.</figcaption>
+        </figure>
+
+        <h3>Step 5 — Tweak the shiny values</h3>
+
+        <p>Inside the panel you can also tweak which color channels are routed where, and adjust
+        the brightness offset per channel. Try different configurations to preview what a custom
+        shiny would look like — the viewport updates live as you update the values.</p>
+
+        <figure class="screenshot">
+            <img src="images/importer/shiny/shiny-tweak-values.png" alt="Shiny variant panel with channel routing and brightness offsets edited">
+            <figcaption>Edit the channel routing and brightness offsets to explore custom shiny configurations.</figcaption>
         </figure>
 
         <div class="callout">
@@ -444,6 +475,13 @@
             separate model for their shiny form instead of a color swap. For those, the
             <strong>Shiny Variant</strong> panel won't appear — you need to import the shiny model
             file separately.
+        </div>
+
+        <div class="callout">
+            <strong>Note:</strong> the addon also ships with a standalone <code>add_shiny_filter.py</code>
+            script that applies the same shiny filter logic to any arbitrary model. Run it from
+            Blender's Text Editor — see the <a href="running-scripts.html">running scripts guide</a>
+            for the full walkthrough.
         </div>
 
         <h2 id="troubleshooting">7. Troubleshooting</h2>
