@@ -73,6 +73,11 @@ class Exporter:
         if output_ext == 'fsys':
             output_ext = _resolve_fsys_inner_ext(filepath)
 
+        # Bare .dat output never carries the bound_box section — it's only
+        # used by PKX-wrapped models for in-game collision/culling.
+        if output_ext == 'dat':
+            options['include_bound_box'] = False
+
         # Phase 1 — Describe Blender Scene: Blender context → BRScene
         br_scene, shiny_params, pkx_header = describe_scene(
             context, options, logger, output_ext=output_ext,

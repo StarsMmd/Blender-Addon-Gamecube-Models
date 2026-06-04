@@ -180,8 +180,6 @@ class ExportHSD(bpy.types.Operator, ExportHelper):
                          description='Print INFO/DEBUG export progress to the Blender console, including the per-section DAT size breakdown.')
     strip_names: BoolProperty(default=False, name='Strip Node Names',
                              description='Remove bone/node names from the output. Enable for compatibility with models that have empty name fields.')
-    include_bound_box: BoolProperty(default=True, name='Include Bound Box',
-                                   description='Include the bound_box root section in the DAT. PKX models use this for collision/culling. Disable for standalone .dat files that don\'t need it.')
     sparsify_bezier: BoolProperty(default=True, name='Bezier Sparsification',
                                   description='Use bezier curves with slopes for animation export. Produces more accurate keyframes. Disable for simpler linear sparsification.')
 
@@ -201,7 +199,6 @@ class ExportHSD(bpy.types.Operator, ExportHelper):
 
         options = {
             'strip_names': self.strip_names,
-            'include_bound_box': self.include_bound_box,
             'sparsify_bezier': self.sparsify_bezier,
         }
 
