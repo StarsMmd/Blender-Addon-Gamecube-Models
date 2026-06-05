@@ -5,9 +5,11 @@ Runs after either the new IR pipeline (Phase 5) or the legacy importer.
 Operates entirely on Blender objects — no dependency on earlier phases.
 
 Bakes the importer's Y-up→Z-up viewing rotation into bone + child-mesh
-data so each `matrix_world` arrives at identity (mirrors
-`scripts/prepare_for_export.py:bake_transforms()`). Re-exports through
-the prep script find the data already baked and skip that step. The
+data so each `matrix_world` arrives at identity (mirrors the
+`bake_transforms()` step in both prep scripts —
+`scripts/prepare_for_pkx_export.py` and
+`scripts/prepare_for_dat_export.py`). Re-exports through either prep
+script find the data already baked and skip that step. The
 exporter itself now composes `matrix_world` / `matrix_basis` on the
 fly inside describe + plan, so this bake is convenience rather than
 correctness — but production scenes still benefit from arriving in
@@ -55,9 +57,10 @@ def post_process(armature_names, shiny_params=None, options=None, logger=StubLog
 
     # Bake the importer's Y-up→Z-up viewing rotation into the bone +
     # mesh data so each `matrix_world` is identity. Mirrors the prep
-    # script's `bake_transforms()` step — running it here means a re-export
-    # through `scripts/prepare_for_export.py` finds the data already
-    # baked and noops that step. Also lets the round-trip runner's IBI
+    # scripts' `bake_transforms()` step — running it here means a re-export
+    # through `scripts/prepare_for_pkx_export.py` or
+    # `scripts/prepare_for_dat_export.py` finds the data already baked
+    # and noops that step. Also lets the round-trip runner's IBI
     # / BBB scoring pass the exporter's baked-transforms validator.
     if build_results:
         bake_targets = [r['armature'] for r in build_results]
@@ -130,9 +133,10 @@ def bake_imported_transforms(armatures, logger=StubLogger()):
     a "viewing rotation" that lets the importer keep raw Y-up GameCube
     bone matrices verbatim while still rendering Z-up in the viewport.
     Baking that rotation into the data makes the imported scene's
-    canonical form match what `scripts/prepare_for_export.py:
-    bake_transforms()` produces, so a re-export through the prep script
-    finds the data already baked and skips its own bake step.
+    canonical form match what both prep scripts' `bake_transforms()`
+    step produces (`scripts/prepare_for_pkx_export.py` and
+    `scripts/prepare_for_dat_export.py`), so a re-export through either
+    prep script finds the data already baked and skips its own bake step.
 
     The exporter now composes `matrix_world` / `matrix_basis` on the
     fly inside describe + plan (see `exporter/phases/describe/helpers/

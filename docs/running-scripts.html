@@ -108,8 +108,14 @@
         <ul>
             <li><code>add_shiny_filter.py</code> — apply the shiny color filter to any model.</li>
             <li><code>remove_shiny_filter.py</code> — strip the shiny filter back off.</li>
-            <li><code>prepare_for_export.py</code> — full prep pass for custom / imported-from-elsewhere
-            models before exporting (weights, textures, lights, metadata).</li>
+            <li><code>prepare_for_pkx_export.py</code> — full prep pass for custom or
+            imported-from-elsewhere models being exported as <code>.pkx</code> (weights, textures,
+            lights, PKX header metadata, shiny filter, smoke-test actions).</li>
+            <li><code>prepare_for_dat_export.py</code> — slimmer prep pass for bare
+            <code>.dat</code> exports — bake transforms, weight limiting, texture sizes / formats.
+            Skips every PKX-only step.</li>
+            <li><code>add_debug_camera.py</code> — drop in a viewport-friendly preview camera
+            framed on the scene meshes.</li>
             <li><code>set_texture_formats.py</code> — auto-pick GX texture formats per image.</li>
             <li><code>add_ambient_lighting.py</code> — drop in standard battle lighting.</li>
         </ul>

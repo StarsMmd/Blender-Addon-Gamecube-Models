@@ -128,8 +128,10 @@ def validate_baked_br(br_scene):
             ". The exporter requires every armature to land at identity "
             "matrix_basis (and matrix_world) before plan runs — the bone "
             "path SRT-decomposes world matrices and silently drops shear "
-            "that the vertex path keeps. Run `scripts/prepare_for_export.py` "
-            "(or `Object > Apply > All Transforms`) before exporting; "
+            "that the vertex path keeps. Run "
+            "`scripts/prepare_for_pkx_export.py` (PKX output) or "
+            "`scripts/prepare_for_dat_export.py` (.dat output), or "
+            "`Object > Apply > All Transforms`, before exporting; "
             "round-trip tests can opt out via "
             "options['skip_baked_transforms_validation']=True."
         )

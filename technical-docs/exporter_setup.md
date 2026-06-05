@@ -12,7 +12,7 @@ The exporter writes a Blender scene to a `.dat` or `.pkx` binary that can be use
 
 1. [**Check compatibility**](#1-feature-compatibility) — confirm the exporter supports the Blender features your scene uses.
 2. [**Prepare the scene**](#2-scene-preparation) — delete unwanted objects, scale and rotate the model.
-3. [**Run the preparation script**](#3-preparation-script) — run `scripts/prepare_for_export.py` to set up camera, lights, weights, textures, and PKX metadata.
+3. [**Run the preparation script**](#3-preparation-script) — run `scripts/prepare_for_pkx_export.py` (for `.pkx` output) or `scripts/prepare_for_dat_export.py` (for bare `.dat` output) to set up camera aspect, weights, textures, and — in the PKX flow — lights and PKX header metadata.
 4. [**Edit export properties**](#4-export-properties) — assign animations to PKX slots, adjust camera, set metadata.
 5. [**Run the script again**](#5-refine-and-re-run) — re-run to auto-derive animation timing from your slot assignments.
 6. [**Export**](#6-export) — File > Export > Gamecube model (`.dat`, `.pkx`, or replace into an existing `.fsys`).
@@ -181,22 +181,33 @@ Because the GameCube has limited RAM, the [preparation script](#3-preparation-sc
 
 ## 3. Preparation Script
 
-For models **not** imported through the DAT plugin, run **`scripts/prepare_for_export.py`** from Blender's Scripting panel:
+Pick the prep script that matches your output kind:
+
+- **`.pkx` output** → run **`scripts/prepare_for_pkx_export.py`**
+- **bare `.dat` output** → run **`scripts/prepare_for_dat_export.py`**
+
+For models **not** imported through the DAT plugin, run the appropriate script from Blender's Scripting panel:
 
 1. Open the Scripting workspace
-2. Open `scripts/prepare_for_export.py`
+2. Open the script (`scripts/prepare_for_pkx_export.py` or `scripts/prepare_for_dat_export.py`)
 3. Click **Run Script**
 
-The script:
-- Creates a `Debug_Camera` with target empty (unused by the game, kept for format parity)
-- Limits vertex bone weights to 3 per vertex and quantizes to 10% steps
-- Sets up all 4 standard battle lights (ambient + 3 directional SUN)
-- Downscales any texture larger than 512×512 proportionally (UVs are in normalized [0, 1] space in Blender so no UV remapping is needed), then auto-selects GX texture formats based on image content
-- Applies stub PKX metadata (species ID, animation slots, shiny params, body map)
-- Inserts shiny filter preview nodes into all materials
-- Authors two helper actions per armature — `auto_animation_dummy` (two-frame identity pose) and `auto_animation_spin` (60-frame full revolution around the rig's vertical axis). Available for in-game smoke testing via the PKX Metadata panel; ignore them during normal authoring
+**Both scripts** (shared steps):
+- Bake `matrix_world` to identity on every armature + child mesh (the exporter rejects unbaked transforms)
+- Stamp `dat_camera_aspect = 1.18` on any scene camera missing it (camera creation is not part of prep — use `scripts/add_debug_camera.py`)
+- Limit vertex bone weights to 3 per vertex and quantise to 10% steps
+- Cull unused material slots
+- Downscale any texture larger than 512×512 proportionally (UVs are in normalised [0, 1] space in Blender so no UV remapping is needed)
+- Auto-select GX texture formats based on image content
 
-Models imported through the DAT plugin already have these properties set.
+**`prepare_for_pkx_export.py` additionally:**
+- Applies stub PKX metadata (species ID, animation slots, shiny params, body map)
+- Auto-derives animation timings from action durations
+- Inserts shiny filter preview nodes into all textured materials
+- Authors two helper actions per armature — `auto_animation_dummy` (two-frame identity pose) and `auto_animation_spin` (60-frame full revolution around the rig's vertical axis). Available for in-game smoke testing via the PKX Metadata panel; ignore them during normal authoring
+- Creates a 4-light preview rig (ambient + 3 SUN), namespaced `DATPlugin_Prep_*` so re-runs are idempotent
+
+Models imported through the DAT plugin already have the shared properties set.
 
 ---
 

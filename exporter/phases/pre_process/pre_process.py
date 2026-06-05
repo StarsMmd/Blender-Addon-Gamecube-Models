@@ -168,8 +168,8 @@ def _validate_pkx_metadata(context, ext, fsys_inner_kind, logger):
         raise ValueError(
             "PKX output requires an armature with PKX header metadata "
             "(custom property 'dat_pkx_format' set to 'XD' or "
-            "'COLOSSEUM'). Run scripts/prepare_for_export.py against this "
-            ".blend to populate the metadata. Armatures inspected: " + names
+            "'COLOSSEUM'). Run scripts/prepare_for_pkx_export.py against "
+            "this .blend to populate the metadata. Armatures inspected: " + names
         )
     logger.info("  PKX metadata OK")
 
@@ -200,9 +200,10 @@ def _validate_baked_transforms(context, logger):
     matmul on the vertex side disagree about shear, so unbaked transforms
     let those two paths drift bone-by-bone down the chain.
 
-    `scripts/prepare_for_export.py` bakes everything into the data; this
-    check guards against running the exporter on a scene that skipped
-    that step.
+    Both prep scripts (`scripts/prepare_for_pkx_export.py` and
+    `scripts/prepare_for_dat_export.py`) bake everything into the data;
+    this check guards against running the exporter on a scene that
+    skipped that step.
     """
     try:
         import bpy
@@ -257,7 +258,8 @@ def _check_baked_transforms(armatures, children_by_armature):
         "Every armature and child mesh must have an identity matrix_world "
         "before exporting, or the bone path (SRT decompose) and vertex "
         "path (matmul) drift apart. Fix with one of:\n"
-        "  • Run scripts/prepare_for_export.py against this .blend\n"
+        "  • Run scripts/prepare_for_pkx_export.py (PKX output) or\n"
+        "    scripts/prepare_for_dat_export.py (bare .dat output) against this .blend\n"
         "  • In Blender: select the armature + meshes, "
         "Object > Apply > All Transforms"
     )
@@ -277,9 +279,9 @@ def _validate_vertex_weight_count(context, logger):
 
     The GX envelope matrix-index byte packs up to 4 MTXIDX slots, so the
     hardware cannot blend more than 4 influences per vertex. Weight
-    limiting lives in scripts/prepare_for_export.py; this check just
-    guards against running the exporter on a scene where that step was
-    skipped.
+    limiting lives in both prep scripts (`prepare_for_pkx_export.py` and
+    `prepare_for_dat_export.py`); this check just guards against running
+    the exporter on a scene where that step was skipped.
     """
     try:
         import bpy
@@ -319,7 +321,8 @@ def _check_vertex_weight_count(meshes_by_armature):
         sample = "; ".join(f"{m}[v{i}]={n}" for m, i, n in offenders[:5])
         raise ValueError(
             f"Vertex weight count exceeds GameCube envelope limit of "
-            f"{MAX_VERTEX_WEIGHTS}. Run scripts/prepare_for_export.py "
+            f"{MAX_VERTEX_WEIGHTS}. Run scripts/prepare_for_pkx_export.py "
+            f"(PKX output) or scripts/prepare_for_dat_export.py (.dat output) "
             f"first (tune MAX_WEIGHTS_PER_VERTEX). Sample offenders: {sample}"
         )
 
@@ -328,9 +331,10 @@ def _validate_texture_sizes(context, logger):
     """Reject any texture with a dimension above MAX_TEXTURE_DIM.
 
     GameCube RAM and TMEM budgets can't absorb arbitrarily-large textures
-    from GLB/FBX rips. The prepare_for_export.py script downscales images
-    above the cap; this check guards against running the exporter on a
-    scene where that step was skipped.
+    from GLB/FBX rips. Both prep scripts (`prepare_for_pkx_export.py` and
+    `prepare_for_dat_export.py`) downscale images above the cap; this
+    check guards against running the exporter on a scene where that step
+    was skipped.
     """
     try:
         import bpy

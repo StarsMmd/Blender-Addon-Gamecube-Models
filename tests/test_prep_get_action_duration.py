@@ -16,7 +16,7 @@ import os
 
 
 PREP_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "scripts", "prepare_for_export.py"
+    os.path.dirname(__file__), "..", "scripts", "prepare_for_pkx_export.py"
 )
 
 

@@ -7,7 +7,8 @@ MAX_WEIGHTS_PER_VERTEX bone influences (lowest-weighted are dropped, the
 remaining weights are re-normalised).
 
 GameCube hardware caps at 4 weights per vertex; 3 is the practical default
-matching `prepare_for_export.py` for size/quality balance.
+matching `prepare_for_pkx_export.py` and `prepare_for_dat_export.py` for
+size/quality balance.
 
 This script is fully standalone — no imports from the plugin codebase.
 """

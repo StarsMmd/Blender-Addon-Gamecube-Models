@@ -503,7 +503,7 @@ class TestPObjectIterativeParsing:
 
 class TestEnvelopeWeightDedup:
     """Compose dedups envelopes on exact weight match. Weight
-    limiting/quantisation is prepare_for_export.py's job."""
+    limiting/quantisation is the prep scripts' job."""
 
     def test_distinct_weights_stay_separate(self):
         assignments = [

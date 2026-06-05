@@ -4,10 +4,10 @@ Run this from Blender's Scripting panel (Text Editor > Run Script) with an
 armature selected. It creates ShinyRoute and ShinyBright node groups and
 inserts them into every material on the armature's child meshes. Uses
 whatever shiny params are already on the armature (from PKX import,
-prepare_for_export, or user edits) — defaults to identity if unset.
+prepare_for_pkx_export, or user edits) — defaults to identity if unset.
 
 Materials that already have shiny nodes are skipped, so this is safe to
-run multiple times or after prepare_for_export.
+run multiple times or after prepare_for_pkx_export.
 
 Edit the shiny route/brightness in the PKX Metadata panel to change the
 appearance. Toggle dat_pkx_shiny to preview the effect.

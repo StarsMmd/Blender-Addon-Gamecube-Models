@@ -60,12 +60,12 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.80 | current | `bpy.ops.object.mode_set(mode=...)` | `skeleton.py`, `animations.py`, `constraints.py`, `exporter/describe/helpers/armature.py`, `exporter/describe/helpers/constraints.py` | EDIT/OBJECT/POSE mode switching |
 | 2.80 | current | `bpy.ops.object.select_all(action='DESELECT')` | `BlenderPlugin.py`, `exporter/describe/helpers/armature.py` | |
 | 2.80 | current | `bpy.ops.screen.area_split(direction, factor)` | `BlenderPlugin.py` | Workspace setup |
-| 2.80 | current | `bpy.ops.object.transform_apply(location, rotation, scale)` | `prepare_for_export.py` | Bake armature + child mesh world transforms into data |
-| 2.80 | current | `bpy.ops.object.vertex_group_limit_total(limit=n)` | `prepare_for_export.py` | Cap per-vertex influences at hardware limit |
-| 2.80 | current | `bpy.ops.object.vertex_group_normalize_all()` | `prepare_for_export.py` | Renormalize weights after limiting/quantising |
-| 2.80 | current | `bpy.ops.mesh.select_all(action='SELECT')` | `prepare_for_export.py` | Select for separate-by-loose-parts |
-| 2.80 | current | `bpy.ops.mesh.separate(type='LOOSE')` | `prepare_for_export.py` | Split multi-material meshes |
-| 2.80 | current | `bpy.context.selected_objects` | `prepare_for_export.py` | Iterate newly separated meshes |
+| 2.80 | current | `bpy.ops.object.transform_apply(location, rotation, scale)` | `prepare_for_pkx_export.py`, `prepare_for_dat_export.py` | Bake armature + child mesh world transforms into data |
+| 2.80 | current | `bpy.ops.object.vertex_group_limit_total(limit=n)` | `prepare_for_pkx_export.py`, `prepare_for_dat_export.py` | Cap per-vertex influences at hardware limit |
+| 2.80 | current | `bpy.ops.object.vertex_group_normalize_all()` | `prepare_for_pkx_export.py`, `prepare_for_dat_export.py` | Renormalize weights after limiting/quantising |
+| 2.80 | current | `bpy.ops.mesh.select_all(action='DESELECT')` | `prepare_for_pkx_export.py` | Select for rigid-vs-envelope split |
+| 2.80 | current | `bpy.ops.mesh.separate(type='SELECTED')` | `prepare_for_pkx_export.py` | Split single-bone vertices into rigid meshes |
+| 2.80 | current | `bpy.context.selected_objects` | `prepare_for_pkx_export.py` | Iterate newly separated meshes |
 | 2.80 | current | `bpy.context.active_object` | `set_texture_formats.py`, `add_shiny_filter.py`, `add_ambient_lighting.py` | Script entry point — active armature |
 | 2.80 | current | `bpy.data.node_groups.remove(group)` | `remove_shiny_filter.py` | Delete shared shiny node groups |
 | | | | | |
@@ -238,7 +238,7 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.80 | current | `light_data.color = [r, g, b]` | `lights.py` | |
 | 2.80 | current | `light_data.energy` | `lights.py` | Brightness value; 0 for ambient no-op lights |
 | | | **Light Custom Properties** | | |
-| 2.80 | current | `obj["dat_light_type"] = "AMBIENT"` | `lights.py`, `prepare_for_export.py` | Marks a POINT light as an ambient light |
+| 2.80 | current | `obj["dat_light_type"] = "AMBIENT"` | `lights.py`, `prepare_for_pkx_export.py`, `prepare_for_dat_export.py` | Marks a POINT light as an ambient light |
 | | | | | |
 | | | **Image Data** | | |
 | 2.80 | current | `image.pixels = [...]` | `materials.py` | Flat RGBA float list |
