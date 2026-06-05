@@ -177,13 +177,35 @@ def bake_imported_transforms(armatures, logger=StubLogger()):
             ad.action = None
             ad.use_nla = False
 
+        # Force depsgraph evaluation so every object's matrix_world
+        # cache is consistent before we read it. `obj.parent = arm`
+        # during build doesn't trigger a recompute on its own — small
+        # scenes (single-mesh trophies, item models) can have the mesh's
+        # matrix_world cache still holding its pre-parenting identity
+        # value at this point, which silently no-ops the bake on the
+        # mesh data path.
+        bpy.context.view_layer.update()
+
         # Capture world matrices BEFORE any mutation. matrix_world is
         # cached and re-reading it after a sibling object is baked
         # returns half-stale values.
-        targets = [(arm, arm.matrix_world.copy())]
+        #
+        # Child meshes are baked using the armature's world matrix, not
+        # their own. The mesh's vertex data was loaded in raw Y-up GC
+        # frame; for simple scenes mesh.matrix_world can still be at
+        # identity when this runs (depsgraph staleness — see above), so
+        # using it would no-op the bake and leave the data Y-up while
+        # the bones get rotated to Z-up. The exporter would then
+        # double-rotate the geometry on the way out. The view_layer
+        # update above keeps things consistent for downstream code, but
+        # we still source the bake transform from the armature so the
+        # mesh data is guaranteed to land in the same Z-up frame as the
+        # bones regardless of cache state.
+        arm_world = arm.matrix_world.copy()
+        targets = [(arm, arm_world)]
         for obj in bpy.data.objects:
             if obj.parent is arm and obj.type == 'MESH':
-                targets.append((obj, obj.matrix_world.copy()))
+                targets.append((obj, arm_world))
 
         for obj, world in targets:
             data = getattr(obj, 'data', None)
