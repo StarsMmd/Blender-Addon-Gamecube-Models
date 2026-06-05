@@ -11,9 +11,8 @@ The script operates on all objects in the scene — no selection required:
      a non-uniform armature scale combined with edit-bone rotation would
      introduce, drifting bones away from mesh vertices the further you
      walk down the bone chain.
-  2. Creates a Debug_Camera if none exists (the PKX camera appears to be
-     unused by the game engine; kept for format fidelity pending a
-     confirmed camera-less export test)
+  2. Stamps a default `dat_camera_aspect` on any scene camera missing one
+     (camera creation lives in scripts/add_debug_camera.py)
   3. Limits vertex bone weights to 3 per vertex (GameCube constraint)
   4. Splits oversized meshes by body region if >25 estimated PObjects
   5. Applies default PKX metadata to all armatures that don't have it
@@ -347,119 +346,27 @@ def bake_transforms():
 
 
 # ---------------------------------------------------------------------------
-# Debug camera
+# Camera aspect
 # ---------------------------------------------------------------------------
 #
-# Both the XD and Colosseum disassemblies show no real consumer of the PKX
-# model's embedded camera — battles, summary screens, PC box, and overworld
-# all use hardcoded or bounding-box-derived cameras. The camera section is
-# most likely a SysDolphin-era debug/preview camera that the format
-# preserves but the game ignores. We still emit one to keep the DAT
-# structure identical to official models until a camera-less export is
-# confirmed non-breaking.
-
-DEBUG_CAMERA_NAME = "Debug_Camera"
-DEBUG_CAMERA_TARGET = "Debug_Camera_target"
+# This script does not create any camera. Use `scripts/add_debug_camera.py`
+# if you want a viewport-friendly preview camera; the exporter writes
+# whatever cameras are present in the scene with no special filtering.
 
 
-def _model_display_size():
-    """Compute a display size for empties: 3% of the scene's model bounding box diagonal."""
-    from mathutils import Vector
-    min_co = [float('inf')] * 3
-    max_co = [float('-inf')] * 3
-    for obj in bpy.data.objects:
-        if obj.type == 'MESH':
-            for corner in obj.bound_box:
-                world = obj.matrix_world @ Vector(corner)
-                for i in range(3):
-                    min_co[i] = min(min_co[i], world[i])
-                    max_co[i] = max(max_co[i], world[i])
-    if min_co[0] == float('inf'):
-        return 0.5
-    diag = (Vector(max_co) - Vector(min_co)).length
-    return max(0.1, min(3.0, diag * 0.03))
-
-
-def prepare_camera():
-    """Create a default debug camera if none exists, and set aspect on all cameras.
-
-    Returns the number of cameras created (0 or 1).
+def normalize_camera_aspect():
+    """Stamp a default `dat_camera_aspect=1.18` on any scene camera that
+    doesn't carry one already, so the exporter's CObj writes a sensible
+    aspect for cameras authored without going through the importer.
+    Returns the number of cameras touched.
     """
-    created = 0
-
-    # Create Debug_Camera if it doesn't exist
-    if bpy.data.objects.get(DEBUG_CAMERA_NAME) is None:
-        # Compute model bounding box to position camera intelligently
-        from mathutils import Vector
-        min_co = [float('inf')] * 3
-        max_co = [float('-inf')] * 3
-        for obj in bpy.data.objects:
-            if obj.type == 'MESH':
-                for corner in obj.bound_box:
-                    world = obj.matrix_world @ Vector(corner)
-                    for i in range(3):
-                        min_co[i] = min(min_co[i], world[i])
-                        max_co[i] = max(max_co[i], world[i])
-
-        if min_co[0] != float('inf'):
-            center_x = (min_co[0] + max_co[0]) / 2
-            center_y = (min_co[1] + max_co[1]) / 2
-            center_z = (min_co[2] + max_co[2]) / 2
-            height = max_co[2] - min_co[2]
-            depth = max_co[1] - min_co[1]
-        else:
-            # No meshes — use sensible defaults
-            center_x, center_y, center_z = 0.0, 0.0, 0.5
-            height = 1.0
-            depth = 1.0
-
-        # Target at halfway up the model's max height
-        target_z = max_co[2] * 0.5
-
-        # Camera in front of the model (negative Y), at target height,
-        # pulled back ~2.5× the model's height (matches typical game framing)
-        cam_distance = max(height * 2.5, 1.5)
-        cam_pos = (center_x, center_y - cam_distance, target_z)
-        target_pos = (center_x, center_y, target_z)
-
-        cam_data = bpy.data.cameras.new(DEBUG_CAMERA_NAME)
-        cam_data.type = 'PERSP'
-        cam_data.lens = 37.5       # ~27° vertical FOV (most common across all PKX models)
-        cam_data.clip_start = 0.01
-        cam_data.clip_end = 3277.0
-
-        cam_obj = bpy.data.objects.new(DEBUG_CAMERA_NAME, cam_data)
-        cam_obj.location = cam_pos
-        cam_obj["dat_camera_aspect"] = 1.18
-        bpy.context.scene.collection.objects.link(cam_obj)
-
-        # Create target empty at model center
-        target = bpy.data.objects.new(DEBUG_CAMERA_TARGET, None)
-        target.empty_display_type = 'PLAIN_AXES'
-        target.empty_display_size = _model_display_size()
-        target.location = target_pos
-        bpy.context.scene.collection.objects.link(target)
-
-        # Add TRACK_TO constraint
-        track = cam_obj.constraints.new('TRACK_TO')
-        track.target = target
-        track.track_axis = 'TRACK_NEGATIVE_Z'
-        track.up_axis = 'UP_Y'
-
-        created = 1
-        print("  Created '%s' in front of model, targeting center" % DEBUG_CAMERA_NAME)
-        print("    Position: (%.2f, %.2f, %.2f)" % cam_pos)
-        print("    Target: (%.2f, %.2f, %.2f)" % target_pos)
-        print("    Lens: 37.5mm (~27° FOV), aspect: 1.18")
-        print("    Adjust position/FOV to frame your model. Smaller models need wider FOV.")
-
-    # Set dat_camera_aspect on any cameras that don't have it
+    touched = 0
     for obj in bpy.data.objects:
         if obj.type == 'CAMERA' and "dat_camera_aspect" not in obj:
             obj["dat_camera_aspect"] = 1.18
             print("  Camera '%s': set dat_camera_aspect = 1.18" % obj.name)
-
-    return created
+            touched += 1
+    return touched
 
 
 # ---------------------------------------------------------------------------
@@ -1444,6 +1351,13 @@ def _cull_unused_material_slots(armature):
 # Scene lights
 # ---------------------------------------------------------------------------
 
+# Namespaced prefix for every light this prep script creates. Keeps re-runs
+# idempotent (lookup by exact name → skip if exists) and avoids collisions
+# with user-authored or importer-built lights (which use shorter, generic
+# names like "Light_0" / "Ambient_Light").
+_PREP_LIGHT_PREFIX = "DATPlugin_Prep_"
+
+
 def prepare_ambient_light():
     """Add an ambient light if none exists in the scene.
 
@@ -1453,21 +1367,25 @@ def prepare_ambient_light():
 
     Returns the number of ambient lights created (0 or 1).
     """
-    # Check for existing ambient light
+    # Skip if either an existing AMBIENT-flagged light is already present
+    # OR our namespaced one was created on a previous run.
+    name = _PREP_LIGHT_PREFIX + "Ambient"
+    if bpy.data.objects.get(name) is not None:
+        return 0
     for obj in bpy.data.objects:
         if obj.type == 'LIGHT' and obj.get('dat_light_type') == 'AMBIENT':
             return 0
 
-    # Default: (76, 76, 76) / 255 ≈ 0.298 sRGB — the most common
-    # ambient color across all tested Pokémon models.
+    # Default: (76, 76, 76) / 255 ≈ 0.298 sRGB — a sensible neutral
+    # fill brightness for in-engine preview.
     srgb_val = 76 / 255.0
     linear_val = _srgb_to_linear(srgb_val)
 
-    light_data = bpy.data.lights.new(name='Ambient_Light', type='POINT')
+    light_data = bpy.data.lights.new(name=name, type='POINT')
     light_data.energy = 0
     light_data.color = (linear_val, linear_val, linear_val)
 
-    lamp = bpy.data.objects.new(name='Ambient_Light', object_data=light_data)
+    lamp = bpy.data.objects.new(name=name, object_data=light_data)
     lamp["dat_light_type"] = "AMBIENT"
     bpy.context.scene.collection.objects.link(lamp)
 
@@ -1475,30 +1393,35 @@ def prepare_ambient_light():
 
 
 def prepare_lights():
-    """Ensure the scene has the standard 4-light battle setup.
+    """Ensure the scene has a standard 4-light preview setup.
 
-    All game models have exactly 4 LightSets:
+    Creates a 4-LightSet layout that matches the convention found in
+    every tested Colo/XD model:
       [0] Ambient (76, 76, 76) — uniform fill, POINT with energy=0
       [1] Main directional (204, 204, 204) — brightest, SUN from above-front
       [2] Fill directional (102, 102, 102) — medium, SUN from the side
       [3] Back/rim directional (76, 76, 76) — darker, SUN from behind
 
-    Creates any missing lights. Returns the number of lights created.
+    Names are namespaced under _PREP_LIGHT_PREFIX so re-runs don't
+    duplicate them and they don't collide with imported / user lights.
+
+    Returns the number of lights created.
     """
     created = 0
 
     # [0] Ambient — delegate to existing function
     created += prepare_ambient_light()
 
-    # Standard directional lights — (name, color_u8, rotation_euler_degrees)
+    # Standard directional lights — (suffix, color_u8, rotation_euler_radians)
     _DIRECTIONAL_LIGHTS = [
-        ('Main_Light',  204, (math.radians(-45), 0, math.radians(30))),
-        ('Fill_Light',  102, (math.radians(-30), 0, math.radians(-60))),
-        ('Back_Light',   76, (math.radians(-20), 0, math.radians(150))),
+        ('Main', 204, (math.radians(-45), 0, math.radians(30))),
+        ('Fill', 102, (math.radians(-30), 0, math.radians(-60))),
+        ('Back',  76, (math.radians(-20), 0, math.radians(150))),
     ]
 
-    for name, color_u8, rotation in _DIRECTIONAL_LIGHTS:
-        # Skip if a SUN light with this name already exists
+    for suffix, color_u8, rotation in _DIRECTIONAL_LIGHTS:
+        name = _PREP_LIGHT_PREFIX + suffix
+        # Idempotent: skip if a previous run already created this light.
         existing = bpy.data.objects.get(name)
         if existing and existing.type == 'LIGHT' and existing.data.type == 'SUN':
             continue
@@ -1867,12 +1790,9 @@ if __name__ == "__main__" or True:
             print("    %s: longest bone = %.3f, max mesh vertex = %.3f"
                   % (arm.name, longest, v))
 
-    # 2. Camera — disabled: both XD and Colosseum disassemblies show no
-    # consumer of the PKX camera. Keep prepare_camera() available until a
-    # camera-less PKX export is confirmed non-breaking.
-    # cam_created = prepare_camera()
-    # if not cam_created:
-    #     print("  Debug camera already exists")
+    # 2. Camera aspect — stamp default dat_camera_aspect on any camera
+    # missing it. Camera creation lives in scripts/add_debug_camera.py.
+    normalize_camera_aspect()
 
     # 2-4. Per-armature steps: PKX metadata, timing, texture formats
     armatures = [obj for obj in bpy.data.objects if obj.type == 'ARMATURE']

@@ -5,9 +5,11 @@ Runs after either the new IR pipeline (Phase 5) or the legacy importer.
 Operates entirely on Blender objects — no dependency on earlier phases.
 
 Bakes the importer's Y-up→Z-up viewing rotation into bone + child-mesh
-data so each `matrix_world` arrives at identity (mirrors
-`scripts/prepare_for_export.py:bake_transforms()`). Re-exports through
-the prep script find the data already baked and skip that step. The
+data so each `matrix_world` arrives at identity (mirrors the
+`bake_transforms()` step in both prep scripts —
+`scripts/prepare_for_pkx_export.py` and
+`scripts/prepare_for_dat_export.py`). Re-exports through either prep
+script find the data already baked and skip that step. The
 exporter itself now composes `matrix_world` / `matrix_basis` on the
 fly inside describe + plan, so this bake is convenience rather than
 correctness — but production scenes still benefit from arriving in
@@ -55,9 +57,10 @@ def post_process(armature_names, shiny_params=None, options=None, logger=StubLog
 
     # Bake the importer's Y-up→Z-up viewing rotation into the bone +
     # mesh data so each `matrix_world` is identity. Mirrors the prep
-    # script's `bake_transforms()` step — running it here means a re-export
-    # through `scripts/prepare_for_export.py` finds the data already
-    # baked and noops that step. Also lets the round-trip runner's IBI
+    # scripts' `bake_transforms()` step — running it here means a re-export
+    # through `scripts/prepare_for_pkx_export.py` or
+    # `scripts/prepare_for_dat_export.py` finds the data already baked
+    # and noops that step. Also lets the round-trip runner's IBI
     # / BBB scoring pass the exporter's baked-transforms validator.
     if build_results:
         bake_targets = [r['armature'] for r in build_results]
@@ -130,9 +133,10 @@ def bake_imported_transforms(armatures, logger=StubLogger()):
     a "viewing rotation" that lets the importer keep raw Y-up GameCube
     bone matrices verbatim while still rendering Z-up in the viewport.
     Baking that rotation into the data makes the imported scene's
-    canonical form match what `scripts/prepare_for_export.py:
-    bake_transforms()` produces, so a re-export through the prep script
-    finds the data already baked and skips its own bake step.
+    canonical form match what both prep scripts' `bake_transforms()`
+    step produces (`scripts/prepare_for_pkx_export.py` and
+    `scripts/prepare_for_dat_export.py`), so a re-export through either
+    prep script finds the data already baked and skips its own bake step.
 
     The exporter now composes `matrix_world` / `matrix_basis` on the
     fly inside describe + plan (see `exporter/phases/describe/helpers/
@@ -177,13 +181,35 @@ def bake_imported_transforms(armatures, logger=StubLogger()):
             ad.action = None
             ad.use_nla = False
 
+        # Force depsgraph evaluation so every object's matrix_world
+        # cache is consistent before we read it. `obj.parent = arm`
+        # during build doesn't trigger a recompute on its own — small
+        # scenes (single-mesh trophies, item models) can have the mesh's
+        # matrix_world cache still holding its pre-parenting identity
+        # value at this point, which silently no-ops the bake on the
+        # mesh data path.
+        bpy.context.view_layer.update()
+
         # Capture world matrices BEFORE any mutation. matrix_world is
         # cached and re-reading it after a sibling object is baked
         # returns half-stale values.
-        targets = [(arm, arm.matrix_world.copy())]
+        #
+        # Child meshes are baked using the armature's world matrix, not
+        # their own. The mesh's vertex data was loaded in raw Y-up GC
+        # frame; for simple scenes mesh.matrix_world can still be at
+        # identity when this runs (depsgraph staleness — see above), so
+        # using it would no-op the bake and leave the data Y-up while
+        # the bones get rotated to Z-up. The exporter would then
+        # double-rotate the geometry on the way out. The view_layer
+        # update above keeps things consistent for downstream code, but
+        # we still source the bake transform from the armature so the
+        # mesh data is guaranteed to land in the same Z-up frame as the
+        # bones regardless of cache state.
+        arm_world = arm.matrix_world.copy()
+        targets = [(arm, arm_world)]
         for obj in bpy.data.objects:
             if obj.parent is arm and obj.type == 'MESH':
-                targets.append((obj, obj.matrix_world.copy()))
+                targets.append((obj, arm_world))
 
         for obj, world in targets:
             data = getattr(obj, 'data', None)

@@ -66,29 +66,57 @@ After running, use the **Shiny Variant** panel in Object Properties to tweak par
 
 ---
 
-## prepare_for_export.py
+## prepare_for_pkx_export.py
 
-**Purpose:** Prepare a Blender scene for Colosseum/XD export. Adds custom properties the exporter needs on cameras, armatures, and lights. Operates on all objects in the scene — no selection required. Only adds properties that don't already exist — not needed on models that were imported through the DAT plugin.
+**Purpose:** Prepare a Blender scene for **PKX** export (Pokémon model containers). Adds the custom properties the exporter needs on cameras, armatures, and lights, plus the PKX-only metadata: animation slots, body map, derived timings, shiny filter shader nodes, and a four-light battle preview. Operates on all objects in the scene — no selection required. Only adds properties that don't already exist — not needed on models that were imported through the DAT plugin.
+
+> **Pick the right prep script for the output kind.** Use this one when the export target is `.pkx`. For bare `.dat` output (maps, scene archives, anything without a PKX header) use [`prepare_for_dat_export.py`](#prepare_for_dat_exportpy) instead — same bake + weight + texture steps, but skips the PKX-only ones (metadata, timing, shiny, test anims, battle lights).
 
 > **Scope of its optimisations:** prep applies only the optimisations needed to land within the game's **hard** limits — texture size ≤ 512×512, ≤ 3 bone weights per vertex, 10 % weight quantisation. It will not shrink a model beyond that. If the exported file is still too large, or the target is a heavier newer-game rip, reach for `optimize.py` (or the individual `optimize/*.py` passes) first — those are lossier but more aggressive (polycount decimation, 256 px textures, keyframe thinning, vertex merging).
 
 **Usage:**
 1. Open the Scripting workspace
-2. Open `scripts/prepare_for_export.py`
+2. Open `scripts/prepare_for_pkx_export.py`
 3. Click **Run Script**
 
 **What it does:**
 1. **Bakes loc/rot/scale** on every armature and its child meshes via Blender's `transform_apply`, so each `matrix_world` is identity. The exporter rejects any armature or child mesh whose `matrix_world` is not identity — without this, the bone path's SRT decompose drops shear introduced by non-uniform armature scale, while the vertex path's matmul keeps it, and the two drift apart further down the chain.
-2. Creates a `Debug_Camera` with target if none exists, and sets `dat_camera_aspect` on all cameras (the camera section in a PKX appears to be unused by the game engine — see `exporter_setup.md` Camera section)
-3. Applies default PKX metadata to the selected armature (if it doesn't already have it)
-4. Auto-derives animation timing from action durations for any animation slot that has an action assigned. Uses even splits: action types get 33%/66%/100% for wind-up/hit/duration, loops get full duration, hit reactions get 50%/100%
-5. Auto-selects GX texture formats for textures that don't have one set — analyzes each texture's pixel content and picks the most efficient format (CMPR, I8, C8, etc.). Skips textures that already have a format. The auto-selected format is usually optimal, but you can override it per-texture in the Image Editor's properties if needed
-6. Adds an ambient light if none exists — creates a no-op POINT light with `energy=0` (no visible change in Blender) and `dat_light_type = "AMBIENT"`. The light's color controls scene-level fill lighting in-game. Lower values (darker gray) produce more contrast and deeper shadows; higher values (lighter gray) produce a flatter, softer look. Default is `(76, 76, 76)` — the most common ambient color across Pokémon models
-7. Authors two helper actions per armature for in-game smoke testing — `auto_animation_dummy` (two-frame identity pose; the game requires ≥ 2 keyframes per channel for an animation to play) and `auto_animation_spin` (60-frame full revolution around the rig's vertical axis on the root bone, with frame 0 == frame 60 mod 2π so the loop closes). Neither is assigned to a PKX slot — pick them by hand in the PKX Metadata panel only when smoke-testing; ignore them for normal authoring
+2. Stamps `dat_camera_aspect = 1.18` on any scene camera missing it (camera creation is not part of prep — use [`add_debug_camera.py`](#add_debug_camerapy) if you want a viewport preview)
+3. Limits vertex bone weights to 3 per vertex and quantises to 10 % steps
+4. Culls unused material slots
+5. Applies default PKX metadata to the armature (PKX-only)
+6. Auto-derives animation timing from action durations for any animation slot that has an action assigned (PKX-only). Uses even splits: action types get 33%/66%/100% for wind-up/hit/duration, loops get full duration, hit reactions get 50%/100%
+7. Downscales any texture larger than 512×512 to fit, then auto-selects GX texture formats for textures still on `AUTO` — analyzes each texture's pixel content and picks the most efficient format (CMPR, I8, C8, etc.). Skips textures that already have a format
+8. Inserts shiny filter nodes into every material with a textured colour chain (PKX-only)
+9. Authors two helper actions per armature for in-game smoke testing — `auto_animation_dummy` (two-frame identity pose; the game requires ≥ 2 keyframes per channel for an animation to play) and `auto_animation_spin` (60-frame full revolution around the rig's vertical axis on the root bone, with frame 0 == frame 60 mod 2π so the loop closes). Neither is assigned to a PKX slot — pick them by hand in the PKX Metadata panel only when smoke-testing; ignore them for normal authoring
+10. Creates a 4-light preview rig — one POINT ambient (`dat_light_type = "AMBIENT"`, default `(76, 76, 76)`) plus three SUN directionals (Main/Fill/Back). All four are namespaced under `DATPlugin_Prep_*` so re-runs are idempotent and the names don't collide with imported or user-authored lights
 
 **Tip:** After assigning actions to animation slots in the PKX Metadata panel, run the script again to auto-fill timing values based on the action durations. The script always re-derives timing for any slot with an action assigned.
 
 See [Exporter Setup](exporter_setup.md) for a full reference of every property, what it does, and how to choose the right values.
+
+---
+
+## prepare_for_dat_export.py
+
+**Purpose:** Prepare a Blender scene for **bare `.dat`** export (maps, scene archives, arbitrary models without a PKX header). Standalone — duplicates the shared helpers from `prepare_for_pkx_export.py` rather than importing them, so each script can be reasoned about in isolation.
+
+> **Pick the right prep script for the output kind.** Use this one when the export target is `.dat`. For `.pkx` output use [`prepare_for_pkx_export.py`](#prepare_for_pkx_exportpy) instead — it adds the PKX-only steps (header metadata, animation slot timings, shiny filter, smoke-test actions, battle lights).
+
+**Usage:**
+1. Open the Scripting workspace
+2. Open `scripts/prepare_for_dat_export.py`
+3. Click **Run Script**
+
+**What it does** (subset of the PKX prep — all the hardware-level steps, none of the PKX header authoring):
+1. **Bakes loc/rot/scale** on every armature and its child meshes so each `matrix_world` is identity (same reason as the PKX prep — the bone path SRT-decomposes and the vertex path matmuls; they must agree)
+2. Stamps `dat_camera_aspect = 1.18` on any scene camera missing it
+3. Limits vertex bone weights to 3 per vertex and quantises to 10 % steps
+4. Culls unused material slots
+5. Downscales any texture larger than 512×512
+6. Auto-selects GX texture formats for textures still on `AUTO`
+
+**What it skips** (vs the PKX prep): PKX header metadata, animation timing derivation, shiny filter shader nodes, the `auto_animation_*` smoke-test helpers, and the four-light battle preview. None of those apply to a bare `.dat` model.
 
 ---
 
@@ -147,11 +175,31 @@ The format can also be set manually per-texture by selecting the image in the Im
 
 ---
 
+## add_debug_camera.py
+
+**Purpose:** Drop a viewport-friendly preview camera into the scene, framed on the combined mesh AABB. The exporter writes whatever cameras are present in the scene, so anything added here will land in the output `.dat` / `.pkx` as a regular `scene_data.camera` entry — there is no special "debug" handling on the export side.
+
+**Usage:**
+1. Open the Scripting workspace
+2. Open `scripts/add_debug_camera.py`
+3. Click **Run Script**
+
+By default the camera is named `Debug_Camera` (with a `Debug_Camera_target` empty as its TRACK_TO). Set `NAME` in the script's text editor (or via `bpy` globals) before running to use a different name.
+
+**What it does:**
+- Computes the scene's mesh AABB and places a perspective camera ~2.5× the model height back along `-Y`, looking at the model centre.
+- Defaults: 37.5 mm lens (~27° vertical FOV), `dat_camera_aspect = 1.18`, near = 0.01, far = 3277.
+- No-op if a camera with the chosen name already exists.
+
+**Why a separate script:** the DAT exporter treats every scene camera the same way — there is no "is this a preview?" filter. Keeping camera creation out of the prep scripts means running prep on a model with no camera produces a model file with no camera, mirroring the source exactly.
+
+---
+
 ## optimize.py
 
 **Purpose:** Run every lossy optimisation pass in one go to shrink oversized models from newer games. Lossy — intended for rips/imports that are too heavy to fit the GameCube budget.
 
-> **When to use:** `prepare_for_export.py` already enforces the game's hard limits (≤ 512×512 textures, ≤ 3 weights per vertex, 10 % weight quantisation). Reach for these scripts when prep isn't enough — e.g. when the exported file is too large, when the source is a newer-gen rip with dense geometry / long animations, or when you want a smaller in-memory footprint than the hardware ceiling. Run `optimize.py` before `prepare_for_export.py`; prep then picks up the already-optimised scene and adds the export-specific metadata.
+> **When to use:** the prep scripts (`prepare_for_pkx_export.py` and `prepare_for_dat_export.py`) already enforce the game's hard limits (≤ 512×512 textures, ≤ 3 weights per vertex, 10 % weight quantisation). Reach for these scripts when prep isn't enough — e.g. when the exported file is too large, when the source is a newer-gen rip with dense geometry / long animations, or when you want a smaller in-memory footprint than the hardware ceiling. Run `optimize.py` before whichever prep script matches your output kind; prep then picks up the already-optimised scene and adds the export-specific metadata.
 
 **Usage:**
 1. Open the Scripting workspace

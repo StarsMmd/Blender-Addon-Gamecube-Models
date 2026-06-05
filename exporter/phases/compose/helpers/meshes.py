@@ -592,10 +592,11 @@ def _canonicalize_weights(weight_list):
     shared envelope get un-deformed by one blend matrix but re-deformed by
     a different one at runtime.
 
-    Weight limiting and quantization are the prepare script's job (see
-    scripts/prepare_for_export.py) so the viewport preview matches what
-    ships to the .dat. Compose only renormalises against floating-point
-    drift.
+    Weight limiting and quantization are the prep script's job (see
+    `scripts/prepare_for_pkx_export.py` and
+    `scripts/prepare_for_dat_export.py`) so the viewport preview matches
+    what ships to the .dat. Compose only renormalises against
+    floating-point drift.
 
     Returns:
         (canonical_list, key) where canonical_list is the renormalised

@@ -36,7 +36,7 @@ Not every Pokemon has shiny parameters — some use a separate model for their s
 
 ## Exporting
 
-The exporter writes a Blender scene back to a `.dat` or `.pkx` binary the game can load. Works for models that came in through this plugin and for custom or third-party models prepared via `scripts/prepare_for_export.py`.
+The exporter writes a Blender scene back to a `.dat` or `.pkx` binary the game can load. Works for models that came in through this plugin and for custom or third-party models prepared via the matching prep script — `scripts/prepare_for_pkx_export.py` for PKX output or `scripts/prepare_for_dat_export.py` for bare `.dat`.
 
 See the [Exporter guide](docs/exporter.html) for the full workflow — scene preparation, export options, and getting your model back into the game. For implementation details and the supported-feature matrix, see [Exporter Setup](technical-docs/exporter_setup.md).
 

@@ -64,14 +64,14 @@ class Exporter:
         # Pre-process — Validate output path and scene
         pre_process(context, filepath, options, logger)
 
-        # Extension tells Phase 1 whether to drop the prep-script's
-        # auto-generated preview lights/camera — we only strip those when
-        # writing a bare .dat. A .pkx export keeps them for self-containment.
-        # For .fsys output we resolve to the inner model kind so describe
-        # makes the same self-containment choice as a direct .dat / .pkx.
+        # Bare .dat output never carries the bound_box section — it's only
+        # used by PKX-wrapped models for in-game collision/culling. .fsys
+        # output resolves to its inner model kind for the same decision.
         output_ext = filepath.rsplit('.', 1)[-1].lower() if '.' in filepath else ''
         if output_ext == 'fsys':
             output_ext = _resolve_fsys_inner_ext(filepath)
+        if output_ext == 'dat':
+            options['include_bound_box'] = False
 
         # Phase 1 — Describe Blender Scene: Blender context → BRScene
         br_scene, shiny_params, pkx_header = describe_scene(

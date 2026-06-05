@@ -36,8 +36,8 @@ def validate_baked_transforms(armatures):
     any shear introduced by combining a non-uniform armature scale with an
     edit-bone rotation. The vertex path uses a plain matmul that preserves
     that shear, so the two paths drift apart the further down the chain you
-    go. Baking transforms upstream (scripts/prepare_for_export.py) keeps
-    both paths in the same frame.
+    go. Baking transforms upstream (`scripts/prepare_for_pkx_export.py` or
+    `scripts/prepare_for_dat_export.py`) keeps both paths in the same frame.
     """
     children_by_armature = {
         arm: [obj for obj in bpy.data.objects
@@ -62,9 +62,10 @@ def check_baked_transforms(armatures, children_by_armature):
     if bad:
         raise ValueError(
             "Unbaked transforms on: " + ", ".join(bad) + ". "
-            "Run scripts/prepare_for_export.py (or apply Object > Apply > "
-            "All Transforms manually) so every armature and child mesh has "
-            "identity matrix_world before exporting."
+            "Run scripts/prepare_for_pkx_export.py (PKX output) or "
+            "scripts/prepare_for_dat_export.py (.dat output), or apply "
+            "Object > Apply > All Transforms manually, so every armature "
+            "and child mesh has identity matrix_world before exporting."
         )
 
 

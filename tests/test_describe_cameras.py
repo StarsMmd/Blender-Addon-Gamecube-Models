@@ -176,12 +176,12 @@ class TestDescribeCamera:
         result = describe_camera(cam)
         assert result.roll == 0.5
 
-    def test_name_first_camera(self):
+    def test_name_uses_camera_index(self):
         cam = _make_camera(name="battle_cam")
         result = describe_camera(cam, camera_index=0)
-        assert result.name == "Debug_Camera"
+        assert result.name == "Camera_0"
 
-    def test_name_subsequent_camera(self):
+    def test_name_includes_camera_index(self):
         cam = _make_camera(name=None)
         result = describe_camera(cam, camera_index=3)
         assert result.name == "Camera_3"

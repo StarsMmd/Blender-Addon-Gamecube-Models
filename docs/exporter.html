@@ -447,6 +447,17 @@
         prep work is already done — but the script should still be run. For models from anywhere
         else (GLB rips, custom models), it handles much more.</p>
 
+        <p><strong>Pick the prep script that matches your output kind:</strong></p>
+        <ul>
+            <li><code>scripts/prepare_for_pkx_export.py</code> — when you're exporting a
+                <strong>.pkx</strong> (Pokémon model container). Includes the PKX-only steps:
+                header metadata, animation slot timings, shiny filter shader nodes, smoke-test
+                actions, and a four-light battle preview.</li>
+            <li><code>scripts/prepare_for_dat_export.py</code> — when you're exporting a bare
+                <strong>.dat</strong> (maps, scene archives, arbitrary models without a PKX
+                header). Same bake / weight / texture steps, none of the PKX-specific authoring.</li>
+        </ul>
+
         <h3>Step 1 — Open the Scripting workspace</h3>
 
         <p>At the top of Blender, click the <strong>Scripting</strong> tab in the workspace bar.
@@ -460,7 +471,9 @@
         <h3>Step 2 — Open the preparation script</h3>
 
         <p>In the text editor at the top of the workspace, click <strong>Open</strong> and browse
-        to <code>scripts/prepare_for_export.py</code> inside the plugin's installation folder.</p>
+        to the prep script that matches your output — <code>scripts/prepare_for_pkx_export.py</code>
+        for <code>.pkx</code> or <code>scripts/prepare_for_dat_export.py</code> for bare
+        <code>.dat</code> — inside the plugin's installation folder.</p>
 
         <p>To find the plugin's installation folder:</p>
 
@@ -472,7 +485,8 @@
 
         <figure class="screenshot">
             <img src="images/exporter/preparing/open-script.png" alt="Open script in Blender text editor">
-            <figcaption>Open <code>prepare_for_export.py</code> from the plugin's <code>scripts/</code> folder.</figcaption>
+            <figcaption>Open the prep script (<code>prepare_for_pkx_export.py</code> or
+            <code>prepare_for_dat_export.py</code>) from the plugin's <code>scripts/</code> folder.</figcaption>
         </figure>
 
         <h3>Step 3 — Run the script</h3>

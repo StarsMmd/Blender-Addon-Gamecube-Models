@@ -85,7 +85,7 @@ class TestCheckBakedTransforms:
 
     def test_helpful_error_mentions_prep_script(self):
         arm = _MockObj('Armature', Matrix.Diagonal((2.0, 2.0, 2.0, 1.0)))
-        with pytest.raises(ValueError, match="prepare_for_export"):
+        with pytest.raises(ValueError, match="prepare_for_(pkx|dat)_export"):
             _check_baked_transforms([arm], {arm: []})
 
 
@@ -119,7 +119,8 @@ class TestPreProcessBakedTransforms:
         with pytest.raises(ValueError) as excinfo:
             _preprocess_check_baked_transforms([arm], {arm: []})
         msg = str(excinfo.value)
-        assert "prepare_for_export.py" in msg
+        assert "prepare_for_pkx_export.py" in msg
+        assert "prepare_for_dat_export.py" in msg
         assert "Apply > All Transforms" in msg
 
     def test_only_meshes_unbaked(self):
@@ -174,7 +175,7 @@ class TestCheckVertexWeightCount:
 
     def test_error_mentions_prepare_script(self):
         mesh = _MockMesh('Body', [[0.2, 0.2, 0.2, 0.2, 0.2]])
-        with pytest.raises(ValueError, match="prepare_for_export"):
+        with pytest.raises(ValueError, match="prepare_for_(pkx|dat)_export"):
             _check_vertex_weight_count({object(): [mesh]})
 
     def test_sample_offender_in_error(self):
@@ -205,7 +206,7 @@ class TestCheckTextureSizes:
             _check_texture_sizes([('Body.png', 512, 1024)])
 
     def test_error_mentions_prepare_script(self):
-        with pytest.raises(ValueError, match="prepare_for_export"):
+        with pytest.raises(ValueError, match="prepare_for_(pkx|dat)_export"):
             _check_texture_sizes([('Body.png', 2048, 2048)])
 
     def test_sample_offender_in_error(self):
