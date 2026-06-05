@@ -152,6 +152,11 @@ def compose_meshes(meshes, joints, bones, logger=StubLogger()):
     # the same MaterialObject node. The serialize DFS then writes the
     # MObject + its TObject + Image + pixel data exactly once.
     mobj_cache = {}
+    # Per-pass IRImage → (Image node, encode_result) cache. Plan already
+    # dedupes IRImage across IRMaterials; this keeps that dedup intact on
+    # the compose side so multiple TObj chains share one Image node + one
+    # pixel-data buffer in the output.
+    image_cache = {}
 
     for bone_idx, ir_meshes in meshes_by_bone.items():
         # Group IRMeshes by material identity. Meshes with the same
@@ -187,7 +192,8 @@ def compose_meshes(meshes, joints, bones, logger=StubLogger()):
             mat_key = id(ir_material)
             mobj = mobj_cache.get(mat_key)
             if mobj is None:
-                mobj = compose_material(ir_material, logger=logger)
+                mobj = compose_material(ir_material, logger=logger,
+                                        image_cache=image_cache)
                 mobj_cache[mat_key] = mobj
 
             mesh_node = Mesh(address=None, blender_obj=None)
