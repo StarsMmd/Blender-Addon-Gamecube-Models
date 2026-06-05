@@ -580,9 +580,16 @@ class TestDATHeaderAndAlignment:
             padding = result[file_size:]
             assert all(b == 0 for b in padding), "padding bytes should be zero"
 
-    def test_serialize_output_0x20_aligned(self):
-        """serialize() output should be padded to 0x20 (32-byte) alignment."""
+    def test_serialize_output_equals_file_size(self):
+        """serialize() output length must equal header.file_size — no trailing pad.
+
+        A raw .dat is loaded directly from the FST/fsys, so the game's archive
+        parser asserts header.file_size == the recorded file length. Trailing
+        0x20 padding (which belongs only in the PKX container, applied in the
+        package phase) would break that check. See HSD_ArchiveParse.
+        """
         from exporter.phases.serialize.serialize import serialize
+        from shared.helpers.binary import read
         from shared.Nodes.Classes.Joints.Joint import Joint as JointNode
         from shared.Nodes.Classes.Joints.ModelSet import ModelSet
         from shared.Nodes.Classes.RootNodes.SceneData import SceneData
@@ -613,8 +620,10 @@ class TestDATHeaderAndAlignment:
         scene_data.fog = None
 
         result = serialize([scene_data], ['scene_data'])
-        assert len(result) % 0x20 == 0, \
-            f"serialize output should be 0x20 aligned, got {len(result)} bytes ({len(result) % 0x20} remainder)"
+        header_file_size = read('uint', result, 0)
+        assert len(result) == header_file_size, \
+            f"serialize output ({len(result)} bytes) must equal header.file_size " \
+            f"({header_file_size}) — no trailing padding on a raw .dat"
 
     def test_data_size_excludes_header(self):
         """data_size field should not include the 0x20 header."""

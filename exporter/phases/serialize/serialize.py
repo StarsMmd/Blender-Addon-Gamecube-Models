@@ -33,10 +33,11 @@ def serialize(root_nodes, section_names, logger=StubLogger()):
 
     dat_bytes = stream.getvalue()
 
-    # Pad to 0x20 alignment
-    remainder = len(dat_bytes) % 0x20
-    if remainder != 0:
-        dat_bytes += b'\x00' * (0x20 - remainder)
+    # The DAT ends exactly at its header file_size field — no trailing pad.
+    # A raw .dat must keep this length so its on-disk size equals file_size
+    # (the game's archive parser asserts header.file_size == the size the
+    # resource system recorded for the file). Any 0x20 alignment the PKX
+    # container needs is applied in the package phase, not here.
 
     logger.info("  Node count: %d", len(builder.node_list))
     logger.info("  Relocations: %d", len(builder.relocations))
@@ -44,7 +45,7 @@ def serialize(root_nodes, section_names, logger=StubLogger()):
     if logger.verbose:
         _log_size_breakdown(builder, section_names, dat_bytes, logger)
 
-    logger.info("=== Export Phase 3 complete: %d bytes (0x20 aligned) ===", len(dat_bytes))
+    logger.info("=== Export Phase 3 complete: %d bytes ===", len(dat_bytes))
     return dat_bytes
 
 
@@ -101,7 +102,7 @@ def _log_size_breakdown(builder, section_names, dat_bytes, logger):
     logger.debug("  section info: %s", _fmt_bytes(section_info_bytes))
     logger.debug("  string table: %s", _fmt_bytes(string_table_bytes))
     logger.debug("  header: %s", _fmt_bytes(header_bytes))
-    logger.debug("  total DAT (aligned): %s", _fmt_bytes(len(dat_bytes)))
+    logger.debug("  total DAT: %s", _fmt_bytes(len(dat_bytes)))
 
 
 def _fmt_bytes(n):

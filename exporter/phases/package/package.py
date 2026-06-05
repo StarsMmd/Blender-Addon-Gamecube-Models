@@ -61,6 +61,20 @@ def package_output(dat_bytes, filepath, options=None, logger=StubLogger(),
     return final_bytes
 
 
+def _pad_dat_to_0x20(dat_bytes):
+    """Pad a DAT payload to a 0x20 boundary for embedding in a PKX container.
+
+    The DAT's own header.file_size still describes the unpadded length, so the
+    padding is transparent to the archive parser (it reads the size from the
+    header, not from the embedded length). Only the container needs the
+    alignment — a raw .dat is never padded (see serialize phase).
+    """
+    remainder = len(dat_bytes) % 0x20
+    if remainder != 0:
+        dat_bytes = dat_bytes + b'\x00' * (0x20 - remainder)
+    return dat_bytes
+
+
 def _package_pkx(dat_bytes, filepath, shiny_params, pkx_header, logger):
     """Build or inject PKX output.
 
@@ -79,6 +93,7 @@ def _package_pkx(dat_bytes, filepath, shiny_params, pkx_header, logger):
     Returns:
         bytes — complete PKX file.
     """
+    dat_bytes = _pad_dat_to_0x20(dat_bytes)
     if pkx_header is not None:
         return _build_pkx_from_header(dat_bytes, pkx_header, shiny_params, logger)
     elif os.path.exists(filepath):

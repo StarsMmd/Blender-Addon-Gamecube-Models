@@ -313,6 +313,36 @@ class TestPackage:
         result = package_output(dat_bytes, filepath)
         assert result == dat_bytes
 
+    def test_dat_output_not_padded_to_0x20(self, tmp_path):
+        """A raw .dat must keep its exact length even when not 0x20-aligned.
+
+        The DAT's on-disk size has to equal header.file_size, or the game's
+        HSD_ArchiveParse size assertion fails when it's loaded straight from
+        the FST/fsys. Padding belongs only to the PKX container.
+        """
+        # 100 bytes (0x64) — deliberately not a multiple of 0x20.
+        dat_bytes = struct.pack('>I', 100) + b'\x11' * 96
+        assert len(dat_bytes) % 0x20 != 0
+        filepath = str(tmp_path / "output.dat")
+        result = package_output(dat_bytes, filepath)
+        assert result == dat_bytes
+        assert len(result) == read('uint', result, 0)  # == header.file_size
+
+    def test_pkx_output_pads_embedded_dat_to_0x20(self, tmp_path):
+        """For .pkx output the embedded DAT is padded to a 0x20 boundary,
+        while header.file_size still describes the unpadded length (so the
+        padding is transparent to the archive parser)."""
+        dat_bytes = struct.pack('>I', 100) + b'\x22' * 96  # 100 bytes, unaligned
+        # New file, no header metadata -> default XD header, build from scratch.
+        filepath = str(tmp_path / "model.pkx")
+        result = package_output(dat_bytes, filepath)
+
+        pkx = PKXContainer(result)
+        # The embedded DAT region (everything after the header) is 0x20-aligned.
+        assert (len(result) - pkx.header_size) % 0x20 == 0
+        # ...but the DAT still parses to its original, unpadded content.
+        assert pkx.dat_bytes == dat_bytes
+
     def test_pkx_injection_preserves_trailer(self, tmp_path):
         """PKX packaging preserves the trailer after replacing the DAT."""
         original = _build_colo_pkx(dat_body_size=64)
