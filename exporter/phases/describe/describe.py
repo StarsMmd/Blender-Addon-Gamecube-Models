@@ -55,9 +55,8 @@ def describe_scene(context, options=None, logger=StubLogger(), output_ext=''):
     """Read the active Blender scene and produce a BRScene.
 
     In: context (bpy.types.Context); options (dict|None, reads
-        ``sparsify_bezier``); logger; output_ext (str, e.g. 'dat'/'pkx' —
-        when 'dat', the prep-script's auto-generated preview lights and
-        debug camera are dropped so bare .dat exports stay lean).
+        ``sparsify_bezier``); logger; output_ext (str, e.g. 'dat'/'pkx',
+        passed through to compose decisions like bound-box inclusion).
     Out: (BRScene, ShinyParams|None, PKXHeader|None).
     """
     if options is None:
@@ -93,9 +92,8 @@ def describe_scene(context, options=None, logger=StubLogger(), output_ext=''):
             logger,
         )
 
-    skip_prep_auto = (output_ext == 'dat')
-    br_lights = describe_lights(context, logger=logger, skip_prep_auto=skip_prep_auto)
-    br_cameras = describe_cameras(context, logger=logger, skip_prep_auto=skip_prep_auto)
+    br_lights = describe_lights(context, logger=logger)
+    br_cameras = describe_cameras(context, logger=logger)
 
     br_scene = BRScene(models=br_models, lights=br_lights, cameras=br_cameras)
 
