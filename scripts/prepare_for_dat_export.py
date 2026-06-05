@@ -37,6 +37,47 @@ import bpy
 
 
 # ---------------------------------------------------------------------------
+# Optimisation knobs
+# ---------------------------------------------------------------------------
+#
+# Trade visual fidelity for in-game performance. Lower values reduce
+# PObject count, matrix-pool usage, and file size — critical for arbitrary
+# (non-XD-native) model exports because the game's renderer chokes when
+# these go past empirically observed caps. Game-native bodies sit around
+# 8–15 PObjects per material; if a prepped model's largest mesh lands
+# well above that in the export log, tighten the knobs and re-prep.
+#
+# These mirror the same block at the top of prepare_for_pkx_export.py —
+# keep both in sync so PKX and DAT outputs optimise identically.
+
+# Hard cap on bone influences per vertex. GX hardware allows up to 4
+# (PNMTXIDX selects from 4 blend weights). Game models commonly use 2 or
+# 3 to keep envelope-combination explosion in check.
+MAX_WEIGHTS_PER_VERTEX = 3
+
+# Step size for weight quantisation, in absolute weight units (0..1).
+# Larger steps collapse more near-identical envelopes into one, shrinking
+# the unique-envelope count and the resulting PObject split. 0.1 matches
+# the precision the game itself stores; 0.25 is much more aggressive and
+# the right starting point for high-bone-count rips.
+WEIGHT_QUANTISATION_STEP = 0.1
+
+# Opt-in (HSDLib parity, `POBJ_Generator.ClampWeight`). When True, any
+# vertex weight below WEIGHT_DROP_THRESHOLD is removed and its slack
+# redistributed to the dominant bone before quantisation — prevents
+# GLB-rip long-tail weight distributions from collapsing to sum<1.0
+# after rounding. Leave False to preserve exact game-model round-trips;
+# flip True for arbitrary rips that exhibit shrunken / floating vertices.
+REDISTRIBUTE_SUB_THRESHOLD_WEIGHTS = False
+WEIGHT_DROP_THRESHOLD = 0.1
+
+# Maximum texture dimension on either axis; larger textures are
+# downscaled proportionally. GX hardware cap is 1024×1024, but XD's
+# texture-memory budget makes 512 the practical safe ceiling.
+MAX_TEXTURE_DIM = 512
+
+
+# ---------------------------------------------------------------------------
 # Bake transforms
 # ---------------------------------------------------------------------------
 #
@@ -328,12 +369,10 @@ def normalize_camera_aspect():
 # Mesh weight limiting
 # ---------------------------------------------------------------------------
 
-MAX_WEIGHTS_PER_VERTEX = 3
-
-
 def prepare_mesh_weights(armature):
     """Limit per-vertex bone influences to MAX_WEIGHTS_PER_VERTEX and
-    quantise weights to 10% steps (matching game-model precision).
+    quantise weights to WEIGHT_QUANTISATION_STEP increments (matching
+    game-model precision).
 
     Returns (weights_limited, 0) — the second value is reserved for the
     rigid-split count that the PKX prep script reports.
@@ -366,17 +405,41 @@ def prepare_mesh_weights(armature):
             print("    %s: limited %d vertices to %d weights" %
                   (mesh_obj.name, affected, MAX_WEIGHTS_PER_VERTEX))
 
+        # Drop sub-threshold weights and redistribute their slack to the
+        # dominant bone (opt-in, HSDLib ClampWeight parity).
+        if REDISTRIBUTE_SUB_THRESHOLD_WEIGHTS:
+            redistributed = 0
+            for v in mesh_obj.data.vertices:
+                bone_groups = [g for g in v.groups
+                               if g.group < len(mesh_obj.vertex_groups)
+                               and mesh_obj.vertex_groups[g.group].name in bone_names
+                               and g.weight > 0.0]
+                small = [g for g in bone_groups
+                         if g.weight < WEIGHT_DROP_THRESHOLD]
+                if not small or len(small) == len(bone_groups):
+                    continue
+                slack = sum(g.weight for g in small)
+                dominant = max(bone_groups, key=lambda g: g.weight)
+                for g in small:
+                    g.weight = 0.0
+                dominant.weight = min(1.0, dominant.weight + slack)
+                redistributed += 1
+            if redistributed:
+                print("    %s: redistributed sub-%.2f weights on %d vertices"
+                      % (mesh_obj.name, WEIGHT_DROP_THRESHOLD, redistributed))
+
         bpy.ops.object.mode_set(mode='WEIGHT_PAINT')
         bpy.ops.object.vertex_group_normalize_all(lock_active=False)
         bpy.ops.object.mode_set(mode='OBJECT')
 
+        step = WEIGHT_QUANTISATION_STEP
         mesh_data = mesh_obj.data
         quantized = 0
         for v in mesh_data.vertices:
             for g in v.groups:
                 if g.group < len(mesh_obj.vertex_groups):
                     if mesh_obj.vertex_groups[g.group].name in bone_names:
-                        q = round(g.weight, 1)
+                        q = round(g.weight / step) * step
                         if abs(q - g.weight) > 0.001:
                             g.weight = q
                             quantized += 1
@@ -389,9 +452,9 @@ def prepare_mesh_weights(armature):
                 for g in v.groups:
                     if g.group < len(mesh_obj.vertex_groups):
                         if mesh_obj.vertex_groups[g.group].name in bone_names:
-                            g.weight = round(g.weight, 1)
-            print("    %s: quantized %d weight values to 10%% steps" %
-                  (mesh_obj.name, quantized))
+                            g.weight = round(g.weight / step) * step
+            print("    %s: quantised %d weight values to %.0f%% steps" %
+                  (mesh_obj.name, quantized, step * 100))
 
     return total_limited, 0
 
@@ -420,9 +483,6 @@ def cull_unused_material_slots(armature):
 # ---------------------------------------------------------------------------
 # Textures
 # ---------------------------------------------------------------------------
-
-MAX_TEXTURE_DIM = 512
-
 
 def prepare_texture_sizes(armature):
     """Downscale any texture larger than MAX_TEXTURE_DIM on either axis.
@@ -625,5 +685,18 @@ if __name__ == "__main__" or True:
         fmt_count = prepare_texture_formats(arm)
         if fmt_count:
             print("  Set GX format on %d texture(s) on '%s'" % (fmt_count, arm.name))
+
+    # Leave the first armature selected + active so its properties panel
+    # is immediately visible in the Properties editor.
+    _first_arm = next((o for o in bpy.data.objects if o.type == 'ARMATURE'), None)
+    if _first_arm is not None:
+        try:
+            bpy.ops.object.mode_set(mode='OBJECT')
+        except RuntimeError:
+            pass
+        bpy.ops.object.select_all(action='DESELECT')
+        _first_arm.select_set(True)
+        bpy.context.view_layer.objects.active = _first_arm
+        print("  Selected armature '%s'" % _first_arm.name)
 
     print("=== Done ===")

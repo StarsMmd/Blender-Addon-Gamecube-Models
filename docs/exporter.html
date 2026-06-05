@@ -766,6 +766,58 @@
 
 <h2 id="troubleshooting">8. Troubleshooting</h2>
 
+        <h3>The model garbles in-game or has extra geometry radiating out from it</h3>
+
+        <p>If the model loads in-game but renders as the correct body plus large flat planes,
+        long thin triangles, or other geometry stretching off into space, the export is most
+        likely pushing past one of the renderer's per-frame caps — too many surfaces
+        (<strong>PObjects</strong>), too many bone-weight combinations, or too many matrices.
+        XD's hardware has limits the importer and Blender don't enforce, so the file looks
+        fine when re-imported but the game's draw loop chokes.</p>
+
+        <p>The prep script can produce a smaller, simpler model by collapsing similar bone
+        weights together. The knobs that control how aggressive this is live as constants at
+        the very top of <code>scripts/prepare_for_pkx_export.py</code> (and the same block at
+        the top of <code>prepare_for_dat_export.py</code>):</p>
+
+        <ul>
+            <li><code>MAX_WEIGHTS_PER_VERTEX</code> — how many bones can influence a single
+            vertex. Hardware allows up to 4. Game models commonly use 2 or 3.
+            <strong>Lower = fewer surfaces.</strong></li>
+            <li><code>WEIGHT_QUANTISATION_STEP</code> — the granularity bone weights are
+            rounded to. <code>0.1</code> matches the precision the game itself stores;
+            <code>0.25</code> is much more aggressive. <strong>Larger = fewer surfaces.</strong></li>
+            <li><code>REDISTRIBUTE_SUB_THRESHOLD_WEIGHTS</code> — when <code>True</code>,
+            any bone weight below <code>WEIGHT_DROP_THRESHOLD</code> is removed and its
+            slack handed back to that vertex's dominant bone. Useful for GLB/FBX rips with
+            long tails of near-zero weights. Leave <code>False</code> for round-tripped game
+            models.</li>
+            <li><code>MAX_TEXTURE_DIM</code> — maximum texture dimension on either axis;
+            larger textures get downscaled proportionally. <code>512</code> is the practical
+            safe ceiling for XD's texture-memory budget.</li>
+        </ul>
+
+        <p>To diagnose, watch the export log (Blender's system console). Lines like
+        <code>splitting mesh 'X' (137 envelopes) into 42 PObjects</code> tell you where the
+        budget is going. Game-native bodies sit at <strong>around 8–15 PObjects per
+        material</strong>; anything well above that on an arbitrary model is likely to garble.</p>
+
+        <p>A reasonable first escalation when the defaults don't fly is:</p>
+
+<pre><code>MAX_WEIGHTS_PER_VERTEX = 2
+WEIGHT_QUANTISATION_STEP = 0.25
+REDISTRIBUTE_SUB_THRESHOLD_WEIGHTS = True
+</code></pre>
+
+        <p>Save the script, re-run it on the scene, and re-export. The
+        <code>splitting mesh …</code> counts should drop substantially. If the largest mesh
+        is still emitting 25+ PObjects after the tightest knobs, the source mesh itself is
+        too dense for the renderer — apply a Decimate modifier to bring the face count down
+        (Pokémon-sized models typically sit in the 600–1,500 face range), then re-prep and
+        re-export.</p>
+
+        <h3>Other problems</h3>
+
         <p>If you hit a problem the docs don't cover, ask on the community Discord:
         <a href="https://discord.gg/xCPjjnv">discord.gg/xCPjjnv</a>. Include screenshots of your
         scene (Outliner + Material Properties at minimum), the exact error message Blender showed,

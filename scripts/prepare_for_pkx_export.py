@@ -42,6 +42,44 @@ import math
 
 
 # ---------------------------------------------------------------------------
+# Optimisation knobs
+# ---------------------------------------------------------------------------
+#
+# Trade visual fidelity for in-game performance. Lower values reduce
+# PObject count, matrix-pool usage, and file size — critical for arbitrary
+# (non-XD-native) model exports because the game's renderer chokes when
+# these go past empirically observed caps. Game-native PKX bodies sit
+# around 8–15 PObjects per material; if a prepped model's largest mesh
+# lands well above that in the export log, tighten the knobs and re-prep.
+
+# Hard cap on bone influences per vertex. GX hardware allows up to 4
+# (PNMTXIDX selects from 4 blend weights). Game models commonly use 2 or
+# 3 to keep envelope-combination explosion in check.
+MAX_WEIGHTS_PER_VERTEX = 3
+
+# Step size for weight quantisation, in absolute weight units (0..1).
+# Larger steps collapse more near-identical envelopes into one, shrinking
+# the unique-envelope count and the resulting PObject split. 0.1 matches
+# the precision the game itself stores; 0.25 is much more aggressive and
+# the right starting point for high-bone-count rips.
+WEIGHT_QUANTISATION_STEP = 0.1
+
+# Opt-in (HSDLib parity, `POBJ_Generator.ClampWeight`). When True, any
+# vertex weight below WEIGHT_DROP_THRESHOLD is removed and its slack
+# redistributed to the dominant bone before quantisation — prevents
+# GLB-rip long-tail weight distributions from collapsing to sum<1.0
+# after rounding. Leave False to preserve exact game-model round-trips;
+# flip True for arbitrary rips that exhibit shrunken / floating vertices.
+REDISTRIBUTE_SUB_THRESHOLD_WEIGHTS = False
+WEIGHT_DROP_THRESHOLD = 0.1
+
+# Maximum texture dimension on either axis; larger textures are
+# downscaled proportionally. GX hardware cap is 1024×1024, but XD's
+# texture-memory budget makes 512 the practical safe ceiling.
+MAX_TEXTURE_DIM = 512
+
+
+# ---------------------------------------------------------------------------
 # Bake transforms
 # ---------------------------------------------------------------------------
 #
@@ -130,23 +168,6 @@ def _ensure_bone_marker_object():
     return bpy.data.objects.new(name, mesh)
 
 
-def _collect_armature_actions(arm):
-    """Actions that this armature's animation_data references — active +
-    every NLA strip's action. We only scale fcurves on these, not on
-    every action in bpy.data.actions, so a second armature's actions
-    don't get over-scaled when its scale factor differs."""
-    if not arm.animation_data:
-        return set()
-    actions = set()
-    if arm.animation_data.action:
-        actions.add(arm.animation_data.action)
-    for tr in arm.animation_data.nla_tracks:
-        for st in tr.strips:
-            if st.action:
-                actions.add(st.action)
-    return actions
-
-
 def bake_transforms():
     """Bake loc/rot/scale on every armature and its child meshes so each
     `matrix_world` is identity.
@@ -192,7 +213,6 @@ def bake_transforms():
         anim_snapshot = {
             'arm': arm,
             'scale': arm.matrix_world.to_scale().x,  # uniform scale assumed
-            'actions': _collect_armature_actions(arm),
             'action': ad.action if ad else None,
             'use_nla': ad.use_nla if ad else None,
             'pose': [
@@ -278,23 +298,60 @@ def bake_transforms():
             pb.custom_shape_scale_xyz = (1.0, 1.0, 1.0)
 
     # ------------------------------------------------------------------
-    # Step 3: scale every pose.bones[...].location fcurve by the
-    # armature's pre-bake world scale. Pose rotations and scales need no
-    # adjustment (they're dimensionless).
+    # Step 3: scale every translation fcurve by the armature's pre-bake
+    # world scale. Covers both pose-bone translations
+    # (`pose.bones["…"].location`) and object-level translations
+    # (`location`). Rotations and scales are dimensionless and need no
+    # adjustment.
+    #
+    # Actions are scoped per armature: an action belongs to an armature
+    # if any pose-bone fcurve names a bone on that armature, or if it's
+    # referenced via animation_data on the armature itself or one of its
+    # child meshes. A `seen` set prevents double-scaling when actions are
+    # somehow shared across rigs.
     # ------------------------------------------------------------------
-    loc_re = re.compile(r'^pose\.bones\[".*"\]\.location$')
+    pose_bone_path_re = re.compile(r'^pose\.bones\["([^"]+)"\]\.')
+    loc_path_re = re.compile(r'^(pose\.bones\[".*"\]\.location|location)$')
+    seen = set()
     for snap in saved_anim:
         s = snap['scale']
         if abs(s - 1.0) < 1e-6:
-            continue  # armature was already at unit scale, nothing to do
-        for action in snap['actions']:
+            continue
+        arm = snap['arm']
+        bone_names = {b.name for b in arm.data.bones}
+
+        owned = set()
+        for obj in (arm, *(o for o in bpy.data.objects if o.parent is arm)):
+            ad = obj.animation_data
+            if not ad:
+                continue
+            if ad.action:
+                owned.add(ad.action)
+            for tr in ad.nla_tracks:
+                for st in tr.strips:
+                    if st.action:
+                        owned.add(st.action)
+        for action in bpy.data.actions:
+            if action in owned:
+                continue
             for fc in action.fcurves:
-                if not loc_re.match(fc.data_path):
+                m = pose_bone_path_re.match(fc.data_path)
+                if m and m.group(1) in bone_names:
+                    owned.add(action)
+                    break
+
+        for action in owned:
+            if action in seen:
+                continue
+            seen.add(action)
+            for fc in action.fcurves:
+                if not loc_path_re.match(fc.data_path):
                     continue
                 for kp in fc.keyframe_points:
                     kp.co.y *= s
                     kp.handle_left.y *= s
                     kp.handle_right.y *= s
+
         # Also scale the snapshotted pose-loc values we'll restore below
         snap['pose'] = [
             (name, (loc[0]*s, loc[1]*s, loc[2]*s), quat, eul, aa, scl)
@@ -440,7 +497,10 @@ def apply_pkx_metadata(armature, format='XD', model_type='POKEMON', species_id=0
     armature.dat_pkx_shiny_brightness_b = 0.0
 
     # --- Sub-animations (all inactive) ---
-    sub_triggers = ["sleep_on", "sleep_off", "extra", "unused"]
+    if model_type == 'POKEMON':
+        sub_triggers = ["sleep_on", "sleep_off", "blink", "unused"]
+    else:
+        sub_triggers = ["sleep_on", "sleep_off", "extra", "unused"]
     for i in range(4):
         prefix = "dat_pkx_sub_anim_%d" % i
         armature[prefix + "_type"] = "none"
@@ -601,6 +661,10 @@ def prepare_test_animations(armature):
         return 0
     root_name = armature.data.bones[0].name
     rot_path = 'pose.bones["%s"].rotation_euler' % root_name
+    # Euler fcurves are only evaluated when the pose bone is in an Euler
+    # rotation mode; the Blender default is QUATERNION, which silently
+    # ignores rotation_euler keyframes during viewport playback.
+    armature.pose.bones[root_name].rotation_mode = 'XYZ'
     created = 0
 
     if _TEST_ANIM_DUMMY not in bpy.data.actions:
@@ -639,9 +703,6 @@ def prepare_test_animations(armature):
 # ---------------------------------------------------------------------------
 # Texture sizing
 # ---------------------------------------------------------------------------
-
-MAX_TEXTURE_DIM = 512
-
 
 def prepare_texture_sizes(armature):
     """Downscale any texture larger than MAX_TEXTURE_DIM on either axis.
@@ -1089,22 +1150,11 @@ def _srgb_to_linear(c):
 # Mesh weight limiting and splitting
 # ---------------------------------------------------------------------------
 
-MAX_WEIGHTS_PER_VERTEX = 3
-
-# Opt-in knob (HSDLib parity, `POBJ_Generator.ClampWeight`). When True, any
-# vertex weight below 0.1 is removed and its slack redistributed to the
-# dominant bone before quantization — prevents GLB-rip long-tail weight
-# distributions from collapsing to sum<1.0 after 10% rounding. Leave False
-# to preserve exact game-model round-trips; flip to True when testing
-# arbitrary rips that exhibit shrunken / floating vertices.
-REDISTRIBUTE_SUB_0_1_WEIGHTS = False
-
-
 def prepare_mesh_weights(armature):
     """Optimize mesh weights for GameCube export.
 
     1. Limits all vertices to MAX_WEIGHTS_PER_VERTEX bone influences.
-    2. Quantizes weights to 10% steps (matching game model precision).
+    2. Quantises weights to WEIGHT_QUANTISATION_STEP increments.
     3. Separates single-bone vertices into rigid meshes per bone,
        leaving only multi-bone vertices in the envelope mesh.
 
@@ -1144,16 +1194,18 @@ def prepare_mesh_weights(armature):
             print("    %s: limited %d vertices to %d weights" %
                   (mesh_obj.name, affected, MAX_WEIGHTS_PER_VERTEX))
 
-        # Step 2a: Drop sub-0.1 weights and redistribute their slack to the
-        # dominant bone of each vertex (opt-in, HSDLib ClampWeight parity).
-        if REDISTRIBUTE_SUB_0_1_WEIGHTS:
+        # Step 2a: Drop sub-threshold weights and redistribute their slack
+        # to the dominant bone of each vertex (opt-in, HSDLib ClampWeight
+        # parity). Threshold and toggle live at the top of the file.
+        if REDISTRIBUTE_SUB_THRESHOLD_WEIGHTS:
             redistributed = 0
             for v in mesh_obj.data.vertices:
                 bone_groups = [g for g in v.groups
                                if g.group < len(mesh_obj.vertex_groups)
                                and mesh_obj.vertex_groups[g.group].name in bone_names
                                and g.weight > 0.0]
-                small = [g for g in bone_groups if g.weight < 0.1]
+                small = [g for g in bone_groups
+                         if g.weight < WEIGHT_DROP_THRESHOLD]
                 if not small or len(small) == len(bone_groups):
                     continue
                 slack = sum(g.weight for g in small)
@@ -1163,21 +1215,22 @@ def prepare_mesh_weights(armature):
                 dominant.weight = min(1.0, dominant.weight + slack)
                 redistributed += 1
             if redistributed:
-                print("    %s: redistributed sub-0.1 weights on %d vertices" %
-                      (mesh_obj.name, redistributed))
+                print("    %s: redistributed sub-%.2f weights on %d vertices"
+                      % (mesh_obj.name, WEIGHT_DROP_THRESHOLD, redistributed))
 
-        # Step 2: Quantize weights to 10% steps
+        # Step 2: Quantise weights to WEIGHT_QUANTISATION_STEP increments
         bpy.ops.object.mode_set(mode='WEIGHT_PAINT')
         bpy.ops.object.vertex_group_normalize_all(lock_active=False)
         bpy.ops.object.mode_set(mode='OBJECT')
 
+        step = WEIGHT_QUANTISATION_STEP
         mesh_data = mesh_obj.data
         quantized = 0
         for v in mesh_data.vertices:
             for g in v.groups:
                 if g.group < len(mesh_obj.vertex_groups):
                     if mesh_obj.vertex_groups[g.group].name in bone_names:
-                        q = round(g.weight, 1)
+                        q = round(g.weight / step) * step
                         if abs(q - g.weight) > 0.001:
                             g.weight = q
                             quantized += 1
@@ -1190,9 +1243,9 @@ def prepare_mesh_weights(armature):
                 for g in v.groups:
                     if g.group < len(mesh_obj.vertex_groups):
                         if mesh_obj.vertex_groups[g.group].name in bone_names:
-                            g.weight = round(g.weight, 1)
-            print("    %s: quantized %d weight values to 10%% steps" %
-                  (mesh_obj.name, quantized))
+                            g.weight = round(g.weight / step) * step
+            print("    %s: quantised %d weight values to %.0f%% steps" %
+                  (mesh_obj.name, quantized, step * 100))
 
     return total_limited, 0
 
@@ -1463,8 +1516,8 @@ _ANIM_TYPE_ITEMS = [
     ("action", "Action"), ("compound", "Compound"),
 ]
 _SUB_ANIM_TRIGGER_ITEMS = [
-    ("sleep_on", "Sleep On"), ("sleep_off", "Sleep Off"),
-    ("extra", "Extra"), ("unused", "Unused"),
+    ("sleep_on", "Sleep"), ("sleep_off", "Wake Up"),
+    ("blink", "Blink"), ("extra", "Extra"), ("unused", "Unused"),
 ]
 _BODY_MAP_KEYS = [
     "root", "head", "center", "body_3", "neck", "head_top",
@@ -1850,5 +1903,18 @@ if __name__ == "__main__" or True:
     light_count = prepare_lights()
     if light_count:
         print("  Added %d battle light(s)" % light_count)
+
+    # 7. Leave the first armature selected + active so the PKX Metadata
+    # panel is immediately visible in the Properties editor.
+    _first_arm = next((o for o in bpy.data.objects if o.type == 'ARMATURE'), None)
+    if _first_arm is not None:
+        try:
+            bpy.ops.object.mode_set(mode='OBJECT')
+        except RuntimeError:
+            pass
+        bpy.ops.object.select_all(action='DESELECT')
+        _first_arm.select_set(True)
+        bpy.context.view_layer.objects.active = _first_arm
+        print("  Selected armature '%s'" % _first_arm.name)
 
     print("=== Done ===")
