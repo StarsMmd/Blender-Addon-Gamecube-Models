@@ -356,8 +356,8 @@ _ANIM_TYPE_ITEMS = [
     ("action", "Action"), ("compound", "Compound"),
 ]
 _SUB_ANIM_TRIGGER_ITEMS = [
-    ("sleep_on", "Sleep On"), ("sleep_off", "Sleep Off"),
-    ("extra", "Extra"), ("unused", "Unused"),
+    ("sleep_on", "Sleep"), ("sleep_off", "Wake Up"),
+    ("blink", "Blink"), ("extra", "Extra"), ("unused", "Unused"),
 ]
 
 # Property key suffixes for body map bones.
@@ -486,22 +486,28 @@ class DAT_PT_PKXPanel(bpy.types.Panel):
         # === Sub-Animations (Part Anim Data) ===
         if obj.get("dat_pkx_sub_anim_0_type") is not None:
             box = layout.box()
-            box.label(text="Sub-Animations", icon='ANIM')
-            for i in range(4):
-                prefix = "dat_pkx_sub_anim_%d" % i
-                sa_type = obj.get(prefix + "_type", "none")
-                if sa_type == "none" and not obj.get(prefix + "_anim_ref", ""):
-                    continue
-                sub_box = box.box()
-                trigger = obj.get(prefix + "_trigger", "unknown")
-                sub_box.label(text=trigger.replace('_', ' ').title())
-                _draw_enum_dropdown(sub_box, obj, prefix + "_trigger",
-                                    _SUB_ANIM_TRIGGER_ITEMS, label="Trigger:")
-                _prop_row(sub_box, "Type", sa_type)
-                ref_key = prefix + "_anim_ref"
-                if ref_key in obj:
-                    sub_box.prop_search(obj, '["%s"]' % ref_key, bpy.data, "actions",
-                                        text="Action")
+            header = box.row(align=True)
+            icon = 'TRIA_DOWN' if obj.dat_pkx_sub_anim_expand else 'TRIA_RIGHT'
+            header.prop(obj, "dat_pkx_sub_anim_expand", icon=icon,
+                        text="Sub-Animations", emboss=False)
+            if obj.dat_pkx_sub_anim_expand:
+                for i in range(4):
+                    prefix = "dat_pkx_sub_anim_%d" % i
+                    sa_type = obj.get(prefix + "_type", "none")
+                    sub_box = box.box()
+                    trigger = obj.get(prefix + "_trigger", "unknown")
+                    trigger_label = next(
+                        (lbl for val, lbl in _SUB_ANIM_TRIGGER_ITEMS if val == trigger),
+                        trigger.replace('_', ' ').title(),
+                    )
+                    sub_box.label(text=trigger_label)
+                    _draw_enum_dropdown(sub_box, obj, prefix + "_trigger",
+                                        _SUB_ANIM_TRIGGER_ITEMS, label="Trigger:")
+                    _prop_row(sub_box, "Type", sa_type)
+                    ref_key = prefix + "_anim_ref"
+                    if ref_key in obj:
+                        sub_box.prop_search(obj, '["%s"]' % ref_key, bpy.data, "actions",
+                                            text="Action")
 
         # === Animation Slots ===
         anim_count = obj.get("dat_pkx_anim_count", 0)
@@ -636,6 +642,11 @@ _dat_props = [
         name="Expand Animation Slots",
         description="Expand/collapse state for animation slot panels",
         size=17, default=[False] * 17,
+    )),
+    ('dat_pkx_sub_anim_expand', BoolProperty(
+        name="Expand Sub-Animations",
+        description="Expand/collapse the Sub-Animations panel",
+        default=False,
     )),
 ]
 

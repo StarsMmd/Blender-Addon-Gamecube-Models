@@ -46,12 +46,15 @@ _SHINY_NAMES = frozenset((
 ))
 
 
-def plan_material(br_material, logger=StubLogger(), image_cache=None):
+def plan_material(br_material, logger=StubLogger(), image_cache=None,
+                  uv_layer_names=None):
     """Convert one BRMaterial to an IRMaterial.
 
     In: br_material (BRMaterial); logger; image_cache (optional dict
         id(BRImage) → IRImage, shared across materials so identical
-        images dedup at the IR level).
+        images dedup at the IR level); uv_layer_names (optional list[str]
+        — the owning mesh's UV layer names, in positional order; used to
+        resolve a UVMap node's `uv_map` to a GX texture slot index).
     Out: IRMaterial, or None if the material has no node graph.
     """
     if br_material is None or not br_material.node_graph.nodes:
@@ -59,6 +62,8 @@ def plan_material(br_material, logger=StubLogger(), image_cache=None):
 
     if image_cache is None:
         image_cache = {}
+    if uv_layer_names is None:
+        uv_layer_names = []
 
     view = _GraphView(br_material.node_graph)
 
@@ -83,7 +88,9 @@ def plan_material(br_material, logger=StubLogger(), image_cache=None):
     shininess, enable_specular = _extract_specular_settings(principled)
 
     color_source, alpha_source = _detect_color_sources(view)
-    texture_layers = _extract_texture_layers(view, logger, image_cache)
+    texture_layers = _extract_texture_layers(
+        view, logger, image_cache, uv_layer_names,
+    )
 
     is_translucent = _detect_translucent(view, principled)
 
@@ -109,12 +116,24 @@ def plan_material(br_material, logger=StubLogger(), image_cache=None):
     return ir_material
 
 
-def plan_materials(br_materials, logger=StubLogger()):
+def plan_materials(br_materials, uv_layer_names_per_material=None,
+                   logger=StubLogger()):
     """Convert a list of BRMaterials to IRMaterials, deduping IRImages
-    across the list so identical source images share an IRImage."""
+    across the list so identical source images share an IRImage.
+
+    uv_layer_names_per_material is an optional parallel list — index i
+    gives the UV layer names from the first mesh using material i, so
+    plan_material can resolve UVMap.uv_map references to a positional
+    index. Omit when the caller has no mesh context (round-trip fixtures).
+    """
     image_cache = {}
-    return [plan_material(m, logger=logger, image_cache=image_cache)
-            for m in br_materials]
+    if uv_layer_names_per_material is None:
+        uv_layer_names_per_material = [[]] * len(br_materials)
+    return [
+        plan_material(m, logger=logger, image_cache=image_cache,
+                      uv_layer_names=uv_layer_names_per_material[i])
+        for i, m in enumerate(br_materials)
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -417,7 +436,7 @@ def _tex_node_feeds_color(view, tex_node_name):
     return False
 
 
-def _extract_texture_layers(view, logger, image_cache):
+def _extract_texture_layers(view, logger, image_cache, uv_layer_names):
     tex_nodes = _order_texture_nodes(view)
     color_tex_nodes = [t for t in tex_nodes if _tex_node_feeds_color(view, t.name)]
     if len(color_tex_nodes) < len(tex_nodes):
@@ -426,7 +445,9 @@ def _extract_texture_layers(view, logger, image_cache):
                      len(dropped), dropped)
     layers = []
     for layer_index, tex_node in enumerate(color_tex_nodes):
-        layer = _describe_texture_node(view, tex_node, layer_index, image_cache)
+        layer = _describe_texture_node(
+            view, tex_node, layer_index, image_cache, uv_layer_names,
+        )
         if layer is not None:
             layers.append(layer)
     return layers
@@ -496,7 +517,8 @@ def _order_texture_nodes(view):
     return sorted(tex_nodes, key=_sort_key)
 
 
-def _describe_texture_node(view, tex_node, layer_index, image_cache):
+def _describe_texture_node(view, tex_node, layer_index, image_cache,
+                           uv_layer_names):
     if tex_node.image_ref is None:
         return None
 
@@ -521,9 +543,9 @@ def _describe_texture_node(view, tex_node, layer_index, image_cache):
         if node.node_type == 'ShaderNodeMapping' and mapping_node is None:
             mapping_node = node
         elif node.node_type == 'ShaderNodeUVMap':
-            m = re.search(r'(\d+)$', node.properties.get('uv_map', '') or '')
-            if m:
-                uv_index = int(m.group(1))
+            uv_map_name = node.properties.get('uv_map', '') or ''
+            if uv_map_name and uv_map_name in uv_layer_names:
+                uv_index = uv_layer_names.index(uv_map_name)
         elif node.node_type == 'ShaderNodeTexCoord':
             if from_socket == 'Reflection':
                 coord_type = CoordType.REFLECTION

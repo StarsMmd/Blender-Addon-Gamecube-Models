@@ -141,7 +141,7 @@ def _describe_mesh_object(mesh_obj, bone_names, logger,
     parent_bone_name = _determine_parent_bone_name(
         mesh_obj, per_vertex_groups, bone_names,
     )
-    is_hidden = mesh_obj.hide_render
+    is_hidden = mesh_obj.hide_render or mesh_obj.hide_viewport or mesh_obj.hide_get()
 
     num_materials = len(mesh_data.materials)
     if num_materials <= 1:

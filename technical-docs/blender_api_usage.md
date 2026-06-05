@@ -284,7 +284,9 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.80 | current | `vertex.groups` | `exporter/describe/helpers/meshes.py` | Per-vertex group assignments |
 | 2.80 | current | `group_element.group` | `exporter/describe/helpers/meshes.py` | Vertex group index |
 | 2.80 | current | `group_element.weight` | `exporter/describe/helpers/meshes.py` | Vertex weight value |
-| 2.80 | current | `obj.hide_render` | `exporter/describe/helpers/meshes.py` | Mesh visibility |
+| 2.80 | current | `obj.hide_render` | `exporter/describe/helpers/meshes.py` | Mesh visibility (render gate) |
+| 2.80 | current | `obj.hide_viewport` | `exporter/describe/helpers/meshes.py` | Mesh visibility (viewport-disable toggle) |
+| 2.80 | current | `obj.hide_get()` | `exporter/describe/helpers/meshes.py` | Mesh visibility (per-view-layer eye-icon hide) |
 | 2.80 | current | `material.use_backface_culling` | `exporter/describe/helpers/meshes.py` | Backface culling flag |
 | | | | | |
 | | | **Exporter — Describe Animations (Phase 1, deep decoder)** | | |

@@ -65,6 +65,12 @@ def describe_bone_animations(armature, bones, logger=StubLogger(), use_bezier=Tr
         if dropped:
             logger.info("  PKX references %d action(s); dropped %d unreferenced action(s)",
                         len(referenced_actions), dropped)
+        kept_names = {a.name for a in actions}
+        missing = sorted(n for n in referenced_actions if n not in kept_names)
+        if missing:
+            logger.warning("  PKX slots reference %d action(s) that aren't attached to "
+                           "armature '%s' (slot will export as empty): %s",
+                           len(missing), armature.name, ", ".join(missing))
 
     slot_order = _collect_slot_ordered_action_names(armature)
     if slot_order:
@@ -84,6 +90,17 @@ def describe_bone_animations(armature, bones, logger=StubLogger(), use_bezier=Tr
     for action in actions:
         anim_set = _describe_action(action, bones, bone_data, bone_name_to_index, logger, use_bezier)
         if anim_set is None:
+            # Count what we saw so the user can tell whether the action is
+            # empty, points at unknown bones, or has its fcurves trapped in
+            # a slot/layer that `action.fcurves` doesn't expose.
+            total_fcurves = len(action.fcurves)
+            pose_fcurves = sum(1 for fc in action.fcurves
+                               if fc.data_path.startswith('pose.bones['))
+            logger.warning("  action '%s' produced no animation set "
+                           "(%d total fcurves, %d on pose.bones[]); "
+                           "check that the action has bone keyframes visible in "
+                           "action.fcurves and that bone names match the armature",
+                           action.name, total_fcurves, pose_fcurves)
             continue
         if mat_lookup:
             anim_set.material_tracks = describe_material_animations_for_action(

@@ -124,18 +124,26 @@ except (ImportError, SystemError):
     from shared.helpers.logger import StubLogger
 
 
-def compose_material(ir_material, logger=StubLogger()):
+def compose_material(ir_material, logger=StubLogger(), image_cache=None):
     """Convert an IRMaterial into a MaterialObject node tree.
 
     Args:
         ir_material: IRMaterial dataclass.
         logger: Logger instance.
+        image_cache: optional dict[id(IRImage), (Image node, encode_result)]
+            shared across compose_material calls so multiple materials
+            referencing the same IRImage produce one Image node + one
+            pixel-data buffer in the output. Pass None when calling in
+            isolation (e.g. tests).
 
     Returns:
         MaterialObject node, or None if ir_material is None.
     """
     if ir_material is None:
         return None
+
+    if image_cache is None:
+        image_cache = {}
 
     # Build render_mode flags
     render_mode = _build_render_mode(ir_material)
@@ -144,7 +152,7 @@ def compose_material(ir_material, logger=StubLogger()):
     mat_node = _build_material_node(ir_material)
 
     # Build Texture chain
-    tex_root = _build_texture_chain(ir_material.texture_layers, logger)
+    tex_root = _build_texture_chain(ir_material.texture_layers, logger, image_cache)
 
     # Build pixel engine (fragment blending)
     pe_node = _build_pixel_engine(ir_material.fragment_blending)
@@ -242,14 +250,14 @@ def _make_rgba_color(color_tuple):
 # Texture chain construction
 # ---------------------------------------------------------------------------
 
-def _build_texture_chain(texture_layers, logger):
+def _build_texture_chain(texture_layers, logger, image_cache):
     """Build a linked list of Texture nodes from IRTextureLayer list."""
     if not texture_layers:
         return None
 
     tex_nodes = []
     for i, layer in enumerate(texture_layers):
-        tex = _build_texture_node(layer, i, logger)
+        tex = _build_texture_node(layer, i, logger, image_cache)
         tex_nodes.append(tex)
 
     # Link via .next
@@ -259,7 +267,7 @@ def _build_texture_chain(texture_layers, logger):
     return tex_nodes[0]
 
 
-def _build_texture_node(ir_layer, tex_index, logger):
+def _build_texture_node(ir_layer, tex_index, logger, image_cache):
     """Create a Texture node from an IRTextureLayer."""
     tex = Texture(address=None, blender_obj=None)
     tex.name = None
@@ -296,8 +304,11 @@ def _build_texture_node(ir_layer, tex_index, logger):
     tex.blending = ir_layer.blend_factor
     tex.mag_filter = 1  # GX_LINEAR
 
-    # Image and palette
-    img, encode_result = _build_image_node(ir_layer.image, logger)
+    # Image and palette — dedupe via the per-pass image_cache so multiple
+    # materials referencing the same IRImage share one Image node + one
+    # pixel-data buffer. Also avoids a class of writer bug where the same
+    # Image instance can land in node_list twice via different TObj paths.
+    img, encode_result = _build_image_node(ir_layer.image, logger, image_cache)
     tex.image = img
     if encode_result['palette_data'] is not None:
         pal = Palette(address=None, blender_obj=None)
@@ -391,16 +402,26 @@ def _map_wrap_mode_to_gx(wrap):
 # Image node construction
 # ---------------------------------------------------------------------------
 
-def _build_image_node(ir_image, logger=StubLogger()):
+def _build_image_node(ir_image, logger=StubLogger(), image_cache=None):
     """Create an Image node from an IRImage.
 
     Selects the best GX texture format based on pixel content analysis
     (or user override), encodes the pixels, and returns the Image node.
     For palette-indexed formats, also returns palette data.
 
+    If `image_cache` is supplied and already holds an entry for this
+    IRImage (by identity), returns the cached (Image, encode_result) pair
+    so callers share one Image node + one encoded pixel buffer across
+    materials.
+
     Returns:
-        (Image node, palette_data dict or None)
+        (Image node, encode_result dict)
     """
+    if image_cache is not None:
+        cached = image_cache.get(id(ir_image))
+        if cached is not None:
+            return cached
+
     img = Image(address=None, blender_obj=None)
     img.width = ir_image.width
     img.height = ir_image.height
@@ -421,6 +442,8 @@ def _build_image_node(ir_image, logger=StubLogger()):
                  ir_image.name, ir_image.width, ir_image.height,
                  format_id, len(result['image_data']))
 
+    if image_cache is not None:
+        image_cache[id(ir_image)] = (img, result)
     return img, result
 
 

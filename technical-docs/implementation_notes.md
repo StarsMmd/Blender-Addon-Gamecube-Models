@@ -142,6 +142,11 @@ GLB/FBX rips frequently set `blend_method='HASHED'` on materials even when the c
 
 Consequence for the exporter: the decision whether a material is "translucent" should not be driven by `blend_method` alone. (And currently, it's not driven by anything — see "Material translucency is unsupported" above.)
 
+### UV slot indexing
+The GX texture slot a material samples from (`Texture.source = 4 + uv_index`) is the **positional index** of the UV layer on the owning mesh — not anything parsed from the layer's name. Mesh export writes the `i`-th UV layer to `GX_VA_TEX0 + i`. Material export reads each `ShaderNodeUVMap`'s `uv_map` property and looks up its position in the owning mesh's `uv_layers` list. If no UVMap node is wired in, the slot defaults to 0.
+
+The pre-`Float2` fix used a regex (`r'(\d+)$'`) to extract the slot from the layer name. That treated glTF-rip names like `Float2` as "this UV lives in slot 2", which the material side never agreed with — producing files where the mesh's vertex format published TEX2 but the texture's `source` field said TEX0, so the in-game sampler defaulted to (0,0). Positional indexing makes mesh and material agree by construction; the slot is the layer's position, full stop.
+
 ### Texture alpha histogram semantics
 When classifying a material's intended alpha behaviour, looking at the texture's alpha channel distribution matters more than the Blender shader setup. Three common patterns:
 
@@ -174,6 +179,14 @@ Use `python3.11` for round-trip tests. The default `python3` on the dev machine 
 The prep script bakes every armature's and child mesh's `matrix_world` into the geometry data before export. The exporter then rejects any armature or child mesh that still has a non-identity `matrix_world`, so the bone (decompose) and vertex (matmul) transform paths stay in the same reference frame.
 
 A consequence worth knowing: `Armature.transform(world)` in Blender 4.5 applies rotation and scale correctly but silently drops the translation column on armatures. Rigs positioned off-origin in object mode need `bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)` (or manual repositioning to world origin) before the prep script runs, otherwise the mesh and skeleton end up in different frames.
+
+The bake also scales translation fcurves to match the new rest frame. Pose-bone `location` keyframes and object-level `location` keyframes are both multiplied by the armature's pre-bake world scale; rotations and pose-bone scales are dimensionless and untouched. Actions are scoped per armature — each armature scales the actions it owns (active + NLA on itself or its child meshes, plus any floating action whose pose-bone fcurves name a bone on that rig), with a `seen` set guarding against double-scaling if an action somehow appears under multiple rigs.
+
+### Data section layout (exported DAT)
+The serializer writes raw buffers into the data section in the same order Sysdolphin's compiler used: **vertex buffers → display lists → parsed structs (bulk) → palettes → image pixels**. Image pixel buffers and vertex buffers are content-deduplicated, so multiple Texture / Vertex references that share a buffer contribute one block to the file. `dat_builder.build` realises this as four phases — `writePrimitivePointers` (vertex), `writePrivateData` + struct allocation (display lists + structs), `writePaletteData`, `writeImageData`. Pixel buffers therefore land near the end of the data section and never at relative offset 0, where they would alias the "null pointer" sentinel.
+
+### DAT file length must equal `header.file_size` (no trailing pad on a raw .dat)
+`HSD_ArchiveParse` (verified in both the XD and Chibi-Robo disassemblies — same shared HSD library) asserts `header.file_size == expectedSize`, where `expectedSize` is the byte length the resource system recorded for the file. For a **raw `.dat`** loaded straight from an FST/fsys, that recorded length is the on-disk entry size, so any trailing padding beyond `header.file_size` makes the assertion fail and the model never loads. `dat_builder` already ends the file right after the last symbol string (length == `file_size`); the serialize phase must **not** add 0x20 padding. The 0x20 alignment a container needs is applied in the **package phase, for `.pkx` output only** (`package._pad_dat_to_0x20`): inside a PKX the embedded DAT may be padded because the inner DAT's size is read from the DAT/PKX header (`pkx.py` delimits it by `header.file_size`), so the pad sits in the trailer and is invisible to the size check. That header-vs-fsys distinction is why XD Pokémon models (always PKX-wrapped) never hit this, while a bare `.dat` does.
 
 ### Armature-child-mesh auto-join
 The prep script joins every armature-child mesh into one object before weight optimisation. Compose splits back out by material and by the 10-unique-weight-combo palette cap, so no data is lost. The point of joining is that each separate mesh object contributes at least one PObject per material slot regardless of vertex count — on a GLB rip that fragments the body into dozens of meshes, that alone can push the export past the 240 PObject crash ceiling.
