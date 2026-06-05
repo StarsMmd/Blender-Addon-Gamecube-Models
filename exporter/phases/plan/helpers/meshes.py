@@ -92,10 +92,15 @@ def plan_meshes(br_meshes, br_materials, ir_bones, logger=StubLogger()):
 def _pack_bone_weights(vertex_groups):
     """Invert BRVertexGroup (per-bone) into IRBoneWeights (per-vertex).
 
-    Always emits SkinType.WEIGHTED — POBJ_SKIN/SINGLE_BONE is unused
-    across the surveyed game models, and we can't safely re-classify a
-    single-bone-weight=1.0 envelope mesh into rigid skin from a Blender
-    scene alone.
+    Promotes to SkinType.SINGLE_BONE when every vertex is influenced by
+    exactly one bone at full strength and every vertex names the same
+    bone. That sidesteps the envelope skinning math entirely at runtime
+    — the game just multiplies the vertex's local position by that one
+    bone's world matrix. For envelope skinning the encode/decode chain
+    has a small rounding residue that's invisible on body geometry but
+    visible on detached single-bone meshes (eyes, hair strands, etc.).
+
+    Otherwise emits SkinType.WEIGHTED.
     """
     if not vertex_groups:
         return None
@@ -103,10 +108,35 @@ def _pack_bone_weights(vertex_groups):
     by_vertex = {}
     for vg in vertex_groups:
         for vertex_idx, weight in vg.assignments:
+            if weight <= 0.0:
+                continue
             by_vertex.setdefault(vertex_idx, []).append((vg.name, weight))
 
     if not by_vertex:
         return None
+
+    # Single-bone test: one bone per vertex, weight ~= 1.0, same bone everywhere.
+    single_bone_name = None
+    is_single_bone = True
+    for _, bone_list in by_vertex.items():
+        if len(bone_list) != 1:
+            is_single_bone = False
+            break
+        bone_name, weight = bone_list[0]
+        if abs(weight - 1.0) > 1e-3:
+            is_single_bone = False
+            break
+        if single_bone_name is None:
+            single_bone_name = bone_name
+        elif bone_name != single_bone_name:
+            is_single_bone = False
+            break
+
+    if is_single_bone and single_bone_name is not None:
+        return IRBoneWeights(
+            type=SkinType.SINGLE_BONE,
+            bone_name=single_bone_name,
+        )
 
     assignments = sorted(by_vertex.items())
     return IRBoneWeights(
