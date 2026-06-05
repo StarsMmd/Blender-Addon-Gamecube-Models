@@ -4,7 +4,6 @@ Reverses importer/phases/describe/helpers/meshes.py:describe_meshes().
 Takes IRMesh dataclasses and reconstructs the SysDolphin node tree
 structure with encoded vertex buffers and GX display lists.
 """
-import re
 from collections import defaultdict
 
 try:
@@ -305,8 +304,7 @@ def _build_pobj(ir_mesh, joints, bones, bone_name_to_index, logger):
     for uv_i, uv_layer in enumerate(ir_mesh.uv_layers):
         flipped_uvs = [(u, 1.0 - v) for u, v in uv_layer.uvs]
         uv_verts, uv_indices, uv_buffer = _encode_indexed_float2(flipped_uvs)
-        uv_idx = _parse_uv_index(uv_layer.name, uv_i)
-        uv_desc = _make_vertex_desc(GX_VA_TEX0 + uv_idx, GX_TEX_ST, GX_F32, stride=8)
+        uv_desc = _make_vertex_desc(GX_VA_TEX0 + uv_i, GX_TEX_ST, GX_F32, stride=8)
         uv_desc.raw_vertex_data = uv_buffer
         vertex_descs.append(uv_desc)
         vertex_buffers.append(('uv', uv_verts, uv_indices))
@@ -680,18 +678,6 @@ def _build_envelope_lists(envelope_map, joints, bone_name_to_index):
 # ---------------------------------------------------------------------------
 # Vertex buffer encoding
 # ---------------------------------------------------------------------------
-
-def _parse_uv_index(name, fallback):
-    """Extract the UV texture index from a layer name.
-
-    Handles importer names like 'uvtex_0' and Blender defaults like 'UVMap'.
-    """
-    if not name:
-        return fallback
-    match = re.search(r'(\d+)$', name)
-    if match:
-        return int(match.group(1))
-    return fallback
 
 
 def _make_vertex_desc(attribute, component_count, component_type, stride):

@@ -33,7 +33,23 @@ def plan_meshes(br_meshes, br_materials, ir_bones, logger=StubLogger()):
     Out: list[IRMesh].
     """
     bone_name_to_index = {b.name: i for i, b in enumerate(ir_bones)}
-    ir_materials = plan_materials(br_materials, logger=logger)
+
+    # For each material, the UV layer name order from the first mesh that
+    # uses it. Plan_material consults this when resolving a UVMap node's
+    # `uv_map` to a positional index — the GX texture slot is the layer's
+    # position in the owning mesh's UV layer list.
+    uv_layer_names_per_material = [[] for _ in br_materials]
+    for br_mesh in br_meshes:
+        mi = br_mesh.material_index
+        if mi is None or mi >= len(uv_layer_names_per_material):
+            continue
+        if uv_layer_names_per_material[mi]:
+            continue
+        uv_layer_names_per_material[mi] = [uv.name for uv in br_mesh.uv_layers]
+
+    ir_materials = plan_materials(
+        br_materials, uv_layer_names_per_material, logger=logger,
+    )
 
     ir_meshes = []
     for br_mesh in br_meshes:
