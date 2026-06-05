@@ -34,11 +34,8 @@ class Palette(Node):
         # decodes colors directly from byte data
         self.raw_data = parser.read_chunk(data_size, self.data, parser._startOffset(True))
 
-    def writePaletteData(self, builder):
-        """Write palette data. Runs after parsed structs so palettes land near
-        the end of the data section (just before images), matching Sysdolphin's
-        compiler layout.
-        """
+    def writePrimitivePointers(self, builder):
+        """Write shared palette data (Phase 1)."""
         if not hasattr(self, '_raw_pointer_fields'):
             self._raw_pointer_fields = set()
         if hasattr(self, 'raw_data') and self.raw_data:
