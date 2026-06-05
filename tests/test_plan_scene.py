@@ -88,6 +88,32 @@ class TestPlanLight:
         br = plan_light(ir)
         assert br.target_location is None
 
+    def test_sun_direction_promoted_to_track_to_target(self):
+        """GX LOBJ_INFINITE stores a direction vector in `position` with no
+        `interest`. Blender Suns ignore object location and rotate-only, so
+        the importer must move that direction into `target_location` for the
+        build phase to create a TRACK_TO empty. Without this, exporters
+        re-read the lamp's default world rotation and lose the direction.
+        """
+        ir = _stub_ir_light(type_value='SUN', position=(1.0, 2.0, 3.0),
+                            target_position=None)
+        br = plan_light(ir)
+        assert br.blender_type == 'SUN'
+        assert br.location is None
+        # GC Y-up → Blender Z-up: (x, y, z) → (x, -z, y).
+        assert br.target_location == (1.0, -3.0, 2.0)
+
+    def test_sun_preserves_explicit_target_when_present(self):
+        """A SUN that already has a `target_position` must not have its
+        location swapped — the IR already encodes both endpoints, so the
+        existing data is authoritative."""
+        ir = _stub_ir_light(type_value='SUN', position=(1.0, 2.0, 3.0),
+                            target_position=(4.0, 5.0, 6.0))
+        br = plan_light(ir)
+        assert br.blender_type == 'SUN'
+        assert br.location == (1.0, -3.0, 2.0)
+        assert br.target_location == (4.0, -6.0, 5.0)
+
 
 class TestFovToLens:
 

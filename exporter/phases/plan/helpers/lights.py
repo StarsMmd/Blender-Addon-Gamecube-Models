@@ -40,12 +40,26 @@ def plan_lights(br_lights, logger=StubLogger()):
         if ir_type is None:
             continue
 
+        position = _zup_to_yup(br.location)
+        target_position = _zup_to_yup(br.target_location)
+
+        # Native GX encoding for LOBJ_INFINITE (SUN) stores the direction
+        # vector directly in `position` with no `interest`. The importer
+        # mirrors that by promoting the IR position to a TRACK_TO target
+        # on the Blender side; collapse that representation back here so
+        # the recomposed Light node matches the original bytes.
+        if ir_type == LightType.SUN and target_position is not None and (
+            position is None or position == (0.0, 0.0, 0.0)
+        ):
+            position = target_position
+            target_position = None
+
         out.append(IRLight(
             name=br.name,
             type=ir_type,
             color=color,
-            position=_zup_to_yup(br.location),
-            target_position=_zup_to_yup(br.target_location),
+            position=position,
+            target_position=target_position,
             brightness=br.energy,
         ))
     return out

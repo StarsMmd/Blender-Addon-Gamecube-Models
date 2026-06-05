@@ -55,14 +55,30 @@ def plan_light(ir_light):
             energy=0.0,
             is_ambient=True,
         )
+
+    blender_type = _LIGHT_TYPE_MAP.get(ir_light.type.value, 'POINT')
+    location = _gc_to_blender(ir_light.position) if ir_light.position else None
+    target_location = (_gc_to_blender(ir_light.target_position)
+                       if ir_light.target_position else None)
+
+    # GX LOBJ_INFINITE (SUN) stores a direction unit-vector in `position`
+    # when `interest` is absent — there is no real eye position to speak of
+    # for an infinite light. Blender's Sun lamp ignores object location and
+    # uses object rotation, so writing the direction to `lamp.location`
+    # silently drops it. Promote the vector to `target_location` so the
+    # build phase creates a TRACK_TO empty; the exporter's describe pass
+    # reads that same target back, closing the round-trip loop.
+    if blender_type == 'SUN' and location is not None and target_location is None:
+        target_location = location
+        location = None
+
     return BRLight(
         name=ir_light.name,
-        blender_type=_LIGHT_TYPE_MAP.get(ir_light.type.value, 'POINT'),
+        blender_type=blender_type,
         color=color_linear,
         energy=ir_light.brightness,
-        location=_gc_to_blender(ir_light.position) if ir_light.position else None,
-        target_location=(_gc_to_blender(ir_light.target_position)
-                         if ir_light.target_position else None),
+        location=location,
+        target_location=target_location,
     )
 
 
