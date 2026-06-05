@@ -174,6 +174,19 @@ class DATBuilder(BinaryWriter):
 			phase2_end = self._currentRelativeAddress()
 			self.node_sizes[id(node)] = phase2_end - phase2_start
 
+		# --- Phase 2.5a: Write palette LUT data ---
+		# Sysdolphin's compiler places palettes and image pixels at the very
+		# end of the data section, after all parsed structs. Palettes come
+		# just before the image data they index.
+		for node in self.node_list:
+			node.writePaletteData(self)
+
+		# --- Phase 2.5b: Write image pixel data ---
+		# Identical pixel buffers across Image instances are deduplicated so
+		# shared textures contribute one block to the file.
+		for node in self.node_list:
+			node.writeImageData(self)
+
 		# --- Phase 3: Write node structs at allocated addresses ---
 		for node in self.node_list:
 			node.writeBinary(self)

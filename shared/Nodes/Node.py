@@ -47,10 +47,20 @@ class Node(object):
     def loadFromBinary(self, parser):
         parser.parseNode(self)
 
-    # Override in subclasses that have SHARED raw data (vertex buffers, image pixels,
-    # palette data) that is written once in Phase 1 and referenced by multiple nodes.
-    # The base class is a no-op — most nodes have no shared data.
+    # Override in subclasses that have SHARED raw data written at the very start
+    # of the data section (Phase 1). In practice this is only VertexList today —
+    # palettes and images now write later via writePaletteData / writeImageData
+    # so the data section matches Sysdolphin's compiler layout (vertex buffers
+    # first, parsed structs in the middle, palettes + images last).
     def writePrimitivePointers(self, builder):
+        pass
+
+    # Write palette LUT data (Phase 3a). Default no-op — Palette overrides.
+    def writePaletteData(self, builder):
+        pass
+
+    # Write image pixel data (Phase 3b). Default no-op — Image overrides.
+    def writeImageData(self, builder):
         pass
 
     # Write this node's PRIVATE raw data immediately before the node's struct allocation.

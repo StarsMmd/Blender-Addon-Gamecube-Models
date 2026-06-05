@@ -57,19 +57,29 @@ class Image(Node):
         else:
             self.raw_image_data = b''
 
-    def writePrimitivePointers(self, builder):
-        """Write shared image pixel data (Phase 1)."""
+    def writeImageData(self, builder):
+        """Write image pixel data. Runs after parsed structs so images land
+        at the end of the data section, matching Sysdolphin's compiler layout.
+        Identical pixel buffers across Image instances share one data block.
+        """
         if not hasattr(self, '_raw_pointer_fields'):
             self._raw_pointer_fields = set()
-        if self.raw_image_data:
+        if not self.raw_image_data:
+            self.data_address = 0
+            return
+        if not hasattr(builder, '_image_data_cache'):
+            builder._image_data_cache = {}
+        key = bytes(self.raw_image_data)
+        cached = builder._image_data_cache.get(key)
+        if cached is None:
             builder.seek(0, 'end')
             builder.align_buffer()
-            self.data_address = builder._currentRelativeAddress()
-            for byte in self.raw_image_data:
+            cached = builder._currentRelativeAddress()
+            for byte in key:
                 builder.write(byte, 'uchar')
-            self._raw_pointer_fields.add('data_address')
-        else:
-            self.data_address = 0
+            builder._image_data_cache[key] = cached
+        self.data_address = cached
+        self._raw_pointer_fields.add('data_address')
 
     def decodeFromRawData(self, palette):
         """Decode raw_image_data into RGBA pixels without needing the parser.
