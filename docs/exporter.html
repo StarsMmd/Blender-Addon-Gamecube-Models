@@ -550,8 +550,13 @@
         </ul>
 
         <div class="callout">
-            <strong>Note:</strong> <strong>Species ID</strong> (the Pokédex number of the Pokémon
-            you're replacing) is optional.
+            <strong>Note:</strong> Leave <strong>Species ID</strong> at <code>0</code> unless
+            you're exporting an edited version of a model that was originally imported from
+            the game (in which case keep the species ID the importer set, so the model still
+            identifies as the same Pokémon). For brand-new models built from scratch — or
+            models imported from any other source (PBR, GLB / FBX rips, other tools) —
+            leave it at <code>0</code>. Nothing in the in-battle render path reads this
+            field.
         </div>
 
         <h3>Step 5 — Set the body map</h3>
