@@ -696,34 +696,30 @@ def apply_pkx_metadata(armature, format='XD', model_type='POKEMON', species_id=0
         armature[prefix + "_anim_ref"] = ""
 
     # --- Body map bones ---
-    # The game uses 16 slots but only slots 0-7 are actively referenced by the
-    # XD battle code (root, head tracking, particle/effect attachment points).
-    # Slots 8-15 are unreferenced and always exported as -1 (skip).
+    # The PKX header carries 16 slots per anim entry (body_map_bones[0..15]).
+    # Disassembly + corpus survey confirms only `origin` (slot 0), `mouth`
+    # (slot 1, head-attached Model entries) and `chest` (slot 2, LensFlare
+    # anchor) are read by the waza-effect pipeline at any meaningful
+    # frequency. The other slots are authored by hand and rarely consumed,
+    # but we still expose all 16 so the user can hand-pick.
     #
-    # Each slot is filled with a sensible default ONLY when the caller hasn't
-    # already set it. This lets a deploy harness (or the user, by hand) pick
-    # body-map bones via per-rig conventions and then re-run prep to refresh
-    # timings without losing those choices.
+    # Each slot is filled with a sensible default ONLY when the caller
+    # hasn't already set it. This lets a deploy harness (or the user, by
+    # hand) pick body-map bones via per-rig conventions and then re-run
+    # prep to refresh timings without losing those choices.
     bones = list(armature.data.bones)
     root_name = bones[0].name if bones else ""
-    _body_defaults = {
-        "root": root_name,
-        "head": head_bone_name,
-        "center": "",
-        "body_3": "",
-        "neck": "",
-        "head_top": "",
-        "limb_a": "",
-        "limb_b": "",
-    }
-    for key, default in _body_defaults.items():
+    _body_defaults = {key: "" for key in _BODY_MAP_KEYS}
+    _body_defaults["origin"] = root_name
+    _body_defaults["mouth"] = head_bone_name
+    for key in _BODY_MAP_KEYS:
         prop_key = "dat_pkx_body_%s" % key
         # `not in armature` catches "never set"; `== ""` is a sentinel for
         # "explicitly cleared" — both should fall back to the default.
         existing = armature.get(prop_key)
         if existing:
             continue
-        armature[prop_key] = default
+        armature[prop_key] = _body_defaults[key]
 
     # --- Animation entries (17 slots) ---
     anim_count = 17
@@ -1725,17 +1721,20 @@ _SUB_ANIM_TRIGGER_ITEMS = [
     ("sleep_on", "Sleep"), ("sleep_off", "Wake Up"),
     ("blink", "Blink"), ("extra", "Extra"), ("unused", "Unused"),
 ]
+# Standalone-script rule (per CLAUDE.md): no imports from the plugin
+# package. Keep the body-map list inline and mirror its content with
+# shared/helpers/pkx_header.py — both must stay in sync.
 _BODY_MAP_KEYS = [
-    "root", "head", "center", "body_3", "neck", "head_top",
-    "limb_a", "limb_b", "secondary_8", "secondary_9",
-    "secondary_10", "secondary_11", "attach_a", "attach_b",
-    "attach_c", "attach_d",
+    "origin", "mouth", "chest", "tail",
+    "eye_left", "eye_right", "hand_left", "hand_right",
+    "additional_1", "additional_2", "additional_3", "additional_4",
+    "foot_left", "foot_right", "center", "additional_5",
 ]
 _BODY_MAP_NAMES = [
-    "Root", "Head", "Center", "Body Part 3", "Neck", "Head Top",
-    "Limb Left", "Limb Right", "Secondary 8", "Secondary 9",
-    "Secondary 10", "Secondary 11", "Attachment A", "Attachment B",
-    "Attachment C", "Attachment D",
+    "Origin", "Mouth", "Chest", "Tail",
+    "Eye Left", "Eye Right", "Hand Left", "Hand Right",
+    "Additional 1", "Additional 2", "Additional 3", "Additional 4",
+    "Foot Left", "Foot Right", "Center", "Additional 5",
 ]
 _XD_POKEMON_ANIM_NAMES = [
     "Idle", "Special A", "Physical A", "Physical B", "Physical C",

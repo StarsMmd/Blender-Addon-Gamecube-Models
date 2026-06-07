@@ -273,27 +273,36 @@ def test_container_gpt1_extraction():
     assert extracted[:100] == gpt1
 
 def test_body_map_keys_cover_all_16_slots():
-    """All three places that define body-map keys agree on the 16-slot layout."""
+    """The canonical BODY_MAP_KEYS list in pkx_header.py spans all 16 slots
+    and the three downstream consumers re-export it (no duplicate literals)."""
     import pathlib
-    import re
+
+    from shared.helpers.pkx_header import BODY_MAP_KEYS, BODY_MAP_NAMES
+
+    expected = [
+        "origin", "mouth", "chest", "tail",
+        "eye_left", "eye_right", "hand_left", "hand_right",
+        "additional_1", "additional_2", "additional_3", "additional_4",
+        "foot_left", "foot_right", "center", "additional_5",
+    ]
+    assert BODY_MAP_KEYS == expected
+    assert len(BODY_MAP_NAMES) == 16
 
     addon_root = pathlib.Path(__file__).resolve().parent.parent
-    expected_tail = [
-        "secondary_8", "secondary_9", "secondary_10", "secondary_11",
-        "attach_a", "attach_b", "attach_c", "attach_d",
-    ]
-
+    # Each consumer must pull from the canonical source rather than redefining
+    # a parallel list — otherwise a future rename will desynchronise them.
     for rel in (
         'importer/phases/post_process/post_process.py',
         'exporter/phases/describe/helpers/scene.py',
         'BlenderPlugin.py',
     ):
         src = (addon_root / rel).read_text()
-        # Find the _BODY_MAP_KEYS literal and ensure each extended suffix appears.
-        assert 'secondary_8' in src, f'{rel}: missing secondary_8'
-        assert 'attach_d' in src, f'{rel}: missing attach_d'
-        for suffix in expected_tail:
-            assert f'"{suffix}"' in src, f'{rel}: missing "{suffix}"'
+        assert 'BODY_MAP_KEYS' in src, f'{rel}: must import BODY_MAP_KEYS'
+        # No old-suffix literals should linger.
+        for legacy in ('body_3', 'head_top', 'limb_a', 'limb_b',
+                       'attach_a', 'attach_b', 'attach_c', 'attach_d',
+                       'secondary_8'):
+            assert f'"{legacy}"' not in src, f'{rel}: stale literal "{legacy}"'
 
 
 def test_body_map_extended_slots_survive_header_round_trip():

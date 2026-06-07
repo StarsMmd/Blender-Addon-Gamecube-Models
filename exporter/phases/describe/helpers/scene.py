@@ -9,24 +9,19 @@ try:
     from .....shared.helpers.logger import StubLogger
     from .....shared.helpers.shiny_params import ShinyParams
     from .....shared.helpers.pkx_header import (
-        PKXHeader, AnimMetadataEntry, SubAnim, PartAnimData,
+        PKXHeader, AnimMetadataEntry, SubAnim, PartAnimData, BODY_MAP_KEYS,
     )
     from .....shared.helpers.pkx import _from_brightness
 except (ImportError, SystemError):
     from shared.helpers.logger import StubLogger
     from shared.helpers.shiny_params import ShinyParams
     from shared.helpers.pkx_header import (
-        PKXHeader, AnimMetadataEntry, SubAnim, PartAnimData,
+        PKXHeader, AnimMetadataEntry, SubAnim, PartAnimData, BODY_MAP_KEYS,
     )
     from shared.helpers.pkx import _from_brightness
 
 
-_PKX_BODY_MAP_KEYS = [
-    "root", "head", "center", "body_3", "neck", "head_top",
-    "limb_a", "limb_b",
-    "secondary_8", "secondary_9", "secondary_10", "secondary_11",
-    "attach_a", "attach_b", "attach_c", "attach_d",
-]
+_PKX_BODY_MAP_KEYS = BODY_MAP_KEYS
 
 
 def validate_baked_transforms(armatures):

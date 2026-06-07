@@ -171,7 +171,7 @@ The `pre_process` phase rejects this configuration with a validator that fires b
 ## PKX metadata
 
 ### Body-map bone conventions
-`anim_entries[i].body_map_bones[0..15]` is a per-slot lookup from body-part key to bone index. Slot indices 0-7 map to well-known body parts (root, head, center, body_3, neck, head_top, limb_a, limb_b); 8-15 are extended attachment points used by particle generators on effect-themed species.
+`anim_entries[i].body_map_bones[0..15]` is a per-slot lookup from body-part key to bone index. The 16 slots are: `origin, mouth, chest, tail, eye_left, eye_right, hand_left, hand_right, additional_1, additional_2, additional_3, additional_4, foot_left, foot_right, center, additional_5`. Naming comes from a corpus + disassembly survey of which slots the waza-effect pipeline (`ParticleEntry / EffectEntry / ModelEntry / LensFlareEntry`) reads in practice: `origin` (slot 0) covers ~95% of attaches, `mouth` (slot 1) anchors head-attached Model entries (fire-breath models, status overlays), `chest` (slot 2) anchors LensFlare entries (chest-level light bursts), and the remaining slots are per-species author choices for particle attach points.
 
 Convention across the corpus:
 - Pokémon models use **bone index 0** for unused slots (root fallback).
