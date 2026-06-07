@@ -246,6 +246,13 @@ def bake_transforms():
     if not armatures:
         return 0
 
+    # Flush the depsgraph so matrix_world reflects any caller-set transform
+    # (e.g. a freshly-assigned obj.scale). matrix_world is a cached property;
+    # without this, the Step-0 snapshot below reads a stale identity scale and
+    # the translation-fcurve rescale is silently skipped — leaving animated
+    # bone translations at their pre-scale magnitude.
+    bpy.context.view_layer.update()
+
     saved_anim = []
     saved_hide = []
     for arm in armatures:
