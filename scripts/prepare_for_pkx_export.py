@@ -773,30 +773,27 @@ def apply_pkx_metadata(armature, format='XD', model_type='POKEMON', species_id=0
     # Slot types: 0=idle(loop), 8=damage(hit), 9=damageB(compound), 10=faint(hit), rest=action
     _SLOT_TYPES = {0: "loop", 8: "hit_reaction", 9: "compound", 10: "hit_reaction"}
 
-    # Point slots 0-10 at a single default action so core states (idle,
-    # physical/special attacks, damage, faint) resolve to the same DAT
-    # animation. With the exporter's slot-ordered enumeration this action
-    # becomes DAT[0] and every assigned slot's anim_index lands at 0 —
-    # a sane baseline for arbitrary models that don't yet have per-slot
-    # actions authored. Slots 11-16 (Extra 1-4, Special C, Take Flight)
-    # are per-species and often unused; leave them unassigned so the
-    # author has to opt in explicitly.
-    default_action = _first_bone_action_name(armature)
-
+    # Leave every slot's action assignment empty by default. The author
+    # picks the action per slot via the PKX Metadata panel; only then
+    # does the next prep run derive timing. Auto-assigning a default
+    # action here is a footgun: derive_timing would lock in timings
+    # against the default's duration, and `set_if_zero` would then
+    # protect those stale timings on every subsequent run.
     for i in range(anim_count):
         prefix = "dat_pkx_anim_%02d" % i
         anim_type = _SLOT_TYPES.get(i, "action")
-        slot_action = default_action if i <= 10 else ""
 
         armature[prefix + "_type"] = anim_type
-        armature[prefix + "_sub_0_anim"] = slot_action
+        armature[prefix + "_sub_0_anim"] = ""
         if anim_type == "compound":
-            armature[prefix + "_sub_1_anim"] = slot_action
+            armature[prefix + "_sub_1_anim"] = ""
         armature[prefix + "_sub_count"] = 2 if anim_type == "compound" else 1
         armature[prefix + "_damage_flags"] = 0
         armature[prefix + "_terminator"] = 3 if is_xd else 1
 
-        # Timing defaults (will be recalculated by derive_timing below)
+        # Timings start at 0; derive_timing only runs once the panel has
+        # existed for at least one prep run AND the author has picked an
+        # action for the slot.
         armature[prefix + "_timing_1"] = 0.0
         armature[prefix + "_timing_2"] = 0.0
         armature[prefix + "_timing_3"] = 0.0
@@ -809,19 +806,36 @@ def apply_pkx_metadata(armature, format='XD', model_type='POKEMON', species_id=0
 
 
 def _get_action_duration(action_name):
-    """Get an action's duration in seconds (frame count / 30 fps).
+    """Get an action's duration in seconds (frame span / 30 fps).
 
     HSD AOBJs advance at 30 animation-units/second on XD (verified by
     matching `AOBJ.end_frame / 30` against every game-native PKX header
-    `timing_1` value). The importer samples `range(end_frame)` so the
-    last keyframe lands at `end_frame - 1`; we add 1 back so the derived
-    duration equals the stored timing exactly.
+    `timing_1` value).
+
+    The exporter normalises every action to a zero-based frame range and
+    bakes `max_frame - min_frame + 1` frames (see the exporter's
+    `_bone_fcurves_frame_range`). The derived duration must span that same
+    range, so we subtract the start frame. Using `max_frame + 1` alone
+    assumes a frame-0 start and over-counts by the start frame — an action
+    authored on Blender's default frame-1 start derives one frame too long,
+    so the in-game timing outlasts the baked animation. For an importer
+    round-trip the start frame is 0, so the result is unchanged.
+
+    Only pose-bone fcurves define the animation length; object- and
+    material-level fcurves can span a different range and are ignored,
+    mirroring the exporter.
     """
     action = bpy.data.actions.get(action_name)
     if not action or not action.fcurves:
         return 0.0
-    max_frame = max(kp.co[0] for fc in action.fcurves for kp in fc.keyframe_points)
-    return (max_frame + 1) / 30.0
+    bone_frames = [kp.co[0] for fc in action.fcurves
+                   if fc.data_path.startswith('pose.bones[')
+                   for kp in fc.keyframe_points]
+    frames = bone_frames or [kp.co[0] for fc in action.fcurves
+                             for kp in fc.keyframe_points]
+    if not frames:
+        return 0.0
+    return (max(frames) - min(frames) + 1) / 30.0
 
 
 def derive_timing(armature):
@@ -833,10 +847,22 @@ def derive_timing(armature):
       hit_reaction: T1 = reaction start (50%), T2 = duration
       compound:     T1 = sub1 mid, T2 = sub1 end, T3 = sub2 mid, T4 = sub2 end
 
-    Returns the number of entries updated.
+    Each timing field is only filled in when its current value is 0 — so
+    re-running prep never clobbers a value the user (or an earlier prep
+    pass) already set. To force a redrive on a specific slot, manually
+    zero its timing fields in the PKX Metadata panel and re-run.
+
+    Returns the number of timing fields updated.
     """
     anim_count = armature.get("dat_pkx_anim_count", 0)
     updated = 0
+
+    def set_if_zero(key, value):
+        nonlocal updated
+        if armature.get(key, 0.0):
+            return
+        armature[key] = value
+        updated += 1
 
     for i in range(anim_count):
         prefix = "dat_pkx_anim_%02d" % i
@@ -848,24 +874,22 @@ def derive_timing(armature):
             continue
 
         if anim_type == "loop":
-            armature[prefix + "_timing_1"] = dur
+            set_if_zero(prefix + "_timing_1", dur)
         elif anim_type == "action":
-            armature[prefix + "_timing_1"] = dur / 3.0
-            armature[prefix + "_timing_2"] = dur * 2.0 / 3.0
-            armature[prefix + "_timing_3"] = dur
+            set_if_zero(prefix + "_timing_1", dur / 3.0)
+            set_if_zero(prefix + "_timing_2", dur * 2.0 / 3.0)
+            set_if_zero(prefix + "_timing_3", dur)
         elif anim_type == "hit_reaction":
-            armature[prefix + "_timing_1"] = dur * 0.5
-            armature[prefix + "_timing_2"] = dur
+            set_if_zero(prefix + "_timing_1", dur * 0.5)
+            set_if_zero(prefix + "_timing_2", dur)
         elif anim_type == "compound":
             # Two sub-anims: get duration of second if available
             action2_name = armature.get(prefix + "_sub_1_anim", "")
             dur2 = _get_action_duration(action2_name) if action2_name else dur
-            armature[prefix + "_timing_1"] = dur * 0.5
-            armature[prefix + "_timing_2"] = dur
-            armature[prefix + "_timing_3"] = dur2 * 0.5
-            armature[prefix + "_timing_4"] = dur2
-
-        updated += 1
+            set_if_zero(prefix + "_timing_1", dur * 0.5)
+            set_if_zero(prefix + "_timing_2", dur)
+            set_if_zero(prefix + "_timing_3", dur2 * 0.5)
+            set_if_zero(prefix + "_timing_4", dur2)
 
     return updated
 
@@ -2133,15 +2157,24 @@ if __name__ == "__main__" or True:
             print("  Inserted %d mesh-holder bone(s) on '%s'" % (holders, arm.name))
 
         # PKX metadata
-        if arm.get("dat_pkx_format"):
+        panel_existed_before = bool(arm.get("dat_pkx_format"))
+        if panel_existed_before:
             print("  Armature '%s' already has PKX metadata (skipped)" % arm.name)
         else:
             apply_pkx_metadata(arm, format='XD', model_type='POKEMON', species_id=0)
 
-        # Derive animation timing from action durations
-        timing_count = derive_timing(arm)
-        if timing_count:
-            print("  Derived timing for %d animation slot(s) on '%s'" % (timing_count, arm.name))
+        # Derive animation timing from action durations — only on runs
+        # where the panel existed before this run. On the very first
+        # prep run there are no author-picked slot actions yet, so
+        # deriving would lock timings against the empty-string slot
+        # (no-op) or — historically — against a default fill that no
+        # longer happens. Leave timings at 0 until the author picks a
+        # slot action and re-runs prep.
+        if panel_existed_before:
+            timing_count = derive_timing(arm)
+            if timing_count:
+                print("  Derived timing for %d animation slot(s) on '%s'"
+                      % (timing_count, arm.name))
 
         # Texture sizes (downscale >512 before format analysis)
         size_count = prepare_texture_sizes(arm)

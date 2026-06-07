@@ -826,10 +826,22 @@ def derive_timing(armature):
       hit_reaction: T1 = reaction start (50%), T2 = duration
       compound:     T1 = sub1 mid, T2 = sub1 end, T3 = sub2 mid, T4 = sub2 end
 
-    Returns the number of entries updated.
+    Each timing field is only filled in when its current value is 0 — so
+    re-running prep never clobbers a value the user (or an earlier prep
+    pass) already set. To force a redrive on a specific slot, manually
+    zero its timing fields in the PKX Metadata panel and re-run.
+
+    Returns the number of timing fields updated.
     """
     anim_count = armature.get("dat_pkx_anim_count", 0)
     updated = 0
+
+    def set_if_zero(key, value):
+        nonlocal updated
+        if armature.get(key, 0.0):
+            return
+        armature[key] = value
+        updated += 1
 
     for i in range(anim_count):
         prefix = "dat_pkx_anim_%02d" % i
@@ -841,24 +853,22 @@ def derive_timing(armature):
             continue
 
         if anim_type == "loop":
-            armature[prefix + "_timing_1"] = dur
+            set_if_zero(prefix + "_timing_1", dur)
         elif anim_type == "action":
-            armature[prefix + "_timing_1"] = dur / 3.0
-            armature[prefix + "_timing_2"] = dur * 2.0 / 3.0
-            armature[prefix + "_timing_3"] = dur
+            set_if_zero(prefix + "_timing_1", dur / 3.0)
+            set_if_zero(prefix + "_timing_2", dur * 2.0 / 3.0)
+            set_if_zero(prefix + "_timing_3", dur)
         elif anim_type == "hit_reaction":
-            armature[prefix + "_timing_1"] = dur * 0.5
-            armature[prefix + "_timing_2"] = dur
+            set_if_zero(prefix + "_timing_1", dur * 0.5)
+            set_if_zero(prefix + "_timing_2", dur)
         elif anim_type == "compound":
             # Two sub-anims: get duration of second if available
             action2_name = armature.get(prefix + "_sub_1_anim", "")
             dur2 = _get_action_duration(action2_name) if action2_name else dur
-            armature[prefix + "_timing_1"] = dur * 0.5
-            armature[prefix + "_timing_2"] = dur
-            armature[prefix + "_timing_3"] = dur2 * 0.5
-            armature[prefix + "_timing_4"] = dur2
-
-        updated += 1
+            set_if_zero(prefix + "_timing_1", dur * 0.5)
+            set_if_zero(prefix + "_timing_2", dur)
+            set_if_zero(prefix + "_timing_3", dur2 * 0.5)
+            set_if_zero(prefix + "_timing_4", dur2)
 
     return updated
 
