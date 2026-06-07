@@ -159,12 +159,14 @@ def determine_parent_bone(mesh_obj, ir_weights, bone_name_to_index, ir_bones):
 
     fake_groups = []
     if ir_weights and ir_weights.assignments:
-        seen = set()
-        for _, weight_list in ir_weights.assignments:
-            for bone_name, _w in weight_list:
-                if bone_name not in seen:
-                    seen.add(bone_name)
-                    fake_groups.append(_FakeVG(name=bone_name, assignments=[]))
+        assignments_by_bone = {}
+        for vertex_idx, weight_list in ir_weights.assignments:
+            for bone_name, w in weight_list:
+                if w > 0.0:
+                    assignments_by_bone.setdefault(bone_name, []).append(
+                        (vertex_idx, w))
+        for bone_name, assigns in assignments_by_bone.items():
+            fake_groups.append(_FakeVG(name=bone_name, assignments=assigns))
 
     return _resolve_parent_bone_index(
         parent_bone_name, fake_groups, bone_name_to_index, ir_bones,
@@ -188,6 +190,14 @@ def _resolve_parent_bone_index(parent_bone_name, vertex_groups,
     Preferred: ``parent_bone_name`` set by describe (preserves
     importer-side ownership). Otherwise, the nearest common ancestor of
     every bone the mesh has weights on. Fallback: 0 (root).
+
+    A vertex group only counts as "the mesh has weights on this bone"
+    if it has at least one non-zero assignment. Meshes split off a
+    shared Blender mesh data block (e.g. eyes split from the body) keep
+    the full vertex-group list of the source — many of those groups
+    have zero assignments on this specific mesh's faces. Including them
+    would expand the NCA to the whole skeleton and parent the mesh to
+    the root, breaking animation tracking for single-bone meshes.
     """
     if parent_bone_name:
         idx = bone_name_to_index.get(parent_bone_name)
@@ -199,6 +209,10 @@ def _resolve_parent_bone_index(parent_bone_name, vertex_groups,
 
     referenced = set()
     for vg in vertex_groups:
+        if not getattr(vg, 'assignments', None):
+            continue
+        if not any(w > 0.0 for _vi, w in vg.assignments):
+            continue
         idx = bone_name_to_index.get(vg.name)
         if idx is not None:
             referenced.add(idx)

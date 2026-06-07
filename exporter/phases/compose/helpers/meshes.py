@@ -503,21 +503,33 @@ def _undeform_vertices(vertices, envelope_map, bones, bone_name_to_index,
     # Compute inverse deformation matrix per envelope
     inv_deform = []
     for weight_list in env_combos:
-        zero = [[0] * 4 for _ in range(4)]
-        matrix = Matrix(zero)
+        # Runtime short-circuit in _modelParseLoadEnvelopeMatrix: when an
+        # envelope has a single bone at weight >= 1.0 AND the mesh has no
+        # coord matrix (parented to SKELETON_ROOT), the per-envelope
+        # matrix is just joint.matrix — the IBM is omitted. Mirror that
+        # here, otherwise vertices weighted entirely to one bone end up
+        # offset by the IBM factor the runtime never applied.
+        if (coord is None
+                and len(weight_list) == 1
+                and abs(weight_list[0][1] - 1.0) < 1e-6):
+            bone_idx = bone_name_to_index.get(weight_list[0][0], 0)
+            matrix = Matrix(bones[bone_idx].world_matrix)
+        else:
+            zero = [[0] * 4 for _ in range(4)]
+            matrix = Matrix(zero)
 
-        for bone_name, weight in weight_list:
-            bone_idx = bone_name_to_index.get(bone_name, 0)
-            bone = bones[bone_idx]
-            bone_world = Matrix(bone.world_matrix)
-            bone_ibm = _get_invbind_matrix(bone_idx, bones)
-            contrib = bone_world @ bone_ibm
-            for i in range(4):
-                for j in range(4):
-                    matrix[i][j] += weight * contrib[i][j]
+            for bone_name, weight in weight_list:
+                bone_idx = bone_name_to_index.get(bone_name, 0)
+                bone = bones[bone_idx]
+                bone_world = Matrix(bone.world_matrix)
+                bone_ibm = _get_invbind_matrix(bone_idx, bones)
+                contrib = bone_world @ bone_ibm
+                for i in range(4):
+                    for j in range(4):
+                        matrix[i][j] += weight * contrib[i][j]
 
-        if coord:
-            matrix = matrix @ coord
+            if coord:
+                matrix = matrix @ coord
 
         try:
             inv_deform.append(matrix.inverted())

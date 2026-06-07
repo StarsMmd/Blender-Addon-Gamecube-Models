@@ -74,6 +74,39 @@ Invariants confirmed from the XD disassembly at `text1/` that the exporter and `
 
 The 10-palette cap is by far the most commonly encountered — see "PObject count ceiling" above.
 
+### Envelope-weight-1.0 IBM short-circuit
+
+**Plain-English summary.** When you skin a vertex to a single bone at full strength, the game has a shortcut: instead of going through the full skinning math, it just sticks that vertex onto the bone directly. The shortcut skips one of the matrices (the "inverse bind matrix") that the full path would have used. Our exporter was always writing vertex positions assuming the full path would run. So when the game took the shortcut on a vertex weighted entirely to one bone, it skipped the matrix our exporter had compensated for — leaving a small leftover transform that pushed the vertex a few millimetres off where it should sit. This is invisible on game-original models because the original tooling knew about the shortcut and authored numbers that worked either way, and it's invisible on a re-import to Blender because the Blender side uses the full path for everyone with no shortcut. It only surfaces in-game on arbitrary models, and it's most visible on vertices that float clear of their neighbours (like an eye-area vertex on the body) because the offset has nothing nearby to hide behind.
+
+**Technical detail.** `_modelParseLoadEnvelopeMatrix` in the XD disassembly contains a special-case branch that fires for envelopes whose first (and only) entry has weight ≥ 1.0:
+
+```
+lfs   f0, 0x8(r26)     # envelope[0].weight
+fcmpo cr0, f0, f31     # compare to 1.0
+cror  eq, gt, eq
+bne   <multi-bone path>
+
+# single-bone-weight=1 path:
+cmplwi r27, 0x0        # is coord (the mesh's _HSD_mkEnvelopeModelNodeMtx result) NULL?
+beq   <no-coord branch — output = joint.matrix, IBM NOT applied>
+# coord branch:
+output = joint.matrix @ joint.IBM   (coord is concatenated later)
+```
+
+So the runtime's per-envelope matrix is:
+
+| Envelope shape | `coord` present | Matrix used |
+|---|---|---|
+| Multi-bone (Σwᵢ blend) | any | `Σ wᵢ · joint.matrix @ joint.IBM`, then `@ coord` if present |
+| Single bone, weight = 1.0 | yes | `joint.matrix @ joint.IBM @ coord` |
+| **Single bone, weight = 1.0** | **no (mesh hangs off `SKELETON_ROOT`)** | **`joint.matrix` — IBM is omitted entirely** |
+
+`_undeform_vertices` in compose **must mirror this**: when the envelope has one bone at weight = 1.0 and the mesh's coord is None, encode the vertex as `inv(bone.world) @ vertex_world`, not the general `inv(Σ wᵢ · bone.world @ bone.IBM) @ vertex_world`. Otherwise the runtime decodes those single-bone vertices without their encoded IBM and they end up offset by `bone.world_at_bind @ bone.IBM` — close to identity at rest if (and only if) every bone-matrix reconstruction is perfectly bit-stable, but visibly off the moment any non-bit-exact factor enters the chain.
+
+Round-trip game models hide this because their IBM/SRT bytes were authored by tooling that already accounted for the short-circuit. Arbitrary-rig exports surface it as small offsets on body-mesh vertices weighted exclusively to a single bone (face vertices weighted to `head`, hip vertices to `hips`, etc.), with the offset most visible relative to other parts of the same model — e.g. an eye mesh promoted to `SkinType.SINGLE_BONE` (rigid skin path, no envelope at all) sits exactly on the head while the body's head-area vertices drift a few millimetres.
+
+The fix is local to `_undeform_vertices` — detect `len(weight_list) == 1 and weight ≈ 1.0 and coord is None` and skip the IBM term for that envelope-combo. No changes to the file format or to the runtime, and round-trip tests are untouched because round-tripped envelopes have always satisfied the runtime's expectation by construction.
+
 ## Animation pipeline
 
 ### Rotation format
