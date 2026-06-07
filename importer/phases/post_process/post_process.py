@@ -391,15 +391,13 @@ _ANIM_TYPE_NAMES = {2: "loop", 3: "hit_reaction", 4: "action", 5: "compound"}
 _SUB_ANIM_TRIGGERS = {0: "sleep_on", 1: "sleep_off", 2: "extra", 3: "unused"}
 _SUB_ANIM_TYPES = {0: "none", 1: "simple", 2: "targeted"}
 
-# Body map descriptive names (index → property suffix). Slots 0-7 are the
-# engine body parts; slots 8-15 are extended attachment slots used by
-# particle generators. See `ModelSequence::GetPart` in the XD disassembly.
-_BODY_MAP_KEYS = [
-    "root", "head", "center", "body_3", "neck", "head_top",
-    "limb_a", "limb_b",
-    "secondary_8", "secondary_9", "secondary_10", "secondary_11",
-    "attach_a", "attach_b", "attach_c", "attach_d",
-]
+# Body map descriptive names (index → property suffix). Single source of
+# truth is shared.helpers.pkx_header.BODY_MAP_KEYS — keep this module's
+# import alias so the rest of the file reads naturally.
+try:
+    from ....shared.helpers.pkx_header import BODY_MAP_KEYS as _BODY_MAP_KEYS
+except (ImportError, SystemError):
+    from shared.helpers.pkx_header import BODY_MAP_KEYS as _BODY_MAP_KEYS
 
 
 def _derive_pkx_custom_props(pkx_header, actions=None, bone_names=None, model_type=None):

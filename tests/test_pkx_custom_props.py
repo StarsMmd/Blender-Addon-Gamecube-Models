@@ -164,9 +164,9 @@ def test_body_map_resolves_bone_names():
     entry.body_map_bones = [0, 1, -1] + [-1] * 13
     h.anim_entries = [entry]
     props = _derive_pkx_custom_props(h, bone_names=["root", "head", "tail"])
-    assert props["dat_pkx_body_root"] == "root"
-    assert props["dat_pkx_body_head"] == "head"
-    assert props["dat_pkx_body_center"] == ""
+    assert props["dat_pkx_body_origin"] == "root"
+    assert props["dat_pkx_body_mouth"] == "head"
+    assert props["dat_pkx_body_chest"] == ""
 
 
 # --- Tests for the responsibility-bounded helpers ---
@@ -281,9 +281,9 @@ class TestDeriveBodyMapProps:
         entry = AnimMetadataEntry.default_idle(is_xd=True)
         entry.body_map_bones = [0, 1, -1] + [-1] * 13
         props = _derive_body_map_props(entry, _build_bone_name_resolver(["root", "head"]))
-        assert props["dat_pkx_body_root"] == "root"
-        assert props["dat_pkx_body_head"] == "head"
-        assert props["dat_pkx_body_center"] == ""
+        assert props["dat_pkx_body_origin"] == "root"
+        assert props["dat_pkx_body_mouth"] == "head"
+        assert props["dat_pkx_body_chest"] == ""
 
 
 class TestDeriveAnimEntryProps:
@@ -320,6 +320,6 @@ class TestDeriveAnimEntryProps:
             name_resolver=_build_action_name_resolver([]),
             bone_resolver=_build_bone_name_resolver(["a", "b", "c"]),
         )
-        assert props["dat_pkx_anim_01_body_root"] == "c"
-        # Slot 1 (head) is the same (-1) on both → no override key
-        assert "dat_pkx_anim_01_body_head" not in props
+        assert props["dat_pkx_anim_01_body_origin"] == "c"
+        # Slot 1 (mouth) is the same (-1) on both → no override key
+        assert "dat_pkx_anim_01_body_mouth" not in props

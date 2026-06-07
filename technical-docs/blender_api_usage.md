@@ -55,6 +55,8 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.80 | current | `bpy.context.mode` | `skeleton.py`, `exporter/describe/helpers/armature.py` | Check current editor mode |
 | 2.80 | current | `context.screen.areas` | `BlenderPlugin.py` | Workspace setup |
 | 3.2 | current | `context.temp_override(area=...)` | `BlenderPlugin.py` | Workspace split |
+| 3.2 | current | `context.temp_override(active_object=..., object=...)` | `scripts/prepare_for_pkx_export.py`, `scripts/prepare_for_dat_export.py` | Make an armature active to `mode_set` it out of Edit/Pose mode before prep runs |
+| 2.80 | current | `Object.mode` (read) | `scripts/prepare_for_pkx_export.py`, `scripts/prepare_for_dat_export.py` | Detect armatures left in Edit/Pose mode |
 | | | | | |
 | | | **Operators (bpy.ops)** | | |
 | 2.80 | current | `bpy.ops.object.mode_set(mode=...)` | `skeleton.py`, `animations.py`, `constraints.py`, `exporter/describe/helpers/armature.py`, `exporter/describe/helpers/constraints.py` | EDIT/OBJECT/POSE mode switching |

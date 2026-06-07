@@ -74,6 +74,58 @@ Invariants confirmed from the XD disassembly at `text1/` that the exporter and `
 
 The 10-palette cap is by far the most commonly encountered — see "PObject count ceiling" above.
 
+### Envelope-weight-1.0 IBM short-circuit
+
+**Plain-English summary.** When you skin a vertex to a single bone at full strength, the game has a shortcut: instead of going through the full skinning math, it just sticks that vertex onto the bone directly. The shortcut skips one of the matrices (the "inverse bind matrix") that the full path would have used. Our exporter was always writing vertex positions assuming the full path would run. So when the game took the shortcut on a vertex weighted entirely to one bone, it skipped the matrix our exporter had compensated for — leaving a small leftover transform that pushed the vertex a few millimetres off where it should sit. This is invisible on game-original models because the original tooling knew about the shortcut and authored numbers that worked either way, and it's invisible on a re-import to Blender because the Blender side uses the full path for everyone with no shortcut. It only surfaces in-game on arbitrary models, and it's most visible on vertices that float clear of their neighbours (like an eye-area vertex on the body) because the offset has nothing nearby to hide behind.
+
+**Technical detail.** `_modelParseLoadEnvelopeMatrix` in the XD disassembly contains a special-case branch that fires for envelopes whose first (and only) entry has weight ≥ 1.0:
+
+```
+lfs   f0, 0x8(r26)     # envelope[0].weight
+fcmpo cr0, f0, f31     # compare to 1.0
+cror  eq, gt, eq
+bne   <multi-bone path>
+
+# single-bone-weight=1 path:
+cmplwi r27, 0x0        # is coord (the mesh's _HSD_mkEnvelopeModelNodeMtx result) NULL?
+beq   <no-coord branch — output = joint.matrix, IBM NOT applied>
+# coord branch:
+output = joint.matrix @ joint.IBM   (coord is concatenated later)
+```
+
+So the runtime's per-envelope matrix is:
+
+| Envelope shape | `coord` present | Matrix used |
+|---|---|---|
+| Multi-bone (Σwᵢ blend) | any | `Σ wᵢ · joint.matrix @ joint.IBM`, then `@ coord` if present |
+| Single bone, weight = 1.0 | yes | `joint.matrix @ joint.IBM @ coord` |
+| **Single bone, weight = 1.0** | **no (mesh hangs off `SKELETON_ROOT`)** | **`joint.matrix` — IBM is omitted entirely** |
+
+`_undeform_vertices` in compose **must mirror this**: when the envelope has one bone at weight = 1.0 and the mesh's coord is None, encode the vertex as `inv(bone.world) @ vertex_world`, not the general `inv(Σ wᵢ · bone.world @ bone.IBM) @ vertex_world`. Otherwise the runtime decodes those single-bone vertices without their encoded IBM and they end up offset by `bone.world_at_bind @ bone.IBM` — close to identity at rest if (and only if) every bone-matrix reconstruction is perfectly bit-stable, but visibly off the moment any non-bit-exact factor enters the chain.
+
+Round-trip game models hide this because their IBM/SRT bytes were authored by tooling that already accounted for the short-circuit. Arbitrary-rig exports surface it as small offsets on body-mesh vertices weighted exclusively to a single bone (face vertices weighted to `head`, hip vertices to `hips`, etc.), with the offset most visible relative to other parts of the same model — e.g. an eye mesh promoted to `SkinType.SINGLE_BONE` (rigid skin path, no envelope at all) sits exactly on the head while the body's head-area vertices drift a few millimetres.
+
+The fix is local to `_undeform_vertices` — detect `len(weight_list) == 1 and weight ≈ 1.0 and coord is None` and skip the IBM term for that envelope-combo. No changes to the file format or to the runtime, and round-trip tests are untouched because round-tripped envelopes have always satisfied the runtime's expectation by construction.
+
+### Mesh-owner / deformer disjoint invariant
+
+Game-native models keep two joint roles strictly disjoint:
+
+- a **mesh-owner** joint carries `JOBJ_ENVELOPE_MODEL` (a DObject hangs off it) and has **no** `JOBJ_SKELETON` flag and **no** inverse-bind matrix;
+- a **deformer** joint carries `JOBJ_SKELETON` + an IBM (envelope weights target it) and owns **no** mesh.
+
+Survey of 76 game-native PKX files: **0** weight a vertex to a mesh-owner joint, and **0** set `ENV_MODEL`+`SKELETON` on the same joint. The roles never overlap.
+
+The export pipeline enforces the no-overlap-of-*flags* half itself — `refine_bone_flags` (`exporter/phases/plan/helpers/scene.py`) strips `JOBJ_SKELETON` from any bone that owns a mesh. But it can't enforce the no-*weighting*-to-an-owner half, because that's a question of scene topology, not flags. Arbitrary rips routinely violate it: a detached mesh weighted ~100% to a single bone (eyes, hair strands) is also *attached* to that bone, and a body mesh is typically owned by `hips` while also being weighted to it.
+
+The failure mode is geometric. The envelope coordinate system (`_envelope_coord_system`, mirrored in describe and compose) resolves a mesh's coord from its owner bone by walking up to the nearest `JOBJ_SKELETON` ancestor. When the owner is *itself* the deformer but has had `SKELETON` stripped (because it owns the mesh), the walk overshoots to an ancestor and takes the third branch `(world[ancestor] @ ibm[owner]).inv @ world[owner]`, producing a coord that disagrees with what the runtime's `_HSD_mkEnvelopeModelNodeMtx` computes. The vertices render offset — visibly "floating" for a whole detached eye mesh (~9.7-unit offset measured on one rig), and as subtler whole-body distortion when the body's owner is a non-root deformer. It is invisible on round-trips (describe and compose mirror each other) and in Blender previews (full skin path for everyone), so it only surfaces in-game.
+
+**Fix (prep-script, not in the IR):** `reparent_meshes_to_holder_bones` in `scripts/prepare_for_pkx_export.py`. For every mesh whose export owner bone (Blender bone-parent if set, else the nearest common ancestor of its weighted bones) is itself a deformer, it inserts a coincident no-weight **holder bone** as a child of that deformer and bone-parents the mesh to the holder. The exporter then sees owner = holder (`ENV_MODEL`, non-deformer → no `SKELETON`/IBM) and weights = the original deformer (`SKELETON`) — disjoint, exactly mirroring the structure the importer already round-trips cleanly.
+
+Done in prep rather than as an IR transform deliberately: native `mesh.parent_bone` is already honored by describe (`_determine_parent_bone_name`) → plan, and `describe_armature` emits bones depth-first, so a holder added in Blender lands in the correct serialized (DFS) position and the PKX header's name→index body-map (resolved in describe from the final armature) stays correct — **no bone-index remapping, no header sync, no pipeline change**. `bake_transforms` was taught to skip bone-parented meshes (their geometry is baked to world space on the first pass while still object-parented), keeping the deploy's two-pass prep idempotent.
+
+In-game confirmation (2026-06-07): resolved both the floating-eye issue and general body jankiness across six arbitrary PBR rips. An earlier attempt, `SkinType.SINGLE_BONE` promotion (commit 57bf5b9), was reverted — it sidestepped the envelope path for single-bone meshes but placed them wrong in a different way and didn't address bodies. Remaining: mirror the prep step into `scripts/prepare_for_dat_export.py` for `.dat` output.
+
 ## Animation pipeline
 
 ### Rotation format
@@ -119,7 +171,7 @@ The `pre_process` phase rejects this configuration with a validator that fires b
 ## PKX metadata
 
 ### Body-map bone conventions
-`anim_entries[i].body_map_bones[0..15]` is a per-slot lookup from body-part key to bone index. Slot indices 0-7 map to well-known body parts (root, head, center, body_3, neck, head_top, limb_a, limb_b); 8-15 are extended attachment points used by particle generators on effect-themed species.
+`anim_entries[i].body_map_bones[0..15]` is a per-slot lookup from body-part key to bone index. The 16 slots are: `origin, mouth, chest, tail, eye_left, eye_right, hand_left, hand_right, additional_1, additional_2, additional_3, additional_4, foot_left, foot_right, center, additional_5`. Naming comes from a corpus + disassembly survey of which slots the waza-effect pipeline (`ParticleEntry / EffectEntry / ModelEntry / LensFlareEntry`) reads in practice: `origin` (slot 0) covers ~95% of attaches, `mouth` (slot 1) anchors head-attached Model entries (fire-breath models, status overlays), `chest` (slot 2) anchors LensFlare entries (chest-level light bursts), and the remaining slots are per-species author choices for particle attach points.
 
 Convention across the corpus:
 - Pokémon models use **bone index 0** for unused slots (root fallback).

@@ -19,10 +19,15 @@ class Vertex(Node):
 
     def writePrivateData(self, builder):
         # Vertex buffer data is shared and written in Phase 1 by VertexList.writePrimitivePointers.
-        # Here we just ensure the relocation is tracked.
+        # Here we just ensure the relocation is tracked. base_pointer == 0 is a
+        # valid address (start of the data section) — it must still go through
+        # _raw_pointer_fields so the relocation gets recorded; otherwise the
+        # runtime treats the field as a null pointer and the PObject decodes
+        # vertex data from offset zero with no rebase applied, which manifests
+        # as garbage positions.
         if not hasattr(self, '_raw_pointer_fields'):
             self._raw_pointer_fields = set()
-        if hasattr(self, 'raw_vertex_data') and self.raw_vertex_data and self.base_pointer != 0:
+        if hasattr(self, 'raw_vertex_data') and self.raw_vertex_data:
             self._raw_pointer_fields.add('base_pointer')
 
     def getFormat(self):

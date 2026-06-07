@@ -767,7 +767,7 @@ class TestTextureAlignment:
 
         img = Image(address=None, blender_obj=None)
         img.raw_image_data = bytes(range(128))  # 128 bytes of pixel data
-        img.writePrimitivePointers(builder)
+        img.writeImageData(builder)
 
         assert img.data_address % 32 == 0, \
             f"Image data not 32-byte aligned: 0x{img.data_address:X}"
@@ -799,7 +799,7 @@ class TestTextureAlignment:
 
         pal = Palette(address=None, blender_obj=None)
         pal.raw_data = bytes(range(64))  # 64 bytes of palette data
-        pal.writePrimitivePointers(builder)
+        pal.writePaletteData(builder)
 
         assert pal.data % 32 == 0, \
             f"Palette data not 32-byte aligned: 0x{pal.data:X}"
@@ -833,12 +833,44 @@ class TestTextureAlignment:
         for size in sizes:
             img = Image(address=None, blender_obj=None)
             img.raw_image_data = bytes(size)
-            img.writePrimitivePointers(builder)
+            img.writeImageData(builder)
             images.append(img)
 
         for i, img in enumerate(images):
             assert img.data_address % 32 == 0, \
                 f"Image[{i}] not 32-byte aligned: 0x{img.data_address:X} (data size={sizes[i]})"
+
+    def test_offset_zero_pointer_records_relocation(self):
+        """Pointer fields that target offset 0 of the data section must
+        still record a relocation. Regression: the dat_builder and several
+        node-write sites short-circuited on `value != 0`, which collapses
+        "null pointer" with "valid offset 0 — start of data section".
+        With the palette/image reorder, the first vertex buffer lands at
+        offset 0, and every PObject referencing it was silently dropping
+        its base_pointer relocation → runtime read zero unrebased →
+        radial-plane garbage geometry.
+        """
+        from shared.Nodes.Classes.Mesh.Vertex import Vertex
+
+        # Simulate Phase 2 writePrivateData for a Vertex whose buffer
+        # ended up at offset 0. _raw_pointer_fields must end up containing
+        # 'base_pointer' so writeNode forces the relocation regardless of
+        # the stored value.
+        v = Vertex(address=None, blender_obj=None)
+        v.attribute = 9
+        v.attribute_type = 1
+        v.component_count = 0
+        v.component_type = 4
+        v.component_frac = 0
+        v.stride = 12
+        v.base_pointer = 0
+        v.raw_vertex_data = bytes(48)  # any non-empty payload
+
+        v.writePrivateData(builder=None)
+        assert 'base_pointer' in v._raw_pointer_fields, (
+            "base_pointer must be marked as a raw pointer field even when "
+            "the buffer landed at offset 0, otherwise the relocation gets "
+            "silently dropped and the game reads a null pointer")
 
     def test_opcode_node_count_roundtrip(self):
         """Opcode encoding must produce counts the decoder reconstructs correctly.

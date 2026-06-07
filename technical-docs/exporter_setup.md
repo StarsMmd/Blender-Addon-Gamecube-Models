@@ -250,31 +250,36 @@ See the PKX Metadata panel for all properties including body map, timing, sub-an
 
 The body map is a per-animation table of bone indices that the game reads at runtime to know where on the model to anchor specific things. Set these in the **Body Map** section of the PKX Metadata panel.
 
-**What the game uses it for:**
+**What the game uses it for** (frequencies measured across 1401 game-native `.wzx` move files):
 
-- **Head tracking / camera targeting** — slot 1 (Head) is the load-bearing slot; the in-game battle camera and critical-hit zoom lock to this bone (the battle camera is a separate engine — not the PKX `Debug_Camera`).
-- **Particle & status effect attachment** — status particles (sleep Z's, confusion stars, burn flames), move VFX anchors, and held-item positions use slots 2–7 (center/jaw, neck, head-top, left/right limb).
-- **Targeting hitboxes** — damage reactions and hit sparks anchor to whichever slot the move script names.
+- **Origin (slot 0)** — universal default attach for ~95% of all waza effects. Already auto-filled by the prep script with the armature's first bone.
+- **Mouth (slot 1)** — where head-attached Model entries land: fire-breath models, status overlays (sleep Z's, confusion stars), ice crystals, hit-reception props.
+- **Chest (slot 2)** — the LensFlare anchor used by ~80 distinct moves for chest-level light bursts (Fire Punch, Flamethrower, Solar Beam charge-up, Mega Punch/Kick, Counter, Volt Tackle, …).
+- **Tail / Eye_L / Eye_R / Hand_L / Hand_R / Foot_L / Foot_R / Center** — author-specific anchors used by a small number of specialised moves (e.g. Iron Tail's slash, Conversion's full-body texture wrap).
+- **Head bone field** — a separate PKX header field (not in the body map). Drives the in-battle head-tracking camera. Auto-detected by name; verify it.
+- **Additional 1–5** — rarely consumed by the waza pipeline; reserved for per-rig overrides.
 
-Only slots 0–7 are surfaced as custom properties because the XD battle code does not reference slots 8–15. The exporter always writes `-1` for 8–15.
+The 16 slots are surfaced as custom properties so the user can hand-pick any of them. The canonical key list lives in `shared/helpers/pkx_header.py::BODY_MAP_KEYS`.
 
 | Slot | What to assign | Impact if wrong |
 |------|----------------|-----------------|
-| Root | Root bone (always bone 0) | Structural — particles lose origin alignment |
-| Head | Head bone used for head tracking | **High** — visibly broken camera / head-lock |
-| Center | Center of mass / jaw — fallback attachment | Medium — particles on wrong body region |
-| Body 3 | Model-specific body anchor | Low–Medium |
-| Neck | Neck bone (typically parent of Head) | Medium — status effects off-position |
-| Head Top | Top of head (sleep Z's, confusion particles) | Medium |
-| Limb Left / Right | Arm/wing/fin endpoints (from Pokémon's perspective) | Medium — move VFX attached wrong |
+| Origin | Root bone (always bone 0) | Structural — every effect that falls back to origin lands wrong |
+| Mouth | Mouth / jaw / head bone | **High** — fire breath and status overlays land in the wrong place |
+| Chest | Mid-spine / chest / upper-torso bone | **High** — visible chest flashes on most attack moves land wrong |
+| Tail | Tip of the tail (most distal segment) | Low–Medium — only matters for tail-themed moves |
+| Eye Left / Right | Eye bones (Pokémon's perspective) | Low — only matters for eye-target effects |
+| Hand Left / Right | Hand / paw / forelimb (Pokémon's perspective) | Low–Medium |
+| Foot Left / Right | Foot / hindlimb (Pokémon's perspective) | Low–Medium |
+| Center | Secondary trunk anchor (hips / lower spine) | Low — used by Conversion's overlay |
+| Additional 1–5 | Leave on origin unless you have a specific reason | Negligible |
 
 **What to do when a slot has no clean analog** (e.g. a wingless Pokémon with no "limb", a tailless Pokémon):
 
-- **Leave the slot empty (exports as -1 = skip).** The game treats `-1` as "no attachment" and simply skips the effect.
-- **Do not set it to the root bone as a fallback.** Setting it to 0/root makes status particles and move VFX spawn at the Pokémon's feet — worse than the effect not appearing.
-- Use a best-approximation bone only when you're confident it's within roughly the right region (e.g. reusing a single arm bone as both left and right on a quadruped with merged limbs).
+- **Leave the slot pointing at origin (the prep default).** Effects fall back gracefully.
+- **Do NOT set the slot to `-1`** for Pokémon models — empirical testing shows Pokémon-slot PKXs with `-1` in unused body_map positions do not load cleanly (the game dereferences the index unchecked). Trainer models on the NPC path tolerate `-1`, but the prep script always defaults Pokémon slots to a real bone.
+- For slots like Mouth and Chest where there's no obvious bone, fall through the priority list — typically `head` for Mouth and `spine` / `hips` for Chest — to get close enough that the effects look acceptable.
 
-The prep script fills Root with the first bone and attempts to auto-assign Head by matching bones whose names contain "head" (case-insensitive); on models without such a name it falls back to the first child of the root bone, which is often wrong. Verify Head in the PKX Metadata panel and leave every other slot empty unless you know the model has a clear match.
+The prep script fills Origin with the first bone and Mouth with the first bone whose name contains "head" (case-insensitive); on models without such a name it falls back to the first child of the root bone, which is often wrong. Verify Mouth and Chest in the PKX Metadata panel — these two are the highest-leverage slots for visible move VFX.
 
 **Trainers:** XD trainer models use the identical 16-slot body map structure and the same slot semantics — the game's battle particle/effect code doesn't distinguish between Pokémon and trainer models. The same guidance applies.
 

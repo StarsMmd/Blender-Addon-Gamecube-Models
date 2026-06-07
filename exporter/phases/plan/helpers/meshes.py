@@ -92,15 +92,10 @@ def plan_meshes(br_meshes, br_materials, ir_bones, logger=StubLogger()):
 def _pack_bone_weights(vertex_groups):
     """Invert BRVertexGroup (per-bone) into IRBoneWeights (per-vertex).
 
-    Promotes to SkinType.SINGLE_BONE when every vertex is influenced by
-    exactly one bone at full strength and every vertex names the same
-    bone. That sidesteps the envelope skinning math entirely at runtime
-    — the game just multiplies the vertex's local position by that one
-    bone's world matrix. For envelope skinning the encode/decode chain
-    has a small rounding residue that's invisible on body geometry but
-    visible on detached single-bone meshes (eyes, hair strands, etc.).
-
-    Otherwise emits SkinType.WEIGHTED.
+    Always emits SkinType.WEIGHTED — POBJ_SKIN/SINGLE_BONE is unused
+    across the surveyed game models, and we can't safely re-classify a
+    single-bone-weight=1.0 envelope mesh into rigid skin from a Blender
+    scene alone.
     """
     if not vertex_groups:
         return None
@@ -108,35 +103,10 @@ def _pack_bone_weights(vertex_groups):
     by_vertex = {}
     for vg in vertex_groups:
         for vertex_idx, weight in vg.assignments:
-            if weight <= 0.0:
-                continue
             by_vertex.setdefault(vertex_idx, []).append((vg.name, weight))
 
     if not by_vertex:
         return None
-
-    # Single-bone test: one bone per vertex, weight ~= 1.0, same bone everywhere.
-    single_bone_name = None
-    is_single_bone = True
-    for _, bone_list in by_vertex.items():
-        if len(bone_list) != 1:
-            is_single_bone = False
-            break
-        bone_name, weight = bone_list[0]
-        if abs(weight - 1.0) > 1e-3:
-            is_single_bone = False
-            break
-        if single_bone_name is None:
-            single_bone_name = bone_name
-        elif bone_name != single_bone_name:
-            is_single_bone = False
-            break
-
-    if is_single_bone and single_bone_name is not None:
-        return IRBoneWeights(
-            type=SkinType.SINGLE_BONE,
-            bone_name=single_bone_name,
-        )
 
     assignments = sorted(by_vertex.items())
     return IRBoneWeights(
@@ -159,12 +129,14 @@ def determine_parent_bone(mesh_obj, ir_weights, bone_name_to_index, ir_bones):
 
     fake_groups = []
     if ir_weights and ir_weights.assignments:
-        seen = set()
-        for _, weight_list in ir_weights.assignments:
-            for bone_name, _w in weight_list:
-                if bone_name not in seen:
-                    seen.add(bone_name)
-                    fake_groups.append(_FakeVG(name=bone_name, assignments=[]))
+        assignments_by_bone = {}
+        for vertex_idx, weight_list in ir_weights.assignments:
+            for bone_name, w in weight_list:
+                if w > 0.0:
+                    assignments_by_bone.setdefault(bone_name, []).append(
+                        (vertex_idx, w))
+        for bone_name, assigns in assignments_by_bone.items():
+            fake_groups.append(_FakeVG(name=bone_name, assignments=assigns))
 
     return _resolve_parent_bone_index(
         parent_bone_name, fake_groups, bone_name_to_index, ir_bones,
@@ -188,6 +160,14 @@ def _resolve_parent_bone_index(parent_bone_name, vertex_groups,
     Preferred: ``parent_bone_name`` set by describe (preserves
     importer-side ownership). Otherwise, the nearest common ancestor of
     every bone the mesh has weights on. Fallback: 0 (root).
+
+    A vertex group only counts as "the mesh has weights on this bone"
+    if it has at least one non-zero assignment. Meshes split off a
+    shared Blender mesh data block (e.g. eyes split from the body) keep
+    the full vertex-group list of the source — many of those groups
+    have zero assignments on this specific mesh's faces. Including them
+    would expand the NCA to the whole skeleton and parent the mesh to
+    the root, breaking animation tracking for single-bone meshes.
     """
     if parent_bone_name:
         idx = bone_name_to_index.get(parent_bone_name)
@@ -199,6 +179,10 @@ def _resolve_parent_bone_index(parent_bone_name, vertex_groups,
 
     referenced = set()
     for vg in vertex_groups:
+        if not getattr(vg, 'assignments', None):
+            continue
+        if not any(w > 0.0 for _vi, w in vg.assignments):
+            continue
         idx = bone_name_to_index.get(vg.name)
         if idx is not None:
             referenced.add(idx)

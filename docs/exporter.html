@@ -556,35 +556,69 @@
 
         <h3>Step 5 — Set the body map</h3>
 
-        <p>The body map tells the game where on your model to attach particle effects, status icons
-        (sleep Z's, confusion stars), and the camera target. Set these in the <strong>Body Map</strong>
-        section of the PKX Metadata panel.</p>
+        <p>The body map is 16 named slots in the PKX header that the in-game waza-effect pipeline
+        looks up to anchor particles, sound emitters, and overlay models on your Pokémon. Set these
+        in the <strong>Body Map</strong> section of the PKX Metadata panel.</p>
 
         <figure class="screenshot">
             <img src="images/exporter/preparing/body-map-section.png" alt="Body Map section of PKX Metadata">
             <figcaption>The Body Map — pick the bone for each slot.</figcaption>
         </figure>
 
-        <p>Bone slots:</p>
+        <div class="callout">
+            <strong>How important is each slot?</strong> A corpus-wide survey of 1401 game-native
+            <code>.wzx</code> move files shows the waza pipeline actively reads only a handful of
+            these slots. The table below splits the slots into <em>important</em> (almost every
+            move references them), <em>occasional</em> (a small number of moves), and <em>rare</em>
+            (mostly authored but not read). Spend your time on the important ones.
+        </div>
 
-        <ul>
-            <li><strong>Root</strong> — the root bone (auto-filled).</li>
-            <li><strong>Head</strong> — the bone the in-game camera follows. The most important slot
-            to get right. The prep script tries to auto-detect by name but verify it.</li>
-            <li><strong>Center</strong> — the model's centre of mass.</li>
-            <li><strong>Body 3</strong> — unknown, set to origin for now.</li>
-            <li><strong>Neck</strong></li>
-            <li><strong>Head Top</strong></li>
-            <li><strong>Limb Left</strong>, <strong>Limb Right</strong> — usually the left and right
-            arms, or closest equivalent.</li>
-            <li><strong>Secondary 8–11</strong> — leave empty.</li>
-            <li><strong>Attach A–D</strong> — leave empty.</li>
-        </ul>
+        <table>
+            <thead><tr><th>Slot</th><th>Name</th><th>Frequency</th><th>Used for</th></tr></thead>
+            <tbody>
+                <tr><td>0</td><td><strong>Origin</strong></td><td>Important</td>
+                    <td>The model's root attach point. Used by ~95% of all waza effects when they
+                    have no more specific target. Auto-filled with the first bone of the armature
+                    by the prep script.</td></tr>
+                <tr><td>1</td><td><strong>Mouth</strong></td><td>Important</td>
+                    <td>Where head-attached Model entries land — fire-breath models, status overlays
+                    (sleep Z's, confusion stars), ice crystals. Pick a mouth/jaw/head bone.</td></tr>
+                <tr><td>2</td><td><strong>Chest</strong></td><td>Important</td>
+                    <td>The LensFlare anchor — every move with a chest-level light flash (Fire Punch,
+                    Flamethrower, Mega Punch/Kick, Solar Beam charge-up, Counter, etc.) attaches its
+                    glow here. Pick a mid-spine / chest / upper-torso bone.</td></tr>
+                <tr><td>3</td><td><strong>Tail</strong></td><td>Occasional</td>
+                    <td>Distal tail attach for tail-themed moves. Pick the tip of the tail.</td></tr>
+                <tr><td>4–5</td><td><strong>Eye Left / Eye Right</strong></td><td>Occasional</td>
+                    <td>Eye bones from the Pokémon's perspective.</td></tr>
+                <tr><td>6–7</td><td><strong>Hand Left / Hand Right</strong></td><td>Occasional</td>
+                    <td>Hand attach points (Pokémon's perspective). For quadrupeds without hands,
+                    use the closest forelimb or paw bone.</td></tr>
+                <tr><td>8–11</td><td><strong>Additional 1–4</strong></td><td>Rare</td>
+                    <td>Rarely consumed by waza files. Leave on the default (origin) unless you
+                    have a specific reason.</td></tr>
+                <tr><td>12–13</td><td><strong>Foot Left / Foot Right</strong></td><td>Occasional</td>
+                    <td>Foot attach points (Pokémon's perspective). Falls back to leg bones if the
+                    rig has no explicit foot.</td></tr>
+                <tr><td>14</td><td><strong>Center</strong></td><td>Occasional</td>
+                    <td>A secondary trunk anchor distinct from Chest — typically lower-spine / hips.
+                    Used by a small number of full-body overlay effects (Conversion's texture wrap).</td></tr>
+                <tr><td>15</td><td><strong>Additional 5</strong></td><td>Rare</td>
+                    <td>Like Additional 1–4 — leave on origin unless needed.</td></tr>
+            </tbody>
+        </table>
+
+        <p>The most important slot to get right is the <strong>Head Bone</strong> field above the
+        body map (a separate PKX header field used by the in-game camera for head-tracking) — and
+        the body map's <strong>Mouth</strong> and <strong>Chest</strong> slots, since they anchor
+        most of the visible move effects.</p>
 
         <div class="callout">
             <strong>Note:</strong> some models come with names provided for each bone. If not,
-            they'll likely just be numbered bones, and you'll need to select the bones individually
-            in the viewport to find the name of the bone at each required body part.
+            they'll likely just be numbered bones (<code>Bone_000</code>, <code>Bone_001</code>,
+            …), and you'll need to select the bones individually in the viewport to find the bone
+            at each required body part. Tip: in Pose Mode, enable <em>Object Data Properties →
+            Viewport Display → Names</em> to overlay every bone name in the 3D view.
         </div>
 
         <h3>Step 6 — Assign actions to animation slots</h3>

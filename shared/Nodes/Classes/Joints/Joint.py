@@ -45,8 +45,14 @@ class Joint(Node):
     def writeBinary(self, builder):
         # Convert property Node to its address — don't modify flags
         if self.property is not None and hasattr(self.property, 'address'):
-            self.property = self.property.address if self.property.address is not None else 0
-            if self.property != 0:
+            # `address is not None` means the node was actually allocated and
+            # is reachable. `address == 0` is a valid allocation (start of the
+            # data section, possible when there's no preceding raw data) and
+            # still needs a relocation — discriminate on `is not None`, not
+            # `!= 0`, so that case isn't silently dropped.
+            referenced = self.property.address is not None
+            self.property = self.property.address if referenced else 0
+            if referenced:
                 if not hasattr(self, '_raw_pointer_fields'):
                     self._raw_pointer_fields = set()
                 self._raw_pointer_fields.add('property')

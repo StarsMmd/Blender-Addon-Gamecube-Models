@@ -555,20 +555,27 @@ COLO_TRAINER_ANIM_NAMES = [
 ]
 
 BODY_MAP_NAMES = [
-    "Root",             # 0 — always bone 0
-    "Head",             # 1 — head tracking
-    "Center",           # 2 — center null fallback
-    "Body Part 3",      # 3
-    "Neck",             # 4 — typically head-1
-    "Head Top",         # 5 — typically head+1
-    "Limb Left",        # 6 — from the Pokémon's perspective
-    "Limb Right",       # 7 — from the Pokémon's perspective
-    "Secondary 8",      # 8
-    "Secondary 9",      # 9
-    "Secondary 10",     # 10
-    "Secondary 11",     # 11
-    "Attachment A",     # 12
-    "Attachment B",     # 13
-    "Attachment C",     # 14
-    "Attachment D",     # 15
+    "Origin",           # 0 — always bone 0; default attach for most effects
+    "Mouth",            # 1 — Model-entry attach for fire breath, status overlays
+    "Chest",            # 2 — LensFlare anchor for chest-level light bursts
+    "Tail",             # 3
+    "Eye Left",         # 4 — from the Pokémon's perspective
+    "Eye Right",        # 5 — from the Pokémon's perspective
+    "Hand Left",        # 6 — from the Pokémon's perspective
+    "Hand Right",       # 7 — from the Pokémon's perspective
+    "Additional 1",     # 8
+    "Additional 2",     # 9
+    "Additional 3",     # 10
+    "Additional 4",     # 11
+    "Foot Left",        # 12
+    "Foot Right",       # 13
+    "Center",           # 14
+    "Additional 5",     # 15
+]
+
+BODY_MAP_KEYS = [
+    "origin", "mouth", "chest", "tail",
+    "eye_left", "eye_right", "hand_left", "hand_right",
+    "additional_1", "additional_2", "additional_3", "additional_4",
+    "foot_left", "foot_right", "center", "additional_5",
 ]

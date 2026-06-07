@@ -790,16 +790,21 @@ The GameCube renders in gamma space (no linear pipeline). The shiny brightness m
 
 | Index | Name | Purpose |
 |-------|------|---------|
-| 0 | Root | Always bone 0 |
-| 1 | Head | Head tracking rotation target |
-| 2 | Center | Center null / jaw bone (fallback for `GSmodelCenterNull`) |
-| 3 | Body 3 | Generic body attachment |
-| 4 | Neck | Typically head bone - 1 |
-| 5 | Head Top | Typically head bone + 1 |
-| 6 | Limb Left | Left limb (from the Pokémon's perspective, not the viewer's) |
-| 7 | Limb Right | Right limb (from the Pokémon's perspective, not the viewer's) |
-| 8-11 | Secondary | Less commonly used attachments |
-| 12-15 | Attach A-D | Particle/effect attachment points |
+| 0 | Origin | Universal attach point (~95% of waza entries default here) |
+| 1 | Mouth | Head-attached Model entries — fire breath, status overlays (sleep Z's, confusion stars) |
+| 2 | Chest | LensFlare anchor — chest-level light bursts on most attack moves |
+| 3 | Tail | Author-specific; rarely consumed by waza |
+| 4 | Eye Left | Pokémon's perspective, not the viewer's |
+| 5 | Eye Right | Pokémon's perspective |
+| 6 | Hand Left | Pokémon's perspective; falls back to forelimb on quadrupeds |
+| 7 | Hand Right | Pokémon's perspective |
+| 8-11 | Additional 1-4 | Rarely consumed; reserved for per-rig overrides |
+| 12 | Foot Left | Pokémon's perspective |
+| 13 | Foot Right | Pokémon's perspective |
+| 14 | Center | Secondary trunk anchor — used by some full-body overlays (Conversion's texture wrap) |
+| 15 | Additional 5 | Rarely consumed |
+
+Names were chosen from a corpus survey of 1401 game-native `.wzx` move files cross-referenced with the wzx call-site disassembly (`ParticleEntry`, `EffectEntry`, `ModelEntry`, `LensFlareEntry`). The canonical key list is in `shared/helpers/pkx_header.py::BODY_MAP_KEYS`.
 
 Values are mostly consistent across all 17 entries within a model. Per-entry overrides exist for entries where different animations need different attachment points.
 

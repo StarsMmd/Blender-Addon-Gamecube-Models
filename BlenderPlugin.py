@@ -365,12 +365,7 @@ _SUB_ANIM_TRIGGER_ITEMS = [
 # Slots 8-15 are extended slots that carry particle-attachment bones on
 # effect-themed Pokémon; `ModelSequence::GetPart(slot)` resolves any slot
 # 0-15 into the current animation entry's bone index.
-_BODY_MAP_KEYS = [
-    "root", "head", "center", "body_3", "neck", "head_top",
-    "limb_a", "limb_b",
-    "secondary_8", "secondary_9", "secondary_10", "secondary_11",
-    "attach_a", "attach_b", "attach_c", "attach_d",
-]
+from .shared.helpers.pkx_header import BODY_MAP_KEYS as _BODY_MAP_KEYS
 
 
 class DAT_PT_PKXPanel(bpy.types.Panel):

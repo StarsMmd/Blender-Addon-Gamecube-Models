@@ -47,19 +47,28 @@ class Light(Node):
             self._raw_pointer_fields.add('property')
 
     def writeBinary(self, builder):
+        # For node-reference cases: an `address is not None` means the
+        # node was actually allocated. address == 0 is a legitimate
+        # allocation (start of data section) and still needs its
+        # relocation recorded — discriminate on `is not None`, not
+        # `!= 0`, so single-light or no-vertex models don't silently
+        # drop these relocs when a referenced struct lands at offset 0.
         if isinstance(self.property, Attn):
-            self.property = self.property.address
-            if self.property != 0:
+            referenced = self.property.address is not None
+            self.property = self.property.address if referenced else 0
+            if referenced:
                 self._raw_pointer_fields.add('property')
 
         elif isinstance(self.property, PointLight.PointLight):
-            self.property = self.property.address
-            if self.property != 0:
+            referenced = self.property.address is not None
+            self.property = self.property.address if referenced else 0
+            if referenced:
                 self._raw_pointer_fields.add('property')
 
         elif isinstance(self.property, SpotLight.SpotLight):
-            self.property = self.property.address
-            if self.property != 0:
+            referenced = self.property.address is not None
+            self.property = self.property.address if referenced else 0
+            if referenced:
                 self._raw_pointer_fields.add('property')
 
         elif self.property is None:

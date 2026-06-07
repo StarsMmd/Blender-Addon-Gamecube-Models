@@ -168,6 +168,36 @@ def _ensure_bone_marker_object():
     return bpy.data.objects.new(name, mesh)
 
 
+def exit_armature_edit_modes():
+    """Return every armature in the scene from Edit/Pose mode to Object mode.
+
+    Must run before anything else. A from-scratch rig is frequently left
+    mid-edit (placing bones) or in Pose mode, and the global mode is not
+    Object mode in that state. Two things break otherwise:
+      - The first operator in the prep flow, `bpy.ops.object.select_all`,
+        fails its poll with "context is incorrect" (operator polls require
+        Object mode).
+      - `bake_transforms` mutates mesh/armature *data* directly; edits made
+        while an object is in Edit mode are silently overwritten when the
+        edit session is later flushed back, so the bake would be lost.
+
+    `mode_set` acts on the active object, so each armature is made active via
+    a context override before switching; leaving Object mode for the active
+    object drops the whole scene to Object mode. Returns the count switched.
+    """
+    exited = 0
+    for arm in [o for o in bpy.data.objects if o.type == 'ARMATURE']:
+        if arm.mode == 'OBJECT':
+            continue
+        try:
+            with bpy.context.temp_override(active_object=arm, object=arm):
+                bpy.ops.object.mode_set(mode='OBJECT')
+            exited += 1
+        except RuntimeError:
+            pass
+    return exited
+
+
 def bake_transforms():
     """Bake loc/rot/scale on every armature and its child meshes so each
     `matrix_world` is identity.
@@ -202,6 +232,13 @@ def bake_transforms():
     armatures = [obj for obj in bpy.data.objects if obj.type == 'ARMATURE']
     if not armatures:
         return 0
+
+    # Flush the depsgraph so matrix_world reflects any caller-set transform
+    # (e.g. a freshly-assigned obj.scale). matrix_world is a cached property;
+    # without this, the Step-0 snapshot below reads a stale identity scale and
+    # the Step-3 translation-fcurve rescale is silently skipped — leaving
+    # animated bone translations at their pre-scale magnitude.
+    bpy.context.view_layer.update()
 
     # ------------------------------------------------------------------
     # Step 0: snapshot animation + visibility state, then neutralise it.
@@ -260,6 +297,16 @@ def bake_transforms():
         targets.append((arm, arm.matrix_world.copy()))
         for obj in bpy.data.objects:
             if obj.parent is arm and obj.type == 'MESH':
+                # Bone-parented meshes (a holder-bone owner, see
+                # reparent_meshes_to_holder_bones) are deliberately hung off a
+                # bone rather than the armature object. The object-parent bake
+                # below would force matrix_parent_inverse to identity and leave
+                # matrix_world at the bone's tail transform — moving the mesh
+                # and failing the identity verify. Their geometry was already
+                # baked to world space on the first prep pass while they were
+                # still object-parented, so skip them here.
+                if obj.parent_type == 'BONE':
+                    continue
                 targets.append((obj, obj.matrix_world.copy()))
 
     # ------------------------------------------------------------------
@@ -403,6 +450,146 @@ def bake_transforms():
 
 
 # ---------------------------------------------------------------------------
+# Mesh-owner / deformer separation (envelope invariant)
+# ---------------------------------------------------------------------------
+#
+# Game-native models keep two joint roles strictly disjoint: a *mesh-owner*
+# joint carries JOBJ_ENVELOPE_MODEL (a mesh hangs off it) and has no
+# SKELETON flag / inverse-bind matrix, while a *deformer* joint carries
+# JOBJ_SKELETON + an IBM (vertices are weighted to it) and owns no mesh.
+# Across 76 surveyed game PKX files, zero envelope weights ever target a
+# mesh-owner joint and no joint is ever both ENVELOPE_MODEL and SKELETON.
+#
+# Arbitrary rips violate this. A detached mesh weighted ~100% to one bone
+# (eyes, hair strands) is also *attached* to that bone, so the exporter's
+# refine_bone_flags strips SKELETON from it; the envelope coordinate-system
+# math then can't resolve the bone as its own deformer, walks up to the
+# nearest skeleton ancestor, and the mesh renders offset ("floating") in
+# game while round-trips and Blender previews (which use the full skinning
+# path for everyone) look fine.
+#
+# The fix mirrors the game structure: for every mesh whose export owner
+# bone is also a deformer, insert a no-weight holder bone as a child of
+# that deformer and bone-parent the mesh to the holder. Owner becomes the
+# holder (ENV_MODEL, no weights → no SKELETON/IBM); the original bone stays
+# a pure deformer. Done here in prep — not in the exporter IR — so the
+# whole describe→plan→compose pipeline (and the PKX header's name→index
+# body-map resolution) just sees the final armature with correct
+# depth-first indices, no index remapping required.
+
+
+def reparent_meshes_to_holder_bones(armature):
+    """Enforce the mesh-owner/deformer disjoint invariant for `armature`.
+
+    For each child mesh whose export owner bone (Blender bone-parent if
+    set, else the nearest common ancestor of the bones it is weighted to)
+    is itself an envelope weight target, create a coincident no-weight
+    holder bone as a child of that deformer and bone-parent the mesh to
+    it. Idempotent: on a second pass the meshes already own a (non-deformer)
+    holder, so nothing matches.
+
+    Returns the number of holder bones created.
+    """
+    import bpy
+
+    arm_data = armature.data
+    if not arm_data.bones:
+        return 0
+    bone_names = {b.name for b in arm_data.bones}
+    root_name = arm_data.bones[0].name
+    parent_of = {b.name: (b.parent.name if b.parent else None)
+                 for b in arm_data.bones}
+
+    def ancestors(name):
+        chain = []
+        while name is not None:
+            chain.append(name)
+            name = parent_of.get(name)
+        return chain
+
+    meshes = [o for o in bpy.data.objects
+              if o.parent is armature and o.type == 'MESH']
+
+    # Deformer set + per-mesh weighted bones (non-zero weights only).
+    deformers = set()
+    mesh_weighted = {}
+    for m in meshes:
+        idx_to_name = {vg.index: vg.name for vg in m.vertex_groups}
+        weighted = set()
+        for v in m.data.vertices:
+            for g in v.groups:
+                if g.weight > 0.0:
+                    nm = idx_to_name.get(g.group)
+                    if nm in bone_names:
+                        weighted.add(nm)
+        mesh_weighted[m] = weighted
+        deformers |= weighted
+
+    def owner_of(m):
+        # Explicit Blender bone-parent wins — mirrors describe's
+        # _determine_parent_bone_name.
+        if m.parent_type == 'BONE' and m.parent_bone in bone_names:
+            return m.parent_bone
+        weighted = mesh_weighted.get(m, set())
+        if not weighted:
+            return root_name
+        chains = [set(ancestors(n)) for n in weighted]
+        common = set.intersection(*chains)
+        if not common:
+            return root_name
+        # Nearest common ancestor = deepest = first match walking up from
+        # any one weighted bone.
+        for n in ancestors(next(iter(weighted))):
+            if n in common:
+                return n
+        return root_name
+
+    need = {}
+    for m in meshes:
+        owner = owner_of(m)
+        if owner in deformers:
+            need.setdefault(owner, []).append(m)
+
+    if not need:
+        return 0
+
+    # Create holder bones (edit mode), coincident with their deformer so
+    # the rest transform matches and the importer-validated coordinate path
+    # applies.
+    holder_for = {}
+    prev_active = bpy.context.view_layer.objects.active
+    bpy.context.view_layer.objects.active = armature
+    bpy.ops.object.mode_set(mode='EDIT')
+    eb = arm_data.edit_bones
+    for owner in need:
+        o = eb[owner]
+        h = eb.new("%s_mesh" % owner)
+        h.head = o.head.copy()
+        h.tail = o.tail.copy()
+        h.roll = o.roll
+        h.parent = o
+        h.use_connect = False
+        holder_for[owner] = h.name  # Blender may suffix on collision
+    bpy.ops.object.mode_set(mode='OBJECT')
+    bpy.context.view_layer.objects.active = prev_active
+    bpy.context.view_layer.update()
+
+    # Bone-parent each mesh to its holder, preserving world geometry.
+    for owner, mlist in need.items():
+        hname = holder_for[owner]
+        for m in mlist:
+            world = m.matrix_world.copy()
+            m.parent = armature
+            m.parent_type = 'BONE'
+            m.parent_bone = hname
+            bpy.context.view_layer.update()
+            m.matrix_world = world
+    bpy.context.view_layer.update()
+
+    return len(holder_for)
+
+
+# ---------------------------------------------------------------------------
 # Camera aspect
 # ---------------------------------------------------------------------------
 #
@@ -475,8 +662,9 @@ def apply_pkx_metadata(armature, format='XD', model_type='POKEMON', species_id=0
     armature["dat_pkx_distortion_param"] = 0
     armature["dat_pkx_distortion_type"] = 0
 
-    # Head bone
-    head_bone_name = _find_head_bone(armature)
+    # Head bone — preserve any value already set by the caller (e.g. a
+    # deploy harness that picked the head bone via its own priority list).
+    head_bone_name = armature.get("dat_pkx_head_bone") or _find_head_bone(armature)
     armature["dat_pkx_head_bone"] = head_bone_name
 
     # --- Flags (all off) ---
@@ -508,16 +696,30 @@ def apply_pkx_metadata(armature, format='XD', model_type='POKEMON', species_id=0
         armature[prefix + "_anim_ref"] = ""
 
     # --- Body map bones ---
-    # The game uses 16 slots but only slots 0-7 are actively referenced by the
-    # XD battle code (root, head tracking, particle/effect attachment points).
-    # Slots 8-15 are unreferenced and always exported as -1 (skip).
+    # The PKX header carries 16 slots per anim entry (body_map_bones[0..15]).
+    # Disassembly + corpus survey confirms only `origin` (slot 0), `mouth`
+    # (slot 1, head-attached Model entries) and `chest` (slot 2, LensFlare
+    # anchor) are read by the waza-effect pipeline at any meaningful
+    # frequency. The other slots are authored by hand and rarely consumed,
+    # but we still expose all 16 so the user can hand-pick.
+    #
+    # Each slot is filled with a sensible default ONLY when the caller
+    # hasn't already set it. This lets a deploy harness (or the user, by
+    # hand) pick body-map bones via per-rig conventions and then re-run
+    # prep to refresh timings without losing those choices.
     bones = list(armature.data.bones)
     root_name = bones[0].name if bones else ""
-    armature["dat_pkx_body_root"] = root_name
-    armature["dat_pkx_body_head"] = head_bone_name
-    armature["dat_pkx_body_center"] = ""
-    for key in ["body_3", "neck", "head_top", "limb_a", "limb_b"]:
-        armature["dat_pkx_body_%s" % key] = ""
+    _body_defaults = {key: "" for key in _BODY_MAP_KEYS}
+    _body_defaults["origin"] = root_name
+    _body_defaults["mouth"] = head_bone_name
+    for key in _BODY_MAP_KEYS:
+        prop_key = "dat_pkx_body_%s" % key
+        # `not in armature` catches "never set"; `== ""` is a sentinel for
+        # "explicitly cleared" — both should fall back to the default.
+        existing = armature.get(prop_key)
+        if existing:
+            continue
+        armature[prop_key] = _body_defaults[key]
 
     # --- Animation entries (17 slots) ---
     anim_count = 17
@@ -1519,17 +1721,20 @@ _SUB_ANIM_TRIGGER_ITEMS = [
     ("sleep_on", "Sleep"), ("sleep_off", "Wake Up"),
     ("blink", "Blink"), ("extra", "Extra"), ("unused", "Unused"),
 ]
+# Standalone-script rule (per CLAUDE.md): no imports from the plugin
+# package. Keep the body-map list inline and mirror its content with
+# shared/helpers/pkx_header.py — both must stay in sync.
 _BODY_MAP_KEYS = [
-    "root", "head", "center", "body_3", "neck", "head_top",
-    "limb_a", "limb_b", "secondary_8", "secondary_9",
-    "secondary_10", "secondary_11", "attach_a", "attach_b",
-    "attach_c", "attach_d",
+    "origin", "mouth", "chest", "tail",
+    "eye_left", "eye_right", "hand_left", "hand_right",
+    "additional_1", "additional_2", "additional_3", "additional_4",
+    "foot_left", "foot_right", "center", "additional_5",
 ]
 _BODY_MAP_NAMES = [
-    "Root", "Head", "Center", "Body Part 3", "Neck", "Head Top",
-    "Limb Left", "Limb Right", "Secondary 8", "Secondary 9",
-    "Secondary 10", "Secondary 11", "Attachment A", "Attachment B",
-    "Attachment C", "Attachment D",
+    "Origin", "Mouth", "Chest", "Tail",
+    "Eye Left", "Eye Right", "Hand Left", "Hand Right",
+    "Additional 1", "Additional 2", "Additional 3", "Additional 4",
+    "Foot Left", "Foot Right", "Center", "Additional 5",
 ]
 _XD_POKEMON_ANIM_NAMES = [
     "Idle", "Special A", "Physical A", "Physical B", "Physical C",
@@ -1818,6 +2023,13 @@ def _register_pkx_panel():
 if __name__ == "__main__" or True:
     print("=== Prepare for Colosseum/XD Export ===")
 
+    # Force every armature back to Object mode before anything else — a rig
+    # left mid-edit makes the first operator below fail its poll, and would
+    # make bake_transforms' direct-data edits get discarded.
+    exited = exit_armature_edit_modes()
+    if exited:
+        print("  Returned %d armature(s) to Object mode" % exited)
+
     # 0. Register panel + properties if the addon isn't loaded
     _register_pkx_panel()
     _register_image_props()
@@ -1866,6 +2078,14 @@ if __name__ == "__main__" or True:
         culled_slots = _cull_unused_material_slots(arm)
         if culled_slots:
             print("  Culled %d unused material slot(s) on '%s'" % (culled_slots, arm.name))
+
+        # Separate mesh-owner joints from deformer joints (envelope
+        # invariant) so detached single-bone meshes (eyes, hair) don't
+        # float in-game. Runs after weight limiting/splitting so the final
+        # mesh set + weights are known.
+        holders = reparent_meshes_to_holder_bones(arm)
+        if holders:
+            print("  Inserted %d mesh-holder bone(s) on '%s'" % (holders, arm.name))
 
         # PKX metadata
         if arm.get("dat_pkx_format"):
