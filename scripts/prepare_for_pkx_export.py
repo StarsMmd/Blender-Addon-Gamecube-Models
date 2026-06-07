@@ -297,6 +297,16 @@ def bake_transforms():
         targets.append((arm, arm.matrix_world.copy()))
         for obj in bpy.data.objects:
             if obj.parent is arm and obj.type == 'MESH':
+                # Bone-parented meshes (a holder-bone owner, see
+                # reparent_meshes_to_holder_bones) are deliberately hung off a
+                # bone rather than the armature object. The object-parent bake
+                # below would force matrix_parent_inverse to identity and leave
+                # matrix_world at the bone's tail transform — moving the mesh
+                # and failing the identity verify. Their geometry was already
+                # baked to world space on the first prep pass while they were
+                # still object-parented, so skip them here.
+                if obj.parent_type == 'BONE':
+                    continue
                 targets.append((obj, obj.matrix_world.copy()))
 
     # ------------------------------------------------------------------
@@ -437,6 +447,146 @@ def bake_transforms():
         )
 
     return baked
+
+
+# ---------------------------------------------------------------------------
+# Mesh-owner / deformer separation (envelope invariant)
+# ---------------------------------------------------------------------------
+#
+# Game-native models keep two joint roles strictly disjoint: a *mesh-owner*
+# joint carries JOBJ_ENVELOPE_MODEL (a mesh hangs off it) and has no
+# SKELETON flag / inverse-bind matrix, while a *deformer* joint carries
+# JOBJ_SKELETON + an IBM (vertices are weighted to it) and owns no mesh.
+# Across 76 surveyed game PKX files, zero envelope weights ever target a
+# mesh-owner joint and no joint is ever both ENVELOPE_MODEL and SKELETON.
+#
+# Arbitrary rips violate this. A detached mesh weighted ~100% to one bone
+# (eyes, hair strands) is also *attached* to that bone, so the exporter's
+# refine_bone_flags strips SKELETON from it; the envelope coordinate-system
+# math then can't resolve the bone as its own deformer, walks up to the
+# nearest skeleton ancestor, and the mesh renders offset ("floating") in
+# game while round-trips and Blender previews (which use the full skinning
+# path for everyone) look fine.
+#
+# The fix mirrors the game structure: for every mesh whose export owner
+# bone is also a deformer, insert a no-weight holder bone as a child of
+# that deformer and bone-parent the mesh to the holder. Owner becomes the
+# holder (ENV_MODEL, no weights → no SKELETON/IBM); the original bone stays
+# a pure deformer. Done here in prep — not in the exporter IR — so the
+# whole describe→plan→compose pipeline (and the PKX header's name→index
+# body-map resolution) just sees the final armature with correct
+# depth-first indices, no index remapping required.
+
+
+def reparent_meshes_to_holder_bones(armature):
+    """Enforce the mesh-owner/deformer disjoint invariant for `armature`.
+
+    For each child mesh whose export owner bone (Blender bone-parent if
+    set, else the nearest common ancestor of the bones it is weighted to)
+    is itself an envelope weight target, create a coincident no-weight
+    holder bone as a child of that deformer and bone-parent the mesh to
+    it. Idempotent: on a second pass the meshes already own a (non-deformer)
+    holder, so nothing matches.
+
+    Returns the number of holder bones created.
+    """
+    import bpy
+
+    arm_data = armature.data
+    if not arm_data.bones:
+        return 0
+    bone_names = {b.name for b in arm_data.bones}
+    root_name = arm_data.bones[0].name
+    parent_of = {b.name: (b.parent.name if b.parent else None)
+                 for b in arm_data.bones}
+
+    def ancestors(name):
+        chain = []
+        while name is not None:
+            chain.append(name)
+            name = parent_of.get(name)
+        return chain
+
+    meshes = [o for o in bpy.data.objects
+              if o.parent is armature and o.type == 'MESH']
+
+    # Deformer set + per-mesh weighted bones (non-zero weights only).
+    deformers = set()
+    mesh_weighted = {}
+    for m in meshes:
+        idx_to_name = {vg.index: vg.name for vg in m.vertex_groups}
+        weighted = set()
+        for v in m.data.vertices:
+            for g in v.groups:
+                if g.weight > 0.0:
+                    nm = idx_to_name.get(g.group)
+                    if nm in bone_names:
+                        weighted.add(nm)
+        mesh_weighted[m] = weighted
+        deformers |= weighted
+
+    def owner_of(m):
+        # Explicit Blender bone-parent wins — mirrors describe's
+        # _determine_parent_bone_name.
+        if m.parent_type == 'BONE' and m.parent_bone in bone_names:
+            return m.parent_bone
+        weighted = mesh_weighted.get(m, set())
+        if not weighted:
+            return root_name
+        chains = [set(ancestors(n)) for n in weighted]
+        common = set.intersection(*chains)
+        if not common:
+            return root_name
+        # Nearest common ancestor = deepest = first match walking up from
+        # any one weighted bone.
+        for n in ancestors(next(iter(weighted))):
+            if n in common:
+                return n
+        return root_name
+
+    need = {}
+    for m in meshes:
+        owner = owner_of(m)
+        if owner in deformers:
+            need.setdefault(owner, []).append(m)
+
+    if not need:
+        return 0
+
+    # Create holder bones (edit mode), coincident with their deformer so
+    # the rest transform matches and the importer-validated coordinate path
+    # applies.
+    holder_for = {}
+    prev_active = bpy.context.view_layer.objects.active
+    bpy.context.view_layer.objects.active = armature
+    bpy.ops.object.mode_set(mode='EDIT')
+    eb = arm_data.edit_bones
+    for owner in need:
+        o = eb[owner]
+        h = eb.new("%s_mesh" % owner)
+        h.head = o.head.copy()
+        h.tail = o.tail.copy()
+        h.roll = o.roll
+        h.parent = o
+        h.use_connect = False
+        holder_for[owner] = h.name  # Blender may suffix on collision
+    bpy.ops.object.mode_set(mode='OBJECT')
+    bpy.context.view_layer.objects.active = prev_active
+    bpy.context.view_layer.update()
+
+    # Bone-parent each mesh to its holder, preserving world geometry.
+    for owner, mlist in need.items():
+        hname = holder_for[owner]
+        for m in mlist:
+            world = m.matrix_world.copy()
+            m.parent = armature
+            m.parent_type = 'BONE'
+            m.parent_bone = hname
+            bpy.context.view_layer.update()
+            m.matrix_world = world
+    bpy.context.view_layer.update()
+
+    return len(holder_for)
 
 
 # ---------------------------------------------------------------------------
@@ -1929,6 +2079,14 @@ if __name__ == "__main__" or True:
         culled_slots = _cull_unused_material_slots(arm)
         if culled_slots:
             print("  Culled %d unused material slot(s) on '%s'" % (culled_slots, arm.name))
+
+        # Separate mesh-owner joints from deformer joints (envelope
+        # invariant) so detached single-bone meshes (eyes, hair) don't
+        # float in-game. Runs after weight limiting/splitting so the final
+        # mesh set + weights are known.
+        holders = reparent_meshes_to_holder_bones(arm)
+        if holders:
+            print("  Inserted %d mesh-holder bone(s) on '%s'" % (holders, arm.name))
 
         # PKX metadata
         if arm.get("dat_pkx_format"):

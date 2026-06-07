@@ -107,6 +107,25 @@ Round-trip game models hide this because their IBM/SRT bytes were authored by to
 
 The fix is local to `_undeform_vertices` — detect `len(weight_list) == 1 and weight ≈ 1.0 and coord is None` and skip the IBM term for that envelope-combo. No changes to the file format or to the runtime, and round-trip tests are untouched because round-tripped envelopes have always satisfied the runtime's expectation by construction.
 
+### Mesh-owner / deformer disjoint invariant
+
+Game-native models keep two joint roles strictly disjoint:
+
+- a **mesh-owner** joint carries `JOBJ_ENVELOPE_MODEL` (a DObject hangs off it) and has **no** `JOBJ_SKELETON` flag and **no** inverse-bind matrix;
+- a **deformer** joint carries `JOBJ_SKELETON` + an IBM (envelope weights target it) and owns **no** mesh.
+
+Survey of 76 game-native PKX files: **0** weight a vertex to a mesh-owner joint, and **0** set `ENV_MODEL`+`SKELETON` on the same joint. The roles never overlap.
+
+The export pipeline enforces the no-overlap-of-*flags* half itself — `refine_bone_flags` (`exporter/phases/plan/helpers/scene.py`) strips `JOBJ_SKELETON` from any bone that owns a mesh. But it can't enforce the no-*weighting*-to-an-owner half, because that's a question of scene topology, not flags. Arbitrary rips routinely violate it: a detached mesh weighted ~100% to a single bone (eyes, hair strands) is also *attached* to that bone, and a body mesh is typically owned by `hips` while also being weighted to it.
+
+The failure mode is geometric. The envelope coordinate system (`_envelope_coord_system`, mirrored in describe and compose) resolves a mesh's coord from its owner bone by walking up to the nearest `JOBJ_SKELETON` ancestor. When the owner is *itself* the deformer but has had `SKELETON` stripped (because it owns the mesh), the walk overshoots to an ancestor and takes the third branch `(world[ancestor] @ ibm[owner]).inv @ world[owner]`, producing a coord that disagrees with what the runtime's `_HSD_mkEnvelopeModelNodeMtx` computes. The vertices render offset — visibly "floating" for a whole detached eye mesh (~9.7-unit offset measured on one rig), and as subtler whole-body distortion when the body's owner is a non-root deformer. It is invisible on round-trips (describe and compose mirror each other) and in Blender previews (full skin path for everyone), so it only surfaces in-game.
+
+**Fix (prep-script, not in the IR):** `reparent_meshes_to_holder_bones` in `scripts/prepare_for_pkx_export.py`. For every mesh whose export owner bone (Blender bone-parent if set, else the nearest common ancestor of its weighted bones) is itself a deformer, it inserts a coincident no-weight **holder bone** as a child of that deformer and bone-parents the mesh to the holder. The exporter then sees owner = holder (`ENV_MODEL`, non-deformer → no `SKELETON`/IBM) and weights = the original deformer (`SKELETON`) — disjoint, exactly mirroring the structure the importer already round-trips cleanly.
+
+Done in prep rather than as an IR transform deliberately: native `mesh.parent_bone` is already honored by describe (`_determine_parent_bone_name`) → plan, and `describe_armature` emits bones depth-first, so a holder added in Blender lands in the correct serialized (DFS) position and the PKX header's name→index body-map (resolved in describe from the final armature) stays correct — **no bone-index remapping, no header sync, no pipeline change**. `bake_transforms` was taught to skip bone-parented meshes (their geometry is baked to world space on the first pass while still object-parented), keeping the deploy's two-pass prep idempotent.
+
+In-game confirmation (2026-06-07): resolved both the floating-eye issue and general body jankiness across six arbitrary PBR rips. An earlier attempt, `SkinType.SINGLE_BONE` promotion (commit 57bf5b9), was reverted — it sidestepped the envelope path for single-bone meshes but placed them wrong in a different way and didn't address bodies. Remaining: mirror the prep step into `scripts/prepare_for_dat_export.py` for `.dat` output.
+
 ## Animation pipeline
 
 ### Rotation format
