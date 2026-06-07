@@ -512,8 +512,9 @@ def apply_pkx_metadata(armature, format='XD', model_type='POKEMON', species_id=0
     armature["dat_pkx_distortion_param"] = 0
     armature["dat_pkx_distortion_type"] = 0
 
-    # Head bone
-    head_bone_name = _find_head_bone(armature)
+    # Head bone — preserve any value already set by the caller (e.g. a
+    # deploy harness that picked the head bone via its own priority list).
+    head_bone_name = armature.get("dat_pkx_head_bone") or _find_head_bone(armature)
     armature["dat_pkx_head_bone"] = head_bone_name
 
     # --- Flags (all off) ---
@@ -548,13 +549,31 @@ def apply_pkx_metadata(armature, format='XD', model_type='POKEMON', species_id=0
     # The game uses 16 slots but only slots 0-7 are actively referenced by the
     # XD battle code (root, head tracking, particle/effect attachment points).
     # Slots 8-15 are unreferenced and always exported as -1 (skip).
+    #
+    # Each slot is filled with a sensible default ONLY when the caller hasn't
+    # already set it. This lets a deploy harness (or the user, by hand) pick
+    # body-map bones via per-rig conventions and then re-run prep to refresh
+    # timings without losing those choices.
     bones = list(armature.data.bones)
     root_name = bones[0].name if bones else ""
-    armature["dat_pkx_body_root"] = root_name
-    armature["dat_pkx_body_head"] = head_bone_name
-    armature["dat_pkx_body_center"] = ""
-    for key in ["body_3", "neck", "head_top", "limb_a", "limb_b"]:
-        armature["dat_pkx_body_%s" % key] = ""
+    _body_defaults = {
+        "root": root_name,
+        "head": head_bone_name,
+        "center": "",
+        "body_3": "",
+        "neck": "",
+        "head_top": "",
+        "limb_a": "",
+        "limb_b": "",
+    }
+    for key, default in _body_defaults.items():
+        prop_key = "dat_pkx_body_%s" % key
+        # `not in armature` catches "never set"; `== ""` is a sentinel for
+        # "explicitly cleared" — both should fall back to the default.
+        existing = armature.get(prop_key)
+        if existing:
+            continue
+        armature[prop_key] = default
 
     # --- Animation entries (17 slots) ---
     anim_count = 17
