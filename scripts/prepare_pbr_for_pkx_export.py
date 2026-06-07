@@ -1,42 +1,41 @@
-"""Standalone Blender script: Prepare a scene for Colosseum/XD export.
+"""Prepare a PBR-imported rig for XD .pkx export — standalone one-shot.
 
-Run this from Blender's Scripting panel (Text Editor > Run Script) before
-exporting. It ensures all objects in the scene have the custom properties
-the exporter expects.
+PBR-rig-specific companion to ``prepare_for_pkx_export.py``. It preps a
+freshly-imported PBR (Pokémon Battle Revolution) model for ``.pkx`` export
+in a SINGLE run with no manual intervention, provided the rig follows PBR's
+bone/action naming conventions.
 
-The script operates on all objects in the scene — no selection required:
-  1. Bakes loc/rot/scale on all armatures and their child meshes so
-     `matrix_world` is identity. The exporter rejects unbaked transforms
-     because the SRT decomposition of bone matrices loses any shear that
-     a non-uniform armature scale combined with edit-bone rotation would
-     introduce, drifting bones away from mesh vertices the further you
-     walk down the bone chain.
-  2. Stamps a default `dat_camera_aspect` on any scene camera missing one
-     (camera creation lives in scripts/add_debug_camera.py)
-  3. Limits vertex bone weights to 3 per vertex (GameCube constraint)
-  4. Splits oversized meshes by body region if >25 estimated PObjects
-  5. Applies default PKX metadata to all armatures that don't have it
-  6. Auto-derives animation timing from action durations
-  7. Downscales textures larger than 512×512 proportionally, then
-     auto-selects GX texture formats for all armature textures
-  8. Inserts shiny filter nodes into all materials (identity defaults, toggle off)
-  9. Authors two helper actions per armature for in-game smoke testing:
-       - `auto_animation_dummy` — two-frame identity pose (placeholder for
-         empty slots; the game requires at least two keyframes per channel)
-       - `auto_animation_spin` — 60-frame full revolution around the rig's
-         vertical axis on the root bone, with frame 0 == frame 60 (mod 2π)
-         so the loop closes cleanly
-     These are not assigned to any PKX slot — pick them by hand in the PKX
-     Metadata panel only when smoke-testing a model. They should be ignored
-     for normal authoring.
- 10. Creates standard battle lighting (1 ambient + 3 directional)
+This script is FULLY SELF-CONTAINED — it inlines the generic prep pipeline
+(bake / mesh-holder bones / metadata / timing / textures / shiny / lights)
+rather than importing or exec()-ing ``prepare_for_pkx_export.py``, matching
+the convention that every script in this folder runs standalone. Keep the
+two in sync if the shared steps change.
 
-After running, the scene can be exported via File > Export > Gamecube model (.dat).
+What it does, per armature, in order:
 
-Requires the DAT plugin addon to be enabled (for registered shiny properties).
+  1. Scale the armature to 10% of import size (PBR rigs import ~10x too
+     large for XD). One-time — guarded by a marker so a re-run is a no-op
+     rather than scaling to 1%.
+  2. Bake transforms, insert mesh-holder bones, apply default PKX metadata.
+  3. Pattern-match the PKX body-map bone slots (``dat_pkx_body_*``) from the
+     rig's bone names via the priority lists below.
+  4. Pattern-match the 17 animation slots (``dat_pkx_anim_NN_sub_0_anim``)
+     from the rig's action names.
+  5. Derive animation timing from the assigned slot actions, then finish the
+     generic prep (textures, shiny filter, test anims, battle lights).
 
-This script is fully standalone — no imports from the plugin codebase.
+Because the body-map + anim-slot matching happens BEFORE ``derive_timing``
+in the per-armature loop, one pass is enough — there's no second prep run
+to refresh timings after assigning slots.
+
+The body-map and animation-slot priority lists below are PBR-rig
+conventions — deliberately not baked into the import/export pipeline (the
+plugin stays rig-agnostic). Edit them to match a different rig family, or
+copy this file as a template.
+
+Run from Blender's Scripting panel, or exec() it from a headless harness.
 """
+
 import bpy
 import math
 
@@ -579,22 +578,22 @@ def reparent_meshes_to_holder_bones(armature):
     # bone-parented objects leaves a residual that exceeds the 1e-5
     # export validator tolerance on some rigs. The robust approach:
     #
-    #   1. Apply the world transform to the mesh data while the mesh is
-    #      object-parented (matrix_world is whatever it is — usually
-    #      identity after the prior bake — and the data.transform() call
-    #      bakes that into the vertices).
-    #   2. Reset matrix_basis/matrix_parent_inverse so matrix_world is
-    #      cleanly identity in object-parent space.
+    #   1. Apply the current world transform to the mesh data while the
+    #      mesh is still object-parented (matrix_world is typically
+    #      identity after the prior bake — data.transform() bakes any
+    #      leftover into the vertices).
+    #   2. Clear object-level transforms so matrix_world is cleanly
+    #      identity under object parenting.
     #   3. Switch parent_type to 'BONE' and pin matrix_parent_inverse to
     #      the inverse of the bone's effective rest matrix (head matrix
-    #      composed with the tail offset). That makes Blender's chain
-    #      evaluation produce matrix_world = identity exactly — no
-    #      iterative solve, no float-precision drift.
+    #      composed with the tail offset). Blender's chain evaluation
+    #      then becomes
+    #          parent_xform @ parent_xform.inverted() @ I @ I = I
+    #      with no iterative solve and no float drift.
     #
-    # This relies on PBR-imported meshes potentially sharing Mesh data
-    # blocks (`skin_2800` + three duplicates pointing at one Mesh): copy
-    # the data to single-user before transforming so the bake doesn't
-    # leak into siblings.
+    # PBR-imported meshes often share Mesh datablocks across object
+    # instances (one `skin_2800` data with three duplicates); we copy to
+    # single-user before transforming so the bake doesn't leak.
     from mathutils import Matrix as _Matrix
     _identity = _Matrix.Identity(4)
     for owner, mlist in need.items():
@@ -609,21 +608,15 @@ def reparent_meshes_to_holder_bones(armature):
                          @ tail_offset).inverted()
 
         for m in mlist:
-            # 1. Bake current world (typically identity) into the mesh data.
             world = m.matrix_world.copy()
             if not _is_identity_matrix(world):
                 if m.data is not None:
                     if m.data.users > 1:
                         m.data = m.data.copy()
                     m.data.transform(world)
-            # 2. Cleanly clear object-level transforms.
             m.matrix_basis = _identity
             if m.parent is not None:
                 m.matrix_parent_inverse = _identity
-            # 3. Switch to bone parenting and pin matrix_parent_inverse so
-            #    the bone-tail offset cancels out, leaving matrix_world at
-            #    identity without depending on Blender's matrix_world
-            #    setter.
             m.parent = armature
             m.parent_type = 'BONE'
             m.parent_bone = hname
@@ -773,27 +766,30 @@ def apply_pkx_metadata(armature, format='XD', model_type='POKEMON', species_id=0
     # Slot types: 0=idle(loop), 8=damage(hit), 9=damageB(compound), 10=faint(hit), rest=action
     _SLOT_TYPES = {0: "loop", 8: "hit_reaction", 9: "compound", 10: "hit_reaction"}
 
-    # Leave every slot's action assignment empty by default. The author
-    # picks the action per slot via the PKX Metadata panel; only then
-    # does the next prep run derive timing. Auto-assigning a default
-    # action here is a footgun: derive_timing would lock in timings
-    # against the default's duration, and `set_if_zero` would then
-    # protect those stale timings on every subsequent run.
+    # Point slots 0-10 at a single default action so core states (idle,
+    # physical/special attacks, damage, faint) resolve to the same DAT
+    # animation. With the exporter's slot-ordered enumeration this action
+    # becomes DAT[0] and every assigned slot's anim_index lands at 0 —
+    # a sane baseline for arbitrary models that don't yet have per-slot
+    # actions authored. Slots 11-16 (Extra 1-4, Special C, Take Flight)
+    # are per-species and often unused; leave them unassigned so the
+    # author has to opt in explicitly.
+    default_action = _first_bone_action_name(armature)
+
     for i in range(anim_count):
         prefix = "dat_pkx_anim_%02d" % i
         anim_type = _SLOT_TYPES.get(i, "action")
+        slot_action = default_action if i <= 10 else ""
 
         armature[prefix + "_type"] = anim_type
-        armature[prefix + "_sub_0_anim"] = ""
+        armature[prefix + "_sub_0_anim"] = slot_action
         if anim_type == "compound":
-            armature[prefix + "_sub_1_anim"] = ""
+            armature[prefix + "_sub_1_anim"] = slot_action
         armature[prefix + "_sub_count"] = 2 if anim_type == "compound" else 1
         armature[prefix + "_damage_flags"] = 0
         armature[prefix + "_terminator"] = 3 if is_xd else 1
 
-        # Timings start at 0; derive_timing only runs once the panel has
-        # existed for at least one prep run AND the author has picked an
-        # action for the slot.
+        # Timing defaults (will be recalculated by derive_timing below)
         armature[prefix + "_timing_1"] = 0.0
         armature[prefix + "_timing_2"] = 0.0
         armature[prefix + "_timing_3"] = 0.0
@@ -806,36 +802,19 @@ def apply_pkx_metadata(armature, format='XD', model_type='POKEMON', species_id=0
 
 
 def _get_action_duration(action_name):
-    """Get an action's duration in seconds (frame span / 30 fps).
+    """Get an action's duration in seconds (frame count / 30 fps).
 
     HSD AOBJs advance at 30 animation-units/second on XD (verified by
     matching `AOBJ.end_frame / 30` against every game-native PKX header
-    `timing_1` value).
-
-    The exporter normalises every action to a zero-based frame range and
-    bakes `max_frame - min_frame + 1` frames (see the exporter's
-    `_bone_fcurves_frame_range`). The derived duration must span that same
-    range, so we subtract the start frame. Using `max_frame + 1` alone
-    assumes a frame-0 start and over-counts by the start frame — an action
-    authored on Blender's default frame-1 start derives one frame too long,
-    so the in-game timing outlasts the baked animation. For an importer
-    round-trip the start frame is 0, so the result is unchanged.
-
-    Only pose-bone fcurves define the animation length; object- and
-    material-level fcurves can span a different range and are ignored,
-    mirroring the exporter.
+    `timing_1` value). The importer samples `range(end_frame)` so the
+    last keyframe lands at `end_frame - 1`; we add 1 back so the derived
+    duration equals the stored timing exactly.
     """
     action = bpy.data.actions.get(action_name)
     if not action or not action.fcurves:
         return 0.0
-    bone_frames = [kp.co[0] for fc in action.fcurves
-                   if fc.data_path.startswith('pose.bones[')
-                   for kp in fc.keyframe_points]
-    frames = bone_frames or [kp.co[0] for fc in action.fcurves
-                             for kp in fc.keyframe_points]
-    if not frames:
-        return 0.0
-    return (max(frames) - min(frames) + 1) / 30.0
+    max_frame = max(kp.co[0] for fc in action.fcurves for kp in fc.keyframe_points)
+    return (max_frame + 1) / 30.0
 
 
 def derive_timing(armature):
@@ -2089,30 +2068,189 @@ def _register_pkx_panel():
 # Main
 # ---------------------------------------------------------------------------
 
-if __name__ == "__main__" or True:
-    print("=== Prepare for Colosseum/XD Export ===")
 
-    # Force every armature back to Object mode before anything else — a rig
-    # left mid-edit makes the first operator below fail its poll, and would
-    # make bake_transforms' direct-data edits get discarded.
+# ===========================================================================
+# PBR-specific configuration and helpers
+# ===========================================================================
+
+SCALE_FACTOR = 0.1
+_SCALED_MARKER = "dat_pbr_prep_scaled"
+
+# Body-map slot key (suffix of ``dat_pkx_body_*``) -> ordered bone-name
+# candidates. Case-insensitive; first existing bone wins. The 16 keys match
+# the canonical list in shared/helpers/pkx_header.py.
+BODY_MAP_PRIORITY = {
+    "origin":       ["origin", "center"],
+    "mouth":        ["mouth", "jaw", "head", "neck", "chest", "origin"],
+    "chest":        ["chest", "spine", "center", "hips", "origin"],
+    # Tip-first so Iron-Tail-style effects emit from the visible tip.
+    "tail":         ["tail", "tail9", "tail8", "tail7", "tail6", "tail5",
+                     "tail4", "tail3", "tail2", "tail1", "origin"],
+    "eye_left":     ["eye_left", "left_eye", "head", "origin"],
+    "eye_right":    ["eye_right", "right_eye", "head", "origin"],
+    # Hands fall through the arm tree, then mirror into the leg tree
+    # (paw/foreleg quadrupeds reuse leg bones), then origin.
+    "hand_left":    ["left_hand", "left_fore", "left_arm",
+                     "left_foot", "left_calf", "left_leg", "origin"],
+    "hand_right":   ["right_hand", "right_fore", "right_arm",
+                     "right_foot", "right_calf", "right_leg", "origin"],
+    "additional_1": ["origin"],
+    "additional_2": ["origin"],
+    "additional_3": ["origin"],
+    "additional_4": ["origin"],
+    # Feet are the leg-first inverse of hands.
+    "foot_left":    ["left_foot", "left_calf", "left_leg",
+                     "left_hand", "left_fore", "left_arm", "origin"],
+    "foot_right":   ["right_foot", "right_calf", "right_leg",
+                     "right_hand", "right_fore", "right_arm", "origin"],
+    "center":       ["center", "hips", "spine", "chest", "origin"],
+    "additional_5": ["origin"],
+}
+
+# Slots the waza corpus actively reads — warn if they only hit ``origin``.
+BODY_MAP_ORIGIN_WARN = {"mouth", "chest"}
+
+# Action "kinds" — ordered action-name candidates per slot.
+_IDLE     = ["wait", "wait_a"]
+_SPECIAL  = ["kime", "kime_a", "punch", "kick", "wait", "wait_a"]
+_PHYSICAL = ["punch", "punch_a", "kick", "kick_a", "tackle", "tackle_a",
+             "kime", "kime_a", "wait", "wait_a"]
+_DAMAGE   = ["damage", "damage_a", "wait", "wait_a"]
+_FAINT    = ["down", "down_a", "damage", "damage_a", "wait", "wait_a"]
+
+# 17 anim slots. None = leave whatever the metadata default set (opt-out).
+#   0 Idle  1 SpecialA  2-5 PhysicalA-D  6 SpecialB  7 PhysicalE
+#   8-9 Damage/DamageB  10 Faint  11 Extra1  12 SpecialC  13-16 Extra/Flight
+ANIM_SLOT_PRIORITY = [
+    _IDLE, _SPECIAL, _PHYSICAL, _PHYSICAL, _PHYSICAL, _PHYSICAL, _SPECIAL,
+    _PHYSICAL, _DAMAGE, _DAMAGE, _FAINT, None, _SPECIAL, None, None, None, None,
+]
+# Slot 0 (Idle) bottoms out at wait/wait_a — a wait-only match there is
+# expected, not a warning.
+ANIM_SLOT_ROOT_INDEX = 0
+
+
+def _pbr_log(msg):
+    print("[pbr-prep] %s" % msg)
+
+
+def _pbr_lower_bone_names(armature):
+    return {b.name.lower(): b.name for b in armature.data.bones}
+
+
+def _pbr_lower_action_names():
+    return {a.name.lower(): a.name for a in bpy.data.actions}
+
+
+def scale_armature(armature):
+    """Scale ``armature`` to SCALE_FACTOR of import size, once.
+
+    bake_transforms (called later) bakes this into bone + mesh data.
+    Guarded by a marker custom property so a re-run doesn't compound it.
+    Returns True if it scaled, False if already marked.
+    """
+    if armature.get(_SCALED_MARKER):
+        _pbr_log("scale: '%s' already scaled (marker present) — skipping"
+                 % armature.name)
+        return False
+    armature.scale = (SCALE_FACTOR, SCALE_FACTOR, SCALE_FACTOR)
+    armature[_SCALED_MARKER] = True
+    # Flush so matrix_world reflects the new scale before bake_transforms
+    # snapshots it (matrix_world is a cached property).
+    bpy.context.view_layer.update()
+    _pbr_log("scale: '%s' -> %d%%" % (armature.name, int(SCALE_FACTOR * 100)))
+    return True
+
+
+def assign_body_map(armature):
+    """Resolve each body-map slot to a bone via the priority lists."""
+    _pbr_log("assign_body_map on '%s'" % armature.name)
+    bones = _pbr_lower_bone_names(armature)
+    for slot, priority in BODY_MAP_PRIORITY.items():
+        chosen = None
+        chosen_kind = None
+        for option in priority:
+            canonical = bones.get(option.lower())
+            if canonical is not None:
+                chosen = canonical
+                chosen_kind = option.lower()
+                break
+        prop_key = "dat_pkx_body_%s" % slot
+        if chosen is None:
+            _pbr_log("  WARNING body[%s]: no bone matched %r — leaving empty"
+                     % (slot, priority))
+            armature[prop_key] = ""
+            continue
+        armature[prop_key] = chosen
+        _pbr_log("  body[%-12s] -> %s" % (slot, chosen))
+        if chosen_kind == "origin" and slot in BODY_MAP_ORIGIN_WARN:
+            _pbr_log("  WARNING body[%s] resolved only to 'origin' "
+                     "(no preferred bone present)" % slot)
+    # PKX header head bone (drives in-battle head tracking + camera):
+    # default to the mouth slot's bone, the closest authored head bone.
+    mouth_val = armature.get("dat_pkx_body_mouth", "")
+    if mouth_val:
+        armature["dat_pkx_head_bone"] = mouth_val
+
+
+def assign_anim_slots(armature):
+    """Assign each anim slot's first matching action to sub_0_anim."""
+    _pbr_log("assign_anim_slots on '%s'" % armature.name)
+    actions = _pbr_lower_action_names()
+    anim_count = armature.get("dat_pkx_anim_count", 17)
+    for slot_idx in range(anim_count):
+        priority = (ANIM_SLOT_PRIORITY[slot_idx]
+                    if slot_idx < len(ANIM_SLOT_PRIORITY) else None)
+        if priority is None:
+            continue  # opt-out: keep whatever the metadata default set
+        prefix = "dat_pkx_anim_%02d" % slot_idx
+        chosen = None
+        chosen_kind = None
+        for option in priority:
+            canonical = actions.get(option.lower())
+            if canonical is not None:
+                chosen = canonical
+                chosen_kind = option.lower()
+                break
+        if chosen is None:
+            _pbr_log("  WARNING anim[%02d]: no action matched %r — leaving empty"
+                     % (slot_idx, priority))
+            armature[prefix + "_sub_0_anim"] = ""
+            continue
+        armature[prefix + "_sub_0_anim"] = chosen
+        _pbr_log("  anim[%02d] -> %s" % (slot_idx, chosen))
+        if (slot_idx != ANIM_SLOT_ROOT_INDEX
+                and chosen_kind in ("wait", "wait_a")):
+            _pbr_log("  WARNING anim[%02d] resolved only to '%s' "
+                     "(rig missing the action kind this slot expects)"
+                     % (slot_idx, chosen_kind))
+
+
+# ===========================================================================
+# Main — PBR one-shot orchestration
+# ===========================================================================
+
+if __name__ == "__main__" or True:
+    print("=== Prepare PBR rig for XD export (one-shot) ===")
+
+    # Force every armature back to Object mode before anything else.
     exited = exit_armature_edit_modes()
     if exited:
         print("  Returned %d armature(s) to Object mode" % exited)
 
-    # 0. Register panel + properties if the addon isn't loaded
+    # 0. Register panel + properties if the addon isn't loaded.
     _register_pkx_panel()
     _register_image_props()
 
-    # 1. Bake loc/rot/scale on armatures + child meshes. Must run before
-    #    anything else so subsequent prep + the exporter itself see clean
-    #    identity matrix_world on every relevant object.
+    # 1. Scale every armature to 10% (once) BEFORE bake_transforms bakes it
+    #    into bone + mesh data.
+    for arm in (o for o in bpy.data.objects if o.type == 'ARMATURE'):
+        scale_armature(arm)
+
+    # 2. Bake loc/rot/scale on armatures + child meshes.
     baked = bake_transforms()
     if baked:
         print("  Baked transforms on %d object(s) [direct data mutation]" % baked)
-        # Sanity-print a sample bone + vertex magnitude so the user can
-        # eyeball whether bones and meshes ended up at the same scale.
-        # If they're orders of magnitude apart, the loaded script version
-        # is wrong (Text Editor caches the buffer; click Text > Reload).
         for arm in (o for o in bpy.data.objects if o.type == 'ARMATURE'):
             child = next((o for o in bpy.data.objects
                           if o.parent is arm and o.type == 'MESH' and o.data and o.data.vertices),
@@ -2124,86 +2262,71 @@ if __name__ == "__main__" or True:
             print("    %s: longest bone = %.3f, max mesh vertex = %.3f"
                   % (arm.name, longest, v))
 
-    # 2. Camera aspect — stamp default dat_camera_aspect on any camera
-    # missing it. Camera creation lives in scripts/add_debug_camera.py.
+    # 3. Camera aspect.
     normalize_camera_aspect()
 
-    # 2-4. Per-armature steps: PKX metadata, timing, texture formats
     armatures = [obj for obj in bpy.data.objects if obj.type == 'ARMATURE']
     if not armatures:
         print("  No armatures in scene (PKX/timing/texture steps skipped)")
 
     for arm in armatures:
-        # Mesh weight limiting and splitting (before other steps)
+        # Mesh weight limiting and splitting.
         limited, split = prepare_mesh_weights(arm)
         if limited:
             print("  Limited %d vertex weights on '%s'" % (limited, arm.name))
         if split:
             print("  Split meshes into %d regions on '%s'" % (split, arm.name))
 
-        # Strip material slots that no polygon references — split-style ops
-        # leave the full slot list copied onto each new mesh, and the unused
-        # entries still pull their materials into the EEVEE compile graph.
+        # Strip unused material slots.
         culled_slots = _cull_unused_material_slots(arm)
         if culled_slots:
             print("  Culled %d unused material slot(s) on '%s'" % (culled_slots, arm.name))
 
-        # Separate mesh-owner joints from deformer joints (envelope
-        # invariant) so detached single-bone meshes (eyes, hair) don't
-        # float in-game. Runs after weight limiting/splitting so the final
-        # mesh set + weights are known.
+        # Mesh-owner / deformer separation (envelope invariant).
         holders = reparent_meshes_to_holder_bones(arm)
         if holders:
             print("  Inserted %d mesh-holder bone(s) on '%s'" % (holders, arm.name))
 
-        # PKX metadata
-        panel_existed_before = bool(arm.get("dat_pkx_format"))
-        if panel_existed_before:
+        # PKX metadata (defaults; preserves any caller-set values).
+        if arm.get("dat_pkx_format"):
             print("  Armature '%s' already has PKX metadata (skipped)" % arm.name)
         else:
             apply_pkx_metadata(arm, format='XD', model_type='POKEMON', species_id=0)
 
-        # Derive animation timing from action durations — only on runs
-        # where the panel existed before this run. On the very first
-        # prep run there are no author-picked slot actions yet, so
-        # deriving would lock timings against the empty-string slot
-        # (no-op) or — historically — against a default fill that no
-        # longer happens. Leave timings at 0 until the author picks a
-        # slot action and re-runs prep.
-        if panel_existed_before:
-            timing_count = derive_timing(arm)
-            if timing_count:
-                print("  Derived timing for %d animation slot(s) on '%s'"
-                      % (timing_count, arm.name))
+        # PBR body-map + anim-slot matching — BEFORE derive_timing so the
+        # timings are derived from the assigned slot actions in one pass.
+        assign_body_map(arm)
+        assign_anim_slots(arm)
 
-        # Texture sizes (downscale >512 before format analysis)
+        # Derive animation timing from the assigned slot actions.
+        timing_count = derive_timing(arm)
+        if timing_count:
+            print("  Derived timing for %d animation slot(s) on '%s'" % (timing_count, arm.name))
+
+        # Texture sizes, then formats.
         size_count = prepare_texture_sizes(arm)
         if size_count:
             print("  Downscaled %d texture(s) on '%s'" % (size_count, arm.name))
-
-        # Texture formats
         fmt_count = prepare_texture_formats(arm)
         if fmt_count:
             print("  Set GX format on %d texture(s) on '%s'" % (fmt_count, arm.name))
 
-        # Shiny filter
+        # Shiny filter.
         shiny_count = prepare_shiny_filter(arm)
         if shiny_count:
             print("  Shiny filter added to %d material(s) on '%s'" % (shiny_count, arm.name))
 
-        # Test animations (auto_animation_dummy + auto_animation_spin) —
-        # smoke-test placeholders, not auto-assigned to any PKX slot.
+        # Smoke-test placeholder actions.
         test_anim_count = prepare_test_animations(arm)
         if test_anim_count:
             print("  Created %d test animation(s) for '%s'" % (test_anim_count, arm.name))
 
-    # 6. Scene lights (ambient + 3 directional)
+    # Scene lights (ambient + 3 directional).
     light_count = prepare_lights()
     if light_count:
         print("  Added %d battle light(s)" % light_count)
 
-    # 7. Leave the first armature selected + active so the PKX Metadata
-    # panel is immediately visible in the Properties editor.
+    # Leave the first armature selected + active.
     _first_arm = next((o for o in bpy.data.objects if o.type == 'ARMATURE'), None)
     if _first_arm is not None:
         try:
@@ -2215,4 +2338,4 @@ if __name__ == "__main__" or True:
         bpy.context.view_layer.objects.active = _first_arm
         print("  Selected armature '%s'" % _first_arm.name)
 
-    print("=== Done ===")
+    print("=== PBR prep complete ===")

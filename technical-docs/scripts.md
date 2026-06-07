@@ -120,6 +120,33 @@ See [Exporter Setup](exporter_setup.md) for a full reference of every property, 
 
 ---
 
+## prepare_pbr_for_pkx_export.py
+
+**Purpose:** One-shot prep for a freshly-imported **PBR** (Pokémon Battle Revolution) rig targeting `.pkx`. It runs the same pipeline as the generic [`prepare_for_pkx_export.py`](#prepare_for_pkx_exportpy) plus the PBR-rig-specific steps the deploy harness used to apply manually across two prep passes — scaling, body-map matching, and animation-slot matching — so a conforming rig preps correctly in a **single run** with no hand-tuning.
+
+> **Use this only for PBR rips.** The body-map and animation-slot priority lists encode PBR's bone/action naming conventions (`origin`, `mouth`, `chest`, `head`, `left_hand`, `wait`, `kime`, `punch`, `damage`, `down`, …). For any other rig family use the generic [`prepare_for_pkx_export.py`](#prepare_for_pkx_exportpy) and assign the body map / anim slots by hand in the PKX Metadata panel, or copy this file as a template and edit the priority lists at the top.
+
+> **Self-contained.** Like the other scripts here it inlines the shared prep steps rather than importing them — it does not depend on `prepare_for_pkx_export.py`. If the shared steps (bake, holder bones, metadata, timing, textures, shiny, lights) change, update both files.
+
+**Usage:**
+1. Import the PBR `.sdr` (or open a scene containing the imported rig)
+2. Open the Scripting workspace and open `scripts/prepare_pbr_for_pkx_export.py`
+3. Click **Run Script**
+
+**What it does**, in order:
+1. **Scales every armature to 10%** of import size (PBR rigs import ~10× too large for XD), before baking. One-time — guarded by a `dat_pbr_prep_scaled` marker so re-runs don't compound the scale
+2. **Bakes transforms** and **inserts mesh-holder bones**, then per armature: limits/quantises weights, culls unused material slots, applies **default PKX metadata**
+3. **Pattern-matches the body-map bone slots** (`dat_pkx_body_*`) from the rig's bone names via the priority lists, and sets `dat_pkx_head_bone` to the resolved `mouth` bone
+4. **Pattern-matches the 17 animation slots** (`dat_pkx_anim_NN_sub_0_anim`) from the rig's action names by slot kind (Idle / Special / Physical / Damage / Faint)
+5. **Derives animation timing** from the just-assigned slot actions, then finishes the per-armature prep: textures, formats, shiny filter, smoke-test actions
+6. **Adds the four-light battle preview** and leaves the first armature selected
+
+**Why one run is enough:** the generic prep's `apply_pkx_metadata` overwrites the anim slots with defaults and `derive_timing` runs off those defaults — so the deploy harness historically ran the generic prep twice (defaults, then again after assigning slots). This script does the body-map + anim-slot matching **inside the per-armature loop, between `apply_pkx_metadata` and `derive_timing`**, so timings are derived from the assigned actions on the first and only pass.
+
+**Warnings it emits:** a body-map slot that the corpus actively reads (`mouth`, `chest`) falling back to `origin`; a non-idle anim slot that resolves only to `wait`/`wait_a` (the rig is missing the action kind that slot expects). These are advisory — the export still succeeds.
+
+---
+
 ## set_texture_formats.py
 
 **Purpose:** Set the GX texture format on all textures of the selected armature. The exporter uses this property to determine which format to encode each texture in.

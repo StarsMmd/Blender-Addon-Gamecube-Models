@@ -82,13 +82,22 @@ def describe_bone_animations(armature, bones, logger=StubLogger(), use_bezier=Tr
     bone_data = _build_bone_data(bones)
     bone_name_to_index = {b.name: i for i, b in enumerate(bones)}
 
+    # Each pose bone exposes exactly one *active* rotation channel, chosen by
+    # its rotation_mode. An Action can still carry stale fcurves for the other
+    # channel (e.g. flat identity rotation_quaternion curves left behind after
+    # a bone is switched to an Euler mode), so the fcurve set alone can't tell
+    # us which channel Blender actually evaluates. Capture the authoritative
+    # mode here and thread it through so the unbaker reads the right channel.
+    bone_rotation_modes = {pb.name: pb.rotation_mode for pb in armature.pose.bones}
+
     mat_lookup = (
         build_material_lookup_from_meshes(meshes, mesh_materials, bones)
         if meshes is not None and mesh_materials is not None else {})
 
     anim_sets = []
     for action in actions:
-        anim_set = _describe_action(action, bones, bone_data, bone_name_to_index, logger, use_bezier)
+        anim_set = _describe_action(action, bones, bone_data, bone_name_to_index, logger, use_bezier,
+                                    bone_rotation_modes)
         if anim_set is None:
             # Count what we saw so the user can tell whether the action is
             # empty, points at unknown bones, or has its fcurves trapped in
@@ -214,7 +223,9 @@ def _bone_fcurves_frame_range(bone_fcurves):
     return frame_start, frame_end, end_frame
 
 
-def _describe_action(action, bones, bone_data, bone_name_to_index, logger, use_bezier=True):
+def _describe_action(action, bones, bone_data, bone_name_to_index, logger, use_bezier=True,
+                     bone_rotation_modes=None):
+    bone_rotation_modes = bone_rotation_modes or {}
     bone_fcurves = {}
     for fc in action.fcurves:
         match = re.match(r'pose\.bones\["(.+?)"\]\.(.+)', fc.data_path)
@@ -245,7 +256,8 @@ def _describe_action(action, bones, bone_data, bone_name_to_index, logger, use_b
 
         track = _unbake_bone_track(
             bone_name, bone_idx, channels, bone_data, bones,
-            frame_start, frame_end, end_frame, logger, use_bezier)
+            frame_start, frame_end, end_frame, logger, use_bezier,
+            bone_rotation_modes.get(bone_name, 'XYZ'))
         if track is not None:
             tracks.append(track)
 
@@ -265,8 +277,24 @@ def _describe_action(action, bones, bone_data, bone_name_to_index, logger, use_b
     return anim_set
 
 
+def _prefer_quaternion_rotation(rotation_mode, has_quat_fcurves, has_euler_fcurves):
+    """Decide whether to read a bone's rotation from its quaternion fcurves.
+
+    A pose bone has a single *active* rotation channel, selected by its
+    rotation_mode; the inactive channel's fcurves (if any) are stale and must
+    be ignored. Reading them would flatten the bone's real rotation — e.g. the
+    identity rotation_quaternion curves Blender leaves behind after a bone is
+    switched to an Euler mode. The bone's own mode is authoritative; only fall
+    back to the other channel when the mode's own channel has no curves at all.
+    """
+    if rotation_mode == 'QUATERNION':
+        return has_quat_fcurves or not has_euler_fcurves
+    return has_quat_fcurves and not has_euler_fcurves
+
+
 def _unbake_bone_track(bone_name, bone_idx, channels, bone_data, bones,
-                       frame_start, frame_end, end_frame, logger, use_bezier=True):
+                       frame_start, frame_end, end_frame, logger, use_bezier=True,
+                       rotation_mode='XYZ'):
     bd = bone_data[bone_idx]
     parent_idx = bd['parent_index']
     use_legacy = bd['use_legacy']
@@ -276,17 +304,21 @@ def _unbake_bone_track(bone_name, bone_idx, channels, bone_data, bones,
     scl_channels = [[], [], []]
     prev_euler = None
 
+    rot_euler_fcs = channels.get('rotation_euler', {})
+    rot_quat_fcs = channels.get('rotation_quaternion', {})
+    loc_fcs = channels.get('location', {})
+    scl_fcs = channels.get('scale', {})
+
+    # Pick the rotation channel Blender actually evaluates for this bone.
+    use_quat_rotation = _prefer_quaternion_rotation(
+        rotation_mode, bool(rot_quat_fcs), bool(rot_euler_fcs))
+
     for frame in range(frame_start, frame_end + 1):
         blender_rot = [0.0, 0.0, 0.0]
         blender_loc = [0.0, 0.0, 0.0]
         blender_scl = [1.0, 1.0, 1.0]
 
-        rot_euler_fcs = channels.get('rotation_euler', {})
-        rot_quat_fcs = channels.get('rotation_quaternion', {})
-        loc_fcs = channels.get('location', {})
-        scl_fcs = channels.get('scale', {})
-
-        if rot_quat_fcs:
+        if use_quat_rotation:
             qw = rot_quat_fcs[0].evaluate(frame) if 0 in rot_quat_fcs else 1.0
             qx = rot_quat_fcs[1].evaluate(frame) if 1 in rot_quat_fcs else 0.0
             qy = rot_quat_fcs[2].evaluate(frame) if 2 in rot_quat_fcs else 0.0

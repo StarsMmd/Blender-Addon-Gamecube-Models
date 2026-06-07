@@ -43,15 +43,28 @@ def test_get_action_duration_uses_30fps_divisor():
     )
 
 
-def test_get_action_duration_adds_off_by_one():
-    """Importer samples range(end_frame) → last kf sits at end_frame - 1.
-    We must add 1 back to recover the true duration."""
+def test_get_action_duration_spans_min_to_max_frame():
+    """Duration must span max - min + 1 frames, matching the exporter's
+    zero-based normalisation (`_bone_fcurves_frame_range`).
+
+    `max_frame + 1` alone assumes a frame-0 start; an action authored on
+    Blender's default frame-1 start would derive one frame too long, so the
+    in-game timing outlasts the baked animation ("a bit long"). Subtracting
+    the start frame fixes it while preserving importer round-trips (start
+    frame 0 → unchanged). The off-by-one (+1) must still be present so the
+    last sampled frame counts."""
     src = _prep_source()
     i = src.index("def _get_action_duration")
     j = src.index("def ", i + 1)
     body = src[i:j]
-    assert "max_frame + 1" in body, (
-        "_get_action_duration must add 1 to max_frame to recover the true "
-        "duration (importer samples range(end_frame), so the last keyframe "
-        "lives at end_frame - 1). Current body:\n" + body
+    # Inspect the executable return expression, not the docstring.
+    ret = body[body.rindex("return"):]
+    assert "min(" in ret and "max(" in ret, (
+        "_get_action_duration must span both the min and max keyframe so the "
+        "derived duration matches the exporter's normalised frame range. "
+        "Current return:\n" + ret
+    )
+    assert "+ 1" in ret, (
+        "_get_action_duration must keep the +1 off-by-one (the last sampled "
+        "frame counts). Current return:\n" + ret
     )
