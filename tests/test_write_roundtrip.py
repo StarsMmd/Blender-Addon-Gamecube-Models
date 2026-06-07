@@ -767,7 +767,7 @@ class TestTextureAlignment:
 
         img = Image(address=None, blender_obj=None)
         img.raw_image_data = bytes(range(128))  # 128 bytes of pixel data
-        img.writePrimitivePointers(builder)
+        img.writeImageData(builder)
 
         assert img.data_address % 32 == 0, \
             f"Image data not 32-byte aligned: 0x{img.data_address:X}"
@@ -799,7 +799,7 @@ class TestTextureAlignment:
 
         pal = Palette(address=None, blender_obj=None)
         pal.raw_data = bytes(range(64))  # 64 bytes of palette data
-        pal.writePrimitivePointers(builder)
+        pal.writePaletteData(builder)
 
         assert pal.data % 32 == 0, \
             f"Palette data not 32-byte aligned: 0x{pal.data:X}"
@@ -833,7 +833,7 @@ class TestTextureAlignment:
         for size in sizes:
             img = Image(address=None, blender_obj=None)
             img.raw_image_data = bytes(size)
-            img.writePrimitivePointers(builder)
+            img.writeImageData(builder)
             images.append(img)
 
         for i, img in enumerate(images):
