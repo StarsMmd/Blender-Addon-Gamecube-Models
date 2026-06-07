@@ -80,7 +80,7 @@ After running, use the **Shiny Variant** panel in Object Properties to tweak par
 3. Click **Run Script**
 
 **What it does:**
-1. **Bakes loc/rot/scale** on every armature and its child meshes via Blender's `transform_apply`, so each `matrix_world` is identity. The exporter rejects any armature or child mesh whose `matrix_world` is not identity — without this, the bone path's SRT decompose drops shear introduced by non-uniform armature scale, while the vertex path's matmul keeps it, and the two drift apart further down the chain.
+1. **Returns any armature left in Edit/Pose mode to Object mode** before anything else. A rig built from scratch is often left mid-edit; the global mode is then not Object mode, which makes the first operator the script runs (`bpy.ops.object.select_all`) fail its poll with "context is incorrect", and would make the data-level bake below get discarded when the edit session is flushed. Then **bakes loc/rot/scale** on every armature and its child meshes (direct data mutation), so each `matrix_world` is identity. The exporter rejects any armature or child mesh whose `matrix_world` is not identity — without this, the bone path's SRT decompose drops shear introduced by non-uniform armature scale, while the vertex path's matmul keeps it, and the two drift apart further down the chain.
 2. Stamps `dat_camera_aspect = 1.18` on any scene camera missing it (camera creation is not part of prep — use [`add_debug_camera.py`](#add_debug_camerapy) if you want a viewport preview)
 3. Limits vertex bone weights to 3 per vertex and quantises to 10 % steps
 4. Culls unused material slots
@@ -109,7 +109,7 @@ See [Exporter Setup](exporter_setup.md) for a full reference of every property, 
 3. Click **Run Script**
 
 **What it does** (subset of the PKX prep — all the hardware-level steps, none of the PKX header authoring):
-1. **Bakes loc/rot/scale** on every armature and its child meshes so each `matrix_world` is identity (same reason as the PKX prep — the bone path SRT-decomposes and the vertex path matmuls; they must agree)
+1. **Returns any armature left in Edit/Pose mode to Object mode** first (same reason as the PKX prep — otherwise the first operator fails its poll and the bake gets discarded), then **bakes loc/rot/scale** on every armature and its child meshes so each `matrix_world` is identity (the bone path SRT-decomposes and the vertex path matmuls; they must agree)
 2. Stamps `dat_camera_aspect = 1.18` on any scene camera missing it
 3. Limits vertex bone weights to 3 per vertex and quantises to 10 % steps
 4. Culls unused material slots

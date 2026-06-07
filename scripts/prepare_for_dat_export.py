@@ -181,6 +181,36 @@ def _collect_armature_actions(arm):
     return actions
 
 
+def exit_armature_edit_modes():
+    """Return every armature in the scene from Edit/Pose mode to Object mode.
+
+    Must run before anything else. A from-scratch rig is frequently left
+    mid-edit (placing bones) or in Pose mode, and the global mode is not
+    Object mode in that state. Two things break otherwise:
+      - The first operator in the prep flow, `bpy.ops.object.select_all`,
+        fails its poll with "context is incorrect" (operator polls require
+        Object mode).
+      - `bake_transforms` mutates mesh/armature *data* directly; edits made
+        while an object is in Edit mode are silently overwritten when the
+        edit session is later flushed back, so the bake would be lost.
+
+    `mode_set` acts on the active object, so each armature is made active via
+    a context override before switching; leaving Object mode for the active
+    object drops the whole scene to Object mode. Returns the count switched.
+    """
+    exited = 0
+    for arm in [o for o in bpy.data.objects if o.type == 'ARMATURE']:
+        if arm.mode == 'OBJECT':
+            continue
+        try:
+            with bpy.context.temp_override(active_object=arm, object=arm):
+                bpy.ops.object.mode_set(mode='OBJECT')
+            exited += 1
+        except RuntimeError:
+            pass
+    return exited
+
+
 def bake_transforms():
     """Bake loc/rot/scale on every armature and its child meshes so each
     `matrix_world` is identity.
@@ -646,6 +676,13 @@ def _register_image_props():
 
 if __name__ == "__main__" or True:
     print("=== Prepare for bare .dat Export ===")
+
+    # Force every armature back to Object mode before anything else — a rig
+    # left mid-edit makes the first operator below fail its poll, and would
+    # make bake_transforms' direct-data edits get discarded.
+    exited = exit_armature_edit_modes()
+    if exited:
+        print("  Returned %d armature(s) to Object mode" % exited)
 
     _register_image_props()
 
