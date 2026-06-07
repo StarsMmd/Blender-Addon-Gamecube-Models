@@ -256,12 +256,28 @@ class DATBuilder(BinaryWriter):
 			return write_address
 
 		elif isPointerType(field_type):
+			# Track whether the field points at an actual allocation, so
+			# `address == 0` (start of data section — possible when the
+			# referenced node was the first thing written) still records a
+			# relocation. Discriminating on value != 0 alone collapses
+			# "null pointer" and "valid offset 0" and silently drops the
+			# latter, leaving the runtime to read an unrebased zero.
+			referenced = False
 			if value is None:
 				value = 0
 			elif isinstance(value, Node):
-				value = value.address if value.address is not None else 0
-			if relative_to_header and value != 0:
-				# Use the actual write position if no address was specified
+				if value.address is not None:
+					value = value.address
+					referenced = True
+				else:
+					value = 0
+			else:
+				# Plain int — assume non-zero values are real pointers; we
+				# can't tell a non-Node 0 from null at this level, so leave
+				# the old behaviour (caller must use _raw_pointer_fields or
+				# pass a Node to force a relocation on a zero offset).
+				referenced = (value != 0)
+			if relative_to_header and referenced:
 				reloc_addr = address if address is not None else self._currentRelativeAddress()
 				self.relocations.append(reloc_addr)
 			return self.write(value, 'uint', address, relative_to_header, whence)
@@ -271,23 +287,33 @@ class DATBuilder(BinaryWriter):
 			sub_type_length = get_type_length(sub_type)
 			values = value
 
-			# Resolve Node references to addresses before writing
+			# Resolve Node references to addresses before writing. Carry a
+			# parallel "referenced" flag per element so an entry whose
+			# referenced node sits at address 0 still records a relocation
+			# (mirrors the singleton-pointer path above).
+			referenced_flags = []
 			if isPointerType(sub_type) or isNodeClassType(sub_type):
 				resolved = []
 				for v in values:
 					if isinstance(v, Node):
-						resolved.append(v.address if v.address is not None else 0)
+						if v.address is not None:
+							resolved.append(v.address)
+							referenced_flags.append(True)
+						else:
+							resolved.append(0)
+							referenced_flags.append(False)
 					elif v is None:
 						resolved.append(0)
+						referenced_flags.append(False)
 					else:
 						resolved.append(v)
+						referenced_flags.append(v != 0)
 				values = resolved
 
 			write_address = self._currentRelativeAddress() if relative_to_header else self.currentAddress()
-			for v in values:
+			for i, v in enumerate(values):
 				if isPointerType(sub_type) or isNodeClassType(sub_type):
-					# Write as uint pointer, record relocation
-					if relative_to_header and v != 0:
+					if relative_to_header and referenced_flags[i]:
 						self.relocations.append(self._currentRelativeAddress())
 					self.write(v, 'uint')
 				else:

@@ -46,16 +46,18 @@ class Reference(Node):
             # Don't overwrite flags — preserve original
 
         elif isinstance(self.property, Joint):
-            self.property = self.property.address if self.property.address is not None else 0
-            if self.property != 0:
+            referenced = self.property.address is not None
+            self.property = self.property.address if referenced else 0
+            if referenced:
                 if not hasattr(self, '_raw_pointer_fields'):
                     self._raw_pointer_fields = set()
                 self._raw_pointer_fields.add('property')
 
         elif hasattr(self.property, 'address'):
             # BoneReference or other node types
-            self.property = self.property.address if self.property.address is not None else 0
-            if self.property != 0:
+            referenced = self.property.address is not None
+            self.property = self.property.address if referenced else 0
+            if referenced:
                 if not hasattr(self, '_raw_pointer_fields'):
                     self._raw_pointer_fields = set()
                 self._raw_pointer_fields.add('property')
