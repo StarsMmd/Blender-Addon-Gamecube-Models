@@ -255,7 +255,22 @@ def _build_submesh(mesh_name, mat_index, num_materials,
 
 
 def _extract_normals(mesh_data, normal_xform):
-    if not mesh_data.has_custom_normals:
+    """Per-loop normals in the GameCube frame, or None.
+
+    Normals and vertex colors are mutually exclusive per PObject in the game
+    corpus (no shipped PObject carries both): a lit mesh carries normals, a
+    vertex-coloured mesh carries colors. So skip normals when the mesh has
+    colour attributes; otherwise extract them from `corner_normals`, which
+    always reflects the mesh's effective shading — custom split normals when
+    present, otherwise the normals computed from face/smooth shading.
+
+    Gating on `has_custom_normals` (as this once did) silently dropped
+    normals for every from-scratch mesh that hadn't had custom normals
+    authored, so its LIT material had nothing to light and rendered
+    black/missing in-game even though Blender — which computes its own
+    normals — looked correct.
+    """
+    if mesh_data.color_attributes:
         return None
     if hasattr(mesh_data, 'corner_normals'):
         raw = [cn.vector for cn in mesh_data.corner_normals]
