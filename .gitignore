@@ -135,3 +135,6 @@ test models/
 
 # Personal session notes (tracked locally, not shared)
 CLAUDE.md
+
+# Local dev tools — kept on disk but not version-controlled.
+tools/

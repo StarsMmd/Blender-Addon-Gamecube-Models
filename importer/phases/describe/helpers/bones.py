@@ -14,17 +14,27 @@ try:
         JOBJ_HBILLBOARD, JOBJ_RBILLBOARD,
     )
     from .....shared.helpers.scale import GC_TO_METERS
+    from .....shared.helpers.pkx_header import BODY_MAP_NAMES
 except (ImportError, SystemError):
     from shared.helpers.math_shim import Matrix, Vector, Euler, compile_srt_matrix, matrix_to_list
     from shared.IR.skeleton import IRBone
     from shared.IR.enums import ScaleInheritance
     from shared.helpers.scale import GC_TO_METERS
+    from shared.helpers.pkx_header import BODY_MAP_NAMES
     from shared.Constants.hsd import (
         JOBJ_HIDDEN, JOBJ_INSTANCE, JOBJ_EFFECTOR, JOBJ_SPLINE,
         JOBJ_TYPE_MASK, JOBJ_CLASSICAL_SCALING, JOBJ_USE_QUATERNION,
         JOBJ_BILLBOARD_FIELD, JOBJ_BILLBOARD, JOBJ_VBILLBOARD,
         JOBJ_HBILLBOARD, JOBJ_RBILLBOARD,
     )
+
+
+# PascalCase body-map suffixes derived from the canonical names in
+# shared/helpers/pkx_header.py:BODY_MAP_NAMES. Bone names can't contain
+# spaces in many downstream contexts (Blender bone-name conventions,
+# vertex-group names), so collapse to PascalCase here. Order matches
+# BODY_MAP_NAMES exactly.
+_PKX_BONE_SUFFIXES = [name.replace(" ", "") for name in BODY_MAP_NAMES]
 
 
 def describe_bones(root_joint, options=None, logger=None):
@@ -56,27 +66,27 @@ def describe_bones(root_joint, options=None, logger=None):
     total_bones = _count_joints(root_joint)
     bone_digits = len(str(max(total_bones - 1, 0)))
 
-    # Build bone_index → body map suffix from PKX header
+    # Build bone_index → body map suffix from PKX header. Labels come from
+    # the canonical BODY_MAP_NAMES list in shared/helpers/pkx_header.py
+    # (slot 0 is "Origin" — always the root bone — and the remaining slots
+    # are surfaced as PascalCase suffixes on whichever bones they reference).
     _body_map_suffixes = {}
     pkx_header = options.get("pkx_header") if options else None
     if pkx_header and pkx_header.anim_entries:
-        _NJ_LABELS = [
-            "Root", "Head", "Center", "Body3", "Neck", "HeadTop",
-            "LimbL", "LimbR", "Sec8", "Sec9", "Sec10", "Sec11",
-            "AttachA", "AttachB", "AttachC", "AttachD",
-        ]
-        # Count how many body map fields reference each bone index
+        origin_suffix = _PKX_BONE_SUFFIXES[0]
         bone_ref_counts = {}
         first_entry = pkx_header.anim_entries[0]
-        for j in range(16):
+        for j in range(len(_PKX_BONE_SUFFIXES)):
             idx = first_entry.body_map_bones[j]
             if idx >= 0:
-                bone_ref_counts.setdefault(idx, []).append(_NJ_LABELS[j])
-        # Suffix bones referenced by exactly one field, but always
-        # suffix the root bone regardless of how many fields reference it.
+                bone_ref_counts.setdefault(idx, []).append(_PKX_BONE_SUFFIXES[j])
+        # Suffix bones referenced by exactly one slot, but always suffix
+        # the origin (slot 0) bone regardless of how many slots reference it
+        # — the origin is the universal attach point and is virtually always
+        # multi-referenced.
         for idx, labels in bone_ref_counts.items():
-            if "Root" in labels:
-                _body_map_suffixes[idx] = "Root"
+            if origin_suffix in labels:
+                _body_map_suffixes[idx] = origin_suffix
             elif len(labels) == 1:
                 _body_map_suffixes[idx] = labels[0]
 

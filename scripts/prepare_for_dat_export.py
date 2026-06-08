@@ -300,6 +300,16 @@ def bake_transforms():
         targets.append((arm, arm.matrix_world.copy()))
         for obj in bpy.data.objects:
             if obj.parent is arm and obj.type == 'MESH':
+                # Bone-parented meshes (a holder-bone owner, see
+                # reparent_meshes_to_holder_bones) are deliberately hung off a
+                # bone rather than the armature object. The object-parent bake
+                # below would force matrix_parent_inverse to identity and leave
+                # matrix_world at the bone's tail transform — moving the mesh
+                # and failing the identity verify. Their geometry was already
+                # baked to world space on the first prep pass while they were
+                # still object-parented, so skip them here.
+                if obj.parent_type == 'BONE':
+                    continue
                 targets.append((obj, obj.matrix_world.copy()))
 
     baked = 0
@@ -380,6 +390,153 @@ def bake_transforms():
 
 
 # ---------------------------------------------------------------------------
+# Root joint orientation
+# ---------------------------------------------------------------------------
+#
+# The exporter must emit an identity root JOBJ rotation — every game-native
+# model has one. The game applies the root joint's own rotation as the
+# model's base orientation and does NOT undo it the way a full skinning
+# solve does, so a non-identity root joint turns the whole model in-game
+# even though Blender (which evaluates the rest pose as the identity
+# deformation) renders it correctly.
+#
+# The exporter converts each bone's Blender rest matrix through a Z-up to
+# Y-up coordinate rotation. The root joint comes out identity exactly when
+# the root bone's world rest orientation equals that coordinate rotation
+# (+90 deg about X) — i.e. for a bone pointing straight up, roll 0.
+
+
+def _compensate_root_animation(armature, root_name, C3, Cq, rotation_mode):
+    """Rebind the root bone's animation to a new rest so world motion is
+    unchanged. `C3`/`Cq` are the rest-change rotation `new_rest^-1 @ old_rest`
+    as a 3x3 matrix / quaternion. New pose = C @ old pose, which splits into
+    location' = C3 @ location and rotation' = Cq @ rotation (scale unchanged).
+
+    Only the bone's *active* rotation channel (selected by `rotation_mode`)
+    is compensated; the inactive channel may still carry stale identity
+    fcurves Blender leaves behind, and rotating those would be meaningless
+    (the runtime never reads them) and confusing.
+    """
+    from mathutils import Quaternion, Euler, Vector
+
+    rot_e = 'pose.bones["%s"].rotation_euler' % root_name
+    rot_q = 'pose.bones["%s"].rotation_quaternion' % root_name
+    loc_p = 'pose.bones["%s"].location' % root_name
+    active_rot = rot_q if rotation_mode == 'QUATERNION' else rot_e
+
+    for action in bpy.data.actions:
+        chans = {}
+        for fc in action.fcurves:
+            if fc.data_path in (active_rot, loc_p):
+                chans.setdefault(fc.data_path, {})[fc.array_index] = fc
+        if not chans:
+            continue
+
+        def _rewrite(fcs, frame_value):
+            # frame_value(frame) -> sequence indexed by array_index
+            frames = sorted({kp.co[0] for fc in fcs.values()
+                             for kp in fc.keyframe_points})
+            new_vals = {f: frame_value(f) for f in frames}
+            for i, fc in fcs.items():
+                for kp in fc.keyframe_points:
+                    kp.co = (kp.co[0], new_vals[kp.co[0]][i])
+                    kp.handle_left_type = 'AUTO_CLAMPED'
+                    kp.handle_right_type = 'AUTO_CLAMPED'
+                fc.update()
+
+        if rot_e in chans:
+            fcs = chans[rot_e]
+            prev = [None]
+
+            def _euler(f, fcs=fcs, prev=prev):
+                e = Euler((fcs[0].evaluate(f) if 0 in fcs else 0.0,
+                           fcs[1].evaluate(f) if 1 in fcs else 0.0,
+                           fcs[2].evaluate(f) if 2 in fcs else 0.0), 'XYZ')
+                q = Cq @ e.to_quaternion()
+                ne = q.to_euler('XYZ', prev[0]) if prev[0] else q.to_euler('XYZ')
+                prev[0] = ne
+                return ne
+            _rewrite(fcs, _euler)
+
+        if rot_q in chans:
+            fcs = chans[rot_q]
+
+            def _quat(f, fcs=fcs):
+                q = Quaternion((fcs[0].evaluate(f) if 0 in fcs else 1.0,
+                                fcs[1].evaluate(f) if 1 in fcs else 0.0,
+                                fcs[2].evaluate(f) if 2 in fcs else 0.0,
+                                fcs[3].evaluate(f) if 3 in fcs else 0.0))
+                return Cq @ q
+            _rewrite(fcs, _quat)
+
+        if loc_p in chans:
+            fcs = chans[loc_p]
+
+            def _loc(f, fcs=fcs):
+                return C3 @ Vector((fcs[0].evaluate(f) if 0 in fcs else 0.0,
+                                    fcs[1].evaluate(f) if 1 in fcs else 0.0,
+                                    fcs[2].evaluate(f) if 2 in fcs else 0.0))
+            _rewrite(fcs, _loc)
+
+
+def normalize_root_orientation(armature):
+    """Reorient the root bone so the exported root JOBJ rotation is identity.
+
+    Run after `bake_transforms` (so the armature's matrix_world is identity
+    and each edit bone's matrix is its world rest). The root bone is set to
+    the canonical frame (+90 deg about X — a bone pointing up with roll 0);
+    geometry and every other bone keep their absolute rest positions (edit
+    bones are armature-absolute), so the model's facing is unchanged. The
+    root's old rotation is absorbed into its children's local transforms,
+    where it cancels through their inverse-bind matrices like any deformer
+    rotation. The root bone's own animation is rebound to the new rest.
+
+    Returns True if the root was reoriented, False if already canonical.
+    """
+    from mathutils import Matrix
+
+    bones = armature.data.bones
+    if not bones:
+        return False
+
+    # Canonical root rest = the Z-up -> Y-up coord rotation the exporter
+    # inverts; emitting this makes the root JOBJ rotation cancel to identity.
+    target_3x3 = Matrix(((1.0, 0.0, 0.0),
+                         (0.0, 0.0, -1.0),
+                         (0.0, 1.0, 0.0)))
+
+    prev_active = bpy.context.view_layer.objects.active
+    bpy.context.view_layer.objects.active = armature
+    bpy.ops.object.mode_set(mode='EDIT')
+    root_eb = armature.data.edit_bones[0]
+    old_world = root_eb.matrix.copy()
+    cur = old_world.to_3x3()
+    if all(abs(cur[i][j] - target_3x3[i][j]) < 1e-5
+           for i in range(3) for j in range(3)):
+        bpy.ops.object.mode_set(mode='OBJECT')
+        bpy.context.view_layer.objects.active = prev_active
+        return False
+
+    length = root_eb.length
+    new_world = target_3x3.to_4x4()
+    new_world.translation = root_eb.head.copy()
+    root_eb.matrix = new_world
+    root_eb.length = length
+    root_name = root_eb.name
+    bpy.ops.object.mode_set(mode='OBJECT')
+    bpy.context.view_layer.update()
+
+    new_L = bones[0].matrix_local.copy()
+    C = new_L.inverted() @ old_world      # pure rotation about the head
+    rotation_mode = armature.pose.bones[root_name].rotation_mode
+    _compensate_root_animation(armature, root_name, C.to_3x3(), C.to_quaternion(),
+                               rotation_mode)
+
+    bpy.context.view_layer.objects.active = prev_active
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Camera aspect
 # ---------------------------------------------------------------------------
 #
@@ -400,6 +557,162 @@ def normalize_camera_aspect():
             print("  Camera '%s': set dat_camera_aspect = 1.18" % obj.name)
             touched += 1
     return touched
+
+
+# ---------------------------------------------------------------------------
+# Holder-bone insertion for mesh-owner ↔ deformer disjointness
+# ---------------------------------------------------------------------------
+# Game-native models keep two joint roles strictly disjoint: a *mesh-owner*
+# joint carries JOBJ_ENVELOPE_MODEL (a mesh hangs off it) and has no
+# SKELETON flag / inverse-bind matrix, while a *deformer* joint carries
+# JOBJ_SKELETON + an IBM (vertices are weighted to it) and owns no mesh.
+#
+# Arbitrary rips violate this. A detached mesh weighted ~100% to one bone
+# (eyes, hair strands) is also *attached* to that bone, so the exporter's
+# refine_bone_flags strips SKELETON from it; the envelope coordinate-system
+# math then can't resolve the bone as its own deformer, walks up to the
+# nearest skeleton ancestor, and the mesh renders offset ("floating") in
+# game while round-trips and Blender previews (which use the full skinning
+# path for everyone) look fine.
+#
+# The fix mirrors the game structure: for every mesh whose export owner
+# bone is also a deformer, insert a no-weight holder bone (parented to the
+# root) and bone-parent the mesh to the holder. Owner becomes the holder
+# (ENV_MODEL, no weights → no SKELETON/IBM); the original bone stays a pure
+# deformer. Done here in prep — not in the exporter IR — so the whole
+# describe→plan→compose pipeline sees the final armature with correct
+# depth-first indices, no index remapping required.
+
+
+def reparent_meshes_to_holder_bones(armature):
+    """Enforce the mesh-owner/deformer disjoint invariant for `armature`.
+
+    For each child mesh whose export owner bone (Blender bone-parent if
+    set, else the nearest common ancestor of the bones it is weighted to)
+    is itself an envelope weight target, create a coincident no-weight
+    holder bone parented to the root and bone-parent the mesh to it.
+    Idempotent: on a second pass the meshes already own a (non-deformer)
+    holder, so nothing matches.
+
+    Returns the number of holder bones created.
+    """
+    import bpy
+
+    arm_data = armature.data
+    if not arm_data.bones:
+        return 0
+    bone_names = {b.name for b in arm_data.bones}
+    root_name = arm_data.bones[0].name
+    parent_of = {b.name: (b.parent.name if b.parent else None)
+                 for b in arm_data.bones}
+
+    def ancestors(name):
+        chain = []
+        while name is not None:
+            chain.append(name)
+            name = parent_of.get(name)
+        return chain
+
+    meshes = [o for o in bpy.data.objects
+              if o.parent is armature and o.type == 'MESH']
+
+    deformers = set()
+    mesh_weighted = {}
+    for m in meshes:
+        idx_to_name = {vg.index: vg.name for vg in m.vertex_groups}
+        weighted = set()
+        for v in m.data.vertices:
+            for g in v.groups:
+                if g.weight > 0.0:
+                    nm = idx_to_name.get(g.group)
+                    if nm in bone_names:
+                        weighted.add(nm)
+        mesh_weighted[m] = weighted
+        deformers |= weighted
+
+    def owner_of(m):
+        if m.parent_type == 'BONE' and m.parent_bone in bone_names:
+            return m.parent_bone
+        weighted = mesh_weighted.get(m, set())
+        if not weighted:
+            return root_name
+        chains = [set(ancestors(n)) for n in weighted]
+        common = set.intersection(*chains)
+        if not common:
+            return root_name
+        for n in ancestors(next(iter(weighted))):
+            if n in common:
+                return n
+        return root_name
+
+    need = {}
+    for m in meshes:
+        owner = owner_of(m)
+        if owner in deformers:
+            need.setdefault(owner, []).append(m)
+
+    if not need:
+        return 0
+
+    # Holder is coincident with the deformer but parented to the root so
+    # its animated pose stays at rest in Blender's evaluator — otherwise the
+    # mesh, bone-parented to the holder, would inherit the deformer's pose
+    # at the object level *and* receive it again through the Armature
+    # modifier's vertex weights, producing a double transform for any vert
+    # weighted to that deformer. The in-game envelope math doesn't read the
+    # owner's pose (it uses the nearest SKELETON ancestor of each weighted
+    # bone), so the disjoint-owner invariant is preserved regardless of
+    # where in the tree the holder sits.
+    holder_for = {}
+    prev_active = bpy.context.view_layer.objects.active
+    bpy.context.view_layer.objects.active = armature
+    bpy.ops.object.mode_set(mode='EDIT')
+    eb = arm_data.edit_bones
+    root_eb = eb[root_name]
+    for owner in need:
+        o = eb[owner]
+        h = eb.new("%s_mesh" % owner)
+        h.head = o.head.copy()
+        h.tail = o.tail.copy()
+        h.roll = o.roll
+        h.parent = root_eb
+        h.use_connect = False
+        holder_for[owner] = h.name
+    bpy.ops.object.mode_set(mode='OBJECT')
+    bpy.context.view_layer.objects.active = prev_active
+    bpy.context.view_layer.update()
+
+    from mathutils import Matrix as _Matrix
+    _identity = _Matrix.Identity(4)
+    for owner, mlist in need.items():
+        hname = holder_for[owner]
+        bpy.context.view_layer.update()
+        pose_bone = armature.pose.bones.get(hname)
+        if pose_bone is None:
+            continue
+        tail_offset = _Matrix.Translation((0.0, pose_bone.bone.length, 0.0))
+        bone_rest_inv = (armature.matrix_world
+                         @ pose_bone.matrix
+                         @ tail_offset).inverted()
+
+        for m in mlist:
+            world = m.matrix_world.copy()
+            if not _is_identity_matrix(world):
+                if m.data is not None:
+                    if m.data.users > 1:
+                        m.data = m.data.copy()
+                    m.data.transform(world)
+            m.matrix_basis = _identity
+            if m.parent is not None:
+                m.matrix_parent_inverse = _identity
+            m.parent = armature
+            m.parent_type = 'BONE'
+            m.parent_bone = hname
+            m.matrix_parent_inverse = bone_rest_inv
+            m.matrix_basis = _identity
+    bpy.context.view_layer.update()
+
+    return len(holder_for)
 
 
 # ---------------------------------------------------------------------------
@@ -718,9 +1031,20 @@ if __name__ == "__main__" or True:
         if limited:
             print("  Limited %d vertex weights on '%s'" % (limited, arm.name))
 
+        holders = reparent_meshes_to_holder_bones(arm)
+        if holders:
+            print("  Inserted %d mesh-holder bone(s) on '%s'" % (holders, arm.name))
+
         culled = cull_unused_material_slots(arm)
         if culled:
             print("  Culled %d unused material slot(s) on '%s'" % (culled, arm.name))
+
+        # Normalise the root bone so the exported root JOBJ is identity —
+        # a non-identity root joint turns the whole model 90 deg in-game even
+        # though Blender renders it correctly. Geometry/facing is preserved.
+        if normalize_root_orientation(arm):
+            print("  Normalised root bone orientation on '%s' "
+                  "(root JOBJ will export identity)" % arm.name)
 
         size_count = prepare_texture_sizes(arm)
         if size_count:

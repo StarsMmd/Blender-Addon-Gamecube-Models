@@ -554,19 +554,28 @@ def reparent_meshes_to_holder_bones(armature):
 
     # Create holder bones (edit mode), coincident with their deformer so
     # the rest transform matches and the importer-validated coordinate path
-    # applies.
+    # applies. Parent to the root bone (not to the deformer) so the holder's
+    # animated pose stays at rest in Blender's evaluator — otherwise the
+    # mesh, bone-parented to the holder, would inherit the deformer's pose
+    # at the object level *and* receive it again through the Armature
+    # modifier's vertex weights, producing a double transform for any vert
+    # weighted to that deformer. The in-game envelope math doesn't read the
+    # owner's pose (it uses the nearest SKELETON ancestor of each weighted
+    # bone), so the disjoint-owner invariant is preserved regardless of
+    # where in the tree the holder sits.
     holder_for = {}
     prev_active = bpy.context.view_layer.objects.active
     bpy.context.view_layer.objects.active = armature
     bpy.ops.object.mode_set(mode='EDIT')
     eb = arm_data.edit_bones
+    root_eb = eb[root_name]
     for owner in need:
         o = eb[owner]
         h = eb.new("%s_mesh" % owner)
         h.head = o.head.copy()
         h.tail = o.tail.copy()
         h.roll = o.roll
-        h.parent = o
+        h.parent = root_eb
         h.use_connect = False
         holder_for[owner] = h.name  # Blender may suffix on collision
     bpy.ops.object.mode_set(mode='OBJECT')
@@ -625,6 +634,153 @@ def reparent_meshes_to_holder_bones(armature):
     bpy.context.view_layer.update()
 
     return len(holder_for)
+
+
+# ---------------------------------------------------------------------------
+# Root joint orientation
+# ---------------------------------------------------------------------------
+#
+# The exporter must emit an identity root JOBJ rotation — every game-native
+# model has one. The game applies the root joint's own rotation as the
+# model's base orientation and does NOT undo it the way a full skinning
+# solve does, so a non-identity root joint turns the whole model in-game
+# even though Blender (which evaluates the rest pose as the identity
+# deformation) renders it correctly.
+#
+# The exporter converts each bone's Blender rest matrix through a Z-up to
+# Y-up coordinate rotation. The root joint comes out identity exactly when
+# the root bone's world rest orientation equals that coordinate rotation
+# (+90 deg about X) — i.e. for a bone pointing straight up, roll 0.
+
+
+def _compensate_root_animation(armature, root_name, C3, Cq, rotation_mode):
+    """Rebind the root bone's animation to a new rest so world motion is
+    unchanged. `C3`/`Cq` are the rest-change rotation `new_rest^-1 @ old_rest`
+    as a 3x3 matrix / quaternion. New pose = C @ old pose, which splits into
+    location' = C3 @ location and rotation' = Cq @ rotation (scale unchanged).
+
+    Only the bone's *active* rotation channel (selected by `rotation_mode`)
+    is compensated; the inactive channel may still carry stale identity
+    fcurves Blender leaves behind, and rotating those would be meaningless
+    (the runtime never reads them) and confusing.
+    """
+    from mathutils import Quaternion, Euler, Vector
+
+    rot_e = 'pose.bones["%s"].rotation_euler' % root_name
+    rot_q = 'pose.bones["%s"].rotation_quaternion' % root_name
+    loc_p = 'pose.bones["%s"].location' % root_name
+    active_rot = rot_q if rotation_mode == 'QUATERNION' else rot_e
+
+    for action in bpy.data.actions:
+        chans = {}
+        for fc in action.fcurves:
+            if fc.data_path in (active_rot, loc_p):
+                chans.setdefault(fc.data_path, {})[fc.array_index] = fc
+        if not chans:
+            continue
+
+        def _rewrite(fcs, frame_value):
+            # frame_value(frame) -> sequence indexed by array_index
+            frames = sorted({kp.co[0] for fc in fcs.values()
+                             for kp in fc.keyframe_points})
+            new_vals = {f: frame_value(f) for f in frames}
+            for i, fc in fcs.items():
+                for kp in fc.keyframe_points:
+                    kp.co = (kp.co[0], new_vals[kp.co[0]][i])
+                    kp.handle_left_type = 'AUTO_CLAMPED'
+                    kp.handle_right_type = 'AUTO_CLAMPED'
+                fc.update()
+
+        if rot_e in chans:
+            fcs = chans[rot_e]
+            prev = [None]
+
+            def _euler(f, fcs=fcs, prev=prev):
+                e = Euler((fcs[0].evaluate(f) if 0 in fcs else 0.0,
+                           fcs[1].evaluate(f) if 1 in fcs else 0.0,
+                           fcs[2].evaluate(f) if 2 in fcs else 0.0), 'XYZ')
+                q = Cq @ e.to_quaternion()
+                ne = q.to_euler('XYZ', prev[0]) if prev[0] else q.to_euler('XYZ')
+                prev[0] = ne
+                return ne
+            _rewrite(fcs, _euler)
+
+        if rot_q in chans:
+            fcs = chans[rot_q]
+
+            def _quat(f, fcs=fcs):
+                q = Quaternion((fcs[0].evaluate(f) if 0 in fcs else 1.0,
+                                fcs[1].evaluate(f) if 1 in fcs else 0.0,
+                                fcs[2].evaluate(f) if 2 in fcs else 0.0,
+                                fcs[3].evaluate(f) if 3 in fcs else 0.0))
+                return Cq @ q
+            _rewrite(fcs, _quat)
+
+        if loc_p in chans:
+            fcs = chans[loc_p]
+
+            def _loc(f, fcs=fcs):
+                return C3 @ Vector((fcs[0].evaluate(f) if 0 in fcs else 0.0,
+                                    fcs[1].evaluate(f) if 1 in fcs else 0.0,
+                                    fcs[2].evaluate(f) if 2 in fcs else 0.0))
+            _rewrite(fcs, _loc)
+
+
+def normalize_root_orientation(armature):
+    """Reorient the root bone so the exported root JOBJ rotation is identity.
+
+    Run after `bake_transforms` (so the armature's matrix_world is identity
+    and each edit bone's matrix is its world rest). The root bone is set to
+    the canonical frame (+90 deg about X — a bone pointing up with roll 0);
+    geometry and every other bone keep their absolute rest positions (edit
+    bones are armature-absolute), so the model's facing is unchanged. The
+    root's old rotation is absorbed into its children's local transforms,
+    where it cancels through their inverse-bind matrices like any deformer
+    rotation. The root bone's own animation is rebound to the new rest.
+
+    Returns True if the root was reoriented, False if already canonical.
+    """
+    from mathutils import Matrix
+
+    bones = armature.data.bones
+    if not bones:
+        return False
+
+    # Canonical root rest = the Z-up -> Y-up coord rotation the exporter
+    # inverts; emitting this makes the root JOBJ rotation cancel to identity.
+    target_3x3 = Matrix(((1.0, 0.0, 0.0),
+                         (0.0, 0.0, -1.0),
+                         (0.0, 1.0, 0.0)))
+
+    prev_active = bpy.context.view_layer.objects.active
+    bpy.context.view_layer.objects.active = armature
+    bpy.ops.object.mode_set(mode='EDIT')
+    root_eb = armature.data.edit_bones[0]
+    old_world = root_eb.matrix.copy()
+    cur = old_world.to_3x3()
+    if all(abs(cur[i][j] - target_3x3[i][j]) < 1e-5
+           for i in range(3) for j in range(3)):
+        bpy.ops.object.mode_set(mode='OBJECT')
+        bpy.context.view_layer.objects.active = prev_active
+        return False
+
+    length = root_eb.length
+    new_world = target_3x3.to_4x4()
+    new_world.translation = root_eb.head.copy()
+    root_eb.matrix = new_world
+    root_eb.length = length
+    root_name = root_eb.name
+    bpy.ops.object.mode_set(mode='OBJECT')
+    bpy.context.view_layer.update()
+
+    new_L = bones[0].matrix_local.copy()
+    C = new_L.inverted() @ old_world      # pure rotation about the head
+    rotation_mode = armature.pose.bones[root_name].rotation_mode
+    _compensate_root_animation(armature, root_name, C.to_3x3(), C.to_quaternion(),
+                               rotation_mode)
+
+    bpy.context.view_layer.objects.active = prev_active
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -1997,10 +2153,21 @@ def _register_pkx_panel():
                         continue
                     sub_box = box.box()
                     _draw_enum_dropdown(sub_box, obj, prefix + "_type", _ANIM_TYPE_ITEMS, label="Type:")
+                    # Compound slots are Damage B by convention — slot 0
+                    # is the hit/damage clip, slot 1 is the faint
+                    # follow-through — so label them by role.
+                    _slot_anim_type = obj.get(prefix + "_type", "action")
+                    if _slot_anim_type == "compound" and sub_count > 1:
+                        _sub_labels = ["Damage", "Fainting"]
+                    else:
+                        _sub_labels = None
                     for s in range(min(sub_count, 3)):
                         anim_key = prefix + "_sub_%d_anim" % s
                         row = sub_box.row(align=True)
-                        row.label(text="Action %d:" % (s + 1) if sub_count > 1 else "Action:")
+                        if _sub_labels and s < len(_sub_labels):
+                            row.label(text="%s:" % _sub_labels[s])
+                        else:
+                            row.label(text="Action %d:" % (s + 1) if sub_count > 1 else "Action:")
                         if anim_key in obj:
                             row.prop_search(obj, '["%s"]' % anim_key, bpy.data, "actions", text="")
                     anim_type = obj.get(prefix + "_type", "action")
@@ -2011,7 +2178,8 @@ def _register_pkx_panel():
                     elif anim_type == "hit_reaction":
                         _timing_labels = {1: "Reaction", 2: "Duration"}
                     elif anim_type == "compound":
-                        _timing_labels = {1: "Sub 1 Mid", 2: "Sub 1 End", 3: "Sub 2 Mid", 4: "Sub 2 End"}
+                        _timing_labels = {1: "Damage Mid", 2: "Damage End",
+                                          3: "Fainting Mid", 4: "Fainting End"}
                     else:
                         _timing_labels = {}
                     if _timing_labels:
@@ -2281,6 +2449,13 @@ if __name__ == "__main__" or True:
         culled_slots = _cull_unused_material_slots(arm)
         if culled_slots:
             print("  Culled %d unused material slot(s) on '%s'" % (culled_slots, arm.name))
+
+        # Normalise the root bone so the exported root JOBJ is identity —
+        # a non-identity root joint turns the whole model 90 deg in-game even
+        # though Blender renders it correctly. Geometry/facing is preserved.
+        if normalize_root_orientation(arm):
+            print("  Normalised root bone orientation on '%s' "
+                  "(root JOBJ will export identity)" % arm.name)
 
         # Mesh-owner / deformer separation (envelope invariant).
         holders = reparent_meshes_to_holder_bones(arm)

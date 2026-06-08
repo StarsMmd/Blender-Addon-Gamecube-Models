@@ -545,11 +545,22 @@ class DAT_PT_PKXPanel(bpy.types.Panel):
                 _draw_enum_dropdown(sub_box, obj, prefix + "_type",
                                     _ANIM_TYPE_ITEMS, label="Type:")
 
-                # Sub-animations
+                # Sub-animations. Compound slots are Damage B by
+                # convention — slot 0 is the hit/damage clip, slot 1 is
+                # the faint follow-through — so label them by their role
+                # rather than as anonymous Action 1 / Action 2.
+                _slot_anim_type = obj.get(prefix + "_type", "action")
+                if _slot_anim_type == "compound" and sub_count > 1:
+                    _sub_labels = ["Damage", "Fainting"]
+                else:
+                    _sub_labels = None
                 for s in range(min(sub_count, 3)):
                     anim_key = prefix + "_sub_%d_anim" % s
                     row = sub_box.row(align=True)
-                    row.label(text="Action %d:" % (s + 1) if sub_count > 1 else "Action:")
+                    if _sub_labels and s < len(_sub_labels):
+                        row.label(text="%s:" % _sub_labels[s])
+                    else:
+                        row.label(text="Action %d:" % (s + 1) if sub_count > 1 else "Action:")
                     if anim_key in obj:
                         row.prop_search(obj, '["%s"]' % anim_key, bpy.data, "actions", text="")
 
@@ -562,7 +573,8 @@ class DAT_PT_PKXPanel(bpy.types.Panel):
                 elif anim_type == "hit_reaction":
                     _timing_labels = {1: "Reaction", 2: "Duration"}
                 elif anim_type == "compound":
-                    _timing_labels = {1: "Sub 1 Mid", 2: "Sub 1 End", 3: "Sub 2 Mid", 4: "Sub 2 End"}
+                    _timing_labels = {1: "Damage Mid", 2: "Damage End",
+                                      3: "Fainting Mid", 4: "Fainting End"}
                 else:
                     _timing_labels = {}
 
