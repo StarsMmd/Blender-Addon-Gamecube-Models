@@ -213,13 +213,15 @@ def extract_pkx_header(armatures, action_name_to_index, logger=StubLogger()):
                 )
                 h.part_anim_data.append(pad)
         else:
-            h.colo_part_anim_refs = [
-                arm.get("dat_pkx_colo_part_ref_0", -1),
-                arm.get("dat_pkx_colo_part_ref_1", -1),
-                arm.get("dat_pkx_colo_part_ref_2", -1),
-            ]
+            refs = []
+            for i in range(3):
+                prefix = "dat_pkx_sub_anim_%d" % i
+                has = _SUB_TYPE_MAP.get(arm.get(prefix + "_type", "none"), 0)
+                name = arm.get(prefix + "_anim_ref", "")
+                refs.append(action_name_to_index.get(name, -1) if has > 0 and name else -1)
+            h.colo_part_anim_refs = refs
             h.colo_unknown_10 = 5
-            h.colo_unknown_14 = arm.get("dat_pkx_particle_orientation", -1)
+            h.colo_unknown_14 = -1
 
         model_body_map = []
         for j in range(len(_PKX_BODY_MAP_KEYS)):
@@ -246,7 +248,7 @@ def extract_pkx_header(armatures, action_name_to_index, logger=StubLogger()):
                 else:
                     anim_idx = 0
                 has_anim = isinstance(anim_name, str) and anim_name != ""
-                if is_xd and has_anim:
+                if has_anim:
                     derived_motion = 2 if anim_type_str == "loop" else 1
                 else:
                     derived_motion = 0
