@@ -68,6 +68,14 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.80 | current | `bpy.ops.mesh.select_all(action='DESELECT')` | `prepare_for_pkx_export.py` | Select for rigid-vs-envelope split |
 | 2.80 | current | `bpy.ops.mesh.separate(type='SELECTED')` | `prepare_for_pkx_export.py` | Split single-bone vertices into rigid meshes |
 | 2.80 | current | `bpy.context.selected_objects` | `prepare_for_pkx_export.py` | Iterate newly separated meshes |
+| 2.80 | current | `armature_data.edit_bones[0]` | `prepare_for_pkx_export.py`, `prepare_pbr_for_pkx_export.py` | Root edit bone for orientation normalisation (requires EDIT mode) |
+| 2.80 | current | `edit_bone.matrix = Matrix(...)` (setter) | `prepare_for_pkx_export.py`, `prepare_pbr_for_pkx_export.py` | Reorient the root bone to the canonical (identity-root-JOBJ) rest frame |
+| 2.80 | current | `edit_bone.length` (get/set) | `prepare_for_pkx_export.py`, `prepare_pbr_for_pkx_export.py` | Preserve bone length when setting `edit_bone.matrix` |
+| 2.80 | current | `edit_bone.head` | `prepare_for_pkx_export.py`, `prepare_pbr_for_pkx_export.py` | Keep the root head position when reorienting |
+| 2.80 | current | `bone.matrix_local` (read) | `prepare_for_pkx_export.py`, `prepare_pbr_for_pkx_export.py` | New root rest matrix for the animation-rebind delta |
+| 2.80 | current | `pose_bone.rotation_mode` (read) | `prepare_for_pkx_export.py`, `prepare_pbr_for_pkx_export.py` | Pick the active rotation channel to rebind |
+| 2.80 | current | `fcurve.evaluate(frame)` | `prepare_for_pkx_export.py`, `prepare_pbr_for_pkx_export.py` | Sample root channels per frame when rebinding to the new rest |
+| 2.80 | current | `keyframe_point.handle_left_type / handle_right_type = 'AUTO_CLAMPED'` | `prepare_for_pkx_export.py`, `prepare_pbr_for_pkx_export.py` | Smooth auto handles through rewritten root keyframes |
 | 2.80 | current | `bpy.context.active_object` | `set_texture_formats.py`, `add_shiny_filter.py`, `add_ambient_lighting.py` | Script entry point — active armature |
 | 2.80 | current | `bpy.data.node_groups.remove(group)` | `remove_shiny_filter.py` | Delete shared shiny node groups |
 | | | | | |
@@ -277,9 +285,8 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.80 | current | `polygon.loop_start` / `polygon.loop_total` | `exporter/describe/helpers/meshes.py` | Map polygon to per-loop data indices |
 | 2.80 | current | `mesh_data.materials` | `exporter/describe/helpers/meshes.py` | Access material slots for multi-material meshes |
 | 2.80 | current | `mesh_data.uv_layers` | `exporter/describe/helpers/meshes.py` | Read UV layers |
-| 3.2 | current | `mesh_data.color_attributes` | `exporter/describe/helpers/meshes.py` | Read vertex color layers (FLOAT_COLOR) |
-| 2.80 | current | `mesh_data.has_custom_normals` | `exporter/describe/helpers/meshes.py` | Check for custom normals |
-| 4.1 | current | `mesh_data.corner_normals` | `exporter/describe/helpers/meshes.py` | Per-loop normals (replaces `calc_normals_split()`) |
+| 3.2 | current | `mesh_data.color_attributes` | `exporter/describe/helpers/meshes.py` | Read vertex color layers (FLOAT_COLOR); also gates normal export (NRM xor CLR per PObject) |
+| 4.1 | current | `mesh_data.corner_normals` | `exporter/describe/helpers/meshes.py` | Per-loop normals (replaces `calc_normals_split()`), extracted for every lit (non-vertex-coloured) mesh |
 | 2.80 | 4.0 | `mesh_data.calc_normals_split()` | `exporter/describe/helpers/meshes.py` | Fallback for pre-4.1; removed in 4.1 |
 | 2.80 | current | `mesh_data.loops` | `exporter/describe/helpers/meshes.py` | Read per-loop data (fallback path) |
 | 2.80 | current | `obj.vertex_groups` | `exporter/describe/helpers/meshes.py` | Read vertex group list |
