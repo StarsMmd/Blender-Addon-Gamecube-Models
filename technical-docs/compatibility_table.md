@@ -22,8 +22,8 @@ This table tracks every feature in the HAL DAT `.dat` model format and its suppo
 | UV coordinates (up to 8 layers) | ✅ | `IRUVLayer` | ✅ | ✅ | Per-material UV remapping on split |
 | Vertex colors (CLR0, CLR1) | ✅ | `IRColorLayer` | ✅ | ⚠️ | |
 | Custom normals | ✅ | `IRMesh.normals` | ✅ | ⚠️ | Normalized in describe phase |
-| Bone weights / envelopes | ✅ | `IRBoneWeights` | ✅ | ✅ | Weights remapped when mesh is split |
-| Single-bone skinning | ✅ | `IRBoneWeights` | ✅ | ✅ | |
+| Bone weights / envelopes | ✅ | `IRBoneWeights` | ✅ | ✅ | Weights remapped when mesh is split. Game invariant: a mesh's owner joint (`JOBJ_ENVELOPE_MODEL`) must be disjoint from every envelope-weight deformer (`JOBJ_SKELETON` + IBM). Both prep scripts (`prepare_for_pkx_export.py`, `prepare_for_dat_export.py`) enforce this via `reparent_meshes_to_holder_bones` — for every mesh whose owner would otherwise be one of its own weighted bones, a coincident no-weight holder bone is inserted (parented to root, not to the deformer, so Blender's viewport doesn't double-evaluate the deformer's pose) and the mesh is bone-parented to it. Exporter's `pre_process` rejects any scene that still violates the invariant. |
+| Single-bone skinning | ✅ | `IRBoneWeights` | ✅ | ✅ | Eyes, hair strands, and similar detached meshes: subject to the same owner-vs-deformer disjointness requirement (see row above). |
 | Shape keys / morph targets | ⚠️ | `IRShapeKey` | ❌ | ❌ | Dataclass exists but never populated |
 | Bone instances (JOBJ_INSTANCE) | ✅ | `IRBone.instance_child` | ✅ | ❌ | |
 | Spline curves | ✅ | via path animation | ⚠️ Path only | ❌ | |

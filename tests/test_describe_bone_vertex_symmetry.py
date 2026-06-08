@@ -29,6 +29,7 @@ from exporter.phases.describe.helpers.scene import (
 from exporter.phases.pre_process.pre_process import (
     MAX_TEXTURE_DIM,
     MAX_VERTEX_WEIGHTS,
+    _check_mesh_owner_disjoint,
     _check_texture_sizes,
     _check_vertex_weight_count,
     _check_baked_transforms as _preprocess_check_baked_transforms,
@@ -221,6 +222,156 @@ class TestCheckTextureSizes:
 
     def test_constant_matches_documented_cap(self):
         assert MAX_TEXTURE_DIM == 512
+
+
+class _MockBone:
+    def __init__(self, name, parent=None):
+        self.name = name
+        self.parent = parent
+
+
+class _MockArmatureData:
+    def __init__(self, bones):
+        self.bones = bones
+
+
+class _MockArmature:
+    def __init__(self, name, bones):
+        self.name = name
+        self.type = 'ARMATURE'
+        self.data = _MockArmatureData(bones)
+
+
+class _MockVG:
+    def __init__(self, index, name):
+        self.index = index
+        self.name = name
+
+
+class _MockVGroupRef:
+    def __init__(self, group, weight):
+        self.group = group
+        self.weight = weight
+
+
+class _MockVertexDisjoint:
+    def __init__(self, index, group_refs):
+        self.index = index
+        self.groups = group_refs
+
+
+class _MockMeshDataDisjoint:
+    def __init__(self, vertices):
+        self.vertices = vertices
+
+
+class _MockMeshDisjoint:
+    def __init__(self, name, vertex_groups, vertices, parent=None,
+                 parent_type='OBJECT', parent_bone=''):
+        self.name = name
+        self.vertex_groups = vertex_groups
+        self.data = _MockMeshDataDisjoint(vertices)
+        self.parent = parent
+        self.parent_type = parent_type
+        self.parent_bone = parent_bone
+
+
+class TestCheckMeshOwnerDisjoint:
+    """Game requires the mesh-owner joint (ENV_MODEL) to be disjoint from any
+    envelope-weight deformer. The prep script's holder-bone step enforces
+    this; the pre_process check catches scenes that skipped or bypassed it.
+    """
+
+    def _build_arm(self, names):
+        # Bone tree: bones[0] is root, each subsequent bone is a child of root.
+        root = _MockBone(names[0], parent=None)
+        bones = [root]
+        for n in names[1:]:
+            bones.append(_MockBone(n, parent=root))
+        return _MockArmature('rig', bones)
+
+    def test_single_bone_weighted_to_its_owner_rejected(self):
+        # Eye mesh weighted 100% to "head" with no explicit parent_bone →
+        # NCA = "head" = a deformer → violates disjointness.
+        arm = self._build_arm(['root', 'head'])
+        vg = [_MockVG(0, 'head')]
+        verts = [_MockVertexDisjoint(0, [_MockVGroupRef(0, 1.0)])]
+        mesh = _MockMeshDisjoint('Eye', vg, verts)
+        with pytest.raises(ValueError, match="disjoint"):
+            _check_mesh_owner_disjoint({arm: [mesh]})
+
+    def test_holder_bone_owner_passes(self):
+        # Mesh bone-parented to a non-weighted holder bone, weighted to a
+        # separate deformer → invariant satisfied.
+        arm = self._build_arm(['root', 'head', 'head_mesh'])
+        vg = [_MockVG(0, 'head')]
+        verts = [_MockVertexDisjoint(0, [_MockVGroupRef(0, 1.0)])]
+        mesh = _MockMeshDisjoint('Eye', vg, verts,
+                                 parent_type='BONE', parent_bone='head_mesh')
+        _check_mesh_owner_disjoint({arm: [mesh]})
+
+    def test_multi_bone_weighted_nca_deformer_rejected(self):
+        # Body mesh weighted to spine + chest, NCA = spine, spine is itself
+        # a deformer → violates invariant.
+        arm = self._build_arm(['root', 'spine', 'chest'])
+        # Reparent chest under spine so spine is the NCA of {spine, chest}.
+        arm.data.bones[2].parent = arm.data.bones[1]
+        vg = [_MockVG(0, 'spine'), _MockVG(1, 'chest')]
+        verts = [
+            _MockVertexDisjoint(0, [_MockVGroupRef(0, 0.5),
+                                    _MockVGroupRef(1, 0.5)]),
+        ]
+        mesh = _MockMeshDisjoint('Body', vg, verts)
+        with pytest.raises(ValueError, match="disjoint"):
+            _check_mesh_owner_disjoint({arm: [mesh]})
+
+    def test_root_as_owner_passes_when_not_deformer(self):
+        # Mesh weighted only to non-root bones, NCA defaults to root, and
+        # root has no weights → invariant holds.
+        arm = self._build_arm(['root', 'arm_l', 'arm_r'])
+        vg = [_MockVG(0, 'arm_l'), _MockVG(1, 'arm_r')]
+        verts = [
+            _MockVertexDisjoint(0, [_MockVGroupRef(0, 0.5),
+                                    _MockVGroupRef(1, 0.5)]),
+        ]
+        mesh = _MockMeshDisjoint('Body', vg, verts)
+        _check_mesh_owner_disjoint({arm: [mesh]})
+
+    def test_explicit_parent_bone_to_deformer_rejected(self):
+        # User bone-parented mesh directly to a weighted bone — explicit
+        # parent_bone wins over NCA logic.
+        arm = self._build_arm(['root', 'head'])
+        vg = [_MockVG(0, 'head')]
+        verts = [_MockVertexDisjoint(0, [_MockVGroupRef(0, 1.0)])]
+        mesh = _MockMeshDisjoint('Eye', vg, verts,
+                                 parent_type='BONE', parent_bone='head')
+        with pytest.raises(ValueError, match="disjoint"):
+            _check_mesh_owner_disjoint({arm: [mesh]})
+
+    def test_unweighted_mesh_passes(self):
+        # No weights → owner defaults to root which isn't a deformer.
+        arm = self._build_arm(['root', 'head'])
+        mesh = _MockMeshDisjoint('Decor', [], [])
+        _check_mesh_owner_disjoint({arm: [mesh]})
+
+    def test_error_mentions_prepare_script(self):
+        arm = self._build_arm(['root', 'head'])
+        vg = [_MockVG(0, 'head')]
+        verts = [_MockVertexDisjoint(0, [_MockVGroupRef(0, 1.0)])]
+        mesh = _MockMeshDisjoint('Eye', vg, verts)
+        with pytest.raises(ValueError, match="prepare_for_(pkx|dat)_export"):
+            _check_mesh_owner_disjoint({arm: [mesh]})
+
+    def test_sample_offender_in_error(self):
+        arm = self._build_arm(['root', 'head'])
+        vg = [_MockVG(0, 'head')]
+        verts = [_MockVertexDisjoint(0, [_MockVGroupRef(0, 1.0)])]
+        mesh = _MockMeshDisjoint('Eye', vg, verts)
+        with pytest.raises(ValueError, match=r"Eye.*head"):
+            _check_mesh_owner_disjoint({arm: [mesh]})
+
+    def test_empty_dict_ok(self):
+        _check_mesh_owner_disjoint({})
 
 
 class TestIsIdentityMatrix:
