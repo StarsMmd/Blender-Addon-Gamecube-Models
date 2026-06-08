@@ -15,7 +15,7 @@ This table tracks every feature in the HAL DAT `.dat` model format and its suppo
 | Feature | DAT Parse (Phase 3) | IR Type (Phase 4) | Import (Phase 5) | Export | Notes |
 |---------|---------------------|--------------------|--------------------|--------|-------|
 | Skeleton / Bone hierarchy | ✅ | `IRBone` | ✅ | ✅ | Arbitrary armatures supported |
-| Bone transforms (SRT) | ✅ | `IRBone` matrices | ✅ | ✅ | Armature object scale applied |
+| Bone transforms (SRT) | ✅ | `IRBone` matrices | ✅ | ✅ | Armature object scale applied. Game invariant: the root JOBJ rotation must be identity (the renderer applies the root joint's own rotation as the model's base orientation without cancelling it, so any roll/rotation on the root bone turns the whole model in-game). The prep scripts do NOT auto-correct this — before exporting an arbitrary rig, manually edit the root bone in Edit Mode so it points straight up with `roll = 0` (Z-up, rest matrix = +90° about X after the Z-up→Y-up coord rotation). The exporter's `pre_process._validate_root_bone_orientation` rejects scenes whose root won't round-trip to an identity root JOBJ. Importer-built rigs are already canonical. |
 | Bone flags (hidden) | ✅ | `IRBone.is_hidden` | ✅ | ✅ | Reads `bone.hide` and auto-hides bones whose meshes are all hidden |
 | Bone flags (billboard) | ✅ | `IRBone.flags` | ❌ | ❌ | Parsed but not applied |
 | Meshes (tris, quads, tri-strips) | ✅ | `IRMesh` | ✅ | ✅ | Multi-material meshes split by material slot |
