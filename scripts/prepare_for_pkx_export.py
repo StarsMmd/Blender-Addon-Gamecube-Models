@@ -2081,11 +2081,12 @@ def prepare_lights():
     """Ensure the scene has a standard 4-light preview setup.
 
     Creates a 4-LightSet layout that matches the convention found in
-    every tested Colo/XD model:
+    Colo/XD models — directions are the corpus-typical GX light vectors
+    (see technical-docs/implementation_notes.md § Default export lighting):
       [0] Ambient (76, 76, 76) — uniform fill, POINT with energy=0
       [1] Main directional (204, 204, 204) — brightest, SUN from above-front
-      [2] Fill directional (102, 102, 102) — medium, SUN from the side
-      [3] Back/rim directional (76, 76, 76) — darker, SUN from behind
+      [2] Fill directional (102, 102, 102) — medium, SUN from above-behind
+      [3] Back/rim directional (76, 76, 76) — darker, SUN from below-front
 
     Names are namespaced under _PREP_LIGHT_PREFIX so re-runs don't
     duplicate them and they don't collide with imported / user lights.
@@ -2097,14 +2098,22 @@ def prepare_lights():
     # [0] Ambient — delegate to existing function
     created += prepare_ambient_light()
 
-    # Standard directional lights — (suffix, color_u8, rotation_euler_radians)
+    from mathutils import Vector as _Vector
+
+    # Standard directional lights — (suffix, color_u8, gx_direction).
+    # gx_direction is the GX-space (Y-up) unit direction the game stores for
+    # each light, taken from the typical Colo/XD Pokémon lighting rig (see
+    # technical-docs/implementation_notes.md § Default export lighting). The
+    # exporter derives a SUN's direction from its local −Z axis, so we orient
+    # each lamp so −Z points along the GX direction expressed in Blender's
+    # Z-up frame: GX (gx, gy, gz) → Blender forward (gx, −gz, gy).
     _DIRECTIONAL_LIGHTS = [
-        ('Main', 204, (math.radians(-45), 0, math.radians(30))),
-        ('Fill', 102, (math.radians(-30), 0, math.radians(-60))),
-        ('Back',  76, (math.radians(-20), 0, math.radians(150))),
+        ('Main', 204, (0.5304, 0.6596, 0.5326)),
+        ('Fill', 102, (-0.3518, 0.5201, -0.7783)),
+        ('Back',  76, (-0.7116, -0.5396, 0.4499)),
     ]
 
-    for suffix, color_u8, rotation in _DIRECTIONAL_LIGHTS:
+    for suffix, color_u8, gx_dir in _DIRECTIONAL_LIGHTS:
         name = _PREP_LIGHT_PREFIX + suffix
         # Idempotent: skip if a previous run already created this light.
         existing = bpy.data.objects.get(name)
@@ -2119,7 +2128,9 @@ def prepare_lights():
         light_data.color = (linear_val, linear_val, linear_val)
 
         lamp = bpy.data.objects.new(name=name, object_data=light_data)
-        lamp.rotation_euler = rotation
+        gx, gy, gz = gx_dir
+        forward = _Vector((gx, -gz, gy))
+        lamp.rotation_euler = forward.to_track_quat('-Z', 'Y').to_euler()
         bpy.context.scene.collection.objects.link(lamp)
         created += 1
 
