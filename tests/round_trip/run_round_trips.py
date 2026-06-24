@@ -23,8 +23,9 @@ Test types:
     BNB  Binary -> Node tree -> Binary        (byte-level fidelity)
     BBB  BR -> Blender -> BR                  (build/describe round-trip; bounds the
                                               Blender-facing leg only — no IR↔BR involvement)
-    IBI  IR -> BR -> Blender -> BR -> IR      (full Blender round-trip; bounds Plan
-                                              on both sides plus build/describe)
+    IBI  IR -> BR -> IR                       (pure Plan round-trip; bounds the
+                                              importer Plan and exporter Plan back to
+                                              back, no bpy build/describe leg)
 """
 import sys
 import os
@@ -278,25 +279,28 @@ def compute_nin_score(filepath, logger=None):
 # ---------------------------------------------------------------------------
 
 def compute_ibi_score(filepath, logger=None):
-    """Parse through phase 4 to get IR, build in Blender, read back, compare.
+    """Parse through phase 4 to get IR, round-trip through BR, compare.
+
+    Pure Plan round-trip: IR → BR via the importer's Plan, then BR → IR
+    via the exporter's Plan — no bpy build/describe leg. Bounds the two
+    Plan phases back to back, isolating IR↔BR conversion fidelity from
+    any noise the Blender build/describe round-trip would add (fcurve
+    sampling, normal recomputation, etc.).
 
     Uses category-weighted scoring: each IR category (bones, meshes,
     materials, animations, constraints, lights) is scored independently,
     then the scores are averaged across categories that have data. This
     prevents large vertex arrays from drowning out other features.
     """
-    clear_blender_scene()
-
     _, sections = load_model(filepath)
     options = {"filepath": filepath}
     ir_original = describe_ir(sections, options=options, logger=logger)
 
-    # Plan IR → BR (phase 5a), then build (phase 5b)
+    # Plan IR → BR (importer phase 5a), then BR → IR (exporter phase 2).
     br_scene = plan_to_br(ir_original, options={"filepath": filepath}, logger=logger)
-    build_results = build_in_blender(br_scene, options={"filepath": filepath})
-
-    # Read back from Blender (export phase 1 → phase 2)
-    ir_roundtripped, _, _ = read_back_from_blender(build_results)
+    ir_roundtripped = plan_br_to_ir(
+        br_scene, options={'skip_baked_transforms_validation': True},
+    )
 
     # Compare IR scenes by category
     categories, details = _compare_ir_by_category(ir_original, ir_roundtripped)
@@ -310,7 +314,6 @@ def compute_ibi_score(filepath, logger=None):
     else:
         pct, err_pct, miss_pct = 100.0, 0.0, 0.0
 
-    clear_blender_scene()
     return pct, err_pct, miss_pct, details, categories
 
 

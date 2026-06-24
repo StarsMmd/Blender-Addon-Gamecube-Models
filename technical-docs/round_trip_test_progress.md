@@ -31,9 +31,9 @@ Parse a DAT binary into a node tree, run the importer's describe phase to produc
 
 Plan an IRScene into a BRScene via the importer's plan phase, build it into Blender via the importer's build phase, then read it back via the exporter's describe phase. Compare the two BRScenes using per-category scoring. Bounds **only** the Blender-facing leg of the pipeline (build + describe) — no IR↔BR conversion crosses the comparison, so any drift here is either a fidelity bug in build/describe or an inherent limitation of representing the BR data inside Blender.
 
-### IR → Blender → IR (IBI)
+### IR → BR → IR (IBI)
 
-Plan IR → BR via the importer's plan, build into Blender via the importer's build, then run the exporter's `describe → plan` phases to recover a new IRScene. Compare the two IR scenes using category-weighted scoring — each IR category (bones, meshes, materials, animations, constraints, lights) is scored independently, then averaged across categories that have data. This prevents large vertex arrays from inflating the score. IBI is broader than BBB: it adds the IR→BR and BR→IR conversion steps on either side of the bpy round-trip.
+Plan IR → BR via the importer's plan, then run the exporter's plan to recover a new IRScene directly from that BR — **no bpy build/describe leg**. Compare the two IR scenes using category-weighted scoring — each IR category (bones, meshes, materials, animations, constraints, lights) is scored independently, then averaged across categories that have data. This prevents large vertex arrays from inflating the score. IBI isolates the two Plan phases (importer IR→BR and exporter BR→IR) back to back, so any drift is a pure IR↔BR conversion bug, not noise from the Blender round-trip (fcurve resampling, normal recomputation). It requires `mathutils` but not a bpy build context. (This relies on the exporter Plan being self-sufficient — it derives IR bones/meshes from BR via `plan_armature`/`plan_meshes`/`merge_meshes` rather than reading a stash that only the bpy describe phase could populate.)
 
 ### Binary → Node tree → Binary (BNB)
 
@@ -52,7 +52,7 @@ The comparators skip these field categories so the score reflects model data, no
 
 ## Test Results
 
-**Overall export pipeline completion (76 character/Pokémon models): 🔵 80.0%** _(weighted: NBN 20% × 92.3 + NIN 35% × 76.2 + BBB 15% × 82.1 + IBI 25% × 73.3 + BNB 5% × 85.4)_
+**Overall export pipeline completion (76 character/Pokémon models): ✅ 82.7%** _(weighted: NBN 20% × 92.3 + NIN 35% × 76.2 + BBB 15% × 83.4 + IBI 25% × 83.0 + BNB 5% × 85.4)_
 
 _Average health: 🔴 0-20% · 🟠 21-40% · 🟡 41-60% · 🔵 61-80% · ✅ 81-100%_
 
@@ -64,99 +64,99 @@ Scores below come from the full corpus in `~/Documents/Projects/DAT plugin/model
 
 ### Character / Pokémon Models
 
-| Model | Game | NBN ✅ | NIN 🔵 | BBB ✅ | IBI 🔵 | BNB ✅ |
+| Model | Game | NBN ✅ | NIN 🔵 | BBB ✅ | IBI ✅ | BNB ✅ |
 |---|---|---|---|---|---|---|
-| absol | Colo | 92.3%(8/0) | 78.7%(21/0) | 82.2%(12/6) | 63.2%(15/21) | 86.4% |
-| achamo | XD | 92.0%(8/0) | 76.2%(24/0) | 81.6%(11/7) | 73.5%(15/11) | 84.3% |
-| airmd | Colo | 92.8%(7/0) | 79.3%(21/0) | 81.3%(12/7) | 72.2%(15/13) | 85.0% |
-| akami_m_a1 | XD | 92.2%(8/0) | 79.9%(17/3) | 83.5%(7/10) | 68.9%(6/25) | 74.3% |
-| ametama | Colo | 93.1%(7/0) | 82.1%(18/0) | 81.9%(12/6) | 78.8%(15/7) | 90.2% |
-| betbeton | Colo | 90.0%(10/0) | 62.7%(37/0) | 82.6%(10/7) | 70.0%(13/17) | 82.0% |
-| blacky | Colo | 93.2%(7/0) | 81.9%(18/0) | 82.5%(11/7) | 72.4%(13/15) | 88.6% |
-| bohmander | XD | 91.5%(9/0) | 79.0%(21/0) | 81.4%(12/7) | 68.9%(14/17) | 84.1% |
-| booster | Colo | 92.9%(7/0) | 80.1%(20/0) | 81.2%(11/8) | 79.7%(12/9) | 91.5% |
-| boss555_a1 | XD | 92.4%(8/0) | 80.7%(17/3) | 83.3%(7/10) | 75.2%(8/17) | 83.1% |
-| cerebi | XD | 89.6%(10/0) | 61.9%(38/0) | 83.0%(8/9) | 74.7%(14/12) | 82.0% |
-| cokodora | Colo | 93.4%(7/0) | 84.6%(15/0) | 82.4%(10/7) | 60.2%(12/28) | 86.4% |
-| darklugia | XD | 90.7%(9/0) | 76.6%(23/0) | 81.8%(10/8) | 63.6%(14/22) | 82.0% |
-| denryu | Colo | 93.9%(6/0) | 82.3%(17/0) | 81.5%(11/8) | 72.8%(15/12) | 87.3% |
-| deoxys | XD | 90.7%(9/0) | 64.2%(36/0) | 82.2%(12/6) | 66.8%(18/15) | 84.5% |
-| dirteng | Colo | 91.3%(9/0) | 80.2%(20/0) | 81.5%(10/8) | 74.0%(15/11) | 82.6% |
-| donmel | Colo | 92.9%(7/0) | 82.6%(17/0) | 82.9%(9/8) | 69.6%(11/19) | 85.7% |
-| ebiwalar | Colo | 91.7%(8/0) | 78.2%(22/0) | 81.8%(10/8) | 78.1%(14/8) | 82.6% |
-| eievui | Colo | 89.8%(10/0) | 59.2%(41/0) | 82.7%(11/6) | 77.3%(12/11) | 82.8% |
-| eifie | Colo | 91.1%(9/0) | 64.6%(35/0) | 82.5%(10/7) | 71.2%(14/15) | 82.5% |
-| entei | Colo | 93.4%(7/0) | 84.3%(16/0) | 81.8%(12/7) | 70.4%(16/14) | 85.5% |
-| fire | Colo | 93.3%(7/0) | 84.6%(15/1) | 81.6%(11/8) | 81.3%(11/7) | 83.5% |
-| freezer | Colo | 93.1%(7/0) | 81.3%(18/1) | 80.1%(11/9) | 80.6%(12/8) | 90.5% |
-| frygon | XD | 93.0%(7/0) | 80.0%(20/0) | 81.2%(11/8) | 71.3%(15/14) | 86.0% |
-| fushigibana | Colo | 92.7%(7/0) | 81.5%(18/0) | 81.7%(13/6) | 71.4%(14/15) | 89.1% |
-| gaderi_0101 | XD | 92.0%(8/0) | 75.1%(23/1) | 81.9%(4/14) | 67.9%(2/30) | 83.8% |
-| gallop | XD | 91.7%(8/0) | 77.4%(23/0) | 82.0%(10/8) | 68.9%(12/19) | 83.2% |
-| gangar | Colo | 90.0%(10/0) | 62.4%(38/0) | 80.6%(10/9) | 76.3%(9/15) | 83.6% |
-| gba_emr_f_0101 | XD | 93.0%(7/0) | 79.3%(15/6) | 82.1%(4/14) | 67.8%(2/31) | 80.0% |
-| ghos | Colo | 90.3%(10/0) | 63.1%(35/2) | 82.5%(8/10) | 79.6%(11/9) | 79.2% |
-| gonyonyo | Colo | 94.4%(6/0) | 77.8%(22/0) | 81.9%(12/6) | 77.1%(13/10) | 87.7% |
-| groudon | Colo | 94.3%(6/0) | 83.9%(16/0) | 81.3%(12/6) | 72.6%(16/11) | 91.7% |
-| haganeil | XD | 92.7%(7/0) | 84.3%(16/0) | 79.0%(13/8) | 81.8%(11/7) | 92.7% |
-| hakuryu | Colo | 93.6%(6/0) | 83.1%(17/0) | 82.6%(8/9) | 77.8%(11/11) | 87.2% |
-| hassam | Colo | 93.0%(7/0) | 84.0%(16/0) | 82.1%(11/7) | 77.0%(14/9) | 86.2% |
-| heracros | Colo | 93.0%(7/0) | 82.7%(17/0) | 81.8%(11/7) | 83.4%(13/4) | 83.9% |
-| hinoarashi | Colo | 90.3%(10/0) | 65.8%(34/0) | 83.5%(10/7) | 75.4%(14/11) | 88.1% |
-| hizuki_a1 | Colo | 92.5%(7/0) | 82.6%(16/2) | 83.4%(7/10) | 75.3%(6/19) | 66.7% |
-| houou | Colo | 92.5%(7/0) | 75.3%(25/0) | 78.6%(11/10) | 68.2%(18/14) | 87.8% |
-| kairiky | Colo | 89.9%(10/0) | 60.4%(40/0) | 82.8%(9/8) | 80.1%(10/10) | 80.9% |
-| kairyu | Colo | 92.7%(7/0) | 79.6%(20/0) | 81.2%(8/11) | 66.6%(9/24) | 92.1% |
-| kemusso | Colo | 94.9%(5/0) | 86.9%(13/0) | 81.5%(9/10) | 78.2%(11/11) | 85.1% |
-| kibanha | XD | 92.0%(8/0) | 75.3%(25/0) | 81.2%(10/8) | 79.2%(14/7) | 85.6% |
-| kirlia | Colo | 93.2%(7/0) | 85.9%(14/0) | 82.8%(10/7) | 70.7%(13/17) | 86.9% |
-| koduck | Colo | 94.0%(6/0) | 82.4%(18/0) | 81.8%(12/7) | 66.7%(14/19) | 85.6% |
-| kyukon | Colo | 90.9%(9/0) | 71.5%(29/0) | 82.0%(10/8) | 67.8%(13/19) | 81.1% |
-| lantern | Colo | 93.6%(6/0) | 81.5%(15/4) | 81.8%(10/8) | 72.9%(14/13) | 88.8% |
-| laplace | Colo | 90.9%(9/0) | 62.7%(37/0) | 82.4%(8/10) | 81.0%(7/12) | 83.0% |
-| lizardon | Colo | 93.5%(7/0) | 80.3%(19/0) | 79.9%(9/11) | 73.7%(11/16) | 92.3% |
-| mage_0101 | XD | 91.8%(8/0) | 77.6%(21/1) | 82.4%(4/14) | 65.1%(2/33) | 83.3% |
-| mcgroudon_1101 | XD | 91.6%(8/0) | 80.6%(17/2) | 81.1%(5/14) | 66.5%(4/30) | 82.6% |
-| metamon | Colo | 89.0%(11/0) | 53.1%(47/0) | 84.0%(8/8) | 83.1%(7/10) | 81.4% |
-| miniryu | XD | 90.2%(10/0) | 58.5%(41/0) | 83.8%(9/7) | 77.2%(9/14) | 81.6% |
-| mirrabo_0101 | XD | 91.8%(8/0) | 79.7%(19/2) | 82.1%(4/14) | 64.4%(2/33) | 85.9% |
-| nendoll | Colo | 93.4%(7/0) | 75.9%(21/3) | 83.2%(11/6) | 82.2%(10/8) | 94.4% |
-| noctus | Colo | 93.2%(7/0) | 80.9%(19/0) | 81.3%(10/9) | 63.0%(15/22) | 83.2% |
-| nukenin | XD | 97.1%(3/0) | 87.6%(12/0) | 82.0%(9/9) | 83.9%(11/6) | 95.0% |
-| nyoromo | Colo | 91.4%(9/0) | 69.5%(31/0) | 81.6%(12/7) | 74.0%(15/11) | 89.8% |
-| patcheel | Colo | 92.4%(8/0) | 73.7%(26/0) | 81.7%(13/5) | 70.0%(15/15) | 92.8% |
-| pikachu | Colo | 93.4%(7/0) | 77.8%(22/0) | 80.8%(9/10) | 69.3%(10/21) | 90.9% |
-| rayquaza | XD | 93.6%(6/0) | 84.3%(16/0) | 83.2%(14/3) | 79.8%(17/4) | 92.2% |
-| rinto_0101 | XD | 93.7%(6/0) | 79.5%(14/7) | 82.5%(4/14) | 63.3%(1/35) | 80.1% |
-| rinto_1101 | XD | 93.9%(6/0) | 76.3%(14/10) | 82.8%(4/13) | 66.8%(2/31) | 83.3% |
-| rinto_1102 | XD | 94.3%(6/0) | 77.5%(14/9) | 82.7%(4/13) | 66.4%(2/32) | 84.9% |
-| roselia | Colo | 91.0%(9/0) | 71.1%(29/0) | 82.4%(9/8) | 73.5%(13/13) | 87.4% |
-| ruffresia | Colo | 90.2%(10/0) | 60.3%(40/0) | 82.9%(8/9) | 77.7%(8/14) | 85.5% |
-| runpappa | XD | 92.5%(7/0) | 75.2%(25/0) | 82.5%(13/5) | 74.4%(16/9) | 85.2% |
-| showers | Colo | 89.7%(10/0) | 63.4%(37/0) | 82.6%(10/7) | 73.9%(9/18) | 81.2% |
-| sirnight | Colo | 92.2%(8/0) | 75.0%(25/0) | 81.9%(10/8) | 70.2%(14/16) | 84.2% |
-| subame | Colo | 91.7%(8/0) | 77.4%(23/0) | 82.9%(10/7) | 75.8%(13/11) | 82.0% |
-| suikun | Colo | 92.2%(8/0) | 81.2%(19/0) | 81.2%(13/6) | 66.8%(19/14) | 89.8% |
-| sunnygo | Colo | 97.4%(3/0) | 89.6%(10/0) | 83.0%(9/8) | 82.9%(9/8) | 93.7% |
-| thunder | Colo | 89.7%(10/0) | 61.8%(38/0) | 82.7%(8/9) | 80.4%(11/9) | 80.1% |
-| tropius | Colo | 92.9%(7/0) | 81.4%(19/0) | 81.0%(11/8) | 64.8%(14/21) | 83.5% |
-| usohachi | XD | 92.3%(8/0) | 71.8%(22/6) | 84.1%(7/9) | 87.8%(9/3) | 81.7% |
-| vibrava | Colo | 91.6%(8/0) | 77.9%(22/0) | 82.8%(12/5) | 74.2%(16/10) | 86.8% |
+| absol | Colo | 92.3%(8/0) | 78.7%(21/0) | 83.2%(7/10) | 73.4%(6/21) | 86.4% |
+| achamo | XD | 92.0%(8/0) | 76.2%(24/0) | 82.7%(7/10) | 82.5%(8/10) | 84.3% |
+| airmd | Colo | 92.8%(7/0) | 79.3%(21/0) | 82.3%(7/10) | 81.6%(6/12) | 85.0% |
+| akami_m_a1 | XD | 92.2%(8/0) | 79.9%(17/3) | 85.5%(5/10) | 75.7%(1/23) | 74.3% |
+| ametama | Colo | 93.1%(7/0) | 82.1%(18/0) | 82.9%(7/10) | 88.4%(6/6) | 90.2% |
+| betbeton | Colo | 90.0%(10/0) | 62.7%(37/0) | 83.8%(6/10) | 80.0%(6/14) | 82.0% |
+| blacky | Colo | 93.2%(7/0) | 81.9%(18/0) | 83.6%(6/10) | 81.8%(4/14) | 88.6% |
+| bohmander | XD | 91.5%(9/0) | 79.0%(21/0) | 82.5%(7/10) | 78.0%(6/16) | 84.1% |
+| booster | Colo | 92.9%(7/0) | 80.1%(20/0) | 82.5%(6/12) | 92.3%(5/2) | 91.5% |
+| boss555_a1 | XD | 92.4%(8/0) | 80.7%(17/3) | 85.4%(5/10) | 82.4%(2/15) | 83.1% |
+| cerebi | XD | 89.6%(10/0) | 61.9%(38/0) | 84.5%(5/11) | 81.7%(10/8) | 82.0% |
+| cokodora | Colo | 93.4%(7/0) | 84.6%(15/0) | 83.5%(6/10) | 69.7%(4/27) | 86.4% |
+| darklugia | XD | 90.7%(9/0) | 76.6%(23/0) | 83.1%(6/11) | 73.1%(7/20) | 82.0% |
+| denryu | Colo | 93.9%(6/0) | 82.3%(17/0) | 82.8%(7/11) | 81.8%(7/11) | 87.3% |
+| deoxys | XD | 90.7%(9/0) | 64.2%(36/0) | 83.2%(7/10) | 76.7%(10/14) | 84.5% |
+| dirteng | Colo | 91.3%(9/0) | 80.2%(20/0) | 82.8%(7/11) | 82.2%(8/9) | 82.6% |
+| donmel | Colo | 92.9%(7/0) | 82.6%(17/0) | 84.2%(5/11) | 78.1%(4/18) | 85.7% |
+| ebiwalar | Colo | 91.7%(8/0) | 78.2%(22/0) | 83.1%(6/11) | 86.1%(8/6) | 82.6% |
+| eievui | Colo | 89.8%(10/0) | 59.2%(41/0) | 83.3%(7/10) | 86.5%(4/9) | 82.8% |
+| eifie | Colo | 91.1%(9/0) | 64.6%(35/0) | 83.7%(6/10) | 80.0%(6/14) | 82.5% |
+| entei | Colo | 93.4%(7/0) | 84.3%(16/0) | 83.1%(7/10) | 80.0%(7/13) | 85.5% |
+| fire | Colo | 93.3%(7/0) | 84.6%(15/1) | 83.1%(6/11) | 90.8%(4/5) | 83.5% |
+| freezer | Colo | 93.1%(7/0) | 81.3%(18/1) | 81.2%(6/12) | 93.4%(5/1) | 90.5% |
+| frygon | XD | 93.0%(7/0) | 80.0%(20/0) | 82.6%(6/11) | 80.5%(7/12) | 86.0% |
+| fushigibana | Colo | 92.7%(7/0) | 81.5%(18/0) | 82.8%(7/10) | 82.4%(5/13) | 89.1% |
+| gaderi_0101 | XD | 92.0%(8/0) | 75.1%(23/1) | 83.9%(2/14) | 81.3%(2/17) | 83.8% |
+| gallop | XD | 91.7%(8/0) | 77.4%(23/0) | 83.4%(6/11) | 78.4%(5/17) | 83.2% |
+| gangar | Colo | 90.0%(10/0) | 62.4%(38/0) | 81.8%(7/12) | 88.0%(4/8) | 83.6% |
+| gba_emr_f_0101 | XD | 93.0%(7/0) | 79.3%(15/6) | 84.2%(2/14) | 80.8%(1/18) | 80.0% |
+| ghos | Colo | 90.3%(10/0) | 63.1%(35/2) | 84.6%(5/11) | 86.7%(8/6) | 79.2% |
+| gonyonyo | Colo | 94.4%(6/0) | 77.8%(22/0) | 82.9%(7/10) | 87.5%(5/8) | 87.7% |
+| groudon | Colo | 94.3%(6/0) | 83.9%(16/0) | 82.4%(7/10) | 83.7%(6/10) | 91.7% |
+| haganeil | XD | 92.7%(7/0) | 84.3%(16/0) | 79.8%(8/12) | 96.5%(3/0) | 92.7% |
+| hakuryu | Colo | 93.6%(6/0) | 83.1%(17/0) | 84.0%(5/11) | 85.7%(4/10) | 87.2% |
+| hassam | Colo | 93.0%(7/0) | 84.0%(16/0) | 83.5%(6/10) | 85.6%(6/8) | 86.2% |
+| heracros | Colo | 93.0%(7/0) | 82.7%(17/0) | 83.0%(7/10) | 92.7%(5/3) | 83.9% |
+| hinoarashi | Colo | 90.3%(10/0) | 65.8%(34/0) | 84.6%(7/9) | 84.3%(7/9) | 88.1% |
+| hizuki_a1 | Colo | 92.5%(7/0) | 82.6%(16/2) | 85.4%(5/10) | 81.9%(1/17) | 66.7% |
+| houou | Colo | 92.5%(7/0) | 75.3%(25/0) | 80.2%(6/13) | 80.6%(11/8) | 87.8% |
+| kairiky | Colo | 89.9%(10/0) | 60.4%(40/0) | 83.9%(6/10) | 88.2%(5/7) | 80.9% |
+| kairyu | Colo | 92.7%(7/0) | 79.6%(20/0) | 82.5%(4/14) | 80.1%(5/14) | 92.1% |
+| kemusso | Colo | 94.9%(5/0) | 86.9%(13/0) | 82.9%(6/11) | 85.8%(5/9) | 85.1% |
+| kibanha | XD | 92.0%(8/0) | 75.3%(25/0) | 82.6%(7/11) | 88.0%(7/5) | 85.6% |
+| kirlia | Colo | 93.2%(7/0) | 85.9%(14/0) | 83.9%(6/10) | 80.0%(4/16) | 86.9% |
+| koduck | Colo | 94.0%(6/0) | 82.4%(18/0) | 82.9%(7/10) | 76.5%(5/18) | 85.6% |
+| kyukon | Colo | 90.9%(9/0) | 71.5%(29/0) | 83.3%(6/11) | 76.0%(6/18) | 81.1% |
+| lantern | Colo | 93.6%(6/0) | 81.5%(15/4) | 83.6%(6/11) | 81.8%(6/12) | 88.8% |
+| laplace | Colo | 90.9%(9/0) | 62.7%(37/0) | 84.0%(5/11) | 87.8%(3/9) | 83.0% |
+| lizardon | Colo | 93.5%(7/0) | 80.3%(19/0) | 81.4%(5/13) | 87.0%(7/6) | 92.3% |
+| mage_0101 | XD | 91.8%(8/0) | 77.6%(21/1) | 84.5%(2/14) | 78.6%(2/20) | 83.3% |
+| mcgroudon_1101 | XD | 91.6%(8/0) | 80.6%(17/2) | 83.2%(3/14) | 80.2%(4/16) | 82.6% |
+| metamon | Colo | 89.0%(11/0) | 53.1%(47/0) | 84.7%(5/10) | 90.5%(2/8) | 81.4% |
+| miniryu | XD | 90.2%(10/0) | 58.5%(41/0) | 84.6%(5/10) | 85.3%(3/12) | 81.6% |
+| mirrabo_0101 | XD | 91.8%(8/0) | 79.7%(19/2) | 84.2%(2/14) | 77.9%(2/20) | 85.9% |
+| nendoll | Colo | 93.4%(7/0) | 75.9%(21/3) | 83.5%(6/11) | 92.0%(2/6) | 94.4% |
+| noctus | Colo | 93.2%(7/0) | 80.9%(19/0) | 82.9%(6/11) | 72.1%(7/21) | 83.2% |
+| nukenin | XD | 97.1%(3/0) | 87.6%(12/0) | 83.6%(5/11) | 91.3%(4/5) | 95.0% |
+| nyoromo | Colo | 91.4%(9/0) | 69.5%(31/0) | 82.8%(6/11) | 85.2%(7/7) | 89.8% |
+| patcheel | Colo | 92.4%(8/0) | 73.7%(26/0) | 82.6%(7/10) | 80.8%(6/13) | 92.8% |
+| pikachu | Colo | 93.4%(7/0) | 77.8%(22/0) | 82.1%(5/13) | 82.3%(5/13) | 90.9% |
+| rayquaza | XD | 93.6%(6/0) | 84.3%(16/0) | 83.5%(7/10) | 89.7%(7/3) | 92.2% |
+| rinto_0101 | XD | 93.7%(6/0) | 79.5%(14/7) | 84.5%(2/14) | 76.2%(1/23) | 80.1% |
+| rinto_1101 | XD | 93.9%(6/0) | 76.3%(14/10) | 84.8%(2/13) | 78.5%(1/20) | 83.3% |
+| rinto_1102 | XD | 94.3%(6/0) | 77.5%(14/9) | 84.8%(2/13) | 78.5%(1/20) | 84.9% |
+| roselia | Colo | 91.0%(9/0) | 71.1%(29/0) | 84.0%(5/11) | 81.7%(7/11) | 87.4% |
+| ruffresia | Colo | 90.2%(10/0) | 60.3%(40/0) | 84.0%(5/11) | 87.0%(4/9) | 85.5% |
+| runpappa | XD | 92.5%(7/0) | 75.2%(25/0) | 83.2%(7/10) | 84.2%(7/8) | 85.2% |
+| showers | Colo | 89.7%(10/0) | 63.4%(37/0) | 83.3%(6/11) | 82.7%(3/14) | 81.2% |
+| sirnight | Colo | 92.2%(8/0) | 75.0%(25/0) | 83.2%(6/11) | 78.3%(7/15) | 84.2% |
+| subame | Colo | 91.7%(8/0) | 77.4%(23/0) | 84.0%(6/10) | 84.4%(6/10) | 82.0% |
+| suikun | Colo | 92.2%(8/0) | 81.2%(19/0) | 82.1%(7/11) | 78.8%(10/11) | 89.8% |
+| sunnygo | Colo | 97.4%(3/0) | 89.6%(10/0) | 84.3%(5/10) | 92.4%(2/5) | 93.7% |
+| thunder | Colo | 89.7%(10/0) | 61.8%(38/0) | 84.3%(5/10) | 87.2%(7/6) | 80.1% |
+| tropius | Colo | 92.9%(7/0) | 81.4%(19/0) | 82.4%(7/10) | 73.8%(6/21) | 83.5% |
+| usohachi | XD | 92.3%(8/0) | 71.8%(22/6) | 85.8%(4/10) | 94.9%(5/0) | 81.7% |
+| vibrava | Colo | 91.6%(8/0) | 77.9%(22/0) | 83.3%(7/10) | 83.2%(7/9) | 86.8% |
 
-**Averages (76 models):** NBN 92.3% · NIN 76.2% · BBB 82.1% · IBI 73.3% · BNB 85.4%
+**Averages:** NBN 92.3% · NIN 76.2% · BBB 83.4% · IBI 83.0% · BNB 85.4%
 
 ### Map / Scene Models
 
-| Model | Game | NBN ✅ | NIN 🔴 | BBB 🔵 | IBI 🔵 | BNB 🔴 |
+| Model | Game | NBN ✅ | NIN 🔴 | BBB 🔵 | IBI ✅ | BNB 🔴 |
 |---|---|---|---|---|---|---|
-| D2_rest_1 | XD | 98.7%(1/0) | 25.0%(1/74) | 72.7%(9/19) | 75.6%(8/16) | 6.4% |
-| D6_out_all | XD | 96.4%(4/0) | 18.1%(0/82) | 68.1%(13/19) | 61.2%(14/25) | 43.7% |
-| M1_out | XD | 98.3%(2/0) | 23.1%(0/77) | 79.4%(8/12) | 78.0%(9/13) | 2.6% |
-| M2_out | XD | 99.4%(1/0) | 25.0%(0/75) | 77.0%(9/14) | 79.2%(10/11) | 3.0% |
-| M3_out | XD | 99.2%(1/0) | 23.0%(0/77) | 76.3%(9/15) | 79.8%(9/11) | 1.5% |
-| M3_shrine_1F | XD | 99.9%(0/0) | 24.2%(0/76) | 75.5%(8/17) | 75.0%(8/17) | 0.8% |
+| D2_rest_1 | XD | 98.7%(1/0) | 25.0%(1/74) | 72.7%(9/19) | 96.1%(2/1) | 6.4% |
+| D6_out_all | XD | 96.4%(4/0) | 18.1%(0/82) | 68.1%(13/19) | 88.2%(5/6) | 43.7% |
+| M1_out | XD | 98.3%(2/0) | 23.1%(0/77) | 79.4%(8/12) | 94.3%(3/3) | 2.6% |
+| M2_out | XD | 99.4%(1/0) | 25.0%(0/75) | 77.0%(9/14) | 96.3%(3/1) | 3.0% |
+| M3_out | XD | 99.2%(1/0) | 23.0%(0/77) | 76.3%(9/15) | 97.0%(3/0) | 1.5% |
+| M3_shrine_1F | XD | 99.9%(0/0) | 24.2%(0/76) | 75.5%(8/17) | 95.1%(5/0) | 0.8% |
 
-**Averages (6 models):** NBN 98.7% · NIN 23.1% · BBB 74.9% · IBI 74.8% · BNB 9.7%
+**Averages (6 models):** NBN 98.7% · NIN 23.1% · BBB 74.9% · IBI 94.5% · BNB 9.7%
 
 <!-- AUTO-GENERATED-RESULTS END -->
 
@@ -166,25 +166,25 @@ Scores below come from the full corpus in `~/Documents/Projects/DAT plugin/model
 
 | Category | Match | Error | Miss | Models |
 |---|---|---|---|---|
-| actions | 19.3% | 28.5% | 52.2% | 77 |
-| bones | 94.5% | 5.5% | 0.0% | 77 |
-| cameras | 99.9% | 0.1% | 0.0% | 77 |
-| constraints | 97.4% | 2.6% | 0.0% | 13 |
-| lights | 80.4% | 19.6% | 0.0% | 77 |
-| materials | 78.5% | 21.5% | 0.0% | 77 |
-| meshes | 96.6% | 2.5% | 0.8% | 77 |
+| actions | 13.3% | 18.9% | 67.8% | 76 |
+| bones | 94.5% | 5.5% | 0.0% | 76 |
+| cameras | 100.0% | 0.0% | 0.0% | 76 |
+| constraints | 97.2% | 2.8% | 0.0% | 12 |
+| lights | 100.0% | 0.0% | 0.0% | 76 |
+| materials | 93.0% | 7.0% | 0.0% | 76 |
+| meshes | 97.4% | 2.4% | 0.2% | 76 |
 
 #### IBI
 
 | Category | Match | Error | Miss | Models |
 |---|---|---|---|---|
-| animations | 36.5% | 40.4% | 23.1% | 77 |
-| bones | 79.3% | 16.3% | 4.4% | 77 |
-| cameras | 99.9% | 0.1% | 0.0% | 77 |
-| constraints | 97.4% | 2.6% | 0.0% | 13 |
-| lights | 78.4% | 21.6% | 0.0% | 77 |
-| materials | 68.8% | 4.4% | 26.8% | 77 |
-| meshes | 50.6% | 7.9% | 41.6% | 77 |
+| animations | 100.0% | 0.0% | 0.0% | 76 |
+| bones | 79.6% | 15.9% | 4.4% | 76 |
+| cameras | 100.0% | 0.0% | 0.0% | 76 |
+| constraints | 100.0% | 0.0% | 0.0% | 12 |
+| lights | 100.0% | 0.0% | 0.0% | 76 |
+| materials | 63.4% | 9.0% | 27.7% | 76 |
+| meshes | 52.3% | 6.5% | 41.2% | 76 |
 
 ---
 
@@ -200,7 +200,7 @@ Scoring methods:
 - **NBN**: Recursively compares all node fields after serialize → reparse. Distinguishes errors (value mismatch) from misses (missing node/field).
 - **NIN**: Walks the full original node tree as the denominator. Missing subtrees in the composed output count as misses; differing values count as errors.
 - **BBB**: Per-category dataclass field comparison between the importer-produced BR (`importer.plan` output) and the exporter-recovered BR (`exporter.describe` of the same scene after `build_blender`). Categories: bones, meshes, materials, actions, lights, cameras. Same skip-list as IBI.
-- **IBI**: Category-weighted scoring. Each IR category (bones, meshes, materials, animations, constraints, lights, cameras) is scored independently, then averaged across categories that have data. Empty categories are excluded.
+- **IBI**: Pure Plan round-trip (importer IR→BR → exporter BR→IR, no bpy leg). Category-weighted scoring. Each IR category (bones, meshes, materials, animations, constraints, lights, cameras) is scored independently, then averaged across categories that have data. Empty categories are excluded.
 
 ---
 

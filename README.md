@@ -91,7 +91,7 @@ python3.11 -m pip install bpy==4.5.7
 | Package | Purpose |
 |---|---|
 | `pytest` | Required for running the unit test suite |
-| `bpy` | Required for round-trip tests (IBI) and CLI pipeline phases 5-6. **Requires Python 3.11.** |
+| `bpy` | Required for the Blender-leg round-trip test (BBB) and CLI pipeline phases 5-6. **Requires Python 3.11.** |
 
 `bpy` bundles `mathutils` — no separate install needed.
 

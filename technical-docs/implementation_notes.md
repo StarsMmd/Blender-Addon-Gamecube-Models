@@ -142,7 +142,7 @@ The runtime interpolates spline keyframes with a **cubic Hermite** using the tan
 
 **The bug (fixed):** the decoder reads the tangents into `IRKeyframe.slope_in/slope_out`, but for *bone* tracks they were never turned into Blender F-curve handles — `_insert_raw_keyframes` emitted `BEZIER` points and left Blender's default **AUTO_CLAMPED** handles to invent the in-between motion. The per-frame bake then sampled that wrong curve. Measured on absol's idle: at keyframes all curves agree, but **between** keyframes the imported motion led/lagged the true motion by **2–5° per segment** with the sign flipping segment-to-segment — i.e. the "wobble." (UV/material tracks were never affected; they already set handles.)
 
-**The fix:** `_assign_bezier_handles` (`describe/helpers/animations.py`) converts each tangent into a bezier handle placed one third of the segment's frame span along the tangent — `handle = (frame ± Δ/3, value ± slope·Δ/3)`. Because the handles sit at 1/3 spacing the bezier's x-coordinate is linear in its parameter, so sampling at integer frames reproduces `splGetHelmite` exactly (verified end-to-end across all 82 of absol's animated rotation channels: max error **0.00004°**, was 5.13°). `build_blender/helpers/animations.py` must set `handle_{left,right}_type = 'FREE'` before writing the positions — AUTO/AUTO_CLAMPED handles are recomputed by Blender and would discard them. This also improves export round-trips, since the exporter recovers tangents from the same handles.
+**The fix:** `_assign_bezier_handles` (`describe/helpers/animations.py`) converts each tangent into a bezier handle placed one third of the segment's frame span along the tangent — `handle = (frame ± Δ/3, value ± slope·Δ/3)`. Because the handles sit at 1/3 spacing the bezier's x-coordinate is linear in its parameter, so sampling at integer frames reproduces `splGetHelmite` exactly (verified end-to-end across all 82 of absol's animated rotation channels: max error **0.00004°**, was 5.13°). `build_blender/helpers/animations.py` must set `handle_{left,right}_type = 'FREE'` before writing the positions — AUTO/AUTO_CLAMPED handles are recomputed by Blender and would discard them. This also improves export round-trips: the bone exporter doesn't read these handles directly — it dense-samples the corrected curve at integer frames (`fc.evaluate`), unbakes each frame, and re-derives tangents by finite differences before a Hermite-bounded sparsification — so fixing the in-Blender curve tightens what those samples reproduce. (Only the material track path reads `keyframe_point.handle_{left,right}` directly; the bone unbake is nonlinear, so handle slopes can't transfer straight into HSD tangent space.)
 
 Two subtleties worth remembering:
 
@@ -230,9 +230,9 @@ Test data is synthesised in-memory. Every unit test either constructs its fixtur
 | NBN | parse → write → reparse → compare fields | Node field preservation through serialisation |
 | NIN | parse → describe → compose → compare fields | IR round-trip fidelity |
 | BBB | importer.plan → build → exporter.describe → compare BR fields | Blender-leg fidelity (build + describe only) |
-| IBI | importer.plan → build → exporter.describe → exporter.plan → compare IR fields | Full import ⇄ export round-trip through BR on both sides |
+| IBI | importer.plan → exporter.plan → compare IR fields | Plan ⇄ Plan fidelity through BR — no bpy build/describe leg |
 
-NIN, BBB, and IBI scores are computed against the full original data — not just the fields the exporter has implemented — so percentages naturally rise as more export features come online. BBB and IBI need a real bpy runtime, so the unit-test stubs in `tests/test_plan_round_trips.py` stay skipped; the live coverage is in `tests/round_trip/run_round_trips.py` (run with `python3.11`).
+NIN, BBB, and IBI scores are computed against the full original data — not just the fields the exporter has implemented — so percentages naturally rise as more export features come online. IBI is now a pure Plan round-trip (IR → BR via the importer's Plan, BR → IR via the exporter's Plan); it isolates IR↔BR conversion fidelity and no longer needs a bpy runtime, so removing the build/describe leg drops the noise that leg added (fcurve resampling, normal recomputation) and tends to raise per-category scores — animations in particular jump because the lossy fcurve sample/sparsify round-trip is gone. BBB still needs a real bpy runtime; the unit-test stubs in `tests/test_plan_round_trips.py` stay skipped, and live coverage is in `tests/round_trip/run_round_trips.py` (run with `python3.11`).
 
 ### Blender Python version
 Use `python3.11` for round-trip tests. The default `python3` on the dev machine is 3.10, which ships an older `bpy==3.4.0` that lacks APIs like `action.slots` that the current codebase requires. `python3.11` pairs with `bpy==4.5.7`.
@@ -286,6 +286,30 @@ GameCube → Blender requires a π/2 rotation around the X-axis. Applied once at
 
 ### Color space
 The IR stores all colors in sRGB [0-1], normalised from u8 but not linearised. Blender-specific linearisation happens in Phase 5 only — material colors, material-animation RGB keyframes, and light colors are linearised when set on the corresponding Blender properties. Vertex colors are stored as `FLOAT_COLOR` (not `BYTE_COLOR`) so Blender does not auto-linearise them; the raw sRGB values pass through to the shader, matching the GameCube's gamma-space rendering. Image pixels are raw u8 RGBA and Blender handles color management internally.
+
+### Default export lighting
+When a scene has no lights, `scripts/prepare_for_pkx_export.py::prepare_lights` synthesises the standard Colo/XD 4-light rig (1 ambient POINT + 3 directional SUN). The three SUN directions are the corpus-typical light vectors, derived by averaging the per-slot normalised GX direction across the 69 game-native PKX models that ship exactly three directional lights, then re-normalising:
+
+| Slot | Colour (u8) | GX (Y-up) unit direction | Rough sense |
+|---|---|---|---|
+| Main | 204 | `( 0.530,  0.660,  0.533)` | above-front |
+| Fill | 102 | `(-0.352,  0.520, -0.778)` | above-behind |
+| Back |  76 | `(-0.712, -0.540,  0.450)` | below-front |
+
+The earlier prep rig used hand-picked `rotation_euler` angles that all pointed *downward* (negative GX-Y) — visibly wrong against real models, whose dominant Main/Fill lights come from *above* (positive GX-Y). The exporter recovers a SUN's direction from its local −Z axis (`describe/helpers/lights.py`), so the prep script orients each lamp via `Vector((gx, -gz, gy)).to_track_quat('-Z', 'Y')` — the GX→Blender forward map `(gx, gy, gz) → (gx, -gz, gy)` is the exact inverse of the exporter's `plan_lights` collapse `(bx, by, bz) → (bx, bz, -by)`, so a prep-created light round-trips back to its listed GX direction (verified to ~1e-5).
+
+### Shader graph socket keys
+`BRLink.from_output` / `BRLink.to_input` and `BRNode.input_defaults` keys reference shader-node sockets by their Blender **socket identifier** — a single string convention, no exceptions. The identifier is unique within a node even when display *names* collide (a Math node's three inputs are `'Value'` / `'Value_001'` / `'Value_002'`; a VectorMath's are `'Vector'` / `'Vector_001'` / `'Vector_002'`).
+
+Why the identifier and not the display name or the positional index: `socket.name` is not unique (the duplicate cases above), and the positional index shifts between Blender versions (Principled's input order changes as sockets are added/reordered). The identifier is both unique *and* version-stable — Blender treats it as the canonical socket reference — so it's the only collision-free, robust key.
+
+Producers and consumers:
+- Exporter describe reads each live socket's `.identifier` directly (`exporter/phases/describe/helpers/materials.py`).
+- Importer plan's `BRGraphBuilder` lets callers wire sockets by convenient integer index and rewrites each to its identifier at storage time via the `_SOCKET_IDS` table (`node_type → (input identifiers, output identifiers)`, positional, Blender 4.5). A tracked node whose type is missing from the table, or an out-of-range index, raises at plan time — so a gap surfaces immediately rather than as an unresolvable link at build time.
+- `build_blender` resolves an identifier by scanning `node.inputs` / `node.outputs` for `socket.identifier == key`. (`node.inputs[key]` matches `.name`, not the identifier, so the scan is required — that's the one ergonomic cost of identifiers.)
+- The exporter plan decoder reads identifiers directly; the two duplicate-socket cases it inspects already used the right identifier (a Math node's first input `'Value'`, a VectorMath's second input `'Vector_001'`).
+
+`_SOCKET_IDS` is the only Blender-version-sensitive data in this path; if a future Blender renames a socket, update it there.
 
 ## Particles (GPT1)
 

@@ -81,30 +81,37 @@ def _set_output_default(node, value):
         socket.default_value = value
 
 
-def _set_input_default(node, socket_key, value):
-    """Set ``default_value`` on a named or indexed input socket.
+def _set_input_default(node, socket_identifier, value):
+    """Set ``default_value`` on an input socket, addressed by identifier.
 
-    In: node (bpy.types.ShaderNode); socket_key (int | str);
+    In: node (bpy.types.ShaderNode); socket_identifier (str);
         value (float | sequence).
     Out: None.
     """
-    socket = _resolve_socket(node.inputs, socket_key)
+    socket = _resolve_socket(node.inputs, socket_identifier)
     if isinstance(value, (list, tuple)):
         socket.default_value[:] = list(value)
     else:
         socket.default_value = value
 
 
-def _resolve_socket(collection, key):
-    """Socket access: int → positional, str → by name.
+def _resolve_socket(collection, identifier):
+    """Socket access by Blender socket *identifier* — the single BR socket
+    convention. Unlike ``collection[key]`` (which matches display name,
+    non-unique), the identifier is unique within a node, so this is the
+    only reliable lookup for nodes with duplicate socket names (a Math
+    node's three 'Value' inputs are 'Value' / 'Value_001' / 'Value_002').
 
     In: collection (bpy_prop_collection — node.inputs or node.outputs);
-        key (int | str).
-    Out: bpy socket.
+        identifier (str).
+    Out: bpy socket. Raises ValueError if no socket matches.
     """
-    if isinstance(key, int):
-        return collection[key]
-    return collection[key]
+    for socket in collection:
+        if socket.identifier == identifier:
+            return socket
+    raise ValueError(
+        "no socket with identifier %r (have: %s)"
+        % (identifier, [s.identifier for s in collection]))
 
 
 def _resolve_image(br_image, image_cache):

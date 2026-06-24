@@ -14,6 +14,9 @@ unwrappers (``plan_actions``, ``plan_constraints``, ``plan_lights``,
 try:
     from ....shared.IR import IRScene, IRModel
     from ....shared.helpers.logger import StubLogger
+    from .helpers.armature import plan_armature
+    from .helpers.meshes import plan_meshes
+    from .helpers.merge_meshes import merge_meshes
     from .helpers.animations import plan_actions
     from .helpers.constraints import plan_constraints
     from .helpers.lights import plan_lights
@@ -22,6 +25,9 @@ try:
 except (ImportError, SystemError):
     from shared.IR import IRScene, IRModel
     from shared.helpers.logger import StubLogger
+    from exporter.phases.plan.helpers.armature import plan_armature
+    from exporter.phases.plan.helpers.meshes import plan_meshes
+    from exporter.phases.plan.helpers.merge_meshes import merge_meshes
     from exporter.phases.plan.helpers.animations import plan_actions
     from exporter.phases.plan.helpers.constraints import plan_constraints
     from exporter.phases.plan.helpers.lights import plan_lights
@@ -58,8 +64,13 @@ def plan_scene(br_scene, options=None, logger=StubLogger()):
 
 
 def _plan_one_model(br_model, logger):
-    ir_bones = br_model._ir_bones
-    ir_meshes = br_model._ir_meshes
+    # Derive IR bones + merged IR meshes straight from BR. These are pure
+    # numerical transforms, so plan owns them — describe computes its own
+    # copy only because the bpy-side animation unbaker / constraint walker
+    # need IR bones while they still have a live Blender context.
+    ir_bones = plan_armature(br_model.armature, logger=logger)
+    ir_meshes = plan_meshes(br_model.meshes, br_model.materials, ir_bones, logger=logger)
+    ir_meshes = merge_meshes(ir_meshes, logger=logger)
 
     # Populate mesh_indices on bones, then refine flags now that mesh
     # attachment + skinning are known.

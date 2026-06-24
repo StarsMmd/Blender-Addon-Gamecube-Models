@@ -6,10 +6,12 @@ into BR dataclasses, and collects scene-level lights and cameras. PKX
 header and shiny filter parameters are extracted from armature custom
 properties as side outputs.
 
-Per-domain BR producers live under ``helpers/``. Animation unbaking
-still depends on already-converted IR bones and merged IR meshes, so the
-loop interleaves describe + plan calls and stashes the IR results on
-each BRModel for the plan phase to reuse instead of re-deriving.
+Per-domain BR producers live under ``helpers/``. Animation unbaking and
+constraint walking need already-converted IR bones / merged IR meshes
+while a live Blender context is available, so describe computes a private
+copy via the pure ``plan_*`` helpers. Those copies are not handed to the
+plan phase — plan re-derives IR from BR itself, keeping BR → IR a
+self-contained transform that works on any BRScene.
 """
 import bpy
 
@@ -82,15 +84,6 @@ def describe_scene(context, options=None, logger=StubLogger(), output_ext=''):
         logger.info("  Processing armature '%s'", armature.name)
         br_model = _describe_one_model(armature, use_bezier, logger)
         br_models.append(br_model)
-        # Diagnostic dump expects IR-shaped animation sets (it walks
-        # `anim_set.tracks` and `track.bone_index`). BRAction now carries
-        # BRBoneTracks with the same field names, so we can pass them
-        # straight in.
-        maybe_dump_diagnostic(
-            armature, br_model._ir_bones,
-            br_model.actions,
-            logger,
-        )
 
     br_lights = describe_lights(context, logger=logger)
     br_cameras = describe_cameras(context, logger=logger)
@@ -118,9 +111,14 @@ def describe_scene(context, options=None, logger=StubLogger(), output_ext=''):
 def _describe_one_model(armature, use_bezier, logger):
     """Pull one armature's full BR description out of Blender.
 
-    Computes the IR bones + merged IR meshes inline because the legacy
-    animation unbaker reads them, then stashes both on the BRModel for
-    the plan phase to reuse.
+    Computes IR bones + merged IR meshes inline because the bpy-side
+    animation unbaker and constraint walker read them while a live
+    Blender context is still available. These IR copies are private to
+    describe — they are not stashed on the BRModel. The plan phase
+    re-derives them from BR (via the same pure ``plan_armature`` /
+    ``plan_meshes`` / ``merge_meshes`` helpers) so that BR → IR is a
+    self-contained transform that works on any BRScene, not only one
+    produced by this describe phase.
     """
     br_armature = describe_armature(armature, logger=logger)
     ir_bones = plan_armature(br_armature, logger=logger)
@@ -143,7 +141,12 @@ def _describe_one_model(armature, use_bezier, logger):
 
     br_constraints = describe_constraints(armature, ir_bones, logger=logger)
 
-    br_model = BRModel(
+    # Diagnostic dump expects IR-shaped animation sets (it walks
+    # `anim_set.tracks` and `track.bone_index`). BRAction carries
+    # BRBoneTracks with the same field names, so they pass straight in.
+    maybe_dump_diagnostic(armature, ir_bones, br_actions, logger)
+
+    return BRModel(
         name=armature.name,
         armature=br_armature,
         meshes=br_meshes,
@@ -151,7 +154,3 @@ def _describe_one_model(armature, use_bezier, logger):
         actions=br_actions,
         constraints=br_constraints,
     )
-    # Side-channel: pre-computed IR for plan to reuse rather than redo.
-    br_model._ir_bones = ir_bones
-    br_model._ir_meshes = ir_meshes
-    return br_model

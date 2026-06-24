@@ -28,8 +28,9 @@ class BRNode:
     ``properties`` are type-specific attributes set via ``setattr`` on the
     bpy node (e.g. ``{'operation': 'ADD', 'use_clamp': True}``).
     ``input_defaults`` sets the ``default_value`` of input sockets, keyed
-    by socket index or name. Linked inputs override defaults at evaluation.
-    ``image_ref`` is populated only for ``ShaderNodeTexImage`` nodes.
+    by socket identifier (see ``BRLink``). Linked inputs override defaults
+    at evaluation. ``image_ref`` is populated only for ``ShaderNodeTexImage``
+    nodes.
     """
     node_type: str
     name: str
@@ -41,11 +42,19 @@ class BRNode:
 
 @dataclass
 class BRLink:
-    """One graph link — socket-to-socket connection between two BRNodes."""
+    """One graph link — socket-to-socket connection between two BRNodes.
+
+    Sockets are referenced by their Blender socket *identifier* (a string)
+    — the single convention. The identifier is unique within a node even
+    when display names collide (a Math node's three inputs are 'Value' /
+    'Value_001' / 'Value_002'), so it's the only collision-free key.
+    ``build_blender`` resolves it via ``socket.identifier``; the importer
+    plan's ``BRGraphBuilder`` maps construction-time integer indices to it.
+    """
     from_node: str           # BRNode.name
-    from_output: object      # int or str
+    from_output: str         # output socket identifier on from_node
     to_node: str
-    to_input: object
+    to_input: str            # input socket identifier on to_node
 
 
 @dataclass
