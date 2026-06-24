@@ -52,6 +52,9 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.80 | current | `bpy.context.scene.frame_set(n)` | `post_process.py`, `exporter/describe/helpers/scene.py` | Reset timeline / sample animations at frame |
 | 2.80 | current | `bpy.context.scene.frame_current` | `exporter/describe/helpers/scene.py` | Save/restore frame while sampling |
 | 2.80 | current | `bpy.context.scene.frame_start / frame_end = n` | `post_process.py` | Set playback range from active action's frame_range |
+| 2.80 | current | `scene.render.engine = 'CYCLES'` | `bake_chico_shader_to_principled.py`, `prepare_for_pkx_export.py` | Switch to Cycles for baking; saved engine restored afterwards |
+| 2.80 | current | `scene.cycles.samples` | `bake_chico_shader_to_principled.py`, `prepare_for_pkx_export.py` | Bake sample count (1 — colour/alpha passes are deterministic) |
+| 2.80 | current | `scene.render.bake.{use_pass_direct, use_pass_indirect, use_pass_color, use_selected_to_active, margin, use_clear}` | `bake_chico_shader_to_principled.py`, `prepare_for_pkx_export.py` | Bake-pass configuration (colour-only diffuse, clear, margin) |
 | 2.80 | current | `bpy.context.mode` | `skeleton.py`, `exporter/describe/helpers/armature.py` | Check current editor mode |
 | 2.80 | current | `context.screen.areas` | `BlenderPlugin.py` | Workspace setup |
 | 3.2 | current | `context.temp_override(area=...)` | `BlenderPlugin.py` | Workspace split |
@@ -67,6 +70,7 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.80 | current | `bpy.ops.object.vertex_group_normalize_all()` | `prepare_for_pkx_export.py`, `prepare_for_dat_export.py` | Renormalize weights after limiting/quantising |
 | 2.80 | current | `bpy.ops.mesh.select_all(action='DESELECT')` | `prepare_for_pkx_export.py` | Select for rigid-vs-envelope split |
 | 2.80 | current | `bpy.ops.mesh.separate(type='SELECTED')` | `prepare_for_pkx_export.py` | Split single-bone vertices into rigid meshes |
+| 2.80 | current | `bpy.ops.object.bake(type='DIFFUSE'/'EMIT')` | `bake_chico_shader_to_principled.py`, `prepare_for_pkx_export.py` | Bake the chico group's composited colour / albedo alpha into per-material images |
 | 2.80 | current | `bpy.context.selected_objects` | `prepare_for_pkx_export.py` | Iterate newly separated meshes |
 | 2.80 | current | `armature_data.edit_bones[0]` | `prepare_for_pkx_export.py`, `prepare_pbr_for_pkx_export.py` | Root edit bone for orientation normalisation (requires EDIT mode) |
 | 2.80 | current | `edit_bone.matrix = Matrix(...)` (setter) | `prepare_for_pkx_export.py`, `prepare_pbr_for_pkx_export.py` | Reorient the root bone to the canonical (identity-root-JOBJ) rest frame |
@@ -143,6 +147,8 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.74 | current | `mesh.normals_split_custom_set(normals)` | `meshes.py` | |
 | 2.80 | current | `polygon.use_smooth = True` | `meshes.py` (importer build_blender) | Required for custom split normals to take effect; Blender 4.1+ polygons default to flat and silently ignore per-loop normals |
 | 2.80 | current | `mesh.uv_layers.new(name)` | `meshes.py` | |
+| 2.80 | current | `polygon.loop_indices` | `bake_chico_shader_to_principled.py`, `prepare_for_pkx_export.py` | Group loops per face to collapse stacked UV tiles by an integer offset |
+| 2.80 | current | `uv_layer.data.foreach_get/set("uv", seq)` | `bake_chico_shader_to_principled.py`, `prepare_for_pkx_export.py` | Snapshot/restore UVs around the tile-collapse bake |
 | 3.2 | current | `mesh.color_attributes.new(name, type, domain)` | `meshes.py` | FLOAT_COLOR + CORNER; avoids sRGB auto-linearization |
 | | | | | |
 | | | **Vertex Groups** | | |
@@ -172,7 +178,7 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.80 | current | `material.use_backface_culling = True` | `meshes.py` | From POBJ cull flags; prevents z-fighting on double-sided geometry |
 | 2.80 | current | `material.blend_method` | `materials.py` (importer build_blender) | EEVEE transparency mode — `'HASHED'` / `'BLEND'` / `'OPAQUE'`. Translucent fallback uses HASHED to avoid EEVEE depth-sort artefacts |
 | 2.80 | current | `material.use_nodes = True` | `materials.py` | |
-| 2.80 | current | `material.node_tree.nodes` / `.links` | `materials.py`, `shiny_filter.py` | |
+| 2.80 | current | `material.node_tree.nodes` / `.links` | `materials.py`, `shiny_filter.py`, `bake_chico_shader_to_principled.py`, `prepare_for_pkx_export.py` | `bake_chico_shader_to_principled.py` adds a `ShaderNodeBsdfPrincipled` fed by a baked image and disconnects the original group |
 | 2.80 | current | `material.node_tree.update_tag()` | `BlenderPlugin.py` | Force material refresh |
 | 2.80 | current | `nodes.new('ShaderNodeOutputMaterial')` | `materials.py` | |
 | 2.79 | current | `nodes.new('ShaderNodeBsdfPrincipled')` | `materials.py` | |
@@ -255,7 +261,9 @@ Every Blender Python API call used by this addon, with the Blender version range
 | | | **Image Data** | | |
 | 2.80 | current | `image.pixels = [...]` | `materials.py` | Flat RGBA float list |
 | 2.80 | current | `image.alpha_mode = 'CHANNEL_PACKED'` | `materials.py` | |
-| 2.80 | current | `image.pack()` | `materials.py` | |
+| 2.80 | current | `image.pack()` | `materials.py`, `bake_chico_shader_to_principled.py`, `prepare_for_pkx_export.py` | |
+| 2.80 | current | `image.pixels.foreach_get/set(seq)` | `bake_chico_shader_to_principled.py`, `prepare_for_pkx_export.py` | Copy the alpha-pass red channel into the colour image's alpha |
+| 2.80 | current | `image.colorspace_settings.name` | `bake_chico_shader_to_principled.py`, `prepare_for_pkx_export.py` | sRGB for the colour bake, Non-Color for the alpha bake |
 | | | | | |
 | | | **mathutils** | | |
 | 2.80 | current | `Vector((...))` | `skeleton.py`, `meshes.py`, `lights.py`, `animations.py` | |
