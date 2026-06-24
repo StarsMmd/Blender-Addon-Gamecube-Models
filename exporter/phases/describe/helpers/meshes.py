@@ -259,10 +259,14 @@ def _extract_normals(mesh_data, normal_xform):
 
     Normals and vertex colors are mutually exclusive per PObject in the game
     corpus (no shipped PObject carries both): a lit mesh carries normals, a
-    vertex-coloured mesh carries colors. So skip normals when the mesh has
-    colour attributes; otherwise extract them from `corner_normals`, which
-    always reflects the mesh's effective shading — custom split normals when
-    present, otherwise the normals computed from face/smooth shading.
+    vertex-coloured mesh carries colors. So skip normals only when the mesh
+    carries *meaningful* (per-vertex-varying) colors — a uniform colour
+    attribute is a material-level default that compose drops, so it must NOT
+    suppress normals (gating on attribute presence alone left imported models,
+    which all ship a uniform white `Color`, with neither normals nor colors).
+    Otherwise extract from `corner_normals`, which reflects the mesh's
+    effective shading — custom split normals when present, else the normals
+    computed from face/smooth shading.
 
     Gating on `has_custom_normals` (as this once did) silently dropped
     normals for every from-scratch mesh that hadn't had custom normals
@@ -270,7 +274,7 @@ def _extract_normals(mesh_data, normal_xform):
     black/missing in-game even though Blender — which computes its own
     normals — looked correct.
     """
-    if mesh_data.color_attributes:
+    if _has_varying_vertex_colors(mesh_data):
         return None
     if hasattr(mesh_data, 'corner_normals'):
         raw = [cn.vector for cn in mesh_data.corner_normals]
@@ -278,6 +282,19 @@ def _extract_normals(mesh_data, normal_xform):
         mesh_data.calc_normals_split()
         raw = [loop.normal for loop in mesh_data.loops]
     return [tuple(normal_xform @ n) for n in raw]
+
+
+def _has_varying_vertex_colors(mesh_data):
+    """True if any colour attribute has per-vertex variation. Mirrors compose,
+    which encodes a CLR layer only when it varies and drops uniform ones."""
+    for attr in mesh_data.color_attributes:
+        data = attr.data
+        if not data:
+            continue
+        first = tuple(data[0].color)
+        if any(tuple(d.color) != first for d in data):
+            return True
+    return False
 
 
 def _extract_vertex_groups(mesh_obj, bone_names):
