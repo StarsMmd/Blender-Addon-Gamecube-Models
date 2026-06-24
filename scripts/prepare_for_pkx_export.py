@@ -2098,15 +2098,10 @@ def prepare_lights():
     # [0] Ambient — delegate to existing function
     created += prepare_ambient_light()
 
-    from mathutils import Vector as _Vector
-
     # Standard directional lights — (suffix, color_u8, gx_direction).
     # gx_direction is the GX-space (Y-up) unit direction the game stores for
     # each light, taken from the typical Colo/XD Pokémon lighting rig (see
-    # technical-docs/implementation_notes.md § Default export lighting). The
-    # exporter derives a SUN's direction from its local −Z axis, so we orient
-    # each lamp so −Z points along the GX direction expressed in Blender's
-    # Z-up frame: GX (gx, gy, gz) → Blender forward (gx, −gz, gy).
+    # technical-docs/implementation_notes.md § Default export lighting).
     _DIRECTIONAL_LIGHTS = [
         ('Main', 204, (0.5304, 0.6596, 0.5326)),
         ('Fill', 102, (-0.3518, 0.5201, -0.7783)),
@@ -2128,10 +2123,23 @@ def prepare_lights():
         light_data.color = (linear_val, linear_val, linear_val)
 
         lamp = bpy.data.objects.new(name=name, object_data=light_data)
-        gx, gy, gz = gx_dir
-        forward = _Vector((gx, -gz, gy))
-        lamp.rotation_euler = forward.to_track_quat('-Z', 'Y').to_euler()
         bpy.context.scene.collection.objects.link(lamp)
+
+        # Match the plugin-imported light rig exactly: a PLAIN_AXES empty at
+        # the GX direction (expressed Z-up as (gx, -gz, gy)) plus a TRACK_TO
+        # constraint pointing the lamp's -Z at it. The exporter then recovers
+        # the direction from the target the same way it does for imported
+        # lights, instead of from the lamp's -Z axis.
+        gx, gy, gz = gx_dir
+        target = bpy.data.objects.new(name + '_target', None)
+        target.empty_display_type = 'PLAIN_AXES'
+        target.location = (gx, -gz, gy)
+        bpy.context.scene.collection.objects.link(target)
+
+        constraint = lamp.constraints.new(type='TRACK_TO')
+        constraint.target = target
+        constraint.track_axis = 'TRACK_NEGATIVE_Z'
+        constraint.up_axis = 'UP_Y'
         created += 1
 
     return created
