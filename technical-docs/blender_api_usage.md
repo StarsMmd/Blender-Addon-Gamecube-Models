@@ -228,8 +228,10 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.80 | current | `action.fcurves.find(data_path, index=n)` | `cameras.py` (export) | Read-back camera FCurves |
 | 2.80 | current | `curve.keyframe_points.insert(frame, value)` | `animations.py`, `material_animations.py` | |
 | 2.80 | current | `keyframe.interpolation = '...'` | `animations.py` | BEZIER, LINEAR, CONSTANT |
-| 2.80 | current | `keyframe.handle_left = (x, y)` | `animations.py` | Bezier handles |
+| 2.80 | current | `keyframe.handle_left = (x, y)` | `animations.py` | Bezier handles (HSD Hermite tangents) |
 | 2.80 | current | `keyframe.handle_right = (x, y)` | `animations.py` | |
+| 2.80 | current | `keyframe.handle_left_type / handle_right_type = 'FREE'` | `animations.py` | Required so HSD tangent handles aren't recomputed away by AUTO/AUTO_CLAMPED |
+| 2.80 | current | `curve.update()` | `animations.py` | Recalc after writing FREE handle positions |
 | 2.80 | current | `curve.modifiers.new('CYCLES')` | `animations.py`, `material_animations.py` | Looping animations |
 | | | | | |
 | | | **NLA** | | |

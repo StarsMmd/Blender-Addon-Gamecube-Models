@@ -275,9 +275,7 @@ def _decode_bone_channels(aobj, joint=None, bone=None, bones=None,
             category, component = _CHANNEL_MAP[fobj.type]
             keyframes = decode_fobjdesc(fobj, logger=logger, options=options)
 
-            if category == 'r':
-                rotation[component] = keyframes
-            elif category == 'l':
+            if category == 'l':
                 for kf in keyframes:
                     kf.value *= GC_TO_METERS
                     if kf.handle_left is not None:
@@ -288,6 +286,16 @@ def _decode_bone_channels(aobj, joint=None, bone=None, bones=None,
                         kf.slope_in *= GC_TO_METERS
                     if kf.slope_out is not None:
                         kf.slope_out *= GC_TO_METERS
+
+            # Convert the authored per-key tangents into bezier handles so the
+            # imported curve reproduces the runtime's cubic-Hermite evaluation
+            # (splGetHelmite). Runs after the metre scaling above so handle
+            # positions stay in the same units as the values they bracket.
+            _assign_bezier_handles(keyframes)
+
+            if category == 'r':
+                rotation[component] = keyframes
+            elif category == 'l':
                 location[component] = keyframes
             elif category == 's':
                 scale[component] = keyframes
@@ -295,6 +303,53 @@ def _decode_bone_channels(aobj, joint=None, bone=None, bones=None,
         fobj = fobj.next
 
     return rotation, location, scale, spline_path
+
+
+def _assign_bezier_handles(keyframes):
+    """Convert HSD per-key Hermite tangents into Blender bezier handle positions.
+
+    The runtime evaluates each spline segment as a cubic Hermite
+    (``splGetHelmite``) using the authored tangents at its two endpoints. The
+    exact cubic-bezier equivalent places each handle one third of the segment's
+    frame span along the tangent, so sampling the bezier curve reproduces the
+    runtime curve frame-for-frame:
+
+        handle_right = (frame + dt_right / 3, value + out_tan * dt_right / 3)
+        handle_left  = (frame - dt_left  / 3, value - in_tan  * dt_left  / 3)
+
+    For a key ``i`` the two tangents can differ:
+      - ``in_tan`` — the tangent the segment *ending* at ``i`` arrives on — is
+        the key's own ``slope_out``.
+      - ``out_tan`` — the tangent the segment *leaving* ``i`` departs on — is
+        the *next* key's ``slope_in``. For plain ``SPL`` keys this equals the
+        key's own ``slope_out``, but an ``HSD_A_OP_SLP`` opcode between two keys
+        overrides the outgoing tangent without emitting a value; the decoder
+        folds that override into the next key's ``slope_in``, so reading it here
+        keeps the asymmetric (SLP) case correct.
+
+    Only BEZIER (spline) keys get handles; LINEAR / CONSTANT segments are left
+    to Blender's own straight / stepped evaluation.
+
+    In: keyframes (list[IRKeyframe], one channel, frame-ordered; mutated in place).
+    Out: None.
+    """
+    n = len(keyframes)
+    if n < 2:
+        return
+    for i, kf in enumerate(keyframes):
+        if kf.interpolation != Interpolation.BEZIER:
+            continue
+        in_tan = kf.slope_out if kf.slope_out is not None else 0.0
+        if i < n - 1 and keyframes[i + 1].slope_in is not None:
+            out_tan = keyframes[i + 1].slope_in
+        else:
+            out_tan = in_tan
+        prev_frame = keyframes[i - 1].frame if i > 0 else None
+        next_frame = keyframes[i + 1].frame if i < n - 1 else None
+        dt_left = (kf.frame - prev_frame) if prev_frame is not None else (next_frame - kf.frame)
+        dt_right = (next_frame - kf.frame) if next_frame is not None else (kf.frame - prev_frame)
+        kf.handle_left = (kf.frame - dt_left / 3.0, kf.value - in_tan * dt_left / 3.0)
+        kf.handle_right = (kf.frame + dt_right / 3.0, kf.value + out_tan * dt_right / 3.0)
 
 
 def _describe_bone_track(aobj, joint, bone, bone_index, bones, logger=None, options=None):
