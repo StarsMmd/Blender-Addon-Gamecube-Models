@@ -385,10 +385,14 @@ def _check_root_bone_orientation(specs):
         "JOBJ rotation. The game applies the root joint's rotation as the "
         "model's base orientation without cancelling it, so the whole model "
         "renders turned (typically 90 deg) in-game even though Blender looks "
-        "correct. Fix by running scripts/prepare_for_pkx_export.py (PKX "
-        "output) or scripts/prepare_for_dat_export.py (bare .dat output) "
-        "against this .blend — both normalise the root bone so the exported "
-        "root joint is identity." % (len(bad), sample)
+        "correct. Fix the root bone manually: in Edit mode aim it straight up "
+        "(+Z) and set Roll = 0 (Armature > Bone Roll > Clear Roll) so it is "
+        "axis-aligned. If the root is already animated, instead add an "
+        "axis-aligned 'Origin' bone at the rig origin and parent the current "
+        "root to it (re-orienting an animated root in place rotates its "
+        "children). See technical-docs/implementation_notes.md > 'Root joint "
+        "orientation' for the rationale and the planned auto-fix."
+        % (len(bad), sample)
     )
 
 
