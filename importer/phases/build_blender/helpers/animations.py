@@ -150,10 +150,16 @@ def _insert_raw_keyframes(track, action):
             offset = len(curve.keyframe_points) - len(keyframes)
             for i, kf in enumerate(keyframes):
                 point = curve.keyframe_points[offset + i]
+                # FREE handle type is required: AUTO/AUTO_CLAMPED handles are
+                # recomputed by Blender and would discard the tangents we
+                # encoded from the HSD stream.
                 if kf.handle_left is not None:
+                    point.handle_left_type = 'FREE'
                     point.handle_left[:] = kf.handle_left
                 if kf.handle_right is not None:
+                    point.handle_right_type = 'FREE'
                     point.handle_right[:] = kf.handle_right
+            curve.update()
             raw[idx] = curve
     return raw
 

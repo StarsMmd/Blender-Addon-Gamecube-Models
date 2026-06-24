@@ -17,10 +17,12 @@ The script operates on all objects in the scene — no selection required:
   4. Splits oversized meshes by body region if >25 estimated PObjects
   5. Applies default PKX metadata to all armatures that don't have it
   6. Auto-derives animation timing from action durations
-  7. Downscales textures larger than 512×512 proportionally, then
+  7. Bakes custom shader-group materials (e.g. `PokemonShaderbyChicoEevee`)
+     down to a Principled BSDF so their composited albedo survives export
+  8. Downscales textures larger than MAX_TEXTURE_DIM proportionally, then
      auto-selects GX texture formats for all armature textures
-  8. Inserts shiny filter nodes into all materials (identity defaults, toggle off)
-  9. Authors two helper actions per armature for in-game smoke testing:
+  9. Inserts shiny filter nodes into all materials (identity defaults, toggle off)
+ 10. Authors two helper actions per armature for in-game smoke testing:
        - `auto_animation_dummy` — two-frame identity pose (placeholder for
          empty slots; the game requires at least two keyframes per channel)
        - `auto_animation_spin` — 60-frame full revolution around the rig's
@@ -29,7 +31,7 @@ The script operates on all objects in the scene — no selection required:
      These are not assigned to any PKX slot — pick them by hand in the PKX
      Metadata panel only when smoke-testing a model. They should be ignored
      for normal authoring.
- 10. Creates standard battle lighting (1 ambient + 3 directional)
+ 11. Creates standard battle lighting (1 ambient + 3 directional)
 
 After running, the scene can be exported via File > Export > Gamecube model (.dat).
 
@@ -74,9 +76,12 @@ REDISTRIBUTE_SUB_THRESHOLD_WEIGHTS = False
 WEIGHT_DROP_THRESHOLD = 0.1
 
 # Maximum texture dimension on either axis; larger textures are
-# downscaled proportionally. GX hardware cap is 1024×1024, but XD's
-# texture-memory budget makes 512 the practical safe ceiling.
-MAX_TEXTURE_DIM = 512
+# downscaled proportionally. GX hardware cap is 1024×1024 and XD's
+# texture-memory budget makes 512 the practical safe ceiling, but
+# battle-model file-size budgets are dominated by texture pixels, so the
+# default is kept aggressively low. Raise it per-model if a texture looks
+# too soft in-game.
+MAX_TEXTURE_DIM = 64
 
 
 # ---------------------------------------------------------------------------
@@ -978,6 +983,353 @@ def prepare_test_animations(armature):
         created += 1
 
     return created
+
+
+# ---------------------------------------------------------------------------
+# Chico shader bake
+# ---------------------------------------------------------------------------
+#
+# Some rips drive the Material Output from a custom shader node group (e.g.
+# `PokemonShaderbyChicoEevee`) instead of a Principled BSDF. The real surface
+# colour is the albedo modulated by a layer-mask texture selecting between flat
+# base-colour layers — not the raw albedo — so the exporter (which reads a
+# single texture feeding a Principled `Base Color`) would otherwise export the
+# material washed-out or untextured. The chico group exposes a `BaseColorBake`
+# output carrying the fully composited colour; this bakes that to a per-material
+# image and rebuilds the surface as a clean Principled BSDF. Runs before the
+# texture-size/format steps so the baked images get downscaled and GX-encoded
+# like any other texture.
+
+_CHICO_BAKE_OUTPUT_KEYS = ("basecolorbake", "basecolour bake", "albedobake", "colorbake")
+_CHICO_ALPHA_INPUT_KEYS = ("albedoalpha", "basecoloralpha", "alpha")
+_CHICO_DEFAULT_SIZE = 1024
+_CHICO_BAKE_MARGIN = 16
+
+
+def _chico_normalise(name):
+    return name.lower().replace("_", "").replace(" ", "")
+
+
+def _chico_match(name, keys):
+    n = _chico_normalise(name)
+    for i, key in enumerate(keys):
+        if _chico_normalise(key) in n:
+            return i
+    return len(keys)
+
+
+def _chico_surface_node(node_tree):
+    out = next((n for n in node_tree.nodes if n.type == "OUTPUT_MATERIAL"), None)
+    if out is None or not out.inputs["Surface"].is_linked:
+        return None, None
+    return out, out.inputs["Surface"].links[0].from_node
+
+
+def _chico_bake_output_socket(group_node):
+    """Return the group's bake-ready colour output socket, or None."""
+    if group_node.type != "GROUP" or group_node.node_tree is None:
+        return None
+    best, best_rank = None, len(_CHICO_BAKE_OUTPUT_KEYS)
+    for sock in group_node.outputs:
+        r = _chico_match(sock.name, _CHICO_BAKE_OUTPUT_KEYS)
+        if r < best_rank:
+            best, best_rank = sock, r
+    return best
+
+
+def _chico_alpha_input_socket(group_node):
+    best, best_rank = None, len(_CHICO_ALPHA_INPUT_KEYS)
+    for sock in group_node.inputs:
+        r = _chico_match(sock.name, _CHICO_ALPHA_INPUT_KEYS)
+        if r < best_rank:
+            best, best_rank = sock, r
+    return best if best_rank < len(_CHICO_ALPHA_INPUT_KEYS) else None
+
+
+def _chico_albedo_props(group_node):
+    """Source albedo size + wrap/filter, for matching the bake target.
+
+    Returns (width, height, extension, interpolation). The model samples the
+    albedo (and layer mask) with REPEAT wrap and UVs that climb past 1.0
+    (UDIM-style stacking), so the baked tile must carry the same extension for
+    the exporter to re-tile it correctly.
+    """
+    w, h = _CHICO_DEFAULT_SIZE, _CHICO_DEFAULT_SIZE
+    ext, interp = "REPEAT", "Linear"
+    for sock in group_node.inputs:
+        if _chico_match(sock.name, ("albedo", "basecolor")) == 0 and sock.is_linked:
+            src = sock.links[0].from_node
+            if src.type == "TEX_IMAGE":
+                ext, interp = src.extension, src.interpolation
+                if src.image and tuple(src.image.size) != (0, 0):
+                    w, h = int(src.image.size[0]), int(src.image.size[1])
+            break
+    return w, h, ext, interp
+
+
+def _chico_render_uv_layer(mesh):
+    if not mesh.uv_layers:
+        return None
+    for layer in mesh.uv_layers:
+        if layer.active_render:
+            return layer
+    return mesh.uv_layers.active
+
+
+def _chico_collapse_uvs_to_tile(obj):
+    """Shift every face into the base UV tile by an integer offset.
+
+    The model stacks UV islands across tiles (V > 1) and relies on REPEAT to
+    sample one tile-tall albedo. Cycles bakes at literal UVs, so islands above
+    the [0,1] tile would miss the bake target. Shifting per face (not per
+    vertex) by floor(centroid) keeps each island intact while landing it in
+    the base tile, where the composite — periodic under REPEAT — is identical.
+    Returns (layer_name, original_uv_array) for restoration, or None.
+    """
+    me = obj.data
+    layer = _chico_render_uv_layer(me)
+    if layer is None:
+        return None
+    data = layer.data
+    saved = [0.0] * (len(data) * 2)
+    data.foreach_get("uv", saved)
+    for poly in me.polygons:
+        loops = poly.loop_indices
+        n = len(loops)
+        cu = sum(data[l].uv[0] for l in loops) / n
+        cv = sum(data[l].uv[1] for l in loops) / n
+        ox, oy = math.floor(cu), math.floor(cv)
+        if ox or oy:
+            for l in loops:
+                uv = data[l].uv
+                uv[0] -= ox
+                uv[1] -= oy
+    return (layer.name, saved)
+
+
+def _chico_restore_uvs(obj, saved):
+    if saved is None:
+        return
+    name, arr = saved
+    layer = obj.data.uv_layers.get(name)
+    if layer is not None:
+        layer.data.foreach_set("uv", arr)
+        obj.data.update()
+
+
+def _chico_objects_using(mat):
+    objs = []
+    for ob in bpy.data.objects:
+        if ob.type != "MESH":
+            continue
+        if any(sl.material is mat for sl in ob.material_slots):
+            objs.append(ob)
+    return objs
+
+
+def _chico_new_image(name, w, h, is_data):
+    img = bpy.data.images.new(name, width=w, height=h, alpha=True, float_buffer=False)
+    img.colorspace_settings.name = "Non-Color" if is_data else "sRGB"
+    return img
+
+
+def _chico_add_target_node(nt, image, location):
+    node = nt.nodes.new("ShaderNodeTexImage")
+    node.image = image
+    node.location = location
+    nt.nodes.active = node          # bake writes to the active image node
+    for n in nt.nodes:
+        n.select = False
+    node.select = True
+    return node
+
+
+def _chico_configure_cycles(scene, bake_type):
+    scene.render.engine = "CYCLES"
+    scene.cycles.samples = 1
+    bake = scene.render.bake
+    bake.use_selected_to_active = False
+    bake.margin = _CHICO_BAKE_MARGIN
+    bake.use_clear = True
+    if bake_type == "DIFFUSE":
+        bake.use_pass_direct = False
+        bake.use_pass_indirect = False
+        bake.use_pass_color = True
+
+
+def _chico_select_for_bake(objects):
+    for ob in bpy.data.objects:
+        ob.select_set(False)
+    active = None
+    for ob in objects:
+        try:
+            ob.hide_set(False)
+        except RuntimeError:
+            pass
+        ob.hide_render = False
+        ob.select_set(True)
+        active = ob
+    bpy.context.view_layer.objects.active = active
+    return active
+
+
+def _chico_copy_red_to_alpha(color_img, alpha_img):
+    """Move the red channel of `alpha_img` into the alpha of `color_img`."""
+    n = color_img.size[0] * color_img.size[1]
+    col = [0.0] * (n * 4)
+    alp = [0.0] * (n * 4)
+    color_img.pixels.foreach_get(col)
+    alpha_img.pixels.foreach_get(alp)
+    for i in range(n):
+        col[i * 4 + 3] = alp[i * 4]
+    color_img.pixels.foreach_set(col)
+    color_img.update()
+
+
+def _chico_collect_jobs():
+    """Find convertible materials and snapshot what each bake needs."""
+    jobs = []
+    skipped_other = []
+    seen = set()
+    for ob in bpy.data.objects:
+        if ob.type != "MESH":
+            continue
+        for sl in ob.material_slots:
+            mat = sl.material
+            if mat is None or mat in seen or not mat.use_nodes or mat.node_tree is None:
+                continue
+            seen.add(mat)
+            out, surface = _chico_surface_node(mat.node_tree)
+            if surface is None or surface.type == "BSDF_PRINCIPLED":
+                continue
+            # The bake output is an output socket on the group node; its data
+            # comes from a link INSIDE the group, so it is not (and need not
+            # be) linked downstream in the material tree.
+            bake_sock = _chico_bake_output_socket(surface)
+            if bake_sock is None:
+                skipped_other.append(mat.name)
+                continue
+            w, h, ext, interp = _chico_albedo_props(surface)
+            jobs.append({
+                "mat": mat, "output": out, "group": surface,
+                "bake_sock": bake_sock,
+                "alpha_in": _chico_alpha_input_socket(surface),
+                "w": w, "h": h, "ext": ext, "interp": interp,
+                "objs": _chico_objects_using(mat),
+            })
+    return jobs, skipped_other
+
+
+def _chico_setup_color_pass(job):
+    nt = job["mat"].node_tree
+    img = _chico_new_image(job["mat"].name + "_bake", job["w"], job["h"], is_data=False)
+    job["color_img"] = img
+    job["color_node"] = _chico_add_target_node(
+        nt, img, (job["group"].location.x + 400, job["group"].location.y))
+    nt.links.new(job["bake_sock"], job["output"].inputs["Surface"])
+
+
+def _chico_setup_alpha_pass(job):
+    """Route the albedo alpha into an emission surface and a data target.
+
+    Returns True if an alpha pass is needed for this material.
+    """
+    alpha_in = job["alpha_in"]
+    if alpha_in is None or not alpha_in.is_linked:
+        return False
+    nt = job["mat"].node_tree
+    emit = nt.nodes.new("ShaderNodeEmission")
+    emit.location = (job["group"].location.x, job["group"].location.y - 300)
+    emit.inputs["Strength"].default_value = 1.0
+    nt.links.new(alpha_in.links[0].from_socket, emit.inputs["Color"])
+    nt.links.new(emit.outputs["Emission"], job["output"].inputs["Surface"])
+    img = _chico_new_image(job["mat"].name + "_bake_a", job["w"], job["h"], is_data=True)
+    job["alpha_img"] = img
+    job["alpha_node"] = _chico_add_target_node(
+        nt, img, (job["group"].location.x + 400, job["group"].location.y - 300))
+    job["alpha_emit"] = emit
+    return True
+
+
+def _chico_finalize(job):
+    nt = job["mat"].node_tree
+    has_alpha = "alpha_img" in job
+    if has_alpha:
+        _chico_copy_red_to_alpha(job["color_img"], job["alpha_img"])
+        # Tear down the temporary alpha bake graph.
+        nt.nodes.remove(job["alpha_emit"])
+        nt.nodes.remove(job["alpha_node"])
+        bpy.data.images.remove(job["alpha_img"])
+
+    job["color_img"].pack()
+
+    # Match the source albedo's wrap/filter so the exporter re-tiles the baked
+    # base tile across the model's stacked (V > 1) UVs.
+    job["color_node"].extension = job["ext"]
+    job["color_node"].interpolation = job["interp"]
+
+    bsdf = nt.nodes.new("ShaderNodeBsdfPrincipled")
+    bsdf.location = (job["group"].location.x + 400, job["group"].location.y - 200)
+    nt.links.new(job["color_node"].outputs["Color"], bsdf.inputs["Base Color"])
+    if has_alpha:
+        nt.links.new(job["color_node"].outputs["Alpha"], bsdf.inputs["Alpha"])
+        try:
+            job["mat"].blend_method = "CLIP"
+        except (AttributeError, TypeError):
+            pass
+    nt.links.new(bsdf.outputs["BSDF"], job["output"].inputs["Surface"])
+
+
+def bake_chico_shaders():
+    """Bake custom shader-group materials down to a Principled BSDF.
+
+    Returns (converted_material_names, skipped_no_bake_output_names).
+    No-op (returns empty lists) when no convertible material is present.
+    """
+    jobs, skipped_other = _chico_collect_jobs()
+    if not jobs:
+        return [], skipped_other
+
+    scene = bpy.context.scene
+    saved_engine = scene.render.engine
+    if bpy.context.object and bpy.context.object.mode != "OBJECT":
+        bpy.ops.object.mode_set(mode="OBJECT")
+
+    all_objs = []
+    for job in jobs:
+        _chico_setup_color_pass(job)
+        for ob in job["objs"]:
+            if ob not in all_objs:
+                all_objs.append(ob)
+
+    # Collapse stacked UV tiles into the base tile for the duration of the
+    # bakes, then restore the original UVs so the exported mesh keeps its
+    # REPEAT-tiled coordinates.
+    saved_uvs = [(ob, _chico_collapse_uvs_to_tile(ob)) for ob in all_objs]
+    try:
+        _chico_configure_cycles(scene, "DIFFUSE")
+        _chico_select_for_bake(all_objs)
+        bpy.ops.object.bake(type="DIFFUSE")
+
+        alpha_jobs = [job for job in jobs if _chico_setup_alpha_pass(job)]
+        if alpha_jobs:
+            alpha_objs = []
+            for job in alpha_jobs:
+                for ob in job["objs"]:
+                    if ob not in alpha_objs:
+                        alpha_objs.append(ob)
+            _chico_configure_cycles(scene, "EMIT")
+            _chico_select_for_bake(alpha_objs)
+            bpy.ops.object.bake(type="EMIT")
+    finally:
+        for ob, snapshot in saved_uvs:
+            _chico_restore_uvs(ob, snapshot)
+
+    for job in jobs:
+        _chico_finalize(job)
+
+    scene.render.engine = saved_engine
+    return [job["mat"].name for job in jobs], skipped_other
 
 
 # ---------------------------------------------------------------------------
@@ -2149,7 +2501,18 @@ if __name__ == "__main__" or True:
     # missing it. Camera creation lives in scripts/add_debug_camera.py.
     normalize_camera_aspect()
 
-    # 2-4. Per-armature steps: PKX metadata, timing, texture formats
+    # 3. Bake custom shader-group materials (e.g. PokemonShaderbyChicoEevee)
+    #    down to a Principled BSDF. Runs scene-wide before the per-armature
+    #    texture-size/format steps so the baked images are downscaled and
+    #    GX-encoded like any other texture.
+    chico_baked, chico_skipped = bake_chico_shaders()
+    if chico_baked:
+        print("  Baked %d custom-shader material(s) to Principled BSDF" % len(chico_baked))
+    if chico_skipped:
+        print("  Custom-shader material(s) with no bake output (left as-is): %s"
+              % ", ".join(chico_skipped))
+
+    # 4. Per-armature steps: PKX metadata, timing, texture formats
     armatures = [obj for obj in bpy.data.objects if obj.type == 'ARMATURE']
     if not armatures:
         print("  No armatures in scene (PKX/timing/texture steps skipped)")
