@@ -404,6 +404,28 @@ Before deleting, duplicate the model into a backup collection — a few Pokémon
 
 Either approach works — pick whichever fits the rest of your editing. Open the eye texture in the Image Editor first if the atlas layout isn't obvious; the cell boundaries are usually clear at a glance.
 
+## Troubleshooting
+
+### Model renders rotated in-game (non-identity root bone)
+
+**Symptom.** The export succeeds (or the exporter rejects the scene with a "non-identity root JOBJ rotation" error), and in-game the whole model is turned — usually 90° — even though it looks correct in Blender.
+
+**Cause.** The exported **root joint rotation must be the identity**. The game applies the root joint's own rotation as the model's base orientation and does *not* cancel it the way skinning cancels a deformer bone's rotation, so a tilted root bone turns the entire model. Blender hides this because it evaluates the rest pose as the identity deformation, and a clean export→import round-trip hides it too. This only affects hand-built / GLB-imported rigs; rigs imported by this plugin are already canonical.
+
+The root bone is canonical when it points **straight up (+Z) with Roll = 0**. Fix it manually before exporting — the prep scripts intentionally do **not** adjust root orientation (automating it breaks animated children, and a blanket re-orient can't handle the mesh-vs-bone case below):
+
+- **Just the root bone is mis-oriented.** In Edit mode, aim the root bone up (+Z) and clear its roll: `Armature → Bone Roll → Clear Roll`. Do this *before* animating the root.
+
+- **The mesh and the root bone are in different orientations** (e.g. a **Z-up mesh under a Y-up root bone**). You can't simply re-orient the rig: the mesh is skinned to the bone, so rotating the bone rotates the mesh too. Use two rotations that cancel on the bone but not the mesh:
+  1. Rotate the **root bone** to axis-aligned (+Z, roll 0). The mesh rotates along with it and is now wrong.
+  2. Rotate the **mesh object** by the **inverse** of that same rotation.
+
+  The bone now exports an identity root joint, and the mesh is back in its correct orientation.
+
+- **The root bone is already animated.** Don't re-orient it in place — that rotates its children on every posed frame. Instead add a new axis-aligned `Origin` bone at the rig origin and **parent the current root to it**. The old root keeps its orientation (now cancelled through normal skinning) and the new `Origin` bone becomes the identity model root.
+
+See [implementation_notes.md → Root joint orientation](implementation_notes.md#root-joint-orientation-must-be-identity-manual-fix) for the underlying rationale.
+
 ## How to Use the New Model in Game
 
 The fastest path from a finished Blender scene to seeing your model running in-game is:
