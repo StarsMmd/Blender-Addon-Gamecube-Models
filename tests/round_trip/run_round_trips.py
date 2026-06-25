@@ -297,9 +297,14 @@ def compute_ibi_score(filepath, logger=None):
     ir_original = describe_ir(sections, options=options, logger=logger)
 
     # Plan IR → BR (importer phase 5a), then BR → IR (exporter phase 2).
+    # Disable mesh merging so the round-tripped mesh count matches the
+    # original — the merge is an intentional PObject-ceiling optimisation,
+    # not a fidelity loss, and counting the merged-away meshes as misses
+    # masks the real per-mesh accuracy.
     br_scene = plan_to_br(ir_original, options={"filepath": filepath}, logger=logger)
     ir_roundtripped = plan_br_to_ir(
-        br_scene, options={'skip_baked_transforms_validation': True},
+        br_scene,
+        options={'skip_baked_transforms_validation': True, 'merge_meshes': False},
     )
 
     # Compare IR scenes by category
@@ -778,6 +783,38 @@ def _is_inactive_tev(field_name, node):
             and getattr(node, 'active', None) == 0)
 
 
+_COLOR_CHANNEL_FIELDS = frozenset({'red', 'green', 'blue', 'alpha'})
+
+
+def _color_channel_equiv(field_name, a, b):
+    """True when a colour channel holds the same value in two scales:
+    a normalized float [0-1] (the IR / parsed-node form) vs a u8 [0-255]
+    (the composed-node form). They differ only by the 1/255 quantization
+    step, so comparing them raw spuriously flags every colour as an error.
+    """
+    if field_name not in _COLOR_CHANNEL_FIELDS:
+        return False
+    fval, ival = (a, b) if isinstance(a, float) else (b, a)
+    if not (isinstance(fval, float) and isinstance(ival, int)):
+        return False
+    if not 0.0 <= fval <= 1.0:
+        return False
+    return abs(round(fval * 255) - ival) <= 1
+
+
+def _nin_value_equal(a, b, tol=1e-5):
+    """Compare two NIN field values, tolerating float round-off and
+    recursing into nested lists (e.g. an inverse_bind matrix's rows), so a
+    last-digit (~1e-16) difference in a matrix element from the IR→compose
+    recomputation isn't counted as a mismatch."""
+    if isinstance(a, float) and isinstance(b, (int, float)):
+        return abs(a - b) <= tol
+    if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
+        return len(a) == len(b) and all(
+            _nin_value_equal(x, y, tol) for x, y in zip(a, b))
+    return a == b
+
+
 def _compare_node_trees_nin(orig, composed):
     """NIN comparison: walk the ORIGINAL tree to count all fields.
 
@@ -849,11 +886,7 @@ def _compare_node_trees_nin(orig, composed):
                         if comp_item is None:
                             misses += 1
                             details.append(f"MISS {fp}[{i}]: {item} vs None")
-                        elif isinstance(item, float) and isinstance(comp_item, float):
-                            if abs(item - comp_item) > 1e-5:
-                                errors += 1
-                                details.append(f"ERR  {fp}[{i}]: {item} vs {comp_item}")
-                        elif item != comp_item:
+                        elif not _nin_value_equal(item, comp_item):
                             errors += 1
                             details.append(f"ERR  {fp}[{i}]: {item} vs {comp_item}")
             else:
@@ -861,11 +894,9 @@ def _compare_node_trees_nin(orig, composed):
                 if val_comp is None and val_orig is not None:
                     misses += 1
                     details.append(f"MISS {fp}: {repr(val_orig)[:60]} vs None")
-                elif isinstance(val_orig, float) and isinstance(val_comp, float):
-                    if abs(val_orig - val_comp) > 1e-5:
-                        errors += 1
-                        details.append(f"ERR  {fp}: {val_orig} vs {val_comp}")
-                elif val_orig != val_comp:
+                elif _color_channel_equiv(field_name, val_orig, val_comp):
+                    pass  # same colour, float [0-1] vs u8 [0-255]
+                elif not _nin_value_equal(val_orig, val_comp):
                     errors += 1
                     details.append(f"ERR  {fp}: {repr(val_orig)[:60]} vs {repr(val_comp)[:60]}")
 
