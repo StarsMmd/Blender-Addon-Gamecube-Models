@@ -58,7 +58,7 @@ _Average health: 🔴 0-20% · 🟠 21-40% · 🟡 41-60% · 🔵 61-80% · ✅ 
 
 Scores below come from the full corpus in `~/Documents/Projects/DAT plugin/models/`, run with `python3.11` and `bpy==4.5.7`. All scores displayed as `match%(error/miss)` — see "How Scores Are Computed" for definitions.
 
-> **Note on map results.** The map / scene corpus (six `.rdat` files) takes 5–20 min per model on the slower entries; the table below shows whichever maps had completed at the time the doc was last refreshed. A full sweep of the maps is a separate batch invocation. `D1_out.rdat` is excluded — it hangs the runner. Re-generate via `python3 tools/parse_rt_results.py <runner-output>`.
+> **Note on map results.** The map / scene corpus (six `.rdat` files) takes 5–20 min per model on the slower entries because of the bpy build in BBB; the table below is a full fresh sweep. `D1_out.rdat` is excluded — it hangs the runner. Re-generate via `python3 tools/parse_rt_results.py <runner-output>`.
 
 <!-- AUTO-GENERATED-RESULTS START -->
 
@@ -147,16 +147,16 @@ Scores below come from the full corpus in `~/Documents/Projects/DAT plugin/model
 
 ### Map / Scene Models
 
-| Model | Game | NBN ✅ | NIN 🔴 | BBB 🔵 | IBI ✅ | BNB 🔴 |
+| Model | Game | NBN ✅ | NIN 🟠 | BBB 🔵 | IBI ✅ | BNB ✅ |
 |---|---|---|---|---|---|---|
-| D2_rest_1 | XD | 98.7%(1/0) | 25.0%(1/74) | 72.7%(9/19) | 96.1%(2/1) | 6.4% |
-| D6_out_all | XD | 96.4%(4/0) | 18.1%(0/82) | 68.1%(13/19) | 88.2%(5/6) | 43.7% |
-| M1_out | XD | 98.3%(2/0) | 23.1%(0/77) | 79.4%(8/12) | 94.3%(3/3) | 2.6% |
-| M2_out | XD | 99.4%(1/0) | 25.0%(0/75) | 77.0%(9/14) | 96.3%(3/1) | 3.0% |
-| M3_out | XD | 99.2%(1/0) | 23.0%(0/77) | 76.3%(9/15) | 97.0%(3/0) | 1.5% |
-| M3_shrine_1F | XD | 99.9%(0/0) | 24.2%(0/76) | 75.5%(8/17) | 95.1%(5/0) | 0.8% |
+| D2_rest_1 | XD | 98.7%(1/0) | 25.0%(1/74) | 78.6%(3/19) | 96.1%(2/1) | 99.4% |
+| D6_out_all | XD | 96.4%(4/0) | 18.1%(0/82) | 72.5%(7/21) | 88.2%(5/6) | 92.9% |
+| M1_out | XD | 98.3%(2/0) | 23.1%(0/77) | 84.6%(3/13) | 94.3%(3/3) | 97.7% |
+| M2_out | XD | 99.4%(1/0) | 25.0%(0/75) | 82.7%(3/14) | 96.3%(3/1) | 98.6% |
+| M3_out | XD | 99.2%(1/0) | 23.0%(0/77) | 81.7%(3/15) | 97.0%(3/0) | 93.6% |
+| M3_shrine_1F | XD | 99.9%(0/0) | 24.2%(0/76) | 81.4%(2/17) | 95.1%(5/0) | 95.7% |
 
-**Averages (6 models):** NBN 98.7% · NIN 23.1% · BBB 74.9% · IBI 94.5% · BNB 9.7%
+**Averages:** NBN 98.7% · NIN 23.1% · BBB 80.2% · IBI 94.5% · BNB 96.3%
 
 <!-- AUTO-GENERATED-RESULTS END -->
 
