@@ -24,6 +24,18 @@ def _coerce_pointer(value, node, field_name):
 		"got {} ({})".format(type(node).__name__, field_name, type(value).__name__, repr(value)[:60]))
 
 
+# Struct types that make up the materials phase (the first phase Sysdolphin
+# emits). RGBAColors are inline (@-fields) so they ride with their Material
+# and never appear here.
+_MATERIAL_TYPES = frozenset({
+	'Image', 'Texture', 'Material', 'MaterialObject',
+	'PixelEngine', 'TextureLOD', 'TextureTEV',
+})
+_ENVELOPE_TYPES = frozenset({'EnvelopeList', 'Envelope'})
+_VERTEX_TYPES = frozenset({'Vertex', 'VertexList'})
+_GEOMETRY_TYPES = frozenset({'PObject', 'Mesh'})
+
+
 # Serializes a node tree to DAT binary format.
 # The build process has 4 internal steps:
 # 1) Collect nodes via DFS post-order traversal into an ordered list (leaf-first).
@@ -76,8 +88,17 @@ class DATBuilder(BinaryWriter):
 
 		deferred = []  # (field_name, value) for child/next/link fields
 
+		# A node may declare a custom direct-children traversal order; listed
+		# fields are visited first (in that order), the rest keep declared order.
+		field_order = getattr(node, 'serialization_field_order', None)
+		if field_order:
+			listed = [f for name in field_order for f in node.fields if f[0] == name]
+			ordered_fields = listed + [f for f in node.fields if f[0] not in field_order]
+		else:
+			ordered_fields = node.fields
+
 		# First pass: recurse into non-link fields (written BEFORE this node)
-		for field in node.fields:
+		for field in ordered_fields:
 			raw_type = field[1]
 			field_name = field[0]
 
@@ -126,6 +147,225 @@ class DATBuilder(BinaryWriter):
 		while self._currentRelativeAddress() % 32 != 0:
 			self.write(0, 'uchar')
 
+	def _serialization_blocks(self):
+		"""Collect the explicit serialization order of every subtree whose
+		root node declares one (``serializes_subtree`` types — currently the
+		bone and material animation joint trees). Each node owns the ordering
+		of its own subtree via ``serializationOrder``; the builder only finds
+		the roots and writes the resulting blocks.
+
+		Returns a list of flat node-lists, one per subtree, ordered by first
+		appearance in node_list.
+		"""
+		candidates = [n for n in self.node_list if getattr(n, 'serializes_subtree', False)]
+		if not candidates:
+			return []
+		# A subtree root is a candidate not referenced as a child/next of
+		# another candidate of the same kind.
+		referenced = set()
+		for n in candidates:
+			for fn in ('child', 'next'):
+				v = getattr(n, fn, None)
+				if isinstance(v, Node):
+					referenced.add(id(v))
+				elif isinstance(v, list):
+					for it in v:
+						if isinstance(it, Node):
+							referenced.add(id(it))
+		blocks = []
+		for n in candidates:
+			if id(n) in referenced:
+				continue
+			order = n.serializationOrder()
+			if order:
+				blocks.append(order)
+		return blocks
+
+	def _write_block(self, nodes):
+		"""Write a declared serialization block: consecutive Frame runs are
+		pooled (buffers then structs), other nodes are written inline."""
+		di, m = 0, len(nodes)
+		while di < m:
+			if type(nodes[di]).__name__ == 'Frame':
+				de = di
+				while de < m and type(nodes[de]).__name__ == 'Frame':
+					de += 1
+				self._write_frame_run(nodes[di:de])
+				di = de
+			else:
+				self._write_node(nodes[di])
+				di += 1
+
+	def _ordered_node_list(self):
+		"""The overarching emission order — the builder's responsibility.
+
+		node_list is DFS post-order and already carries each node's declared
+		direct-child order (``serialization_field_order``). This pass reorders
+		it into the game's struct phase sequence — materials → envelopes →
+		vertex descriptors → geometry → skeleton → (animations + scene) —
+		preserving each node's node_list-relative order *within* its phase
+		(which already matches game-native for every phase except materials,
+		handled specially, and envelopes, see below).
+
+		Envelopes are grouped at their phase position but **not** internally
+		reordered (their convention isn't cracked yet): because the set of
+		envelope structs is fixed, the grouped region has the correct total
+		size, so the downstream phases still land at the right offsets — only
+		the envelope structs themselves stay internally mis-ordered. See
+		technical-docs/implementation_notes.md § Struct ordering convention.
+		"""
+		nl = self.node_list
+		kind = lambda n: type(n).__name__
+		mobj_rank = self._material_object_order()
+		vl_rank = self._vertex_list_order()
+
+		# Materials and vertex descriptors are emitted as blocks (a contiguous
+		# node_list run ending at the MaterialObject / VertexList) ordered by
+		# their leaf's reverse joint-post rank. Envelopes are *grouped* at
+		# their phase position but kept in node_list order (their convention
+		# isn't cracked); grouping them — even mis-ordered internally — keeps
+		# the downstream phases contiguous so they stay correctly ordered.
+		# Geometry, skeleton and the rest (animations + scene) keep their
+		# node_list-relative order.
+		material_blocks, mat_cur = [], []
+		vertex_blocks, vtx_cur = [], []
+		envelopes, geometry, skeleton, rest = [], [], [], []
+		for n in nl:
+			k = kind(n)
+			if k in _MATERIAL_TYPES:
+				mat_cur.append(n)
+				if k == 'MaterialObject':
+					material_blocks.append(mat_cur)
+					mat_cur = []
+			elif k in _VERTEX_TYPES:
+				vtx_cur.append(n)
+				if k == 'VertexList':
+					vertex_blocks.append(vtx_cur)
+					vtx_cur = []
+			elif k in _ENVELOPE_TYPES:
+				envelopes.append(n)
+			elif k in _GEOMETRY_TYPES:
+				geometry.append(n)
+			elif k == 'Joint':
+				skeleton.append(n)
+			else:
+				rest.append(n)
+		rest.extend(mat_cur)
+		rest.extend(vtx_cur)
+		material_blocks.sort(key=lambda b: mobj_rank.get(id(b[-1]), 1 << 30))
+		vertex_blocks.sort(key=lambda b: vl_rank.get(id(b[-1]), 1 << 30))
+
+		ordered = [n for block in material_blocks for n in block]
+		ordered.extend(envelopes)
+		ordered.extend(n for block in vertex_blocks for n in block)
+		ordered.extend(geometry)
+		ordered.extend(skeleton)
+		ordered.extend(rest)
+		return ordered
+
+	def _reverse_joint_post_order(self, extract):
+		"""Compute the emission rank of a per-mesh leaf struct (a
+		MaterialObject or a VertexList) — the reverse of (joint post-order →
+		each joint's mesh list → ``extract(mesh)``, first-encounter dedup).
+		Cross-validated against game-native PKX for both materials and vertex
+		descriptors. ``extract(mesh)`` yields the leaf node(s) for a mesh.
+		Returns id(leaf) → rank."""
+		nl = self.node_list
+		kind = lambda n: type(n).__name__
+		joints = [n for n in nl if kind(n) == 'Joint']
+		referenced = set()
+		for j in joints:
+			for fn in ('child', 'next'):
+				v = getattr(j, fn, None)
+				if isinstance(v, Node):
+					referenced.add(id(v))
+		roots = [j for j in joints if id(j) not in referenced]
+		mesh_by_addr = {n.address: n for n in nl if kind(n) == 'Mesh'}
+
+		post = []
+		seen_j = set()
+
+		def visit(j):
+			if not isinstance(j, Node) or kind(j) != 'Joint' or id(j) in seen_j:
+				return
+			seen_j.add(id(j))
+			visit(getattr(j, 'child', None))
+			visit(getattr(j, 'next', None))
+			post.append(j)
+		for r in roots:
+			visit(r)
+
+		fwd = []
+		seen = set()
+		for j in post:
+			prop = getattr(j, 'property', None)
+			mesh = mesh_by_addr.get(prop) if isinstance(prop, int) else (
+				prop if isinstance(prop, Node) and kind(prop) == 'Mesh' else None)
+			while isinstance(mesh, Node):
+				for leaf in extract(mesh):
+					if isinstance(leaf, Node) and id(leaf) not in seen:
+						seen.add(id(leaf))
+						fwd.append(leaf)
+				mesh = getattr(mesh, 'next', None)
+		return {id(x): r for r, x in enumerate(reversed(fwd))}
+
+	def _material_object_order(self):
+		"""Emission rank of each MaterialObject (one per mesh)."""
+		return self._reverse_joint_post_order(
+			lambda mesh: [getattr(mesh, 'mobject', None)])
+
+	def _vertex_list_order(self):
+		"""Emission rank of each VertexList (via each mesh's PObject chain)."""
+		def extract(mesh):
+			po = getattr(mesh, 'pobject', None)
+			while isinstance(po, Node) and type(po).__name__ == 'PObject':
+				yield getattr(po, 'vertex_list', None)
+				po = getattr(po, 'next', None)
+		return self._reverse_joint_post_order(extract)
+
+	def _write_frame_run(self, frames):
+		"""Pool a run of Frame nodes: every keyframe buffer (4-byte aligned)
+		first, then every Frame struct — matching Sysdolphin's layout."""
+		starts = {}
+		for f in frames:
+			self.seek(0, 'end')
+			while self._currentRelativeAddress() % 4 != 0:
+				self.write(0, 'uchar')
+			starts[id(f)] = self._currentRelativeAddress()
+			f.writePrivateData(self)
+		for f in frames:
+			self._allocate_struct(f)
+			self.seek(0, 'end')
+			self.node_sizes[id(f)] = self._currentRelativeAddress() - starts[id(f)]
+
+	def _write_node(self, node):
+		"""Generic single-node write: private data, then struct allocation."""
+		start = self._currentRelativeAddress()
+		node.writePrivateData(self)
+		self._allocate_struct(node)
+		self.seek(0, 'end')
+		self.node_sizes[id(node)] = self._currentRelativeAddress() - start
+
+	def _allocate_struct(self, node):
+		"""Reserve struct address space at the end of the file with the
+		parser-expected first-field alignment. Sets node.address (None for
+		zero-size stub nodes)."""
+		node_size = node.allocationSize()
+		if node_size > 0:
+			self.seek(0, 'end')
+			if len(node.fields) > 0:
+				first_field = node.fields[0]
+				alignment = get_alignment_at_offset(markUpFieldType(first_field[1]), self._currentRelativeAddress())
+			else:
+				alignment = (4 - (self._currentRelativeAddress() % 4)) % 4
+			for _ in range(alignment):
+				self.write(0, 'uchar')
+			node.address = self._currentRelativeAddress() + node.allocationOffset()
+			for _ in range(node_size):
+				self.write(0, 'uchar')
+		else:
+			node.address = None
+
 	def build(self):
 		# --- Phase 1: Write shared raw data ---
 		# Vertex buffers (deduplicated), image pixels, palette data.
@@ -138,41 +378,45 @@ class DATBuilder(BinaryWriter):
 		for node in self.node_list:
 			node.writePrimitivePointers(self)
 
-		# --- Phase 2: DFS post-order — write private data + allocate structs ---
-		# For each node (already in DFS post-order from __init__):
-		#   1. Write private raw data (display lists, matrices, frame data, strings, pointer arrays)
-		#   2. Allocate the node's struct space
+		# --- Phase 2: write private data + allocate structs ---
+		# Frame keyframe buffers are pooled per animation: a consecutive run
+		# of Frame nodes writes every buffer first, then every struct —
+		# matching Sysdolphin's [buffers][structs] layout. Subtrees whose root
+		# declares a serialization order (``serializes_subtree`` — the bone /
+		# material animation joint trees) are written as a single block in
+		# that declared order, triggered on the first of their nodes seen in
+		# node_list and skipped thereafter. See implementation_notes.md.
+		blocks = self._serialization_blocks()
+		block_of_node = {}
+		for bi, block in enumerate(blocks):
+			for nd in block:
+				block_of_node[id(nd)] = bi
+		written_blocks = set()
+
+		ordered_nodes = self._ordered_node_list()
 		self.seek(0, 'end')
-		for node in self.node_list:
-			phase2_start = self._currentRelativeAddress()
+		idx, n = 0, len(ordered_nodes)
+		while idx < n:
+			node = ordered_nodes[idx]
 
-			# Write private data immediately before the node struct
-			node.writePrivateData(self)
+			bi = block_of_node.get(id(node))
+			if bi is not None:
+				if bi not in written_blocks:
+					written_blocks.add(bi)
+					self._write_block(blocks[bi])
+				idx += 1
+				continue
 
-			# Allocate struct space
-			node_size = node.allocationSize()
-			if node_size > 0:
-				self.seek(0, 'end')
-				if len(node.fields) > 0:
-					first_field = node.fields[0]
-					alignment = get_alignment_at_offset(markUpFieldType(first_field[1]), self._currentRelativeAddress())
-				else:
-					# Nodes with no declared fields (e.g. EnvelopeList) — 4-byte align
-					alignment = (4 - (self._currentRelativeAddress() % 4)) % 4
-				for i in range(alignment):
-					_ = self.write(0, 'uchar')
-
-				node.address = self._currentRelativeAddress() + node.allocationOffset()
-				for i in range(node_size):
-					_ = self.write(0, 'uchar')
-			else:
-				# Stub nodes (e.g. RenderAnimation) — clear stale address from parsing
-				# so pointer resolution writes 0 instead of an invalid original address
-				node.address = None
-
-			self.seek(0, 'end')
-			phase2_end = self._currentRelativeAddress()
-			self.node_sizes[id(node)] = phase2_end - phase2_start
+			# Generic path (pools any stray Frame run too)
+			if type(node).__name__ == 'Frame':
+				end = idx
+				while end < n and type(ordered_nodes[end]).__name__ == 'Frame':
+					end += 1
+				self._write_frame_run(ordered_nodes[idx:end])
+				idx = end
+				continue
+			self._write_node(node)
+			idx += 1
 
 		# --- Phase 2.5a: Write palette LUT data ---
 		# Sysdolphin's compiler places palettes and image pixels at the very
