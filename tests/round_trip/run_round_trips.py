@@ -14,6 +14,10 @@ Usage:
     # All models in a directory
     python3 tests/round_trip/run_round_trips.py ~/models/
 
+    # PKX-metadata round-trip only (header -> custom props -> header), split
+    # by XD / Colosseum with a per-field divergence report:
+    python3 tests/round_trip/run_round_trips.py ~/models/ --pkx-metadata
+
 Requires: bpy (standalone module), mathutils
     pip install bpy mathutils
 
@@ -36,6 +40,12 @@ from collections import Counter
 addon_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 if addon_dir not in sys.path:
     sys.path.insert(0, addon_dir)
+
+# Add the tests directory so shared test helpers (e.g. pkx_metadata_compare)
+# import the same way they do under pytest.
+tests_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if tests_dir not in sys.path:
+    sys.path.insert(0, tests_dir)
 
 # Verify real bpy is available (not mocked)
 try:
@@ -75,6 +85,24 @@ if not hasattr(bpy.types.Image, 'dat_gx_format'):
         ],
         default='AUTO',
     )
+
+# Shiny custom properties (normally registered by BlenderPlugin.register()).
+# The PKX-metadata diagnostic needs these so post_process can store shiny
+# params and the exporter's describe can read them back. Registered
+# callback-free here (the addon's live-update callbacks aren't needed).
+if not hasattr(bpy.types.Object, 'dat_pkx_shiny_route_r'):
+    from bpy.props import EnumProperty, FloatProperty, BoolProperty
+    _SHINY_CH = [('0', 'Red', ''), ('1', 'Green', ''), ('2', 'Blue', ''), ('3', 'Alpha', '')]
+    bpy.types.Object.dat_pkx_shiny = BoolProperty(name="Shiny Preview", default=False)
+    # Identity route + zero brightness, matching the addon's registered
+    # defaults, so a non-shiny model whose import never sets these props
+    # compares clean (round-trips as non-shiny).
+    for _ch, _def in (('r', '0'), ('g', '1'), ('b', '2'), ('a', '3')):
+        setattr(bpy.types.Object, 'dat_pkx_shiny_route_%s' % _ch,
+                EnumProperty(name="Route %s" % _ch.upper(), items=_SHINY_CH, default=_def))
+    for _ch in ('r', 'g', 'b'):
+        setattr(bpy.types.Object, 'dat_pkx_shiny_brightness_%s' % _ch,
+                FloatProperty(name="Brightness %s" % _ch.upper(), default=0.0, min=-1.0, max=1.0))
 
 
 # ---------------------------------------------------------------------------
@@ -1023,6 +1051,115 @@ def run_all_tests(filepath):
     return scores
 
 
+def compute_pkx_metadata_diffs(filepath):
+    """Round-trip a real model's PKX header through the live import/export phases.
+
+    Imports the model, lets post_process write the dat_pkx_* custom properties
+    (+ shiny) onto the armature, re-describes the scene, and diffs the
+    reconstructed PKXHeader against the original via the shared comparator.
+
+    Returns (is_xd, diffs) or None if the file carries no PKX header.
+    """
+    from importer.phases.post_process.post_process import post_process
+    from pkx_metadata_compare import compare_pkx_headers
+
+    with open(filepath, 'rb') as f:
+        raw = f.read()
+    filename = os.path.basename(filepath)
+    # include_shiny mirrors the real import — without it extract drops shiny_params.
+    dat_bytes, metadata = extract_dat(raw, filename, options={"include_shiny": True})[0]
+    orig = metadata.pkx_header
+    if orig is None:
+        return None
+
+    clear_blender_scene()
+    section_map = route_sections(dat_bytes)
+    sections = parse_sections(dat_bytes, section_map, {})
+    ir_scene = describe_ir(sections, {"pkx_header": orig})
+    br_scene = plan_to_br(ir_scene)
+    build_results = build_in_blender(br_scene)
+    # DAT-ordered action names the import wrote the metadata against.
+    orig_actions = [a.name for a in build_results[0]['actions']] if build_results else []
+
+    # colo_xd_kind only steers slot-label naming / model_type, which don't
+    # affect the header fields the comparator checks.
+    post_process(set(), metadata.shiny_params, {"include_shiny": True},
+                 build_results=build_results, pkx_header=orig,
+                 colo_xd_kind='PKX_POKEMON')
+
+    br_scene2, _shiny, rebuilt = describe_back_to_br()
+    # The export may re-order actions; resolve refs by name so a benign
+    # re-ordering is not counted as a metadata loss.
+    rebuilt_actions = ([a.name for a in br_scene2.models[0].actions]
+                       if br_scene2.models else [])
+    return orig.is_xd, compare_pkx_headers(orig, rebuilt, orig_actions, rebuilt_actions)
+
+
+def _generalize_field(path):
+    """Collapse numeric indices so per-slot diffs aggregate (anim[03]->anim[*])."""
+    import re as _re
+    return _re.sub(r'\[\d+\]', '[*]', path)
+
+
+def run_pkx_metadata_diagnostic(files):
+    """Sweep models, round-trip PKX metadata, print per-field divergence histograms
+    split by container format (XD vs Colosseum)."""
+    from collections import Counter
+    # per format: {field: Counter({'violation': n, 'expected': n})}, plus model tallies
+    stats = {True: {}, False: {}}
+    models = {True: 0, False: 0}
+    clean = {True: 0, False: 0}
+    skipped = errored = 0
+
+    print(f"PKX-metadata round-trip over {len(files)} file(s)...\n")
+    for filepath in files:
+        name = os.path.splitext(os.path.basename(filepath))[0]
+        try:
+            result = compute_pkx_metadata_diffs(filepath)
+        except Exception as e:
+            print(f"  {name}: ERROR {e}")
+            errored += 1
+            continue
+        if result is None:
+            skipped += 1
+            continue
+        is_xd, diffs = result
+        models[is_xd] += 1
+        vios = [d for d in diffs if d.kind == 'violation']
+        if not vios:
+            clean[is_xd] += 1
+        fmt = 'XD' if is_xd else 'COLO'
+        print(f"  {name} [{fmt}]: {len(vios)} violation(s), "
+              f"{len(diffs) - len(vios)} expected divergence(s)")
+        for d in diffs:
+            field = _generalize_field(d.path)
+            stats[is_xd].setdefault(field, Counter())[d.kind] += 1
+
+    for is_xd in (True, False):
+        fmt = 'XD' if is_xd else 'COLOSSEUM'
+        n = models[is_xd]
+        if not n:
+            continue
+        print(f"\n=== {fmt}: {n} model(s), {clean[is_xd]} clean "
+              f"({clean[is_xd] * 100 // n}%) ===")
+        fields = stats[is_xd]
+        viol = {f: c for f, c in fields.items() if c.get('violation')}
+        exp = {f: c for f, c in fields.items() if c.get('expected') and not c.get('violation')}
+        if viol:
+            print("  VIOLATIONS (field: count):")
+            for f, c in sorted(viol.items(), key=lambda kv: -kv[1]['violation']):
+                print(f"    {f}: {c['violation']}")
+        else:
+            print("  No violations.")
+        if exp:
+            print("  Expected divergences:")
+            for f, c in sorted(exp.items(), key=lambda kv: -kv[1]['expected']):
+                print(f"    {f}: {c['expected']}")
+
+    print(f"\nProcessed: XD={models[True]} COLO={models[False]} "
+          f"skipped(no header)={skipped} errored={errored}")
+
+
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith('-')]
     flags = [a for a in sys.argv[1:] if a.startswith('-')]
@@ -1038,6 +1175,10 @@ def main():
     if not files:
         print(f"No supported model files found at: {args}")
         sys.exit(1)
+
+    if '--pkx-metadata' in flags:
+        run_pkx_metadata_diagnostic(files)
+        return
 
     verbose = '--verbose' in flags or '-v' in flags
 

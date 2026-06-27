@@ -4,7 +4,11 @@ Run this from Blender's Scripting panel (Text Editor > Run Script) with an
 armature selected. It creates ShinyRoute and ShinyBright node groups and
 inserts them into every material on the armature's child meshes. Uses
 whatever shiny params are already on the armature (from PKX import,
-prepare_for_pkx_export, or user edits) — defaults to identity if unset.
+prepare_for_pkx_export, or user edits). The registered defaults are
+identity/neutral (so a non-shiny model round-trips as non-shiny), so when
+the armature has no shiny params yet this script seeds a visible starting
+variant (channel swap + brightness boost); edit the values afterwards to
+taste. A real imported shiny is left untouched.
 
 Materials that already have shiny nodes are skipped, so this is safe to
 run multiple times or after prepare_for_pkx_export.
@@ -305,8 +309,29 @@ def main():
         raise ValueError("The DAT plugin addon must be enabled for shiny properties to work. "
                          "Enable it in Edit > Preferences > Extensions.")
 
+    # The registered defaults are identity/neutral so a model with no real
+    # shiny round-trips as non-shiny. When applying shiny to an arbitrary
+    # model that has none yet, seed a visible starting variant (channel swap +
+    # brightness boost) so the preview shows an effect. A real imported shiny
+    # (non-identity params already present) is left untouched.
+    identity = (int(armature.dat_pkx_shiny_route_r) == 0
+                and int(armature.dat_pkx_shiny_route_g) == 1
+                and int(armature.dat_pkx_shiny_route_b) == 2
+                and int(armature.dat_pkx_shiny_route_a) == 3)
+    neutral = (abs(armature.dat_pkx_shiny_brightness_r) < 0.001
+               and abs(armature.dat_pkx_shiny_brightness_g) < 0.001
+               and abs(armature.dat_pkx_shiny_brightness_b) < 0.001)
+    if identity and neutral:
+        armature.dat_pkx_shiny_route_r = '2'
+        armature.dat_pkx_shiny_route_g = '0'
+        armature.dat_pkx_shiny_route_b = '1'
+        armature.dat_pkx_shiny_route_a = '3'
+        armature.dat_pkx_shiny_brightness_r = 0.2
+        armature.dat_pkx_shiny_brightness_g = 0.2
+        armature.dat_pkx_shiny_brightness_b = 0.0
+
     # Read current shiny params from registered properties (always present
-    # when the addon is enabled — defaults are identity/neutral).
+    # when the addon is enabled).
     route = [
         int(armature.dat_pkx_shiny_route_r),
         int(armature.dat_pkx_shiny_route_g),

@@ -199,6 +199,37 @@ PKX anim slots reference animations by **DAT index**, not by action name. `anim_
 
 The exporter enumerates actions in PKX slot order so `DAT[i]` matches the action assigned to slot `i`, with alphabetical fallback for armatures that have no PKX metadata. Empty slots are seeded with the first bone-animating action so every `anim_index` resolves deterministically.
 
+### XD vs Colosseum slot layout (and the inverted active flag)
+The **per-slot animation ordering is identical between XD and Colosseum** for Pokémon. The three Pokémon shipped in both games (Absol, Torchic/`achamo`, Skarmory/`airmd`) have a byte-identical `anim_entries[i].sub_anims[0].anim_index` table across the two PKX formats — slot `i` references the same battle animation in both. So the importer reuses `XD_POKEMON_ANIM_NAMES` for Colosseum Pokémon (there is no distinct Colosseum-Pokémon ordering), and trainers use the per-game `XD_TRAINER_ANIM_NAMES` / `COLO_TRAINER_ANIM_NAMES` lists.
+
+What *does* differ is the per-sub **`motion_type` polarity**, which is how a slot is marked real-vs-padding:
+- **XD:** real slots carry `motion_type > 0` (1 = play-once, 2 = loop); unused padding slots are `motion_type = 0`.
+- **Colosseum:** inverted — real slots carry `motion_type = 0`; unused padding slots carry `motion_type = 1` and point at `anim_index 0`.
+
+Verified across all eight available Colosseum PKX files: real slots (0–10, plus slot 16 Take Flight on flyers) are uniformly `motion_type = 0`, and trailing padding slots are `motion_type = 1 → anim 0`. `shared/helpers/pkx_header.py::sub_anim_is_active` encodes this polarity so the describe-phase name map and the post-process metadata derivation agree on which slots reference a real DAT animation. An earlier heuristic that treated Colosseum "active" as `anim_type ∈ {loop, hit_reaction, compound} or motion_type > 0` was backwards: it dropped the real type-4 attack slots (1–7) and promoted the `motion_type = 1` padding slots.
+
+The three sub-animation "trigger" refs (sleep-on / sleep-off / extra pose) are stored differently per format: XD keeps them as `PartAnimData` blocks, Colosseum as three plain ints in `colo_part_anim_refs`, but both share the same positional meaning. `active_part_anim_refs(header)` abstracts over the two layouts (returning `(trigger_index, anim_index)` for refs pointing at a real animation, index > 0) so the describe name map labels these `Sub SleepOnPose / Sub SleepOffPose / Sub Extra` in both games. For the Pokémon shipped in both, the Colosseum sub-trigger refs match the XD ones (e.g. Absol `6, 7, 5`), modulo per-build content differences (a model whose Colosseum build drops a sub-anim stores `-1` in that slot).
+
+### PKX metadata round-trip tests
+
+The metadata round trip is `PKXHeader → dat_pkx_* custom properties → PKXHeader`. Import derives the props (`post_process._derive_pkx_custom_props`, pure); export reconstructs the header from them (`exporter/phases/describe/helpers/scene.py::extract_pkx_header`). Two test layers exercise this:
+
+- **Synthetic (pure, in `tests/test_pkx_metadata_round_trip.py`):** drives the *real* derive/extract functions through a duck-typed fake armature — `extract_pkx_header` only reads `.get()`, `.data.bones`, and the registered `dat_pkx_shiny_*` attrs, so no live Blender scene is needed. Covers XD and Colosseum fixtures (incl. shiny). Runs under plain `python3`.
+- **Corpus diagnostic (`run_round_trips.py --pkx-metadata`, python3.11):** imports each real model, runs `post_process` to write the props, re-describes the scene, and diffs the reconstructed header against the original via `tools/pkx_metadata_compare.py`, reporting per-field divergences split XD / Colosseum.
+
+Fidelity is judged by `compare_pkx_headers`, which classifies each field as a **violation** (must round-trip) or an **expected** divergence:
+
+- *Exact:* species_id, particle_orientation, flags, distortion_*, head_bone (by name), anim_type, sub_anim_count, terminator, body_map (by name), timing.
+- *Identity, not raw index:* sub-anim and part-anim animation references compare by **resolved action name**, because export re-orders the action list (e.g. Idle↔Special swap), so the raw `anim_index` legitimately changes while pointing at the same animation. Inactive padding refs are skipped.
+- *Re-derived:* sub-anim `motion_type` per the polarity rule above (the round trip carries the action name, not the motion byte).
+- *Expected divergences (documented, not failures):* `damage_flags` > 0x7FFFFFFF clamped to 0 (debug heap fill); an `anim_index` that lands outside the action table (uninitialised/garbage source ref) collapses to idx 0 / inactive; shiny brightness **alpha** forced to max on export; `type_id`, `colo_unknown_10/14` hard-coded by the exporter.
+
+Result of the sweep (20 models: 12 XD + 8 Colosseum): **0 violations**, confirming the metadata survives import → export intact once the Colosseum `motion_type` polarity is honoured in `extract_pkx_header`.
+
+**Shiny is never skipped, including identity.** `PKXContainer.shiny_params` and the exporter's `extract_shiny_params` return the shiny params even when they are identity/neutral (they only return `None` when the shiny region is out of bounds, or when `include_shiny` is off). So `post_process` stores the shiny route/brightness on the armature **and inserts the shiny filter into every model's textured materials** — an identity shiny is a visual no-op (and the mix factor is driven by the `dat_pkx_shiny` toggle, default off) but the values are explicit, so they round-trip and every model is shiny-ready. `_is_noop_shiny` remains as a predicate (used by tests / UI "has shiny data" checks) but no longer gates extraction.
+
+The addon's registered shiny defaults are **identity routing + zero brightness**, so the only models that fall back to those defaults are ones with no shiny region at all (raw `.dat`) or imports with `include_shiny` off; they export as non-shiny rather than inheriting a stray preview tint. The non-identity "starting variant" is seeded only where a user deliberately adds shiny to an arbitrary model — `scripts/add_shiny_filter.py` (when the armature has no shiny yet) and the `prepare_*_for_pkx_export.py` prep scripts.
+
 ## Material + texture
 
 ### HASHED blend method from imports
@@ -269,6 +300,34 @@ If this is ever revisited as an auto-fix (not currently planned):
 
 ### Data section layout (exported DAT)
 The serializer writes raw buffers into the data section in the same order Sysdolphin's compiler used: **vertex buffers → display lists → parsed structs (bulk) → palettes → image pixels**. Image pixel buffers and vertex buffers are content-deduplicated, so multiple Texture / Vertex references that share a buffer contribute one block to the file. `dat_builder.build` realises this as four phases — `writePrimitivePointers` (vertex), `writePrivateData` + struct allocation (display lists + structs), `writePaletteData`, `writeImageData`. Pixel buffers therefore land near the end of the data section and never at relative offset 0, where they would alias the "null pointer" sentinel.
+
+### Struct ordering convention (reverse-engineered; BNB analysis)
+Sysdolphin's compiler does **not** emit the "parsed structs (bulk)" in a single tree walk — it groups them by type into a fixed phase sequence, post-order DFS within each phase. Reverse-engineered from game-native PKX files (absol, metamon, pikachu, deoxys all agree by struct address order):
+
+1. **Materials** — per `MaterialObject`, in tree order, post-order: `Image → Texture → Material (+ inline RGBAColor block) → [PixelEngine] → MaterialObject`, deduped when shared.
+2. **Envelopes** — `EnvelopeList` / `Envelope`.
+3. **Vertex descriptors** — `Vertex` / `VertexList`.
+4. **Geometry** — `PObject → Mesh` (DObject), post-order.
+5. **Skeleton** — `Joint` (DFS).
+6. **Bone animation** — `Frame`, `Animation`, `AnimationJoint`.
+7. **Material animation** — `TextureAnimation`, `MaterialAnimation`, `MaterialAnimationJoint`.
+8. **Scene** — `WObject`, `Light`, `Camera`, then `ModelSet` / `CameraSet` / `LightSet`, then `SceneData` / `BoundBox` (roots last).
+
+`DATBuilder`'s base traversal is a single DFS post-order; the animation phases (6–7) are now regrouped to match the original (see below). The upstream phases (1–5) still emit in DFS order — the remaining BNB gap.
+
+#### Animation region layout (cracked)
+Within the bone- and material-animation phases, Sysdolphin writes each **sequence** (one AnimationJoint / MaterialAnimationJoint tree, mirroring the skeleton) bottom-up by layer, *not* depth-first per joint:
+
+- **Bone:** per sequence — all frame/animation data first (each animated joint's keyframe buffers then frame structs then its Animation), then all the AnimationJoint structs (pre-order, root first). Game-native files batch the joints in exactly *N sequences × skeleton-size* groups (absol: 8 × 104).
+- **Material:** per sequence — all frame/animation data, then `TextureAnimation` structs, then `MaterialAnimation` structs, then `MaterialAnimationJoint` structs.
+- **Frame keyframe buffers** are pooled (all an animation's buffers, each 4-byte aligned, then all its Frame structs) — *not* interleaved buffer-then-struct.
+
+`DATBuilder._bone_anim_sequences` / `_material_anim_sequences` reconstruct these groupings and phase 2 emits them as blocks. Measured with `tools/bnb_region_metric.py` (which isolates the animation region and normalises offsets to its start — global BNB is useless for convergence because an upstream size drift shifts every downstream pointer value at once): the animation region went from **0 → 99.6%** of items at the exact relative offset (the residual 0.4% is a subtle material-anim data sub-order at the bone/material boundary). NBN stays 92.3% and all unit tests pass.
+
+#### Why global BNB still lags on absol (upstream gate)
+BNB is a whole-file fuzzy match of 4-byte word *values* (dominated by pointer values). Even with the animation region internally byte-correct, its **absolute** start is shifted by the upstream materials/geometry/skeleton region, which is still **+1 648 bytes** (pure padding/ordering — per-type struct byte totals are identical; the region just isn't grouped into phases 1–5 yet) and starts with `Joint` instead of `Image`. That shift changes every animation pointer's value, so global BNB barely moves on absol (86.4→86.7%). Models with a small upstream region already benefit strongly — **metamon BNB 99.1% / NBN 100%**, pikachu 90.6%. **NBN/NIN remain the metrics that track real export accuracy.**
+
+**Upstream — next target, and the catch.** A flat stable-sort of the non-animation structs into phases 1–5 was tried and reverted (it left BNB ~unchanged, +0.1%). The reason is the same per-group ordering the animation fix solved, one level deeper: *within* the materials phase, DFS post-order emits `[Material, Image, Texture, MaterialObject]` per MObject (the `material` field precedes `texture` in `MaterialObject.fields`, so the Material struct is appended first), whereas game-native files want `[Image → Texture → Material(+inline RGBA) → MaterialObject]`, globally **deduped** (a shared Image/Texture is written once at first use), with `PixelEngine` appearing *after* its MObject for the materials that have one. So the upstream needs a dedicated per-MObject emission pass (analogous to `_bone_anim_sequences` / `_material_anim_sequences`) plus the geometry (`Vertex`/`VertexList`, then `PObject→Mesh`) and skeleton (`Joint` pre-order) groupings — measurable with `tools/bnb_region_metric.py` retargeted at the non-animation region. Cosmetic (no functional benefit), but reproducible.
 
 ### DAT file length must equal `header.file_size` (no trailing pad on a raw .dat)
 `HSD_ArchiveParse` (verified in both the XD and Chibi-Robo disassemblies — same shared HSD library) asserts `header.file_size == expectedSize`, where `expectedSize` is the byte length the resource system recorded for the file. For a **raw `.dat`** loaded straight from an FST/fsys, that recorded length is the on-disk entry size, so any trailing padding beyond `header.file_size` makes the assertion fail and the model never loads. `dat_builder` already ends the file right after the last symbol string (length == `file_size`); the serialize phase must **not** add 0x20 padding. The 0x20 alignment a container needs is applied in the **package phase, for `.pkx` output only** (`package._pad_dat_to_0x20`): inside a PKX the embedded DAT may be padded because the inner DAT's size is read from the DAT/PKX header (`pkx.py` delimits it by `header.file_size`), so the pad sits in the trailer and is invisible to the size check. That header-vs-fsys distinction is why XD Pokémon models (always PKX-wrapped) never hit this, while a bare `.dat` does.

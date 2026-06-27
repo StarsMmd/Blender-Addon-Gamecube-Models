@@ -126,9 +126,8 @@ def extract_shiny_params(armatures, logger=StubLogger()):
         except AttributeError:
             continue
 
-        if route == [0, 1, 2, 3] and all(abs(b) < 0.01 for b in brightness):
-            continue
-
+        # Identity/neutral shiny is not skipped — it round-trips explicitly
+        # (the importer stores it and inserts the no-op filter on every model).
         logger.info("  Found PKX shiny params on %s", arm.name)
         return ShinyParams(
             route_r=route[0], route_g=route[1],
@@ -248,10 +247,13 @@ def extract_pkx_header(armatures, action_name_to_index, logger=StubLogger()):
                 else:
                     anim_idx = 0
                 has_anim = isinstance(anim_name, str) and anim_name != ""
-                if has_anim:
-                    derived_motion = 2 if anim_type_str == "loop" else 1
+                # motion_type polarity is opposite between the games: XD marks a
+                # real slot with >0 (2 for a looping slot, 1 otherwise) and leaves
+                # padding at 0; Colosseum marks real slots with 0 and padding with 1.
+                if is_xd:
+                    derived_motion = (2 if anim_type_str == "loop" else 1) if has_anim else 0
                 else:
-                    derived_motion = 0
+                    derived_motion = 0 if has_anim else 1
                 subs.append(SubAnim(
                     motion_type=derived_motion,
                     anim_index=anim_idx,

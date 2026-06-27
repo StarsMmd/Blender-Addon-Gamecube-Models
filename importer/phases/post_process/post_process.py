@@ -396,8 +396,10 @@ _SUB_ANIM_TYPES = {0: "none", 1: "simple", 2: "targeted"}
 # import alias so the rest of the file reads naturally.
 try:
     from ....shared.helpers.pkx_header import BODY_MAP_KEYS as _BODY_MAP_KEYS
+    from ....shared.helpers.pkx_header import sub_anim_is_active as _sub_anim_is_active
 except (ImportError, SystemError):
     from shared.helpers.pkx_header import BODY_MAP_KEYS as _BODY_MAP_KEYS
+    from shared.helpers.pkx_header import sub_anim_is_active as _sub_anim_is_active
 
 
 def _derive_pkx_custom_props(pkx_header, actions=None, bone_names=None, model_type=None):
@@ -423,7 +425,8 @@ def _derive_pkx_custom_props(pkx_header, actions=None, bone_names=None, model_ty
 
     props["dat_pkx_anim_count"] = len(pkx_header.anim_entries)
     for i, entry in enumerate(pkx_header.anim_entries):
-        props.update(_derive_anim_entry_props(i, entry, first_active, name_resolver, bone_resolver))
+        props.update(_derive_anim_entry_props(i, entry, first_active, name_resolver,
+                                              bone_resolver, pkx_header.is_xd))
 
     return props
 
@@ -514,10 +517,10 @@ def _derive_body_map_props(first_active, bone_resolver):
     }
 
 
-def _derive_anim_entry_props(i, entry, first_active, name_resolver, bone_resolver):
+def _derive_anim_entry_props(i, entry, first_active, name_resolver, bone_resolver, is_xd=True):
     """Derive properties for a single animation entry (timing, sub-anims, body overrides).
 
-    In: i (int, ≥0, slot index); entry (AnimMetadataEntry); first_active (AnimMetadataEntry|None, model-level reference for body-map override detection); name_resolver (callable int->str); bone_resolver (callable int->str).
+    In: i (int, ≥0, slot index); entry (AnimMetadataEntry); first_active (AnimMetadataEntry|None, model-level reference for body-map override detection); name_resolver (callable int->str); bone_resolver (callable int->str); is_xd (bool, container format — picks XD vs Colosseum active-slot detection).
     Out: dict[str, value] of dat_pkx_anim_NN_* keys (and per-entry body overrides where present).
     """
     prefix = "dat_pkx_anim_%02d" % i
@@ -534,7 +537,8 @@ def _derive_anim_entry_props(i, entry, first_active, name_resolver, bone_resolve
 
     for s in range(min(len(entry.sub_anims), 3)):
         sub = entry.sub_anims[s]
-        props[prefix + "_sub_%d_anim" % s] = name_resolver(sub.anim_index) if sub.is_active else ""
+        active = _sub_anim_is_active(entry, sub, is_xd)
+        props[prefix + "_sub_%d_anim" % s] = name_resolver(sub.anim_index) if active else ""
 
     if first_active and entry.body_map_bones[:len(_BODY_MAP_KEYS)] != first_active.body_map_bones[:len(_BODY_MAP_KEYS)]:
         for j, key in enumerate(_BODY_MAP_KEYS):

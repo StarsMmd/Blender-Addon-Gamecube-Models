@@ -617,17 +617,21 @@ _dat_props = [
         description="Toggle shiny color variant preview. When enabled, the shiny channel routing and brightness are applied to all materials",
         default=False, update=_on_shiny_toggle_update,
     )),
+    # Defaults are identity (route 0/1/2/3) + neutral (0.0) so a model with no
+    # real shiny round-trips as non-shiny. The non-identity "starting" preview
+    # values are seeded by the apply-shiny / prep scripts when a user actually
+    # adds a shiny variant to an arbitrary model.
     ('dat_pkx_shiny_route_r', EnumProperty(
         name="Route R", description="Which source color channel feeds the Red output",
-        items=_SHINY_CHANNEL_ITEMS, default='2', update=_on_shiny_param_update,
+        items=_SHINY_CHANNEL_ITEMS, default='0', update=_on_shiny_param_update,
     )),
     ('dat_pkx_shiny_route_g', EnumProperty(
         name="Route G", description="Which source color channel feeds the Green output",
-        items=_SHINY_CHANNEL_ITEMS, default='0', update=_on_shiny_param_update,
+        items=_SHINY_CHANNEL_ITEMS, default='1', update=_on_shiny_param_update,
     )),
     ('dat_pkx_shiny_route_b', EnumProperty(
         name="Route B", description="Which source color channel feeds the Blue output",
-        items=_SHINY_CHANNEL_ITEMS, default='1', update=_on_shiny_param_update,
+        items=_SHINY_CHANNEL_ITEMS, default='2', update=_on_shiny_param_update,
     )),
     ('dat_pkx_shiny_route_a', EnumProperty(
         name="Route A", description="Which source color channel feeds the Alpha output",
@@ -635,11 +639,11 @@ _dat_props = [
     )),
     ('dat_pkx_shiny_brightness_r', FloatProperty(
         name="Brightness R", description="Red brightness: -1 = black, 0 = unchanged, 1 = 2× bright",
-        default=0.2, min=-1.0, max=1.0, step=1, precision=3, update=_on_shiny_param_update,
+        default=0.0, min=-1.0, max=1.0, step=1, precision=3, update=_on_shiny_param_update,
     )),
     ('dat_pkx_shiny_brightness_g', FloatProperty(
         name="Brightness G", description="Green brightness: -1 = black, 0 = unchanged, 1 = 2× bright",
-        default=0.2, min=-1.0, max=1.0, step=1, precision=3, update=_on_shiny_param_update,
+        default=0.0, min=-1.0, max=1.0, step=1, precision=3, update=_on_shiny_param_update,
     )),
     ('dat_pkx_shiny_brightness_b', FloatProperty(
         name="Brightness B", description="Blue brightness: -1 = black, 0 = unchanged, 1 = 2× bright. Alpha brightness is forced to maximum by the game",

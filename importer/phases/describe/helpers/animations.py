@@ -41,7 +41,8 @@ def describe_bone_animations(model_set, joint_to_bone_index, bones, options, log
     name_prefix = model_name or root_joint.name or "Model"
 
     # Build semantic name map from PKX header if available
-    anim_name_map = _build_anim_name_map(options.get("pkx_header"))
+    anim_name_map = _build_anim_name_map(options.get("pkx_header"),
+                                         options.get("colo_xd_kind"))
 
     anim_sets = []
     total_anims = len(animated_joints)
@@ -107,55 +108,50 @@ def _is_static_pose(tracks):
     return True
 
 
-def _build_anim_name_map(pkx_header):
+def _build_anim_name_map(pkx_header, colo_xd_kind=None):
     """Build animation index → semantic name map from PKX header slot entries.
 
-    In: pkx_header (PKXHeader|None, parsed PKX metadata).
+    In: pkx_header (PKXHeader|None, parsed PKX metadata); colo_xd_kind
+        (str|None, importer toggle — 'PKX_TRAINER' selects trainer-pose slot
+        labels, anything else uses Pokémon battle-move labels).
     Out: dict[int, str], animation index → compact semantic name (empty dict if no header).
     """
     if pkx_header is None:
         return {}
 
     try:
-        from .....shared.helpers.pkx_header import XD_POKEMON_ANIM_NAMES
+        from .....shared.helpers.pkx_header import (
+            anim_slot_names, sub_anim_is_active, active_part_anim_refs)
     except (ImportError, SystemError):
-        from shared.helpers.pkx_header import XD_POKEMON_ANIM_NAMES
+        from shared.helpers.pkx_header import (
+            anim_slot_names, sub_anim_is_active, active_part_anim_refs)
 
     is_xd = pkx_header.is_xd
-    slot_names = XD_POKEMON_ANIM_NAMES
+    slot_names = anim_slot_names(is_xd, colo_xd_kind == 'PKX_TRAINER')
 
-    # Collect active slot names per animation index.
-    # XD uses motion_type > 0 to indicate active entries.
-    # Colosseum uses motion_type=0 as the default active state, so we check
-    # whether the entry's anim_type indicates a configured slot instead.
-    _COLO_ACTIVE_TYPES = {2, 3, 5}  # loop, hit_reaction, compound
+    # Collect active slot names per animation index. Active-slot detection
+    # (XD motion_type vs Colosseum anim_type) lives in sub_anim_is_active so
+    # the post-process metadata side stays in lockstep.
     index_to_slots = {}
     for slot_idx, entry in enumerate(pkx_header.anim_entries):
         slot_name = slot_names[slot_idx] if slot_idx < len(slot_names) else 'Slot %d' % slot_idx
         for sub in entry.sub_anims:
             if sub.anim_index >= 1000:
                 continue
-            if is_xd:
-                active = sub.motion_type > 0
-            else:
-                # Colosseum: entry is active if anim_type is non-default or motion_type > 0
-                active = entry.anim_type in _COLO_ACTIVE_TYPES or sub.motion_type > 0
-            if active:
+            if sub_anim_is_active(entry, sub, is_xd):
                 idx = sub.anim_index
                 if idx not in index_to_slots:
                     index_to_slots[idx] = []
                 if slot_name not in index_to_slots[idx]:
                     index_to_slots[idx].append(slot_name)
 
-    # Add sub-animation references
+    # Add sub-animation references. XD keeps these in PartAnimData blocks,
+    # Colosseum in colo_part_anim_refs; active_part_anim_refs abstracts both.
     sub_triggers = {0: 'Sub SleepOnPose', 1: 'Sub SleepOffPose', 2: 'Sub Extra'}
-    for i in range(min(len(pkx_header.part_anim_data), 3)):
-        pad = pkx_header.part_anim_data[i]
-        if pad.has_data > 0 and pad.anim_index_ref > 0:
-            idx = pad.anim_index_ref
-            if idx not in index_to_slots:
-                index_to_slots[idx] = []
-            index_to_slots[idx].append(sub_triggers.get(i, 'Sub %d' % i))
+    for i, idx in active_part_anim_refs(pkx_header):
+        if idx not in index_to_slots:
+            index_to_slots[idx] = []
+        index_to_slots[idx].append(sub_triggers.get(i, 'Sub %d' % i))
 
     # Compact names
     result = {}
