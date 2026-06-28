@@ -70,12 +70,17 @@ class DATBuilder(BinaryWriter):
 			self._dfsPostOrder(root_node, visited)
 		self._current_section_index = None
 
-	def _dfsPostOrder(self, node, visited):
+	def _dfsPostOrder(self, node, visited, skip_next=False):
 		"""DFS traversal matching SysDolphin compiler conventions:
 		- 'child'/'next'/'link' fields (same-type tree/list pointers) are written AFTER the node
 		- All other Node-typed fields are written BEFORE the node (DFS into them first)
 		- Inline structs (@-prefixed) are skipped (they're part of the parent struct)
-		- Deduplicates by object identity"""
+		- Deduplicates by object identity
+
+		``skip_next`` suppresses the node's own ``next`` deferral: used when a
+		caller is walking a ``next``-linked chain itself (see
+		``serialization_reverse_chain_fields``) so the chain isn't followed
+		twice."""
 		if node is None or id(node) in visited:
 			return
 		visited.add(id(node))
@@ -97,6 +102,11 @@ class DATBuilder(BinaryWriter):
 		else:
 			ordered_fields = node.fields
 
+		# Fields whose value heads a ``next``-linked chain emitted in reverse
+		# (deepest element first, head last) — the compiler's order for e.g. a
+		# MaterialObject's multi-texture chain.
+		reverse_chains = getattr(node, 'serialization_reverse_chain_fields', None) or ()
+
 		# First pass: recurse into non-link fields (written BEFORE this node)
 		for field in ordered_fields:
 			raw_type = field[1]
@@ -110,12 +120,27 @@ class DATBuilder(BinaryWriter):
 
 			# Defer child/next/link fields (same-type tree/list pointers)
 			if field_name in ('child', 'next', 'link'):
+				if skip_next and field_name == 'next':
+					continue
 				if isinstance(value, Node):
 					deferred.append(value)
 				elif isinstance(value, list):
 					for item in value:
 						if isinstance(item, Node):
 							deferred.append(item)
+				continue
+
+			# A reversed ``next``-chain field: walk the chain, recurse into each
+			# element deepest-first (suppressing its own ``next`` so the chain
+			# isn't re-followed).
+			if field_name in reverse_chains and isinstance(value, Node):
+				chain = []
+				cur = value
+				while isinstance(cur, Node):
+					chain.append(cur)
+					cur = getattr(cur, 'next', None)
+				for link_node in reversed(chain):
+					self._dfsPostOrder(link_node, visited, skip_next=True)
 				continue
 
 			# Recurse into other Node-typed fields now (BEFORE this node)

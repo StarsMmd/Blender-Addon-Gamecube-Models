@@ -9,8 +9,12 @@ reproduce Sysdolphin's struct-emission order:
   WObjects+Camera) before containers (ModelSets, CameraSet, LightSets), with the
   light leaves and LightSets in reverse LightSet-index order, SceneData last.
 """
+import io
+
 from shared.Nodes.Classes.Material.MaterialAnimationJoint import MaterialAnimationJoint
 from shared.Nodes.Classes.Material.MaterialAnimation import MaterialAnimation
+from shared.Nodes.Classes.Material.MaterialObject import MaterialObject
+from shared.Nodes.Classes.Texture.Texture import Texture
 from shared.Nodes.Classes.Texture.TextureAnimation import TextureAnimation
 from shared.Nodes.Classes.Animation.Animation import Animation
 from shared.Nodes.Classes.Animation.Frame import Frame
@@ -109,6 +113,44 @@ def test_data_band_precedes_structs():
     first_struct = min(i for i, n in enumerate(order)
                        if isinstance(n, (TextureAnimation, MaterialAnimation)))
     assert last_data < first_struct
+
+
+# --- MaterialObject texture chain (DFS reversal) ----------------------------
+
+def _texture(name):
+    tex = Texture(None, None)
+    tex.name = name
+    return tex
+
+
+def test_material_texture_chain_emits_reversed():
+    """A MaterialObject's texture.next chain lands in node_list deepest-first
+    (head last); each texture still precedes nothing of its own beyond itself."""
+    from exporter.phases.serialize.helpers.dat_builder import DATBuilder
+
+    t0 = _texture('t0'); t1 = _texture('t1'); t2 = _texture('t2')
+    t0.next = t1; t1.next = t2
+    mobj = MaterialObject(None, None)
+    mobj.texture = t0
+
+    node_list = DATBuilder(io.BytesIO(), [mobj], ['m']).node_list
+    tex_names = [n.name for n in node_list if isinstance(n, Texture)]
+    assert tex_names == ['t2', 't1', 't0']
+    # MaterialObject itself is written after all of its textures
+    assert node_list.index(mobj) > max(node_list.index(t) for t in (t0, t1, t2))
+
+
+def test_material_single_texture_unchanged():
+    """A single-texture material is unaffected by the reversal."""
+    from exporter.phases.serialize.helpers.dat_builder import DATBuilder
+
+    t0 = _texture('only')
+    mobj = MaterialObject(None, None)
+    mobj.texture = t0
+
+    node_list = DATBuilder(io.BytesIO(), [mobj], ['m']).node_list
+    assert [n.name for n in node_list if isinstance(n, Texture)] == ['only']
+    assert node_list.index(t0) < node_list.index(mobj)
 
 
 # --- SceneData --------------------------------------------------------------
