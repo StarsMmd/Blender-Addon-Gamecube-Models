@@ -179,6 +179,39 @@ def test_material_single_texture_unchanged():
     assert node_list.index(t0) < node_list.index(mobj)
 
 
+# --- VertexList terminator --------------------------------------------------
+
+def test_vertex_list_terminator_constant():
+    """The GX_VA_NULL terminator vertex is emitted with the compiler's fixed
+    descriptor (attribute=0xFF, attribute_type=2, component_type=4), not zeros."""
+    import struct
+    from exporter.phases.serialize.helpers.dat_builder import DATBuilder
+    from shared.Nodes.Classes.Mesh.VertexList import VertexList
+    from shared.Nodes.Classes.Mesh.Vertex import Vertex
+
+    v = Vertex(None, None)
+    v.attribute = 9
+    v.attribute_type = 3
+    v.component_count = 1
+    v.component_type = 4
+    v.component_frac = 0
+    v.stride = 12
+    v.base_pointer = 0
+    vl = VertexList(None, None)
+    vl.vertices = [v]
+    vl.vertex_length = 24
+
+    out = io.BytesIO()
+    DATBuilder(out, [vl], ['vl']).build()
+    data = out.getvalue()
+
+    vlen = 24
+    term = vl.address + len(vl.vertices) * vlen + 32  # +32 DAT header
+    attribute, attribute_type, component_count, component_type = struct.unpack(
+        '>IIII', data[term:term + 16])
+    assert (attribute, attribute_type, component_count, component_type) == (0xFF, 2, 0, 4)
+
+
 # --- SceneData --------------------------------------------------------------
 
 def _light_set(tag):

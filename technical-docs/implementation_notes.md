@@ -345,13 +345,15 @@ BNB is a whole-file fuzzy match of 4-byte word *values* (dominated by pointer va
 
 | model | BNB | dominant residual |
 |---|---|---|
-| absol | 99.64% | data-buffer + scene pointers |
-| metamon | 99.81% | data-buffer + scene pointers |
-| pikachu | 99.79% | image-data + scene pointers |
-| deoxys | 99.49% | envelope internal order → material/geometry pointer cascade |
-| eievui | 99.86% | data-buffer + scene pointers |
+| absol | 99.74% | scene cross-ref pointers |
+| metamon | 99.87% | scene + vertex-list pointers |
+| pikachu | 99.86% | scene + texture/palette pointers |
+| deoxys | 99.56% | envelope internal order → material/geometry pointer cascade |
+| eievui | 99.92% | scene + light pointers |
 
-The remaining <0.5% is: (1) the **envelope internal order** (uncracked — worst on deoxys, which has many envelopes but no palettes), (2) **data-buffer pointer** values (`Image.data_address`, `VertexList` vertex pointers — the order image-pixel / vertex buffers are written at the file tail), and (3) a handful of **scene cross-reference pointers**. The large pre-dedup gaps (absol 86.9%, eievui/metamon ~82%) came almost entirely from two cascades now fixed: the envelope-region over-size and the inline-palette per-texture drift.
+**File-tail layout (cracked).** Sysdolphin lays the tail out as `[image pixel data][palette LUT+struct, interleaved per palette][scene tail][BoundBox]` — every data buffer precedes the scene, and palette *structs* are interleaved with their LUT data, not grouped with the material structs. `DATBuilder.build` defers palette and scene-tail struct allocation out of the main struct pass and emits them after the image-data pass (Phase 2.6 = palettes, 2.7 = scene). Image pixel blocks are written in **struct-address order** (not node_list/DFS order) so their `data_address` pointers ascend with the structs. This fixed the two cascades that were displacing the whole back half of the file on indexed-texture models. The **vertex-descriptor NULL terminator** is emitted with the compiler's fixed non-zero descriptor `(attribute=0xFF, attribute_type=2, component_type=4)` — a constant across every game-native VertexList — rather than all-zeros.
+
+The remaining <0.5% is: (1) the **envelope internal order** (uncracked — worst on deoxys, which has many envelopes but no palettes), and (2) a handful of **scene cross-reference pointers**. The large pre-dedup gaps (absol 86.9%, eievui/metamon ~82%) came from three cascades now fixed: the envelope-region over-size, the inline-palette per-texture drift, and the scene/data-buffer tail ordering.
 
 ### DAT file length must equal `header.file_size` (no trailing pad on a raw .dat)
 `HSD_ArchiveParse` (verified in both the XD and Chibi-Robo disassemblies — same shared HSD library) asserts `header.file_size == expectedSize`, where `expectedSize` is the byte length the resource system recorded for the file. For a **raw `.dat`** loaded straight from an FST/fsys, that recorded length is the on-disk entry size, so any trailing padding beyond `header.file_size` makes the assertion fail and the model never loads. `dat_builder` already ends the file right after the last symbol string (length == `file_size`); the serialize phase must **not** add 0x20 padding. The 0x20 alignment a container needs is applied in the **package phase, for `.pkx` output only** (`package._pad_dat_to_0x20`): inside a PKX the embedded DAT may be padded because the inner DAT's size is read from the DAT/PKX header (`pkx.py` delimits it by `header.file_size`), so the pad sits in the trailer and is invisible to the size check. That header-vs-fsys distinction is why XD Pokémon models (always PKX-wrapped) never hit this, while a bare `.dat` does.

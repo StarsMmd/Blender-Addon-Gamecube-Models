@@ -456,11 +456,26 @@ class DATBuilder(BinaryWriter):
 		# re-emit bytes nor add duplicate relocation entries.
 		env_canonical = {}
 
+		# Palette structs and the scene tail are emitted *after* the texture
+		# data buffers (image pixels, palette LUTs) at the very end of the file:
+		# [image data][palette LUT + struct interleaved][scene tail][BoundBox].
+		# They are deferred out of this struct pass and written below.
+		deferred_palettes, deferred_scene = [], []
+
 		ordered_nodes = self._ordered_node_list()
 		self.seek(0, 'end')
 		idx, n = 0, len(ordered_nodes)
 		while idx < n:
 			node = ordered_nodes[idx]
+			tn = type(node).__name__
+			if tn == 'Palette':
+				deferred_palettes.append(node)
+				idx += 1
+				continue
+			if tn in _SCENE_TYPES:
+				deferred_scene.append(node)
+				idx += 1
+				continue
 
 			bi = block_of_node.get(id(node))
 			if bi is not None:
@@ -494,18 +509,37 @@ class DATBuilder(BinaryWriter):
 			self._write_node(node)
 			idx += 1
 
-		# --- Phase 2.5a: Write palette LUT data ---
-		# Sysdolphin's compiler places palettes and image pixels at the very
-		# end of the data section, after all parsed structs. Palettes come
-		# just before the image data they index.
-		for node in self.node_list:
-			node.writePaletteData(self)
-
-		# --- Phase 2.5b: Write image pixel data ---
-		# Identical pixel buffers across Image instances are deduplicated so
-		# shared textures contribute one block to the file.
-		for node in self.node_list:
+		# --- Phase 2.5: Write image pixel data ---
+		# Image pixels go at the file tail, in struct-address order (the order the
+		# owning Image structs were emitted, *not* node_list/DFS order) so their
+		# data pointers ascend with the structs. Identical pixel buffers across
+		# Images are deduplicated (first by struct order owns the block).
+		by_struct_addr = sorted(
+			self.node_list,
+			key=lambda n: n.address if n.address is not None else (1 << 40),
+		)
+		for node in by_struct_addr:
 			node.writeImageData(self)
+
+		# --- Phase 2.6: Palettes — LUT data then struct, interleaved ---
+		# After the image data, each palette writes its LUT block immediately
+		# followed by its struct, in struct-emission order.
+		for palette in deferred_palettes:
+			palette.writePaletteData(self)
+			self._write_node(palette)
+
+		# --- Phase 2.7: Scene tail (then BoundBox) ---
+		# The scene structs trail every data buffer. The SceneData subtree is a
+		# serialization block (triggered on its first node); BoundBox, a separate
+		# root, follows via the generic path.
+		for node in deferred_scene:
+			bi = block_of_node.get(id(node))
+			if bi is not None:
+				if bi not in written_blocks:
+					written_blocks.add(bi)
+					self._write_block(blocks[bi])
+				continue
+			self._write_node(node)
 
 		# --- Phase 3: Write node structs at allocated addresses ---
 		# Skip envelope-list aliases (they share a written canonical's address).
