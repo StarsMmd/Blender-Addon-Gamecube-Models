@@ -140,6 +140,30 @@ def test_material_texture_chain_emits_reversed():
     assert node_list.index(mobj) > max(node_list.index(t) for t in (t0, t1, t2))
 
 
+def test_palette_groups_with_its_material_block():
+    """A texture's Palette must stay inside the material block (grouped with its
+    Image/Texture), not scatter into the trailing 'rest' bucket."""
+    from exporter.phases.serialize.helpers.dat_builder import DATBuilder
+    from shared.Nodes.Classes.Texture.Image import Image
+    from shared.Nodes.Classes.Texture.Palette import Palette
+
+    img = Image(None, None)
+    pal = Palette(None, None)
+    tex = _texture('t')
+    tex.image = img
+    tex.palette = pal
+    mobj = MaterialObject(None, None)
+    mobj.texture = tex
+
+    builder = DATBuilder(io.BytesIO(), [mobj], ['m'])
+    ordered = builder._ordered_node_list()
+    types = [type(n).__name__ for n in ordered]
+    # Image, Palette, Texture stay contiguous (no rest-scatter splitting them)
+    i = types.index('Palette')
+    assert types[i - 1] == 'Image'
+    assert types[i + 1] == 'Texture'
+
+
 def test_material_single_texture_unchanged():
     """A single-texture material is unaffected by the reversal."""
     from exporter.phases.serialize.helpers.dat_builder import DATBuilder

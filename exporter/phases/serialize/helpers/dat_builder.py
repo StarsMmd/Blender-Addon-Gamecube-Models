@@ -28,7 +28,7 @@ def _coerce_pointer(value, node, field_name):
 # emits). RGBAColors are inline (@-fields) so they ride with their Material
 # and never appear here.
 _MATERIAL_TYPES = frozenset({
-	'Image', 'Texture', 'Material', 'MaterialObject',
+	'Image', 'Palette', 'Texture', 'Material', 'MaterialObject',
 	'PixelEngine', 'TextureLOD', 'TextureTEV',
 })
 _ENVELOPE_TYPES = frozenset({'EnvelopeList', 'Envelope'})
