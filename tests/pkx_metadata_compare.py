@@ -110,7 +110,7 @@ def _compare_part_anims(diffs, orig, rebuilt, orig_actions, rebuilt_actions):
                 _cmp(diffs, "colo_part_anim_refs[%d]" % i, -1, r)
 
 
-def _compare_entries(diffs, orig, rebuilt, orig_actions, rebuilt_actions):
+def _compare_entries(diffs, orig, rebuilt, orig_actions, rebuilt_actions, bone_count=None):
     n = min(len(orig.anim_entries), len(rebuilt.anim_entries))
     if len(orig.anim_entries) != len(rebuilt.anim_entries):
         _cmp(diffs, "len(anim_entries)",
@@ -127,9 +127,17 @@ def _compare_entries(diffs, orig, rebuilt, orig_actions, rebuilt_actions):
             diffs.append(Diff(p + ".damage_flags", o.damage_flags, r.damage_flags, kind))
         for k in range(4):
             _cmp(diffs, p + ".timing_%d" % (k + 1), o.timing[k], r.timing[k], tol=1e-6)
-        # body_map: bones survive by name; -1 / out-of-range collapse to -1.
+        # body_map: bones survive by name. An index past the model's bone count
+        # references a runtime null joint the skeleton doesn't contain — the game
+        # itself resolves it to NULL (ModelSequence::GetPart calls GSmodelGetPart →
+        # GSpartGetJObjPtr, which walks the JObj tree and finds no matching index),
+        # identical to the -1 ("no part") path. So such a slot collapsing to -1 is
+        # behaviourally faithful, not a loss, and isn't rederivable model data.
         for j in range(min(len(o.body_map_bones), len(r.body_map_bones))):
-            _cmp(diffs, p + ".body[%02d]" % j, o.body_map_bones[j], r.body_map_bones[j])
+            ov, rv = o.body_map_bones[j], r.body_map_bones[j]
+            out_of_range = bone_count is not None and ov >= bone_count
+            kind = "expected" if (out_of_range and rv == -1) else "violation"
+            _cmp(diffs, p + ".body[%02d]" % j, ov, rv, kind=kind)
         # sub-anims: anim_index by identity (active slots only); motion_type
         # re-derived per policy (all slots, padding included).
         for s in range(min(len(o.sub_anims), len(r.sub_anims), r.sub_anim_count, 3)):
@@ -150,7 +158,8 @@ def _compare_entries(diffs, orig, rebuilt, orig_actions, rebuilt_actions):
             _cmp(diffs, "%s.sub[%d].motion_type" % (p, s), exp_motion, rs.motion_type, kind=kind)
 
 
-def compare_pkx_headers(orig, rebuilt, orig_actions=None, rebuilt_actions=None):
+def compare_pkx_headers(orig, rebuilt, orig_actions=None, rebuilt_actions=None,
+                        bone_count=None):
     """Compare two PKXHeaders under the round-trip fidelity policy.
 
     In: orig (PKXHeader, the source); rebuilt (PKXHeader, reconstructed by the
@@ -158,6 +167,9 @@ def compare_pkx_headers(orig, rebuilt, orig_actions=None, rebuilt_actions=None):
         (optional DAT-ordered action-name lists). When both lists are given,
         animation references compare by resolved name rather than raw index,
         so a benign re-ordering of the action list on export is not flagged.
+        bone_count (optional int): the model's bone count, so body-map indices
+        past the skeleton (dead null-joint references the game resolves to NULL)
+        are classified as expected rather than violations.
     Out: list[Diff]. A Diff with kind="violation" is a real mismatch; kind=
         "expected" is a documented divergence.
     """
@@ -184,7 +196,7 @@ def compare_pkx_headers(orig, rebuilt, orig_actions=None, rebuilt_actions=None):
 
     _compare_shiny(diffs, orig, rebuilt)
     _compare_part_anims(diffs, orig, rebuilt, orig_actions, rebuilt_actions)
-    _compare_entries(diffs, orig, rebuilt, orig_actions, rebuilt_actions)
+    _compare_entries(diffs, orig, rebuilt, orig_actions, rebuilt_actions, bone_count)
     return diffs
 
 

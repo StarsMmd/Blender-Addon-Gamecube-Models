@@ -212,6 +212,29 @@ def test_colo_motion_type_uses_inverted_polarity():
 
 
 # --------------------------------------------------------------------------
+# Body-map: an index past the model's bones is a dead null-joint reference the
+# game resolves to NULL (identical to -1), so it must score as expected.
+# --------------------------------------------------------------------------
+
+def test_body_map_out_of_range_index_scores_expected_with_bone_count():
+    h = _xd_header()
+    # additional_5 (slot 15) points past the 20-bone armature.
+    h.anim_entries[0].body_map_bones = _body_map(origin=1, mouth=3, additional_5=99)
+    rebuilt = _roundtrip(h, model_type="POKEMON")
+
+    # No bone to name -> the slot collapses to -1 on the way out.
+    assert rebuilt.anim_entries[0].body_map_bones[15] == -1
+
+    path = "anim[00].body[15]"
+    # Without the bone count, the comparator can't tell it was out of range,
+    # so it reads as a violation...
+    assert any(d.path == path for d in violations(compare_pkx_headers(h, rebuilt)))
+    # ...but given the bone count it's classified as an expected divergence.
+    assert not any(d.path == path for d in
+                   violations(compare_pkx_headers(h, rebuilt, bone_count=len(_BONES))))
+
+
+# --------------------------------------------------------------------------
 # Targeted: shiny, body-map overrides, part-anim bones, damage clamp.
 # --------------------------------------------------------------------------
 

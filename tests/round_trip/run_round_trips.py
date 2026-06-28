@@ -977,8 +977,12 @@ def find_model_files(path):
     return []
 
 
-def run_all_tests(filepath):
-    """Run all round-trip tests on a single model file. Returns dict of scores."""
+def run_all_tests(filepath, skip_bbb=False):
+    """Run all round-trip tests on a single model file. Returns dict of scores.
+
+    skip_bbb omits the BR→Blender→BR test, which drives a full bpy build — slow
+    (minutes) on large map/scene archives and the cause of the D1_out hang.
+    """
     name = os.path.splitext(os.path.basename(filepath))[0]
     scores = {'name': name}
 
@@ -1017,20 +1021,26 @@ def run_all_tests(filepath):
         scores['nin_miss'] = 0.0
 
     # BBB
-    try:
-        pct, err_pct, miss_pct, details, categories = compute_bbb_score(filepath)
-        scores['bbb'] = pct
-        scores['bbb_err'] = err_pct
-        scores['bbb_miss'] = miss_pct
-        scores['bbb_details'] = details
-        scores['bbb_categories'] = categories
-    except Exception as e:
-        scores['bbb'] = f"ERROR: {e}"
+    if skip_bbb:
+        scores['bbb'] = 'SKIP'
         scores['bbb_err'] = 0.0
         scores['bbb_miss'] = 0.0
-        import traceback
-        scores['bbb_details'] = [traceback.format_exc()]
         scores['bbb_categories'] = {}
+    else:
+        try:
+            pct, err_pct, miss_pct, details, categories = compute_bbb_score(filepath)
+            scores['bbb'] = pct
+            scores['bbb_err'] = err_pct
+            scores['bbb_miss'] = miss_pct
+            scores['bbb_details'] = details
+            scores['bbb_categories'] = categories
+        except Exception as e:
+            scores['bbb'] = f"ERROR: {e}"
+            scores['bbb_err'] = 0.0
+            scores['bbb_miss'] = 0.0
+            import traceback
+            scores['bbb_details'] = [traceback.format_exc()]
+            scores['bbb_categories'] = {}
 
     # IBI
     try:
@@ -1092,7 +1102,13 @@ def compute_pkx_metadata_diffs(filepath):
     # re-ordering is not counted as a metadata loss.
     rebuilt_actions = ([a.name for a in br_scene2.models[0].actions]
                        if br_scene2.models else [])
-    return orig.is_xd, compare_pkx_headers(orig, rebuilt, orig_actions, rebuilt_actions)
+    # Bone count lets the comparator treat body-map indices past the skeleton
+    # (dead null-joint references the game resolves to NULL) as expected.
+    import bpy
+    armatures = [o for o in bpy.data.objects if o.type == 'ARMATURE']
+    bone_count = len(armatures[0].data.bones) if armatures else None
+    return orig.is_xd, compare_pkx_headers(orig, rebuilt, orig_actions,
+                                           rebuilt_actions, bone_count=bone_count)
 
 
 def _generalize_field(path):
@@ -1188,7 +1204,10 @@ def main():
     for filepath in files:
         name = os.path.splitext(os.path.basename(filepath))[0]
         print(f"  {name}...", end=' ', flush=True)
-        scores = run_all_tests(filepath)
+        # Map / scene archives (.rdat) skip BBB by default — the bpy build is
+        # minutes-slow on them (and hangs on D1_out). Override with --maps-bbb.
+        skip_bbb = filepath.lower().endswith('.rdat') and '--maps-bbb' not in flags
+        scores = run_all_tests(filepath, skip_bbb=skip_bbb)
         all_scores.append(scores)
 
         parts = []
@@ -1249,7 +1268,8 @@ def main():
                 cell = f"{val:.1f}%({err:.0f}/{miss:.0f})"
                 row += f" {cell:>{col_w}}"
             else:
-                row += f" {'ERR':>{col_w}}"
+                label = 'SKIP' if val == 'SKIP' else 'ERR'
+                row += f" {label:>{col_w}}"
         bnb_val = scores.get('bnb')
         if isinstance(bnb_val, float):
             row += f" {bnb_val:>7.1f}%"

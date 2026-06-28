@@ -180,6 +180,21 @@ The game's battle state machine reads `timing_1..4` on each PKX anim slot to pac
 
 The `pre_process` phase rejects this configuration with a validator that fires before the binary is written.
 
+### Inverse-kinematics bend direction (the pole-flip tie-breaker)
+
+Limbs that the game poses by IK (legs/arms — a `JOBJ_EFFECTOR` joint over `JOBJ_JOINT2` + `JOBJ_JOINT1`) usually carry **no rotation tracks on the chain joints themselves**; only the IK *target* joint is animated. The game computes the hip/knee rotations at runtime from the target position, which is ambiguous for a near-straight limb — the knee can fold either way and still reach the target.
+
+The game breaks the tie with a single bit. `resolveIKJoint2` (XD `text1/jobj/resolveIKJoint2.s`) computes the bend *magnitude* geometrically (`acos` of the dot between the joint's local-X and the target direction), rotates about the joint's **local Z axis**, and chooses the *sign* purely from the **`pole_flip` bit** — flag bit `0x4` on the first IK-hint `Reference` of the middle joint. It does **not** read the `pole_angle` float for the knee bend (only the bone length at offset 0x0 and the rotation limits). So forward-vs-backward in game = that one bit.
+
+How the pipeline carries it:
+
+- **IR** keeps `pole_angle` (the small raw base angle) and `pole_flip` (the bit) **separate** on `IRIKConstraint`. An earlier version folded the flip into `pole_angle` as `+π`; the exporter then wrote the bit as `0`, so re-exported limbs bent the wrong way in game. (`pole_angle` alone can't carry it — the runtime ignores it for the bend.)
+- **Importer build** can't use Blender's IK pole the way the game does (Blender's solver needs a pole *target*; the GX rigs pole by angle only). It instead locks the middle joint to a hinge about its **local Z** (`lock_ik_x/y`, `use_ik_limit_z`) and clamps the limit to the GX-intended side: `pole_flip` set ⇒ `+Z` (`ik_min_z=0, ik_max_z=π`), clear ⇒ `−Z`. This makes Blender's solver bend the correct direction. (Blender's standard solver still snaps to straight at the frames where the bend crosses neutral — a viewport-only artifact; it is never sampled into the export, which reads authored fcurves, and the game re-solves IK regardless.)
+- **Exporter describe** re-derives `pole_flip` from the **actual Blender rig**, never from a folded angle — so it works for arbitrary (hand-built / GLB) rigs too: from the middle joint's hinge-limit sign for angle-poled chains (`ik_max_z > |ik_min_z|` ⇒ flipped), or from the Blender pole `pole_angle` (`≈π`) for rigs that use a real pole target.
+- **Compose** writes the `0x4` bit on the effector-length IK-hint reference (the one on the middle joint, which the runtime reads) and keeps the raw `pole_angle` on the joint2-length reference — reproducing the original `0xC0000006` / `0xC0000001` reference flags (modulo the unused low-bit sub_types, which don't affect lookup since IK-hint fetch is wildcard-sub_type).
+
+A rig with neither a hinge limit nor a pole target is genuinely ambiguous and exports `pole_flip = False` — the GX format is equally ambiguous without the flag, so users must set up the limb properly (see [exporter_setup.md → Troubleshooting → Limbs bend the wrong way](exporter_setup.md#limbs-knees--elbows-bend-the-wrong-way-in-game)).
+
 ## PKX metadata
 
 ### Body-map bone conventions
@@ -190,6 +205,11 @@ Convention across the corpus:
 - Human NPC models use **-1** (which is -1 i32, 0xFFFFFFFF) for unused slots.
 
 The two groups load through different in-game code paths. -1 is safe on the NPC path but dangerous for Pokémon slots — empirically, a Pokémon-slot PKX with -1 in unused body_map positions does not load cleanly, consistent with the game dereferencing `body_map_bones[slot]` as an unchecked bone index.
+
+### Out-of-range body-map indices (null joints)
+A few game-native Pokémon carry body-map indices **past the model's bone count** — e.g. ghos `additional_5 = 46` on a 45-bone skeleton; ametama `center/additional_5 = 92/81` on 50 bones; thunder `additional_1–4 = 78/70/79/71` on 64 bones. These reference runtime "null joints" the game appends that aren't in the DAT skeleton, so they have no Blender bone and **can't be rederived** (no deterministic offset across models). They collapse to `-1` on export.
+
+This is behaviourally identical to the original through the documented body-map consumer (`enumNullJointName` / `ModelSequence::GetPart`, disassembly-verified): `GetPart` early-returns NULL for `bone_index < 0`, and for a positive out-of-range index it calls `GSmodelGetPart → GSpartGetJObjPtr`, which walks the JObj tree and finds no matching index → also NULL. So both the original OOR index and `-1` resolve to "no attach point". `compare_pkx_headers(..., bone_count=N)` therefore scores an out-of-range slot that collapses to `-1` as **expected**, not a violation. This is moot for real exports — user-built models never produce OOR body-map indices; only these game-native rips do. (Note the separate empirical caveat below that `-1` in *unused* Pokémon slots can affect loading; that concerns the exporter's choice of default for genuinely-unused slots, where it writes `0`, not `-1`.)
 
 ### Root bone index
 The root bone used for animation is typically at **bone index 1**, not 0. Bone 0 is usually a static wrapper / pm-number node that holds the model's top-level transform but isn't itself animated. Body-map slot 0 (the "root" key) commonly points at index 1 in game models.
