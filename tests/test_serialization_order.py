@@ -140,9 +140,11 @@ def test_material_texture_chain_emits_reversed():
     assert node_list.index(mobj) > max(node_list.index(t) for t in (t0, t1, t2))
 
 
-def test_palette_groups_with_its_material_block():
-    """A texture's Palette must stay inside the material block (grouped with its
-    Image/Texture), not scatter into the trailing 'rest' bucket."""
+def test_palette_emitted_after_material_structs():
+    """Palette structs trail the material structs (the compiler emits all
+    palette structs together near the end of the file, just before the scene),
+    so a Palette must come *after* its Image/Texture/MaterialObject, not inline
+    with them."""
     from exporter.phases.serialize.helpers.dat_builder import DATBuilder
     from shared.Nodes.Classes.Texture.Image import Image
     from shared.Nodes.Classes.Texture.Palette import Palette
@@ -158,10 +160,10 @@ def test_palette_groups_with_its_material_block():
     builder = DATBuilder(io.BytesIO(), [mobj], ['m'])
     ordered = builder._ordered_node_list()
     types = [type(n).__name__ for n in ordered]
-    # Image, Palette, Texture stay contiguous (no rest-scatter splitting them)
-    i = types.index('Palette')
-    assert types[i - 1] == 'Image'
-    assert types[i + 1] == 'Texture'
+    # Palette trails the whole material block.
+    assert types.index('Palette') > types.index('MaterialObject')
+    assert types.index('Palette') > types.index('Image')
+    assert types.index('Palette') > types.index('Texture')
 
 
 def test_material_single_texture_unchanged():

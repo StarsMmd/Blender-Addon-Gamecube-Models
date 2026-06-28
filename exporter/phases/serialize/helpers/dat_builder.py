@@ -28,8 +28,16 @@ def _coerce_pointer(value, node, field_name):
 # emits). RGBAColors are inline (@-fields) so they ride with their Material
 # and never appear here.
 _MATERIAL_TYPES = frozenset({
-	'Image', 'Palette', 'Texture', 'Material', 'MaterialObject',
+	'Image', 'Texture', 'Material', 'MaterialObject',
 	'PixelEngine', 'TextureLOD', 'TextureTEV',
+})
+
+# Scene-tail struct types (the SceneData subtree + BoundBox). Emitted last,
+# after the palette structs — matching the compiler's [animations][palettes]
+# [scene tail][BoundBox] layout.
+_SCENE_TYPES = frozenset({
+	'SceneData', 'LightSet', 'Light', 'CameraSet', 'Camera',
+	'WObject', 'ModelSet', 'Fog', 'BoundBox',
 })
 _ENVELOPE_TYPES = frozenset({'EnvelopeList', 'Envelope'})
 _VERTEX_TYPES = frozenset({'Vertex', 'VertexList'})
@@ -221,6 +229,18 @@ class DATBuilder(BinaryWriter):
 				self._write_node(nodes[di])
 				di += 1
 
+	@staticmethod
+	def _envelope_content_key(envelope_list):
+		"""Identity key for an EnvelopeList by its contents — the (joint, weight)
+		sequence. Keyed on joint object identity (joint addresses aren't assigned
+		yet when envelopes are written; identical envelopes share joint objects
+		because Joint is cachable)."""
+		return tuple(
+			(id(env.joint) if isinstance(env.joint, Node) else env.joint,
+			 round(env.weight, 6))
+			for env in getattr(envelope_list, 'envelopes', [])
+		)
+
 	def _ordered_node_list(self):
 		"""The overarching emission order — the builder's responsibility.
 
@@ -255,6 +275,7 @@ class DATBuilder(BinaryWriter):
 		material_blocks, mat_cur = [], []
 		vertex_blocks, vtx_cur = [], []
 		envelopes, geometry, skeleton, rest = [], [], [], []
+		palettes, scene = [], []
 		for n in nl:
 			k = kind(n)
 			if k in _MATERIAL_TYPES:
@@ -273,6 +294,10 @@ class DATBuilder(BinaryWriter):
 				geometry.append(n)
 			elif k == 'Joint':
 				skeleton.append(n)
+			elif k == 'Palette':
+				palettes.append(n)
+			elif k in _SCENE_TYPES:
+				scene.append(n)
 			else:
 				rest.append(n)
 		rest.extend(mat_cur)
@@ -280,12 +305,16 @@ class DATBuilder(BinaryWriter):
 		material_blocks.sort(key=lambda b: mobj_rank.get(id(b[-1]), 1 << 30))
 		vertex_blocks.sort(key=lambda b: vl_rank.get(id(b[-1]), 1 << 30))
 
+		# Palette structs and the scene tail trail the rest: the compiler emits
+		# them after the animation region as [palettes][scene tail][BoundBox].
 		ordered = [n for block in material_blocks for n in block]
 		ordered.extend(envelopes)
 		ordered.extend(n for block in vertex_blocks for n in block)
 		ordered.extend(geometry)
 		ordered.extend(skeleton)
 		ordered.extend(rest)
+		ordered.extend(palettes)
+		ordered.extend(scene)
 		return ordered
 
 	def _reverse_joint_post_order(self, extract):
@@ -418,6 +447,15 @@ class DATBuilder(BinaryWriter):
 				block_of_node[id(nd)] = bi
 		written_blocks = set()
 
+		# Envelope lists are content-deduplicated: the compiler emits one struct
+		# per unique (joint, weight) sequence and shares it across PObject slots.
+		# Our parse creates a separate object per slot (EnvelopeList is
+		# is_cachable=False), so collapse them here — the first object of each
+		# content key is written and every later duplicate aliases its address.
+		# Aliases are skipped at struct-write time (Phase 3) so they neither
+		# re-emit bytes nor add duplicate relocation entries.
+		env_canonical = {}
+
 		ordered_nodes = self._ordered_node_list()
 		self.seek(0, 'end')
 		idx, n = 0, len(ordered_nodes)
@@ -429,6 +467,19 @@ class DATBuilder(BinaryWriter):
 				if bi not in written_blocks:
 					written_blocks.add(bi)
 					self._write_block(blocks[bi])
+				idx += 1
+				continue
+
+			if type(node).__name__ == 'EnvelopeList':
+				key = self._envelope_content_key(node)
+				canon = env_canonical.get(key)
+				if canon is not None:
+					node.address = canon.address
+					node._envelope_alias = True
+					idx += 1
+					continue
+				env_canonical[key] = node
+				self._write_node(node)
 				idx += 1
 				continue
 
@@ -457,7 +508,10 @@ class DATBuilder(BinaryWriter):
 			node.writeImageData(self)
 
 		# --- Phase 3: Write node structs at allocated addresses ---
+		# Skip envelope-list aliases (they share a written canonical's address).
 		for node in self.node_list:
+			if getattr(node, '_envelope_alias', False):
+				continue
 			node.writeBinary(self)
 
 		# --- Phase 4: Finalize ---
