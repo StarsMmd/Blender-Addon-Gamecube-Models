@@ -327,9 +327,11 @@ def _has_identity_rotation(m4, tol=1e-4):
 def _validate_root_bone_orientation(context, logger):
     """Reject scenes whose root bone would export a non-identity root JOBJ.
 
-    Both prep scripts normalise the root bone (`normalize_root_orientation`);
-    this guards against exporting a scene that skipped that step — the
-    in-game symptom is the whole model rendered turned 90 deg.
+    The prep scripts do **not** adjust root orientation (an earlier
+    in-place auto-normalize was reverted — it broke animated children), so
+    this guard is the only line of defence. `_check_root_bone_orientation`
+    raises with the manual fix; the in-game symptom it prevents is the
+    whole model rendered turned 90 deg.
     """
     try:
         import bpy
@@ -383,15 +385,30 @@ def _check_root_bone_orientation(specs):
     raise ValueError(
         "Root bone of %d armature(s) [%s] would export a non-identity root "
         "JOBJ rotation. The game applies the root joint's rotation as the "
-        "model's base orientation without cancelling it, so the whole model "
-        "renders turned (typically 90 deg) in-game even though Blender looks "
-        "correct. Fix the root bone manually: in Edit mode aim it straight up "
-        "(+Z) and set Roll = 0 (Armature > Bone Roll > Clear Roll) so it is "
-        "axis-aligned. If the root is already animated, instead add an "
-        "axis-aligned 'Origin' bone at the rig origin and parent the current "
-        "root to it (re-orienting an animated root in place rotates its "
-        "children). See technical-docs/implementation_notes.md > 'Root joint "
-        "orientation' for the rationale and the planned auto-fix."
+        "model's base orientation and does not cancel it, so the whole "
+        "model renders turned (typically 90 deg) in-game even though "
+        "Blender looks correct. The root bone must be axis-aligned "
+        "(pointing +Z with Roll = 0) before export. This is a manual fix — "
+        "the prep scripts do not adjust root orientation.\n"
+        "\n"
+        "  - If the mesh and the root bone share the same orientation: in "
+        "Edit mode aim the root bone straight up (+Z) and clear its roll "
+        "(Armature > Bone Roll > Clear Roll).\n"
+        "\n"
+        "  - If the mesh and the root bone are in DIFFERENT orientations "
+        "(e.g. a Z-up mesh under a Y-up root bone): you cannot just "
+        "re-orient the rig, because rotating the bone also rotates the mesh "
+        "skinned to it. Rotate the root bone to axis-aligned (which rotates "
+        "the mesh with it), then rotate the mesh object by the INVERSE of "
+        "that same rotation. The bone ends up aligned and the mesh lands "
+        "back in its correct orientation.\n"
+        "\n"
+        "  - If the root bone is already animated, do not re-orient it in "
+        "place (that rotates its children): add an axis-aligned 'Origin' "
+        "bone at the rig origin and parent the current root to it.\n"
+        "\n"
+        "See technical-docs/exporter_setup.md > Troubleshooting > 'Model "
+        "renders rotated in-game (non-identity root bone)'."
         % (len(bad), sample)
     )
 

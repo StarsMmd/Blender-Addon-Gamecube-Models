@@ -14,6 +14,9 @@ unwrappers (``plan_actions``, ``plan_constraints``, ``plan_lights``,
 try:
     from ....shared.IR import IRScene, IRModel
     from ....shared.helpers.logger import StubLogger
+    from .helpers.armature import plan_armature
+    from .helpers.meshes import plan_meshes
+    from .helpers.merge_meshes import merge_meshes
     from .helpers.animations import plan_actions
     from .helpers.constraints import plan_constraints
     from .helpers.lights import plan_lights
@@ -22,6 +25,9 @@ try:
 except (ImportError, SystemError):
     from shared.IR import IRScene, IRModel
     from shared.helpers.logger import StubLogger
+    from exporter.phases.plan.helpers.armature import plan_armature
+    from exporter.phases.plan.helpers.meshes import plan_meshes
+    from exporter.phases.plan.helpers.merge_meshes import merge_meshes
     from exporter.phases.plan.helpers.animations import plan_actions
     from exporter.phases.plan.helpers.constraints import plan_constraints
     from exporter.phases.plan.helpers.lights import plan_lights
@@ -32,11 +38,15 @@ except (ImportError, SystemError):
 def plan_scene(br_scene, options=None, logger=StubLogger()):
     """Convert a BRScene to an IRScene.
 
-    In: br_scene (BRScene); options (dict|None — reads
+    In: br_scene (BRScene); options (dict|None) — reads
         ``skip_baked_transforms_validation`` to opt out of the BR-side
-        baked-transforms check; round-trip tests use this so they can
-        compare a freshly-built (un-baked) scene without the validator
-        firing); logger.
+        baked-transforms check (round-trip tests use this so they can
+        compare a freshly-built, un-baked scene without the validator
+        firing), and ``merge_meshes`` (default True) to control whether
+        compatible IR meshes are merged to stay under the PObject ceiling
+        — round-trip tests set it False so the mesh count is preserved
+        and the comparison isn't dragged by the (intentional) collapse;
+        logger.
     Out: IRScene ready for compose.
     """
     if options is None:
@@ -47,9 +57,10 @@ def plan_scene(br_scene, options=None, logger=StubLogger()):
     if not options.get('skip_baked_transforms_validation'):
         validate_baked_br(br_scene)
 
+    do_merge = options.get('merge_meshes', True)
     ir_models = []
     for br_model in br_scene.models:
-        ir_models.append(_plan_one_model(br_model, logger))
+        ir_models.append(_plan_one_model(br_model, logger, merge=do_merge))
 
     ir_lights = plan_lights(br_scene.lights, logger=logger)
     ir_cameras = plan_cameras(br_scene.cameras, logger=logger)
@@ -57,9 +68,15 @@ def plan_scene(br_scene, options=None, logger=StubLogger()):
     return IRScene(models=ir_models, lights=ir_lights, cameras=ir_cameras)
 
 
-def _plan_one_model(br_model, logger):
-    ir_bones = br_model._ir_bones
-    ir_meshes = br_model._ir_meshes
+def _plan_one_model(br_model, logger, merge=True):
+    # Derive IR bones + merged IR meshes straight from BR. These are pure
+    # numerical transforms, so plan owns them — describe computes its own
+    # copy only because the bpy-side animation unbaker / constraint walker
+    # need IR bones while they still have a live Blender context.
+    ir_bones = plan_armature(br_model.armature, logger=logger)
+    ir_meshes = plan_meshes(br_model.meshes, br_model.materials, ir_bones, logger=logger)
+    if merge:
+        ir_meshes = merge_meshes(ir_meshes, logger=logger)
 
     # Populate mesh_indices on bones, then refine flags now that mesh
     # attachment + skinning are known.

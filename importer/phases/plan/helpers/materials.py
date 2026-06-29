@@ -37,6 +37,72 @@ except (ImportError, SystemError):
 
 
 # ---------------------------------------------------------------------------
+# Socket index → identifier (Blender 4.5)
+# ---------------------------------------------------------------------------
+# The single BR socket convention is the Blender socket *identifier* (a
+# unique string, e.g. a Math node's 'Value' / 'Value_001' / 'Value_002').
+# Callers wire sockets by convenient integer index; the builder rewrites
+# each to its identifier via this table — `node_type → (input ids, output
+# ids)`, positional. It is the only Blender-version-sensitive data in the
+# builder; see technical-docs/implementation_notes.md § Shader graph
+# socket keys.
+_SOCKET_IDS = {
+    'ShaderNodeAddShader': (['Shader', 'Shader_001'], ['Shader']),
+    'ShaderNodeAttribute': ([], ['Color', 'Vector', 'Fac', 'Alpha']),
+    'ShaderNodeBsdfPrincipled': (
+        ['Base Color', 'Metallic', 'Roughness', 'IOR', 'Alpha', 'Normal',
+         'Weight', 'Diffuse Roughness', 'Subsurface Weight', 'Subsurface Radius',
+         'Subsurface Scale', 'Subsurface IOR', 'Subsurface Anisotropy',
+         'Specular IOR Level', 'Specular Tint', 'Anisotropic',
+         'Anisotropic Rotation', 'Tangent', 'Transmission Weight', 'Coat Weight',
+         'Coat Roughness', 'Coat IOR', 'Coat Tint', 'Coat Normal', 'Sheen Weight',
+         'Sheen Roughness', 'Sheen Tint', 'Emission Color', 'Emission Strength',
+         'Thin Film Thickness', 'Thin Film IOR'], ['BSDF']),
+    'ShaderNodeBsdfTransparent': (['Color', 'Weight'], ['BSDF']),
+    'ShaderNodeBump': (['Strength', 'Distance', 'Filter Width', 'Height', 'Normal'], ['Normal']),
+    'ShaderNodeCombineXYZ': (['X', 'Y', 'Z'], ['Vector']),
+    'ShaderNodeEmission': (['Color', 'Strength', 'Weight'], ['Emission']),
+    'ShaderNodeInvert': (['Fac', 'Color'], ['Color']),
+    'ShaderNodeMapping': (['Vector', 'Location', 'Rotation', 'Scale'], ['Vector']),
+    'ShaderNodeMath': (['Value', 'Value_001', 'Value_002'], ['Value']),
+    'ShaderNodeMixRGB': (['Fac', 'Color1', 'Color2'], ['Color']),
+    'ShaderNodeMixShader': (['Fac', 'Shader', 'Shader_001'], ['Shader']),
+    'ShaderNodeOutputMaterial': (['Surface', 'Volume', 'Displacement', 'Thickness'], []),
+    'ShaderNodeRGB': ([], ['Color']),
+    'ShaderNodeSeparateXYZ': (['Vector'], ['X', 'Y', 'Z']),
+    'ShaderNodeTexCoord': ([], ['Generated', 'Normal', 'UV', 'Object', 'Camera', 'Window', 'Reflection']),
+    'ShaderNodeTexImage': (['Vector'], ['Color', 'Alpha']),
+    'ShaderNodeUVMap': ([], ['UV']),
+    'ShaderNodeValue': ([], ['Value']),
+    'ShaderNodeVectorMath': (['Vector', 'Vector_001', 'Vector_002', 'Scale'], ['Vector', 'Value']),
+}
+
+
+def _socket_identifier(node_type, key, outputs=False):
+    """Resolve an integer socket index to its Blender identifier.
+
+    A string key is already an identifier and passes through. For an
+    integer index: a ``node_type`` of None means an untracked external
+    ref (a unit-test fake — production nodes are all builder-created and
+    tracked), so the key is left unchanged; a real node type missing from
+    ``_SOCKET_IDS``, or an out-of-range index, raises so the gap surfaces
+    at plan time rather than as an unresolvable link at build time.
+    """
+    if not isinstance(key, int):
+        return key
+    if node_type is None:
+        return key
+    entry = _SOCKET_IDS.get(node_type)
+    if entry is None:
+        raise ValueError("no socket-identifier table for node type %s" % node_type)
+    ids = entry[1] if outputs else entry[0]
+    if key >= len(ids):
+        raise ValueError(
+            "no %s socket %d on %s" % ('output' if outputs else 'input', key, node_type))
+    return ids[key]
+
+
+# ---------------------------------------------------------------------------
 # Graph builder — mutable helper that accumulates nodes + links during
 # planning. Node names are auto-generated unless explicitly provided; the
 # builder returns the generated name so callers can target links.
@@ -53,25 +119,34 @@ class BRGraphBuilder:
         self._nodes = []
         self._links = []
         self._counter = 0
+        self._node_types = {}  # node name → bl_idname, for socket-id lookup
 
     def add_node(self, node_type, name=None, properties=None,
                  input_defaults=None, image_ref=None, location=None):
         """Append a new BRNode to the graph and return its name.
 
+        Callers pass socket keys as convenient integer indices; the
+        builder rewrites them to Blender socket *identifiers* (the single
+        BR convention) at storage time. See ``_NODE_INPUT_SOCKET_IDS``.
+
         In: node_type (str, bl_idname); name (str|None, auto-gen '_nN' if None);
-            properties (dict|None); input_defaults (dict|None);
-            image_ref (BRImage|None, only for ShaderNodeTexImage);
-            location (tuple[float, float]|None, editor canvas coords).
+            properties (dict|None); input_defaults (dict|None, keyed by
+            socket index or identifier); image_ref (BRImage|None, only for
+            ShaderNodeTexImage); location (tuple[float, float]|None).
         Out: str, the resolved node name for use in add_link targets.
         """
         if name is None:
             name = '_n%d' % self._counter
             self._counter += 1
+        self._node_types[name] = node_type
+        resolved_defaults = {}
+        for key, value in (input_defaults or {}).items():
+            resolved_defaults[_socket_identifier(node_type, key)] = value
         self._nodes.append(BRNode(
             node_type=node_type,
             name=name,
             properties=dict(properties) if properties else {},
-            input_defaults=dict(input_defaults) if input_defaults else {},
+            input_defaults=resolved_defaults,
             image_ref=image_ref,
             location=location,
         ))
@@ -80,27 +155,32 @@ class BRGraphBuilder:
     def add_link(self, from_node, from_output, to_node, to_input):
         """Record a socket-to-socket link between two already-added nodes.
 
+        Integer socket keys are rewritten to Blender socket identifiers
+        (see ``add_node``).
+
         In: from_node (str, BRNode name); from_output (int|str, socket key);
             to_node (str, BRNode name); to_input (int|str, socket key).
         Out: None.
         """
         self._links.append(BRLink(
             from_node=from_node,
-            from_output=from_output,
+            from_output=_socket_identifier(
+                self._node_types.get(from_node), from_output, outputs=True),
             to_node=to_node,
-            to_input=to_input,
+            to_input=_socket_identifier(
+                self._node_types.get(to_node), to_input),
         ))
 
     def set_input_default(self, node_name, socket_key, value):
         """Set an input socket's default_value on an already-added node.
 
         In: node_name (str, must match an added BRNode.name);
-            socket_key (int|str); value (object).
+            socket_key (int|str, socket index or identifier); value (object).
         Out: None. Raises KeyError if node_name isn't found.
         """
         for n in self._nodes:
             if n.name == node_name:
-                n.input_defaults[socket_key] = value
+                n.input_defaults[_socket_identifier(n.node_type, socket_key)] = value
                 return
         raise KeyError("node %r not found" % node_name)
 

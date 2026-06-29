@@ -157,17 +157,18 @@ class TestPlanApplyBlend:
                                    LayerBlendMode.MIX, 0.7, is_color=True)
         assert result != prev
         assert any(n.node_type == 'ShaderNodeMixRGB' for n in g._nodes)
-        # Factor should have propagated to socket 0's default.
+        # Factor should have propagated to the Fac socket's default
+        # (the builder keys input_defaults by socket identifier).
         mix = next(n for n in g._nodes if n.node_type == 'ShaderNodeMixRGB')
-        assert abs(mix.input_defaults[0] - 0.7) < 1e-9
+        assert abs(mix.input_defaults['Fac'] - 0.7) < 1e-9
 
     def test_replace_sets_factor_zero(self):
         g = BRGraphBuilder()
         _plan_apply_blend(g, ('prev', 0), ('c', 0), ('a', 0),
                           LayerBlendMode.REPLACE, 1.0, is_color=True)
         mix = next(n for n in g._nodes if n.node_type == 'ShaderNodeMixRGB')
-        # REPLACE routes cur_color into input 1 and pins factor to 0.
-        assert mix.input_defaults[0] == 0.0
+        # REPLACE routes cur_color into input 1 and pins the Fac default to 0.
+        assert mix.input_defaults['Fac'] == 0.0
 
 
 class TestPlanPerAxisWrap:

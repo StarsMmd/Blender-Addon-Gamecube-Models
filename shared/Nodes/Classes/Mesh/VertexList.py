@@ -78,12 +78,17 @@ class VertexList(Node):
             vertex.address = self.address + (i * self.vertex_length)
             vertex.writeBinary(builder)
 
-        # Write terminator vertex (attribute = 0xFF, rest zeroed)
+        # Write the GX_VA_NULL terminator vertex. The compiler emits it with a
+        # fixed non-zero descriptor — attribute=0xFF, attribute_type=2,
+        # component_type=4 (constant across every game-native VertexList), the
+        # remaining fields zeroed — so reproduce that exact pattern.
         terminator_address = self.address + (len(self.vertices) * self.vertex_length)
         abs_address = terminator_address + builder.DAT_header_length
         builder.seek(abs_address)
         builder.file.write(b'\x00' * self.vertex_length)
-        builder.write(0xFF, 'uint', terminator_address, relative_to_header=True)
+        builder.write(0xFF, 'uint', terminator_address, relative_to_header=True)        # attribute
+        builder.write(2, 'uint', terminator_address + 4, relative_to_header=True)        # attribute_type
+        builder.write(4, 'uint', terminator_address + 12, relative_to_header=True)       # component_type
         
 
     # Treat this as one complete node so the vertex nodes are always written in the correct order

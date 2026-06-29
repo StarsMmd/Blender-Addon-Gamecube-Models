@@ -286,7 +286,14 @@ class PKXContainer:
 
     @property
     def shiny_params(self):
-        """Read shiny filter parameters. Returns ShinyParams or None."""
+        """Read shiny filter parameters.
+
+        Returns ShinyParams for any in-bounds shiny region — including an
+        identity/neutral one. We deliberately do NOT skip identity shiny: the
+        importer stores it explicitly and inserts the (no-op) shiny filter on
+        every model so the values round-trip and every model is shiny-ready.
+        Returns None only when the region is out of bounds (file too small).
+        """
         base = self._shiny_base
         if base < 0 or base + _COLO_SHINY_SIZE > len(self._data):
             return None
@@ -319,9 +326,6 @@ class PKXContainer:
                 argb & 0xFF,            # B
                 (argb >> 24) & 0xFF,    # A
             ]
-
-        if _is_noop_shiny(route_r, route_g, route_b, route_a, raw_brightness):
-            return None
 
         return ShinyParams(
             route_r=route_r,

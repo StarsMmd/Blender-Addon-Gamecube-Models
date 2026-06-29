@@ -554,6 +554,61 @@ COLO_TRAINER_ANIM_NAMES = [
     "Unused 4", "Unused 5", "Unused 6", "Unused 7",
 ]
 
+def anim_slot_names(is_xd, is_trainer):
+    """Return the 17-entry animation-slot label list for a PKX model.
+
+    In: is_xd (bool, True for XD, False for Colosseum); is_trainer (bool,
+        True for a trainer-pose model, False for a Pokémon battle-move model).
+    Out: list[str] of slot labels. Pokémon models reuse the XD layout for
+        both games — the per-slot animation ordering is identical between XD
+        and Colosseum (see technical-docs/implementation_notes.md).
+    """
+    if is_trainer:
+        return XD_TRAINER_ANIM_NAMES if is_xd else COLO_TRAINER_ANIM_NAMES
+    return XD_POKEMON_ANIM_NAMES
+
+
+def active_part_anim_refs(header):
+    """Return active sub-animation part references as (trigger_index, anim_index).
+
+    Abstracts over the two layouts: XD stores these as PartAnimData blocks,
+    Colosseum as three plain int refs (colo_part_anim_refs). Both share the
+    positional trigger meaning (0 = sleep-on, 1 = sleep-off, 2 = extra). Only
+    refs pointing at a real animation (index > 0) are returned — index 0 is
+    the idle/default and carries no sub-animation.
+
+    In: header (PKXHeader).
+    Out: list[tuple[int, int]] — (trigger slot 0..2, referenced DAT anim index).
+    """
+    refs = []
+    if header.is_xd:
+        for i, pad in enumerate(header.part_anim_data[:3]):
+            if pad.has_data > 0 and pad.anim_index_ref > 0:
+                refs.append((i, pad.anim_index_ref))
+    else:
+        for i, ref in enumerate(header.colo_part_anim_refs[:3]):
+            if ref > 0:
+                refs.append((i, ref))
+    return refs
+
+
+def sub_anim_is_active(entry, sub, is_xd):
+    """Return True iff a sub-anim slot references a real DAT animation.
+
+    The two games use opposite polarity on the per-sub motion_type field:
+    XD marks real slots with motion_type > 0 and leaves unused padding at 0;
+    Colosseum leaves real slots at 0 and tags unused padding with a non-zero
+    motion_type (pointing at the idle/anim 0). The name-map (describe) and
+    metadata (post-process) sides must agree, so both call through here.
+
+    In: entry (AnimMetadataEntry, the owning slot — unused, kept for a stable
+        signature); sub (SubAnim); is_xd (bool).
+    Out: bool.
+    """
+    if is_xd:
+        return sub.motion_type > 0
+    return sub.motion_type == 0
+
 BODY_MAP_NAMES = [
     "Origin",           # 0 — always bone 0; default attach for most effects
     "Mouth",            # 1 — Model-entry attach for fire breath, status overlays

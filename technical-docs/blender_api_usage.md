@@ -85,7 +85,7 @@ Every Blender Python API call used by this addon, with the Blender version range
 | | | | | |
 | | | **Object Data Creation** | | |
 | 2.80 | current | `bpy.data.armatures.new(name)` | `skeleton.py` | |
-| 2.80 | current | `bpy.data.objects.new(name, object_data)` | `skeleton.py`, `meshes.py`, `lights.py`, `cameras.py`, `animations.py` | |
+| 2.80 | current | `bpy.data.objects.new(name, object_data)` | `skeleton.py`, `meshes.py`, `lights.py`, `cameras.py`, `animations.py`, `prepare_for_pkx_export.py`, `prepare_pbr_for_pkx_export.py` | Last: SUN + target empty for the default light rig |
 | 2.80 | current | `bpy.data.objects` (iteration) | `cameras.py`, `BlenderPlugin.py`, `exporter/*.py` | Find objects by type |
 | 2.80 | current | `bpy.data.curves.new(name, type)` | `animations.py` | Spline path curves |
 | 2.80 | current | `bpy.data.meshes.new(name)` | `meshes.py` | |
@@ -98,10 +98,10 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.80 | current | `bpy.data.node_groups[name]` | `shiny_filter.py` | Lookup for rebuild |
 | | | | | |
 | | | **Object Properties** | | |
-| 2.80 | current | `object.location = Vector(...)` | `meshes.py`, `cameras.py`, `lights.py` | |
-| 2.80 | current | `object.empty_display_type = '...'` | `cameras.py`, `lights.py` | Display type for target empties |
+| 2.80 | current | `object.location = Vector(...)` | `meshes.py`, `cameras.py`, `lights.py`, `prepare_for_pkx_export.py`, `prepare_pbr_for_pkx_export.py` | |
+| 2.80 | current | `object.empty_display_type = '...'` | `cameras.py`, `lights.py`, `prepare_for_pkx_export.py`, `prepare_pbr_for_pkx_export.py` | Display type for target empties |
 | 2.80 | current | `object.empty_display_size = n` | `cameras.py` | Scale target empty to model size |
-| 2.80 | current | `object.constraints.new(type=...)` | `cameras.py` | TRACK_TO for camera look-at |
+| 2.80 | current | `object.constraints.new(type=...)` | `cameras.py`, `lights.py`, `prepare_for_pkx_export.py`, `prepare_pbr_for_pkx_export.py` | TRACK_TO for camera look-at + default light rig |
 | 2.80 | current | `object.matrix_local = Matrix(...)` | `meshes.py` | |
 | 2.80 | current | `object.parent = obj` | `meshes.py` | |
 | 2.80 | current | `object.select_set(True)` | `skeleton.py` | |
@@ -125,15 +125,18 @@ Every Blender Python API call used by this addon, with the Blender version range
 | | | | | |
 | | | **Constraints** | | |
 | 2.80 | current | `pose_bone.constraints.new(type=...)` | `constraints.py` | IK, COPY_LOCATION, TRACK_TO, COPY_ROTATION, LIMIT_* |
-| 2.80 | current | `constraint.target = obj` | `constraints.py` | |
+| 2.80 | current | `constraint.target = obj` | `constraints.py`, `prepare_for_pkx_export.py`, `prepare_pbr_for_pkx_export.py` | |
 | 2.80 | current | `constraint.subtarget = name` | `constraints.py` | |
 | 2.80 | current | `constraint.chain_count = n` | `constraints.py` | IK |
 | 2.80 | current | `constraint.pole_target = obj` | `constraints.py` | IK |
+| 2.80 | current | `pose_bone.lock_ik_x/y` (write) | `build_blender/helpers/constraints.py` | Hinge the IK middle joint about local Z |
+| 2.80 | current | `pose_bone.use_ik_limit_z` (read/write) | `build_blender/helpers/constraints.py`, `exporter/describe/helpers/constraints.py` | Clamp / read the IK bend side (pole_flip) |
+| 2.80 | current | `pose_bone.ik_min_z` / `ik_max_z` (read/write) | `build_blender/helpers/constraints.py`, `exporter/describe/helpers/constraints.py` | IK hinge limit range; sign encodes the GX pole_flip |
 | 2.80 | current | `constraint.type` | `export/constraints.py` | Read constraint type string |
 | 2.80 | current | `constraint.enabled` | `export/constraints.py` | Check if constraint is active |
 | 2.80 | current | `constraint.influence` | `export/constraints.py` | Copy Location influence weight |
-| 2.80 | current | `constraint.track_axis` | `export/constraints.py` | Track To axis |
-| 2.80 | current | `constraint.up_axis` | `export/constraints.py` | Track To up axis |
+| 2.80 | current | `constraint.track_axis` | `export/constraints.py`, `prepare_for_pkx_export.py`, `prepare_pbr_for_pkx_export.py` | Track To axis |
+| 2.80 | current | `constraint.up_axis` | `export/constraints.py`, `prepare_for_pkx_export.py`, `prepare_pbr_for_pkx_export.py` | Track To up axis |
 | 2.80 | current | `constraint.owner_space` | `export/constraints.py` | Constraint evaluation space |
 | 2.80 | current | `constraint.target_space` | `export/constraints.py` | Copy Rotation target space |
 | 2.80 | current | `constraint.use_min_x` etc | `export/constraints.py` | Limit constraint axis enables |

@@ -2,9 +2,9 @@
 
 The shader node tree is serialised faithfully into a BRNodeGraph: every
 node becomes a BRNode (node_type = bl_idname, input defaults captured by
-socket name, type-specific attributes captured into ``properties``,
+socket identifier, type-specific attributes captured into ``properties``,
 texture nodes carry a BRImage on ``image_ref``); every wire becomes a
-BRLink with from/to node names and socket names. Plan
+BRLink keyed by socket identifier (see ``BRLink``). Plan
 (`plan_material`) reads the graph and produces an IRMaterial — the
 "is this material LIT, what does each texture layer mean, what blend
 mode applies" interpretation lives entirely on the plan side.
@@ -77,9 +77,9 @@ def _serialise_node_graph(node_tree, image_cache):
     links = [
         BRLink(
             from_node=link.from_node.name,
-            from_output=link.from_socket.name,
+            from_output=link.from_socket.identifier,
             to_node=link.to_node.name,
-            to_input=link.to_socket.name,
+            to_input=link.to_socket.identifier,
         )
         for link in node_tree.links
     ]
@@ -100,8 +100,10 @@ def _serialise_node(node, image_cache):
     if bl_idname == 'ShaderNodeRGB':
         properties['color'] = tuple(node.outputs[0].default_value)
 
-    # ShaderNodeMapping inputs are vector triples — captured by name as
-    # 3-tuples so the plan can rebuild rotation / scale / translation.
+    # Unlinked input-socket defaults, keyed by socket identifier (the
+    # single BR socket convention — unique even when names collide, e.g.
+    # a VectorMath's 'Vector' / 'Vector_001'), so the plan can rebuild
+    # e.g. a Mapping node's rotation / scale / translation.
     input_defaults = {}
     for inp in node.inputs:
         if inp.is_linked:
@@ -110,7 +112,7 @@ def _serialise_node(node, image_cache):
             value = inp.default_value
         except (AttributeError, RuntimeError):
             continue
-        input_defaults[inp.name] = _coerce_default(value)
+        input_defaults[inp.identifier] = _coerce_default(value)
 
     image_ref = None
     if bl_idname == 'ShaderNodeTexImage' and node.image is not None:

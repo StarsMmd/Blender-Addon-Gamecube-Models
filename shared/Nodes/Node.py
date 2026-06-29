@@ -63,6 +63,27 @@ class Node(object):
     def writeImageData(self, builder):
         pass
 
+    # Subtree serialization order. Sysdolphin writes some subtrees (the bone
+    # and material animation joint trees) in a non-DFS order — all of the
+    # tree's leaf data first, then each structural layer. A node type that
+    # owns such a subtree sets ``serializes_subtree = True`` and overrides
+    # this on its *root* node to return a flat, ordered list of the subtree's
+    # nodes; the DATBuilder writes that list as a block (pooling consecutive
+    # Frame runs). Default None = use the builder's DFS order.
+    serializes_subtree = False
+
+    def serializationOrder(self):
+        return None
+
+    # Direct-children traversal order. Some node types emit their immediate
+    # child structs in an order that differs from field-declaration order
+    # (e.g. MaterialObject leads with its PixelEngine). A node type overrides
+    # this with a list of field names to declare the order its Node-typed
+    # fields are visited (and thus emitted) during the builder's DFS; listed
+    # fields go first in the given order, the rest keep their declared order.
+    # None = use field-declaration order.
+    serialization_field_order = None
+
     # Write this node's PRIVATE raw data immediately before the node's struct allocation.
     # Called during Phase 2 (DFS post-order) for each node.
     # Handles: pointer-to-primitive fields (strings, matrices), pointer arrays for

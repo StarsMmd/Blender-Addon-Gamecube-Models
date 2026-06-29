@@ -14,6 +14,10 @@ Usage:
     # All models in a directory
     python3 tests/round_trip/run_round_trips.py ~/models/
 
+    # PKX-metadata round-trip only (header -> custom props -> header), split
+    # by XD / Colosseum with a per-field divergence report:
+    python3 tests/round_trip/run_round_trips.py ~/models/ --pkx-metadata
+
 Requires: bpy (standalone module), mathutils
     pip install bpy mathutils
 
@@ -23,8 +27,9 @@ Test types:
     BNB  Binary -> Node tree -> Binary        (byte-level fidelity)
     BBB  BR -> Blender -> BR                  (build/describe round-trip; bounds the
                                               Blender-facing leg only — no IR↔BR involvement)
-    IBI  IR -> BR -> Blender -> BR -> IR      (full Blender round-trip; bounds Plan
-                                              on both sides plus build/describe)
+    IBI  IR -> BR -> IR                       (pure Plan round-trip; bounds the
+                                              importer Plan and exporter Plan back to
+                                              back, no bpy build/describe leg)
 """
 import sys
 import os
@@ -35,6 +40,12 @@ from collections import Counter
 addon_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 if addon_dir not in sys.path:
     sys.path.insert(0, addon_dir)
+
+# Add the tests directory so shared test helpers (e.g. pkx_metadata_compare)
+# import the same way they do under pytest.
+tests_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if tests_dir not in sys.path:
+    sys.path.insert(0, tests_dir)
 
 # Verify real bpy is available (not mocked)
 try:
@@ -74,6 +85,24 @@ if not hasattr(bpy.types.Image, 'dat_gx_format'):
         ],
         default='AUTO',
     )
+
+# Shiny custom properties (normally registered by BlenderPlugin.register()).
+# The PKX-metadata diagnostic needs these so post_process can store shiny
+# params and the exporter's describe can read them back. Registered
+# callback-free here (the addon's live-update callbacks aren't needed).
+if not hasattr(bpy.types.Object, 'dat_pkx_shiny_route_r'):
+    from bpy.props import EnumProperty, FloatProperty, BoolProperty
+    _SHINY_CH = [('0', 'Red', ''), ('1', 'Green', ''), ('2', 'Blue', ''), ('3', 'Alpha', '')]
+    bpy.types.Object.dat_pkx_shiny = BoolProperty(name="Shiny Preview", default=False)
+    # Identity route + zero brightness, matching the addon's registered
+    # defaults, so a non-shiny model whose import never sets these props
+    # compares clean (round-trips as non-shiny).
+    for _ch, _def in (('r', '0'), ('g', '1'), ('b', '2'), ('a', '3')):
+        setattr(bpy.types.Object, 'dat_pkx_shiny_route_%s' % _ch,
+                EnumProperty(name="Route %s" % _ch.upper(), items=_SHINY_CH, default=_def))
+    for _ch in ('r', 'g', 'b'):
+        setattr(bpy.types.Object, 'dat_pkx_shiny_brightness_%s' % _ch,
+                FloatProperty(name="Brightness %s" % _ch.upper(), default=0.0, min=-1.0, max=1.0))
 
 
 # ---------------------------------------------------------------------------
@@ -278,25 +307,33 @@ def compute_nin_score(filepath, logger=None):
 # ---------------------------------------------------------------------------
 
 def compute_ibi_score(filepath, logger=None):
-    """Parse through phase 4 to get IR, build in Blender, read back, compare.
+    """Parse through phase 4 to get IR, round-trip through BR, compare.
+
+    Pure Plan round-trip: IR → BR via the importer's Plan, then BR → IR
+    via the exporter's Plan — no bpy build/describe leg. Bounds the two
+    Plan phases back to back, isolating IR↔BR conversion fidelity from
+    any noise the Blender build/describe round-trip would add (fcurve
+    sampling, normal recomputation, etc.).
 
     Uses category-weighted scoring: each IR category (bones, meshes,
     materials, animations, constraints, lights) is scored independently,
     then the scores are averaged across categories that have data. This
     prevents large vertex arrays from drowning out other features.
     """
-    clear_blender_scene()
-
     _, sections = load_model(filepath)
     options = {"filepath": filepath}
     ir_original = describe_ir(sections, options=options, logger=logger)
 
-    # Plan IR → BR (phase 5a), then build (phase 5b)
+    # Plan IR → BR (importer phase 5a), then BR → IR (exporter phase 2).
+    # Disable mesh merging so the round-tripped mesh count matches the
+    # original — the merge is an intentional PObject-ceiling optimisation,
+    # not a fidelity loss, and counting the merged-away meshes as misses
+    # masks the real per-mesh accuracy.
     br_scene = plan_to_br(ir_original, options={"filepath": filepath}, logger=logger)
-    build_results = build_in_blender(br_scene, options={"filepath": filepath})
-
-    # Read back from Blender (export phase 1 → phase 2)
-    ir_roundtripped, _, _ = read_back_from_blender(build_results)
+    ir_roundtripped = plan_br_to_ir(
+        br_scene,
+        options={'skip_baked_transforms_validation': True, 'merge_meshes': False},
+    )
 
     # Compare IR scenes by category
     categories, details = _compare_ir_by_category(ir_original, ir_roundtripped)
@@ -310,7 +347,6 @@ def compute_ibi_score(filepath, logger=None):
     else:
         pct, err_pct, miss_pct = 100.0, 0.0, 0.0
 
-    clear_blender_scene()
     return pct, err_pct, miss_pct, details, categories
 
 
@@ -775,6 +811,38 @@ def _is_inactive_tev(field_name, node):
             and getattr(node, 'active', None) == 0)
 
 
+_COLOR_CHANNEL_FIELDS = frozenset({'red', 'green', 'blue', 'alpha'})
+
+
+def _color_channel_equiv(field_name, a, b):
+    """True when a colour channel holds the same value in two scales:
+    a normalized float [0-1] (the IR / parsed-node form) vs a u8 [0-255]
+    (the composed-node form). They differ only by the 1/255 quantization
+    step, so comparing them raw spuriously flags every colour as an error.
+    """
+    if field_name not in _COLOR_CHANNEL_FIELDS:
+        return False
+    fval, ival = (a, b) if isinstance(a, float) else (b, a)
+    if not (isinstance(fval, float) and isinstance(ival, int)):
+        return False
+    if not 0.0 <= fval <= 1.0:
+        return False
+    return abs(round(fval * 255) - ival) <= 1
+
+
+def _nin_value_equal(a, b, tol=1e-5):
+    """Compare two NIN field values, tolerating float round-off and
+    recursing into nested lists (e.g. an inverse_bind matrix's rows), so a
+    last-digit (~1e-16) difference in a matrix element from the IR→compose
+    recomputation isn't counted as a mismatch."""
+    if isinstance(a, float) and isinstance(b, (int, float)):
+        return abs(a - b) <= tol
+    if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
+        return len(a) == len(b) and all(
+            _nin_value_equal(x, y, tol) for x, y in zip(a, b))
+    return a == b
+
+
 def _compare_node_trees_nin(orig, composed):
     """NIN comparison: walk the ORIGINAL tree to count all fields.
 
@@ -846,11 +914,7 @@ def _compare_node_trees_nin(orig, composed):
                         if comp_item is None:
                             misses += 1
                             details.append(f"MISS {fp}[{i}]: {item} vs None")
-                        elif isinstance(item, float) and isinstance(comp_item, float):
-                            if abs(item - comp_item) > 1e-5:
-                                errors += 1
-                                details.append(f"ERR  {fp}[{i}]: {item} vs {comp_item}")
-                        elif item != comp_item:
+                        elif not _nin_value_equal(item, comp_item):
                             errors += 1
                             details.append(f"ERR  {fp}[{i}]: {item} vs {comp_item}")
             else:
@@ -858,11 +922,9 @@ def _compare_node_trees_nin(orig, composed):
                 if val_comp is None and val_orig is not None:
                     misses += 1
                     details.append(f"MISS {fp}: {repr(val_orig)[:60]} vs None")
-                elif isinstance(val_orig, float) and isinstance(val_comp, float):
-                    if abs(val_orig - val_comp) > 1e-5:
-                        errors += 1
-                        details.append(f"ERR  {fp}: {val_orig} vs {val_comp}")
-                elif val_orig != val_comp:
+                elif _color_channel_equiv(field_name, val_orig, val_comp):
+                    pass  # same colour, float [0-1] vs u8 [0-255]
+                elif not _nin_value_equal(val_orig, val_comp):
                     errors += 1
                     details.append(f"ERR  {fp}: {repr(val_orig)[:60]} vs {repr(val_comp)[:60]}")
 
@@ -915,8 +977,12 @@ def find_model_files(path):
     return []
 
 
-def run_all_tests(filepath):
-    """Run all round-trip tests on a single model file. Returns dict of scores."""
+def run_all_tests(filepath, skip_bbb=False):
+    """Run all round-trip tests on a single model file. Returns dict of scores.
+
+    skip_bbb omits the BR→Blender→BR test, which drives a full bpy build — slow
+    (minutes) on large map/scene archives and the cause of the D1_out hang.
+    """
     name = os.path.splitext(os.path.basename(filepath))[0]
     scores = {'name': name}
 
@@ -955,20 +1021,26 @@ def run_all_tests(filepath):
         scores['nin_miss'] = 0.0
 
     # BBB
-    try:
-        pct, err_pct, miss_pct, details, categories = compute_bbb_score(filepath)
-        scores['bbb'] = pct
-        scores['bbb_err'] = err_pct
-        scores['bbb_miss'] = miss_pct
-        scores['bbb_details'] = details
-        scores['bbb_categories'] = categories
-    except Exception as e:
-        scores['bbb'] = f"ERROR: {e}"
+    if skip_bbb:
+        scores['bbb'] = 'SKIP'
         scores['bbb_err'] = 0.0
         scores['bbb_miss'] = 0.0
-        import traceback
-        scores['bbb_details'] = [traceback.format_exc()]
         scores['bbb_categories'] = {}
+    else:
+        try:
+            pct, err_pct, miss_pct, details, categories = compute_bbb_score(filepath)
+            scores['bbb'] = pct
+            scores['bbb_err'] = err_pct
+            scores['bbb_miss'] = miss_pct
+            scores['bbb_details'] = details
+            scores['bbb_categories'] = categories
+        except Exception as e:
+            scores['bbb'] = f"ERROR: {e}"
+            scores['bbb_err'] = 0.0
+            scores['bbb_miss'] = 0.0
+            import traceback
+            scores['bbb_details'] = [traceback.format_exc()]
+            scores['bbb_categories'] = {}
 
     # IBI
     try:
@@ -989,6 +1061,121 @@ def run_all_tests(filepath):
     return scores
 
 
+def compute_pkx_metadata_diffs(filepath):
+    """Round-trip a real model's PKX header through the live import/export phases.
+
+    Imports the model, lets post_process write the dat_pkx_* custom properties
+    (+ shiny) onto the armature, re-describes the scene, and diffs the
+    reconstructed PKXHeader against the original via the shared comparator.
+
+    Returns (is_xd, diffs) or None if the file carries no PKX header.
+    """
+    from importer.phases.post_process.post_process import post_process
+    from pkx_metadata_compare import compare_pkx_headers
+
+    with open(filepath, 'rb') as f:
+        raw = f.read()
+    filename = os.path.basename(filepath)
+    # include_shiny mirrors the real import — without it extract drops shiny_params.
+    dat_bytes, metadata = extract_dat(raw, filename, options={"include_shiny": True})[0]
+    orig = metadata.pkx_header
+    if orig is None:
+        return None
+
+    clear_blender_scene()
+    section_map = route_sections(dat_bytes)
+    sections = parse_sections(dat_bytes, section_map, {})
+    ir_scene = describe_ir(sections, {"pkx_header": orig})
+    br_scene = plan_to_br(ir_scene)
+    build_results = build_in_blender(br_scene)
+    # DAT-ordered action names the import wrote the metadata against.
+    orig_actions = [a.name for a in build_results[0]['actions']] if build_results else []
+
+    # colo_xd_kind only steers slot-label naming / model_type, which don't
+    # affect the header fields the comparator checks.
+    post_process(set(), metadata.shiny_params, {"include_shiny": True},
+                 build_results=build_results, pkx_header=orig,
+                 colo_xd_kind='PKX_POKEMON')
+
+    br_scene2, _shiny, rebuilt = describe_back_to_br()
+    # The export may re-order actions; resolve refs by name so a benign
+    # re-ordering is not counted as a metadata loss.
+    rebuilt_actions = ([a.name for a in br_scene2.models[0].actions]
+                       if br_scene2.models else [])
+    # Bone count lets the comparator treat body-map indices past the skeleton
+    # (dead null-joint references the game resolves to NULL) as expected.
+    import bpy
+    armatures = [o for o in bpy.data.objects if o.type == 'ARMATURE']
+    bone_count = len(armatures[0].data.bones) if armatures else None
+    return orig.is_xd, compare_pkx_headers(orig, rebuilt, orig_actions,
+                                           rebuilt_actions, bone_count=bone_count)
+
+
+def _generalize_field(path):
+    """Collapse numeric indices so per-slot diffs aggregate (anim[03]->anim[*])."""
+    import re as _re
+    return _re.sub(r'\[\d+\]', '[*]', path)
+
+
+def run_pkx_metadata_diagnostic(files):
+    """Sweep models, round-trip PKX metadata, print per-field divergence histograms
+    split by container format (XD vs Colosseum)."""
+    from collections import Counter
+    # per format: {field: Counter({'violation': n, 'expected': n})}, plus model tallies
+    stats = {True: {}, False: {}}
+    models = {True: 0, False: 0}
+    clean = {True: 0, False: 0}
+    skipped = errored = 0
+
+    print(f"PKX-metadata round-trip over {len(files)} file(s)...\n")
+    for filepath in files:
+        name = os.path.splitext(os.path.basename(filepath))[0]
+        try:
+            result = compute_pkx_metadata_diffs(filepath)
+        except Exception as e:
+            print(f"  {name}: ERROR {e}")
+            errored += 1
+            continue
+        if result is None:
+            skipped += 1
+            continue
+        is_xd, diffs = result
+        models[is_xd] += 1
+        vios = [d for d in diffs if d.kind == 'violation']
+        if not vios:
+            clean[is_xd] += 1
+        fmt = 'XD' if is_xd else 'COLO'
+        print(f"  {name} [{fmt}]: {len(vios)} violation(s), "
+              f"{len(diffs) - len(vios)} expected divergence(s)")
+        for d in diffs:
+            field = _generalize_field(d.path)
+            stats[is_xd].setdefault(field, Counter())[d.kind] += 1
+
+    for is_xd in (True, False):
+        fmt = 'XD' if is_xd else 'COLOSSEUM'
+        n = models[is_xd]
+        if not n:
+            continue
+        print(f"\n=== {fmt}: {n} model(s), {clean[is_xd]} clean "
+              f"({clean[is_xd] * 100 // n}%) ===")
+        fields = stats[is_xd]
+        viol = {f: c for f, c in fields.items() if c.get('violation')}
+        exp = {f: c for f, c in fields.items() if c.get('expected') and not c.get('violation')}
+        if viol:
+            print("  VIOLATIONS (field: count):")
+            for f, c in sorted(viol.items(), key=lambda kv: -kv[1]['violation']):
+                print(f"    {f}: {c['violation']}")
+        else:
+            print("  No violations.")
+        if exp:
+            print("  Expected divergences:")
+            for f, c in sorted(exp.items(), key=lambda kv: -kv[1]['expected']):
+                print(f"    {f}: {c['expected']}")
+
+    print(f"\nProcessed: XD={models[True]} COLO={models[False]} "
+          f"skipped(no header)={skipped} errored={errored}")
+
+
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith('-')]
     flags = [a for a in sys.argv[1:] if a.startswith('-')]
@@ -1005,6 +1192,10 @@ def main():
         print(f"No supported model files found at: {args}")
         sys.exit(1)
 
+    if '--pkx-metadata' in flags:
+        run_pkx_metadata_diagnostic(files)
+        return
+
     verbose = '--verbose' in flags or '-v' in flags
 
     print(f"Running round-trip tests on {len(files)} model(s)...\n")
@@ -1013,7 +1204,10 @@ def main():
     for filepath in files:
         name = os.path.splitext(os.path.basename(filepath))[0]
         print(f"  {name}...", end=' ', flush=True)
-        scores = run_all_tests(filepath)
+        # Map / scene archives (.rdat) skip BBB by default — the bpy build is
+        # minutes-slow on them (and hangs on D1_out). Override with --maps-bbb.
+        skip_bbb = filepath.lower().endswith('.rdat') and '--maps-bbb' not in flags
+        scores = run_all_tests(filepath, skip_bbb=skip_bbb)
         all_scores.append(scores)
 
         parts = []
@@ -1074,7 +1268,8 @@ def main():
                 cell = f"{val:.1f}%({err:.0f}/{miss:.0f})"
                 row += f" {cell:>{col_w}}"
             else:
-                row += f" {'ERR':>{col_w}}"
+                label = 'SKIP' if val == 'SKIP' else 'ERR'
+                row += f" {label:>{col_w}}"
         bnb_val = scores.get('bnb')
         if isinstance(bnb_val, float):
             row += f" {bnb_val:>7.1f}%"

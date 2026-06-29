@@ -404,6 +404,48 @@ Before deleting, duplicate the model into a backup collection — a few Pokémon
 
 Either approach works — pick whichever fits the rest of your editing. Open the eye texture in the Image Editor first if the atlas layout isn't obvious; the cell boundaries are usually clear at a glance.
 
+## Troubleshooting
+
+### Model renders rotated in-game (non-identity root bone)
+
+**Symptom.** The export succeeds (or the exporter rejects the scene with a "non-identity root JOBJ rotation" error), and in-game the whole model is turned — usually 90° — even though it looks correct in Blender.
+
+**Cause.** The exported **root joint rotation must be the identity**. The game applies the root joint's own rotation as the model's base orientation and does *not* cancel it the way skinning cancels a deformer bone's rotation, so a tilted root bone turns the entire model. Blender hides this because it evaluates the rest pose as the identity deformation, and a clean export→import round-trip hides it too. This only affects hand-built / GLB-imported rigs; rigs imported by this plugin are already canonical.
+
+The root bone is canonical when it points **straight up (+Z) with Roll = 0**. Fix it manually before exporting — the prep scripts intentionally do **not** adjust root orientation (automating it breaks animated children, and a blanket re-orient can't handle the mesh-vs-bone case below):
+
+- **Just the root bone is mis-oriented.** In Edit mode, aim the root bone up (+Z) and clear its roll: `Armature → Bone Roll → Clear Roll`. Do this *before* animating the root.
+
+- **The mesh and the root bone are in different orientations** (e.g. a **Z-up mesh under a Y-up root bone**). You can't simply re-orient the rig: the mesh is skinned to the bone, so rotating the bone rotates the mesh too. Use two rotations that cancel on the bone but not the mesh:
+  1. Rotate the **root bone** to axis-aligned (+Z, roll 0). The mesh rotates along with it and is now wrong.
+  2. Rotate the **mesh object** by the **inverse** of that same rotation.
+
+  The bone now exports an identity root joint, and the mesh is back in its correct orientation.
+
+- **The root bone is already animated.** Don't re-orient it in place — that rotates its children on every posed frame. Instead add a new axis-aligned `Origin` bone at the rig origin and **parent the current root to it**. The old root keeps its orientation (now cancelled through normal skinning) and the new `Origin` bone becomes the identity model root.
+
+See [implementation_notes.md → Root joint orientation](implementation_notes.md#root-joint-orientation-must-be-identity-manual-fix) for the underlying rationale.
+
+### Limbs (knees / elbows) bend the wrong way in-game
+
+**Symptom.** Legs or arms look fine in Blender, but in-game the knee or elbow folds the *opposite* way during walk / movement animations.
+
+**Cause.** These limbs are posed by **inverse kinematics** at runtime: the animation only moves the foot/hand *target*, and the game solves the knee/elbow from it. A nearly-straight limb can fold either way and still reach the target, so the game relies on a stored **bend-direction flag** to decide. If your rig doesn't express which way the joint should bend, the exporter has nothing to write, the flag defaults to "unset", and the game folds the joint the wrong way. (Models imported by this plugin already carry the flag; this affects hand-built and GLB/FBX-imported rigs.)
+
+**Fix — tell Blender which way the joint bends, one of:**
+
+- **IK limit (recommended, matches what the importer produces).** On the *middle* joint of the chain — the knee or elbow, i.e. the bone between the IK'd bone and the chain root — open the **Bone → Inverse Kinematics** panel and:
+  1. **Lock** the X and Y axes (leave **Z** free) so the joint is a clean hinge about its local Z.
+  2. Enable **Limit Z** and set the range to **one side of zero** in the direction the joint should fold — `Min 0°, Max 180°` to bend toward the joint's local +Z, or `Min −180°, Max 0°` for −Z. Flip the side if it bends backward.
+
+  The exporter reads this hinge direction and writes the matching in-game bend flag.
+
+- **Pole target.** If you'd rather rig with a pole target, add one and set the **Pole Angle** on the IK constraint so the knee/elbow points the correct way. The exporter recovers the bend direction from the pole angle.
+
+If a limb has **neither** a one-sided IK limit nor a pole target, its bend direction is undefined and will export unset — set one of the two above before exporting.
+
+See [implementation_notes.md → Inverse-kinematics bend direction](implementation_notes.md#inverse-kinematics-bend-direction-the-pole-flip-tie-breaker) for the underlying rationale.
+
 ## How to Use the New Model in Game
 
 The fastest path from a finished Blender scene to seeing your model running in-game is:

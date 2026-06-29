@@ -158,6 +158,40 @@ def test_colo_sub_anim_refs_resolved():
     assert props["dat_pkx_sub_anim_0_anim_ref"] == ""
 
 
+def test_colo_anim_entry_sub_ref_resolved_for_real_slot():
+    """Colosseum real slots leave motion_type at 0 (inverse of XD).
+
+    Regression: the metadata side used to gate on sub.motion_type > 0, so
+    every real Colosseum anim-slot reference came out empty. It must use the
+    shared active-slot detection (Colo real slot ⇔ motion_type == 0).
+    """
+    h = _colo_header()
+    # A real action slot whose sub-anim leaves motion_type at 0.
+    entry = AnimMetadataEntry(
+        anim_type=4, sub_anim_count=1,
+        sub_anims=[SubAnim(motion_type=0, anim_index=4)],
+        terminator=1,
+    )
+    h.anim_entries = [entry]
+    actions = [_action("Act%d" % i) for i in range(10)]
+    props = _derive_pkx_custom_props(h, actions=actions)
+    assert props["dat_pkx_anim_00_sub_0_anim"] == "Act4"
+
+
+def test_colo_padding_anim_entry_yields_empty_ref():
+    """A Colo padding slot (motion_type=1, anim 0) must stay empty."""
+    h = _colo_header()
+    entry = AnimMetadataEntry(
+        anim_type=4, sub_anim_count=1,
+        sub_anims=[SubAnim(motion_type=1, anim_index=0)],
+        terminator=1,
+    )
+    h.anim_entries = [entry]
+    actions = [_action("Act%d" % i) for i in range(10)]
+    props = _derive_pkx_custom_props(h, actions=actions)
+    assert props["dat_pkx_anim_00_sub_0_anim"] == ""
+
+
 def test_body_map_resolves_bone_names():
     h = _xd_pokemon_header()
     entry = AnimMetadataEntry.default_idle(is_xd=True)

@@ -184,11 +184,17 @@ def test_extract_shiny_params_bounds_check():
     assert result is None
 
 
-def test_noop_shiny_returns_none():
-    """Identity routing (0,1,2,3) + neutral brightness (128) is a no-op and returns None."""
+def test_identity_shiny_returns_params_not_skipped():
+    """Identity routing (0,1,2,3) + neutral brightness is no longer skipped:
+    it returns explicit identity params so the values round-trip and the
+    importer inserts the (no-op) shiny filter on every model."""
     raw = _build_xd_pkx((0, 1, 2, 3), (128, 128, 128, 128))
     result = _extract_shiny_params(raw, is_xd=True)
-    assert result is None
+    assert result is not None
+    assert (result.route_r, result.route_g, result.route_b, result.route_a) == (0, 1, 2, 3)
+    assert abs(result.brightness_r) < 0.02
+    assert abs(result.brightness_g) < 0.02
+    assert abs(result.brightness_b) < 0.02
 
 
 def test_noop_detection():

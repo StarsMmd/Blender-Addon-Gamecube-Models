@@ -24,14 +24,11 @@ All scripts require the DAT plugin addon to be enabled, since they depend on reg
 4. Click **Run Script**
 
 **What it does:**
-- Creates a `ShinyFilter_{armature_name}` node group with default parameters (no visible change)
-- Inserts the filter into every material on the armature's child meshes
+- Creates the `ShinyRoute` / `ShinyBright` node groups and inserts them into every material on the armature's child meshes
 - Sets up the `dat_pkx_shiny` properties on the armature so the Shiny Variant panel appears
-- Skips materials that already have a `shiny_filter_shader` node to avoid duplicates
+- Skips materials that already have a shiny node to avoid duplicates
 
-**Initial parameters:**
-- Channel routing: R→Red, G→Green, B→Blue, A→Alpha (each channel maps to itself)
-- Brightness: 0.0 for all channels (no change)
+**Initial parameters:** The addon's registered shiny defaults are identity/neutral (so a model with no real shiny round-trips as non-shiny). When the selected armature has no shiny params yet, this script seeds a visible starting variant (channel-swap routing R←Blue, G←Red, B←Green plus a small R/G brightness boost) so the preview shows an effect. An armature that already carries real shiny params (e.g. from a PKX import) is left untouched.
 
 After running, use the **Shiny Variant** panel in Object Properties to tweak parameters and toggle the filter on/off.
 
