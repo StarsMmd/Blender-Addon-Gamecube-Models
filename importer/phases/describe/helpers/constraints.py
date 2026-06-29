@@ -1,5 +1,4 @@
 """Describe constraints from Joint Reference chains into IR constraint types."""
-import math
 
 try:
     from .....shared.Constants.hsd import *
@@ -127,11 +126,13 @@ def _describe_ik(joint, bones, jtb, addr_to_joint, bone_idx_to_addr):
     if not effector_length_robj:
         return None
 
-    # Pole angle
+    # Pole angle (raw) + flip bit, kept separate. The GX runtime sets the knee
+    # bend direction from the flip bit alone (it negates the bend angle); the
+    # raw pole_angle is a small base value it does not use for the bend. Folding
+    # the flip into the angle would lose the bit the exporter must reproduce.
     pole_angle = (joint2_length_robj.property.pole_angle if joint2_length_robj
                   else effector_length_robj.property.pole_angle)
-    if getattr(effector_length_robj.property, 'pole_flip', False):
-        pole_angle += math.pi
+    pole_flip = bool(getattr(effector_length_robj.property, 'pole_flip', False))
 
     # Target bone names
     target_bone = _bone_name_for(target_robj, bones, jtb) if target_robj else None
@@ -162,6 +163,7 @@ def _describe_ik(joint, bones, jtb, addr_to_joint, bone_idx_to_addr):
         target_bone=target_bone,
         pole_target_bone=pole_target_bone,
         pole_angle=pole_angle,
+        pole_flip=pole_flip,
         bone_repositions=repositions,
     )
 

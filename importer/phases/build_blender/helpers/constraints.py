@@ -4,6 +4,8 @@ The IR constraint dataclasses already mirror Blender's constraint API
 (target_bone, track_axis, owner_space, etc.) and BRConstraints holds them
 unchanged — so this layer is a mechanical copy from BR fields to bpy.
 """
+import math
+
 import bpy
 from mathutils import Vector
 
@@ -88,10 +90,46 @@ def _build_ik(ik, armature):
     if ik.target_bone:
         c.target = armature
         c.subtarget = ik.target_bone
+    c.pole_angle = ik.pole_angle
     if ik.pole_target_bone:
         c.pole_target = armature
         c.pole_subtarget = ik.pole_target_bone
-        c.pole_angle = ik.pole_angle
+        # Blender's pole solve reads the bend side from pole_angle, so fold the
+        # GX flip back in here (the export re-derives the bit from this angle).
+        if ik.pole_flip:
+            c.pole_angle = ik.pole_angle + math.pi
+    elif ik.chain_length >= 3:
+        _constrain_poleless_bend(ik, armature)
+
+
+def _constrain_poleless_bend(ik, armature):
+    """Force a stable knee/elbow bend direction for an IK chain with no pole
+    target.
+
+    The GX rig poles such chains by angle only (BoneReference.pole_angle /
+    pole_flip), which Blender's solver cannot use without a pole target — left
+    unconstrained the middle joint pops between bend solutions. We lock the middle
+    joint(s) to a hinge about their local Z axis (the GX joint bend axis) and
+    clamp the hinge to the GX-intended side (the pole_flip bit), so the bend can
+    only open that way. The export reads this hinge limit back to recover the GX
+    flag. The chain root keeps all DOFs so it can still aim at the target.
+    """
+    # pole_flip set ⇒ the GX runtime bends to +Z about the joint's local Z axis,
+    # so the hinge is clamped to positive Z; clear ⇒ negative Z.
+    mid = armature.pose.bones[ik.bone_name].parent
+    for _ in range(ik.chain_length - 2):
+        if mid is None:
+            break
+        mid.lock_ik_x = True
+        mid.lock_ik_y = True
+        mid.use_ik_limit_z = True
+        if ik.pole_flip:
+            mid.ik_min_z = 0.0
+            mid.ik_max_z = math.pi
+        else:
+            mid.ik_min_z = -math.pi
+            mid.ik_max_z = 0.0
+        mid = mid.parent
 
 
 def _build_limit(armature, lim, limit_type):

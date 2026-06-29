@@ -15,12 +15,20 @@ class IRBoneReposition:
 
 @dataclass
 class IRIKConstraint:
-    """Inverse kinematics constraint."""
+    """Inverse kinematics constraint.
+
+    pole_angle is the raw pole angle. pole_flip is the bend-direction bit: the GX
+    runtime decides which way the middle joint (knee/elbow) folds purely from this
+    flag (it negates the computed bend angle), independent of pole_angle. Keeping
+    them separate lets the exporter reproduce the GX flag faithfully instead of
+    folding the flip into the angle (which the runtime ignores for the bend).
+    """
     bone_name: str
     chain_length: int
     target_bone: str | None = None
     pole_target_bone: str | None = None
     pole_angle: float = 0.0
+    pole_flip: bool = False
     bone_repositions: list[IRBoneReposition] = field(default_factory=list)
 
 

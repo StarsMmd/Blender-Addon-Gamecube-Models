@@ -5,6 +5,8 @@ The IR constraint dataclasses already mirror Blender's constraint API
 direct read produces IR-shaped values that BRConstraints holds by
 reference. Plan unwraps them in O(1).
 """
+import math
+
 import bpy
 
 try:
@@ -108,7 +110,19 @@ def _describe_ik(constraint, bone_name, armature, ir_bones, bone_name_to_idx):
 
     target_bone = constraint.subtarget if constraint.target else None
     pole_target_bone = constraint.pole_subtarget if constraint.pole_target else None
-    pole_angle = constraint.pole_angle
+    # Recover the GX bend-direction flag from whatever the Blender rig actually
+    # uses to decide which way the middle joint folds — never from a folded
+    # pole_angle, so this works for arbitrary (non-imported) rigs too:
+    #   - pole-target rig: Blender's pole solve reads the bend side from
+    #     pole_angle (the GX flip shows up as ~pi added to it);
+    #   - angle-poled rig: the bend side is the middle joint's IK hinge-limit
+    #     direction (our importer locks it to +/- local Z).
+    if pole_target_bone:
+        pole_flip = _angle_is_flipped(constraint.pole_angle)
+        pole_angle = constraint.pole_angle - math.pi if pole_flip else constraint.pole_angle
+    else:
+        pole_angle = constraint.pole_angle
+        pole_flip = _hinge_limit_flip(armature, bone_name)
 
     repositions = []
     bone_idx = bone_name_to_idx.get(bone_name)
@@ -140,8 +154,31 @@ def _describe_ik(constraint, bone_name, armature, ir_bones, bone_name_to_idx):
         target_bone=target_bone,
         pole_target_bone=pole_target_bone,
         pole_angle=pole_angle,
+        pole_flip=pole_flip,
         bone_repositions=repositions,
     )
+
+
+def _angle_is_flipped(angle):
+    """True when a pole angle sits in the flipped half (nearer pi than 0)."""
+    norm = (angle + math.pi) % (2 * math.pi) - math.pi
+    return abs(norm) > math.pi / 2
+
+
+def _hinge_limit_flip(armature, effector_name):
+    """Recover the GX pole_flip bit from the middle joint's IK hinge limit.
+
+    The importer locks the middle joint (the effector's parent) to a hinge about
+    its local Z and clamps it to one side: positive Z (ik_max_z > 0, ik_min_z ~ 0)
+    means the GX flip bit was set; negative Z means it was clear. Returns False
+    when the joint carries no Z limit (nothing to read — an unconstrained chain is
+    genuinely ambiguous, the same way the GX format is without the flag).
+    """
+    effector = armature.pose.bones.get(effector_name)
+    mid = effector.parent if effector else None
+    if mid is None or not mid.use_ik_limit_z:
+        return False
+    return mid.ik_max_z > abs(mid.ik_min_z)
 
 
 def _describe_limit(constraint, bone_name):

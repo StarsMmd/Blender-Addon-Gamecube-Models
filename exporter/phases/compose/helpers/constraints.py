@@ -166,16 +166,16 @@ def _compose_ik(ik, joints, bones, bone_name_to_idx, _add_ref):
             ref.next = None
             _add_ref(pole_data_idx, ref)
 
-    # BoneReference nodes for IK bone lengths
-    # The effector's parent gets a BoneReference with the effector's bone length
-    # The pole data joint gets a BoneReference with the JOINT2's bone length (chain_length=3)
-    #
-    # Pole angle encoding: the IR stores the final pole angle (after any
-    # pole_flip addition in the describe phase). The original binary may store
-    # the raw angle with or without the pole_flip flag — we preserve the raw
-    # angle directly in the BoneReference since that's what the format expects.
-    pole_angle = ik.pole_angle
-
+    # BoneReference (IK-hint) nodes for the chain's bone lengths.
+    #   - The effector's reposition → a BoneReference on the effector's parent
+    #     (the middle joint). The GX runtime reads the bend-direction flip bit
+    #     from this first hint on the middle joint, so it carries the pole_flip
+    #     bit (0x4) and a zero pole_angle.
+    #   - The JOINT2 reposition → a BoneReference on its parent, carrying the raw
+    #     pole_angle (the small base value; the runtime does not use it for the
+    #     knee bend, but it is where the original stores it).
+    # The flip bit governs which way the joint folds in game; folding it into the
+    # angle instead would drop it (the runtime ignores the angle for the bend).
     for reposition in ik.bone_repositions:
         repo_idx = bone_name_to_idx.get(reposition.bone_name)
         if repo_idx is None:
@@ -191,13 +191,16 @@ def _compose_ik(ik, joints, bones, bone_name_to_idx, _add_ref):
             parent_scale = 1.0
         raw_length = reposition.bone_length / parent_scale
 
+        is_effector = reposition.bone_name == ik.bone_name
+        flip_bit = 0x4 if (is_effector and ik.pole_flip) else 0
+
         br = BoneReference(address=None, blender_obj=None)
         br.length = raw_length
-        br.pole_angle = pole_angle
+        br.pole_angle = 0.0 if is_effector else ik.pole_angle
 
         ref = Reference(address=None, blender_obj=None)
-        ref.flags = ROBJ_ACTIVE_BIT | REFTYPE_IKHINT | 0
-        ref.sub_type = 0
+        ref.flags = ROBJ_ACTIVE_BIT | REFTYPE_IKHINT | flip_bit
+        ref.sub_type = flip_bit
         ref.property = br
         ref.next = None
 

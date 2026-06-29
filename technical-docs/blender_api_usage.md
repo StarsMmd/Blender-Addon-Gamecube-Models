@@ -129,6 +129,9 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.80 | current | `constraint.subtarget = name` | `constraints.py` | |
 | 2.80 | current | `constraint.chain_count = n` | `constraints.py` | IK |
 | 2.80 | current | `constraint.pole_target = obj` | `constraints.py` | IK |
+| 2.80 | current | `pose_bone.lock_ik_x/y` (write) | `build_blender/helpers/constraints.py` | Hinge the IK middle joint about local Z |
+| 2.80 | current | `pose_bone.use_ik_limit_z` (read/write) | `build_blender/helpers/constraints.py`, `exporter/describe/helpers/constraints.py` | Clamp / read the IK bend side (pole_flip) |
+| 2.80 | current | `pose_bone.ik_min_z` / `ik_max_z` (read/write) | `build_blender/helpers/constraints.py`, `exporter/describe/helpers/constraints.py` | IK hinge limit range; sign encodes the GX pole_flip |
 | 2.80 | current | `constraint.type` | `export/constraints.py` | Read constraint type string |
 | 2.80 | current | `constraint.enabled` | `export/constraints.py` | Check if constraint is active |
 | 2.80 | current | `constraint.influence` | `export/constraints.py` | Copy Location influence weight |
