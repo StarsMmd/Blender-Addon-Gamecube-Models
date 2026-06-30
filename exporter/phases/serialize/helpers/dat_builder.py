@@ -56,7 +56,7 @@ class DATBuilder(BinaryWriter):
 	# Length of the Header data of a DAT model. Pointers in the data are relative to the end of this header.
 	DAT_header_length = 32
 
-	def __init__(self, path_or_stream, root_nodes, section_names=None):
+	def __init__(self, path_or_stream, root_nodes, section_names=None, dedup_buffers=False):
 		super().__init__(path_or_stream)
 		# Reserve space for the header (will be overwritten at the end)
 		self.file.write(b'\x00' * self.DAT_header_length)
@@ -64,6 +64,21 @@ class DATBuilder(BinaryWriter):
 		self.root_nodes = root_nodes
 		self.section_names = section_names or [None] * len(root_nodes)
 		self.relocations = []
+
+		# Content-addressed buffer dedup. Maps a namespace (e.g. 'image',
+		# 'palette', 'frame_ad') to a {bytes: header-relative offset} cache so
+		# identical raw buffers within a category share a single written block.
+		# Kept per-namespace rather than global so each category keeps its own
+		# alignment/layout discipline (see write_dedup_blob).
+		self._blob_caches = {}
+		# Whether to apply the *optional* buffer dedups (palette LUTs, keyframe
+		# streams) that shrink the output but diverge from the original
+		# compiler's layout. Off by default: the original compiler did not dedup
+		# these, so exports stay layout-faithful and binary round-trips match
+		# game files byte-for-byte. Opt in by passing True to recover the size
+		# win on arbitrary models. Dedups flagged matches_original=True (image
+		# pixels) are applied regardless of this flag.
+		self.dedup_buffers = dedup_buffers
 
 		# Build the node list via DFS post-order (children before parents).
 		# Uses identity-based dedup to handle shared nodes and None addresses.
@@ -179,6 +194,43 @@ class DATBuilder(BinaryWriter):
 		"""
 		while self._currentRelativeAddress() % 32 != 0:
 			self.write(0, 'uchar')
+
+	def write_dedup_blob(self, raw, namespace, align=0, matches_original=False):
+		"""Write a raw byte buffer at the file tail, deduplicated by content
+		within ``namespace``. Identical buffers in the same namespace share one
+		written block; returns the header-relative offset of the (possibly
+		shared) block. Returns 0 for an empty/None buffer.
+
+		``align`` pads to that byte boundary before a freshly-written block (the
+		shared block inherits the alignment of its first write). Namespaces are
+		kept separate so one category's buffers can't land at another's expected
+		alignment. Used for image pixels, palette LUTs and keyframe (Frame.ad)
+		buffers; the same primitive could back any other pointer-referenced blob.
+
+		``matches_original=True`` marks a dedup the original compiler also
+		performed (image pixels) — always applied. The default is an *optional*
+		size optimisation gated by ``self.dedup_buffers``: skipped (every buffer
+		written fresh) when that flag is off, so binary round-trips reproduce the
+		original layout.
+		"""
+		if not raw:
+			return 0
+		key = bytes(raw)
+		dedup = matches_original or self.dedup_buffers
+		if dedup:
+			cache = self._blob_caches.setdefault(namespace, {})
+			cached = cache.get(key)
+			if cached is not None:
+				return cached
+		self.seek(0, 'end')
+		if align:
+			while self._currentRelativeAddress() % align != 0:
+				self.write(0, 'uchar')
+		offset = self._currentRelativeAddress()
+		self.file.write(key)
+		if dedup:
+			cache[key] = offset
+		return offset
 
 	def _serialization_blocks(self):
 		"""Collect the explicit serialization order of every subtree whose

@@ -28,14 +28,15 @@ class Frame(Node):
 
     def writePrivateData(self, builder):
         super().writePrivateData(builder)
+        # Keyframe buffers are deduplicated by content: identical channel
+        # streams (e.g. constant tracks repeated across X/Y/Z and across bones)
+        # share one written block. The enclosing frame run 4-byte aligns each
+        # fresh buffer, so no extra alignment is requested here.
+        self.ad = builder.write_dedup_blob(self.raw_ad, 'frame_ad')
         if self.raw_ad:
-            builder.seek(0, 'end')
-            self.ad = builder._currentRelativeAddress()
-            for byte in self.raw_ad:
-                builder.write(byte, 'uchar')
+            # Gate on the buffer, not the returned offset: a buffer legitimately
+            # at data offset 0 must still record a relocation.
             self._raw_pointer_fields.add('ad')
-        else:
-            self.ad = 0
 
 
 _interpolation_dict = {

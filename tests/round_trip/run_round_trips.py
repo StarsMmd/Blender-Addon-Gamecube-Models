@@ -34,6 +34,7 @@ Test types:
 import sys
 import os
 import io
+import struct
 from collections import Counter
 
 # Add the addon directory to the path
@@ -214,7 +215,9 @@ def compute_nbn_score(filepath):
     root_nodes = [s.root_node for s in sections]
     section_names = [s.section_name for s in sections]
     out_buf = io.BytesIO()
-    builder = DATBuilder(out_buf, root_nodes, section_names)
+    # Optional buffer dedup (palette/keyframe) diverges from the original
+    # layout, so disable it here to measure fidelity against the source file.
+    builder = DATBuilder(out_buf, root_nodes, section_names, dedup_buffers=False)
     builder.build()
     rebuilt_bytes = out_buf.getvalue()
 
@@ -250,7 +253,9 @@ def compute_bnb_score(filepath):
     root_nodes = [s.root_node for s in sections]
     section_names = [s.section_name for s in sections]
     out_buf = io.BytesIO()
-    builder = DATBuilder(out_buf, root_nodes, section_names)
+    # Optional buffer dedup (palette/keyframe) diverges from the original
+    # layout, so disable it here to measure fidelity against the source file.
+    builder = DATBuilder(out_buf, root_nodes, section_names, dedup_buffers=False)
     builder.build()
     rebuilt_bytes = out_buf.getvalue()
 
@@ -794,6 +799,12 @@ def _compare_node_trees(node_a, node_b):
                 elif val_a != val_b:
                     errors += 1
 
+        # Compare raw data buffers held as attributes (e.g. BoundBox AABBs).
+        dt, de, dm, _ = _compare_blob_attrs(a, b)
+        total += dt
+        errors += de
+        misses += dm
+
     _walk(node_a, node_b)
     return total, errors, misses
 
@@ -801,6 +812,82 @@ def _compare_node_trees(node_a, node_b):
 # Node fields to skip in NIN/NBN comparisons — file offsets and
 # address-like fields that change between builds but aren't model data
 _NODE_SKIP_FIELDS = {'address', 'data_address', 'display_list_address', 'base_pointer'}
+
+
+# Raw data buffers some nodes carry as plain *attributes* (set in
+# loadFromBinary), not as declared `fields`. The field-walking comparisons
+# above never see them, so the buffer contents were previously unchecked by
+# NBN/NIN. Declare them here so both comparisons validate the actual data.
+# Each entry is (attr, kind):
+#   'aabb_frames' — BoundBox per-frame AABBs. The node's iter_frames() splits
+#                   the structured blob into 24-byte (min+max vec3) chunks,
+#                   skipping the per-set uint32 count prefixes, so frames are
+#                   compared 1-to-1 and aligned across animation sets. One
+#                   point per frame (matched / error / miss).
+#   'bytes'       — compared byte-for-byte as a single point.
+# Extendable to image/palette/keyframe/vertex buffers (raw_image_data,
+# raw_data, raw_ad, raw_vertex_data) when we want those covered too.
+_COMPARE_BLOBS = {
+    'BoundBox': (('raw_aabb_data', 'aabb_frames'),),
+}
+_BLOB_FLOAT_TOL = 1e-3
+
+
+def _compare_blob_attrs(orig_node, comp_node):
+    """Compare the raw data buffers a node carries as attributes (see
+    _COMPARE_BLOBS). Returns (total, errors, misses, details).
+
+    For 'aabb_frames' the blob is decoded into per-frame AABBs (aligned across
+    animation sets) and each frame scores a point: matched, error (present but
+    diverging beyond tol) or miss (absent on the composed side). One summary
+    detail line is emitted per buffer."""
+    specs = _COMPARE_BLOBS.get(type(orig_node).__name__)
+    if not specs:
+        return 0, 0, 0, []
+    total = errors = misses = 0
+    details = []
+    for attr, kind in specs:
+        o = getattr(orig_node, attr, b'') or b''
+        c = (getattr(comp_node, attr, b'') or b'') if comp_node is not None else b''
+        label = f"{type(orig_node).__name__}.{attr}"
+        if not o and not c:
+            continue
+        if kind == 'aabb_frames':
+            of = list(type(orig_node).iter_frames(
+                o, orig_node.anim_set_count, orig_node.first_anim_frame_count))
+            cf = list(type(comp_node).iter_frames(
+                c, comp_node.anim_set_count, comp_node.first_anim_frame_count)) \
+                if comp_node is not None else []
+            bad = miss = 0
+            worst = 0.0
+            for i in range(len(of)):
+                total += 1
+                if i >= len(cf):
+                    misses += 1
+                    miss += 1
+                    continue
+                fo = struct.unpack('>6f', of[i])
+                fc = struct.unpack('>6f', cf[i])
+                dmax = max(abs(a - b) for a, b in zip(fo, fc))
+                if dmax > _BLOB_FLOAT_TOL:
+                    errors += 1
+                    bad += 1
+                    if dmax > worst:
+                        worst = dmax
+            if bad or miss:
+                details.append(
+                    f"ERR  {label}: {bad} diverged + {miss} missing of "
+                    f"{len(of)} frames (worst max|d|={worst:.4g})")
+        else:  # 'bytes'
+            total += 1
+            if not c:
+                misses += 1
+                details.append(f"MISS {label}: {len(o)} bytes vs empty")
+            elif bytes(o) != bytes(c):
+                errors += 1
+                ndiff = sum(1 for x, y in zip(o, c) if x != y) + abs(len(o) - len(c))
+                details.append(f"ERR  {label}: {len(o)} vs {len(c)} bytes, {ndiff} differ")
+    return total, errors, misses, details
 
 
 def _is_inactive_tev(field_name, node):
@@ -927,6 +1014,14 @@ def _compare_node_trees_nin(orig, composed):
                 elif not _nin_value_equal(val_orig, val_comp):
                     errors += 1
                     details.append(f"ERR  {fp}: {repr(val_orig)[:60]} vs {repr(val_comp)[:60]}")
+
+        # Compare raw data buffers held as attributes (e.g. BoundBox AABBs).
+        dt, de, dm, dd = _compare_blob_attrs(orig_node, comp_node)
+        total += dt
+        errors += de
+        misses += dm
+        for d in dd:
+            details.append(f"{node_path}: {d}")
 
     _walk(orig, composed)
     return total, errors, misses, details
