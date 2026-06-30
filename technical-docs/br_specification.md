@@ -207,6 +207,7 @@ A direct mirror of `bpy.types.ShaderNode`.
 | `alpha_mode` | `str` | `'CHANNEL_PACKED'` default. |
 | `pack` | `bool` | Whether to call `bpy_image.pack()`. |
 | `gx_format_override` | `str \| None` | Written to `bpy_image.dat_gx_format` for round-trip export. |
+| `palette_format_override` | `str \| None` | TLUT format for indexed (C4/C8/C14X2) images. Written to `bpy_image.dat_palette_format`; ignored for non-indexed formats. |
 
 ---
 

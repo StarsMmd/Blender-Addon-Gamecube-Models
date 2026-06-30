@@ -8,16 +8,18 @@ import array
 import pytest
 
 from shared.texture_encoder import (
-    analyze_pixels, select_format, encode_texture,
+    analyze_pixels, select_format, select_palette_format, encode_texture,
     encode_i4, encode_i8, encode_ia4, encode_ia8,
     encode_rgb565, encode_rgb5a3, encode_rgba8, encode_cmpr,
-    encode_c4, encode_c8,
+    encode_c4, encode_c8, encode_c14x2,
 )
 from shared.Constants.gx import (
     GX_TF_I4, GX_TF_I8, GX_TF_IA4, GX_TF_IA8,
     GX_TF_RGB565, GX_TF_RGB5A3, GX_TF_RGBA8, GX_TF_CMPR,
     GX_TF_C4, GX_TF_C8,
+    GX_TL_IA8, GX_TL_RGB565, GX_TL_RGB5A3,
 )
+from shared.IR.enums import GXPaletteFormat
 from shared.Nodes.Classes.Texture.Image import (
     convert_I4_block, convert_I8_block, convert_IA4_block, convert_IA8_block,
     convert_RGB565_block, convert_RGB5A3_block, convert_RGBA8_block,
@@ -261,6 +263,66 @@ class TestEncodeDecodeRoundTrip:
         decoded = _decode_tiles(tile_data, 8, 4, GX_TF_C8, palette=pal)
         # Palette quantization from RGB5A3
         assert _max_diff(pixels, decoded) <= 8
+
+
+# ---------------------------------------------------------------------------
+# Palette (TLUT) format hint
+# ---------------------------------------------------------------------------
+
+class TestPaletteFormatHint:
+    """The palette format hint lets indexed textures round-trip their original
+    TLUT format (IA8/RGB565/RGB5A3) instead of always re-encoding to RGB5A3."""
+
+    def test_select_palette_format_mapping(self):
+        assert select_palette_format(None) is None
+        assert select_palette_format(GXPaletteFormat.AUTO) is None
+        assert select_palette_format(GXPaletteFormat.IA8) == GX_TL_IA8
+        assert select_palette_format(GXPaletteFormat.RGB565) == GX_TL_RGB565
+        assert select_palette_format(GXPaletteFormat.RGB5A3) == GX_TL_RGB5A3
+
+    def test_default_palette_format_is_rgb5a3(self):
+        """No hint (None) preserves the historical RGB5A3 default."""
+        pixels = _make_gradient_image(8, 4)
+        for enc in (encode_c4, encode_c8, encode_c14x2):
+            _, _, pal_fmt, _ = enc(pixels, 8, 4)
+            assert pal_fmt == GX_TL_RGB5A3
+
+    def test_hint_selects_requested_format(self):
+        pixels = _make_gradient_image(8, 4)
+        for hint in (GX_TL_IA8, GX_TL_RGB565, GX_TL_RGB5A3):
+            _, _, pal_fmt, _ = encode_c8(pixels, 8, 4, hint)
+            assert pal_fmt == hint
+
+    def test_encode_texture_threads_palette_format(self):
+        pixels = _make_solid_image(8, 8, 200, 100, 50)
+        result = encode_texture(pixels, 8, 8, GX_TF_C8, GX_TL_RGB565)
+        assert result['palette_format'] == GX_TL_RGB565
+
+    def test_rgb565_roundtrip_opaque(self):
+        """An opaque indexed texture encoded with the RGB565 hint round-trips
+        through the importer's palette decoder within 565 quantization."""
+        pixels = _make_gradient_image(8, 4)
+        tile_data, pal_data, pal_fmt, _ = encode_c8(pixels, 8, 4, GX_TL_RGB565)
+        assert pal_fmt == GX_TL_RGB565
+        pal = _MockPalette(pal_data, pal_fmt)
+        decoded = _decode_tiles(tile_data, 8, 4, GX_TF_C8, palette=pal)
+        assert _max_diff(pixels, decoded) <= 8
+
+    def test_ia8_roundtrip_grayscale(self):
+        """A grayscale+alpha indexed texture round-trips through an IA8 TLUT."""
+        # 4 distinct gray levels, each with its own alpha
+        pixels = bytes(
+            [40, 40, 40, 255] * 8 +
+            [120, 120, 120, 200] * 8 +
+            [200, 200, 200, 128] * 8 +
+            [0, 0, 0, 0] * 8
+        )
+        tile_data, pal_data, pal_fmt, _ = encode_c8(pixels, 8, 4, GX_TL_IA8)
+        assert pal_fmt == GX_TL_IA8
+        pal = _MockPalette(pal_data, pal_fmt)
+        decoded = _decode_tiles(tile_data, 8, 4, GX_TF_C8, palette=pal)
+        # IA8 is exact for grayscale intensity and 8-bit alpha
+        assert _max_diff(pixels, decoded) == 0
 
 
 # ---------------------------------------------------------------------------

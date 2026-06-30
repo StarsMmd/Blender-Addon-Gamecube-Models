@@ -13,7 +13,9 @@ try:
     from .....shared.Nodes.Classes.Texture.TextureLOD import TextureLOD
     from .....shared.Nodes.Classes.Texture.TextureTEV import TextureTEV
     from .....shared.Nodes.Classes.Rendering.PixelEngine import PixelEngine
-    from .....shared.texture_encoder import analyze_pixels, select_format, encode_texture
+    from .....shared.texture_encoder import (
+        analyze_pixels, select_format, select_palette_format, encode_texture,
+    )
     from .....shared.Nodes.Classes.Colors.RGBAColor import RGBAColor, RGBX8Color
     from .....shared.Constants.hsd import (
         RENDER_DIFFUSE, RENDER_SPECULAR, RENDER_XLU,
@@ -72,7 +74,9 @@ except (ImportError, SystemError):
     from shared.Nodes.Classes.Texture.TextureLOD import TextureLOD
     from shared.Nodes.Classes.Texture.TextureTEV import TextureTEV
     from shared.Nodes.Classes.Rendering.PixelEngine import PixelEngine
-    from shared.texture_encoder import analyze_pixels, select_format, encode_texture
+    from shared.texture_encoder import (
+        analyze_pixels, select_format, select_palette_format, encode_texture,
+    )
     from shared.Nodes.Classes.Colors.RGBAColor import RGBAColor, RGBX8Color
     from shared.Constants.hsd import (
         RENDER_DIFFUSE, RENDER_SPECULAR, RENDER_XLU,
@@ -433,7 +437,9 @@ def _build_image_node(ir_image, logger=StubLogger(), image_cache=None):
     # Select format and encode
     analysis = analyze_pixels(ir_image.pixels, ir_image.width, ir_image.height)
     format_id = select_format(analysis, ir_image.gx_format_override)
-    result = encode_texture(ir_image.pixels, ir_image.width, ir_image.height, format_id)
+    palette_format = select_palette_format(ir_image.palette_format_override)
+    result = encode_texture(ir_image.pixels, ir_image.width, ir_image.height,
+                            format_id, palette_format)
 
     img.format = format_id
     img.raw_image_data = result['image_data']

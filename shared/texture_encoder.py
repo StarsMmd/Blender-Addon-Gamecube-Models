@@ -13,14 +13,14 @@ try:
         GX_TF_I4, GX_TF_I8, GX_TF_IA4, GX_TF_IA8,
         GX_TF_RGB565, GX_TF_RGB5A3, GX_TF_RGBA8, GX_TF_CMPR,
         GX_TF_C4, GX_TF_C8, GX_TF_C14X2,
-        GX_TL_RGB5A3,
+        GX_TL_IA8, GX_TL_RGB565, GX_TL_RGB5A3,
     )
 except (ImportError, SystemError):
     from Constants.gx import (
         GX_TF_I4, GX_TF_I8, GX_TF_IA4, GX_TF_IA8,
         GX_TF_RGB565, GX_TF_RGB5A3, GX_TF_RGBA8, GX_TF_CMPR,
         GX_TF_C4, GX_TF_C8, GX_TF_C14X2,
-        GX_TL_RGB5A3,
+        GX_TL_IA8, GX_TL_RGB565, GX_TL_RGB5A3,
     )
 
 
@@ -409,8 +409,10 @@ def _rgb565_distance(c0, c1):
 # Palette-indexed format encoders
 # ---------------------------------------------------------------------------
 
-def encode_c4(pixels, width, height):
+def encode_c4(pixels, width, height, palette_format=None):
     """Encode as C4 — 4bpp palette-indexed, 8x8 tiles. Max 16 colors.
+
+    palette_format: GX_TL_* id, or None to default to RGB5A3.
 
     Returns:
         (tile_data, palette_data, palette_format, entry_count)
@@ -431,12 +433,15 @@ def encode_c4(pixels, width, height):
                     i1 = index_map.get((r1, g1, b1, a1), 0)
                     out[idx] = (i0 << 4) | i1
                     idx += 1
-    pal_data = _encode_palette_rgb5a3(palette)
-    return bytes(out[:idx]), pal_data, GX_TL_RGB5A3, len(palette)
+    pal_fmt = palette_format if palette_format is not None else GX_TL_RGB5A3
+    pal_data = _encode_palette(palette, pal_fmt)
+    return bytes(out[:idx]), pal_data, pal_fmt, len(palette)
 
 
-def encode_c8(pixels, width, height):
+def encode_c8(pixels, width, height, palette_format=None):
     """Encode as C8 — 8bpp palette-indexed, 8x4 tiles. Max 256 colors.
+
+    palette_format: GX_TL_* id, or None to default to RGB5A3.
 
     Returns:
         (tile_data, palette_data, palette_format, entry_count)
@@ -454,12 +459,15 @@ def encode_c8(pixels, width, height):
                     r, g, b, a = _get_pixel(pixels, width, height, bx * tw + px, by * th + py)
                     out[idx] = index_map.get((r, g, b, a), 0)
                     idx += 1
-    pal_data = _encode_palette_rgb5a3(palette)
-    return bytes(out[:idx]), pal_data, GX_TL_RGB5A3, len(palette)
+    pal_fmt = palette_format if palette_format is not None else GX_TL_RGB5A3
+    pal_data = _encode_palette(palette, pal_fmt)
+    return bytes(out[:idx]), pal_data, pal_fmt, len(palette)
 
 
-def encode_c14x2(pixels, width, height):
+def encode_c14x2(pixels, width, height, palette_format=None):
     """Encode as C14X2 — 16bpp palette-indexed, 4x4 tiles. Max 16384 colors.
+
+    palette_format: GX_TL_* id, or None to default to RGB5A3.
 
     Returns:
         (tile_data, palette_data, palette_format, entry_count)
@@ -479,8 +487,9 @@ def encode_c14x2(pixels, width, height):
                     out[idx] = ci >> 8
                     out[idx + 1] = ci & 0xFF
                     idx += 2
-    pal_data = _encode_palette_rgb5a3(palette)
-    return bytes(out[:idx]), pal_data, GX_TL_RGB5A3, len(palette)
+    pal_fmt = palette_format if palette_format is not None else GX_TL_RGB5A3
+    pal_data = _encode_palette(palette, pal_fmt)
+    return bytes(out[:idx]), pal_data, pal_fmt, len(palette)
 
 
 def _build_palette(pixels, width, height, max_colors):
@@ -506,6 +515,32 @@ def _build_palette(pixels, width, height, max_colors):
     return colors, index_map
 
 
+def _encode_palette_ia8(palette):
+    """Encode a palette as IA8 (format 0) — 2 bytes per entry: [alpha, intensity].
+
+    IA8 is grayscale-only; RGB is collapsed to a single intensity (the
+    inverse of get_palette_color, which expands intensity into R=G=B).
+    """
+    out = bytearray(len(palette) * 2)
+    for i, (r, g, b, a) in enumerate(palette):
+        out[i * 2] = a
+        out[i * 2 + 1] = round((r + g + b) / 3)
+    return bytes(out)
+
+
+def _encode_palette_rgb565(palette):
+    """Encode a palette as RGB565 (format 1) — 2 bytes per entry, big-endian.
+
+    RGB565 has no alpha channel; alpha is discarded.
+    """
+    out = bytearray(len(palette) * 2)
+    for i, (r, g, b, a) in enumerate(palette):
+        val = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3)
+        out[i * 2] = val >> 8
+        out[i * 2 + 1] = val & 0xFF
+    return bytes(out)
+
+
 def _encode_palette_rgb5a3(palette):
     """Encode a palette as RGB5A3 (format 2) — 2 bytes per entry."""
     out = bytearray(len(palette) * 2)
@@ -519,11 +554,20 @@ def _encode_palette_rgb5a3(palette):
     return bytes(out)
 
 
+def _encode_palette(palette, palette_format):
+    """Encode a palette list in the given GX TLUT format (GX_TL_* id)."""
+    if palette_format == GX_TL_IA8:
+        return _encode_palette_ia8(palette)
+    if palette_format == GX_TL_RGB565:
+        return _encode_palette_rgb565(palette)
+    return _encode_palette_rgb5a3(palette)
+
+
 # ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
 
-def encode_texture(pixels, width, height, format_id):
+def encode_texture(pixels, width, height, format_id, palette_format=None):
     """Encode pixels into the specified GX texture format.
 
     Args:
@@ -531,6 +575,8 @@ def encode_texture(pixels, width, height, format_id):
         width: Image width.
         height: Image height.
         format_id: GX texture format constant (e.g. GX_TF_CMPR).
+        palette_format: GX_TL_* id for indexed formats, or None to default
+            to RGB5A3. Ignored for non-indexed formats.
 
     Returns:
         dict with keys:
@@ -540,15 +586,15 @@ def encode_texture(pixels, width, height, format_id):
             palette_count: int | None — number of palette entries
     """
     if format_id == GX_TF_C4:
-        tile_data, pal_data, pal_fmt, pal_count = encode_c4(pixels, width, height)
+        tile_data, pal_data, pal_fmt, pal_count = encode_c4(pixels, width, height, palette_format)
         return {'image_data': tile_data, 'palette_data': pal_data,
                 'palette_format': pal_fmt, 'palette_count': pal_count}
     elif format_id == GX_TF_C8:
-        tile_data, pal_data, pal_fmt, pal_count = encode_c8(pixels, width, height)
+        tile_data, pal_data, pal_fmt, pal_count = encode_c8(pixels, width, height, palette_format)
         return {'image_data': tile_data, 'palette_data': pal_data,
                 'palette_format': pal_fmt, 'palette_count': pal_count}
     elif format_id == GX_TF_C14X2:
-        tile_data, pal_data, pal_fmt, pal_count = encode_c14x2(pixels, width, height)
+        tile_data, pal_data, pal_fmt, pal_count = encode_c14x2(pixels, width, height, palette_format)
         return {'image_data': tile_data, 'palette_data': pal_data,
                 'palette_format': pal_fmt, 'palette_count': pal_count}
 
@@ -592,3 +638,33 @@ try:
     }
 except (ImportError, SystemError):
     pass
+
+
+# Mapping from GXPaletteFormat enum to GX TLUT format IDs
+_PALETTE_FORMAT_ENUM_TO_ID = {}
+try:
+    from .IR.enums import GXPaletteFormat
+    _PALETTE_FORMAT_ENUM_TO_ID = {
+        GXPaletteFormat.IA8: GX_TL_IA8,
+        GXPaletteFormat.RGB565: GX_TL_RGB565,
+        GXPaletteFormat.RGB5A3: GX_TL_RGB5A3,
+    }
+except (ImportError, SystemError):
+    pass
+
+
+def select_palette_format(user_override=None):
+    """Resolve a palette TLUT format ID from an optional GXPaletteFormat.
+
+    Args:
+        user_override: GXPaletteFormat enum value, or None for auto.
+
+    Returns:
+        GX_TL_* id, or None to let the encoder use its default (RGB5A3).
+    """
+    if user_override is None:
+        return None
+    from .IR.enums import GXPaletteFormat
+    if user_override == GXPaletteFormat.AUTO:
+        return None
+    return _PALETTE_FORMAT_ENUM_TO_ID.get(user_override)

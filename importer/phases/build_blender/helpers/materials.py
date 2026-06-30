@@ -137,6 +137,8 @@ def _resolve_image(br_image, image_cache):
         bpy_image.pack()
     if br_image.gx_format_override is not None and hasattr(bpy_image, 'dat_gx_format'):
         bpy_image.dat_gx_format = br_image.gx_format_override
+    if br_image.palette_format_override is not None and hasattr(bpy_image, 'dat_palette_format'):
+        bpy_image.dat_palette_format = br_image.palette_format_override
 
     image_cache[br_image.cache_key] = bpy_image
     return bpy_image

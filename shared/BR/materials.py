@@ -18,6 +18,7 @@ class BRImage:
     alpha_mode: str = 'CHANNEL_PACKED'
     pack: bool = True
     gx_format_override: str | None = None  # stored on bpy_image.dat_gx_format
+    palette_format_override: str | None = None  # stored on bpy_image.dat_palette_format
 
 
 @dataclass
