@@ -28,7 +28,7 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.80 | current | `bpy.props.BoolProperty` | `BlenderPlugin.py` | Operator toggles + `dat_pkx_shiny`, `dat_gpt1_particles_visible` on Object |
 | 2.80 | current | `bpy.props.IntProperty` | `BlenderPlugin.py` | Max frame |
 | 2.80 | current | `bpy.props.FloatProperty` | `BlenderPlugin.py` | `dat_pkx_shiny_brightness_*` on Object |
-| 2.80 | current | `bpy.props.EnumProperty` | `BlenderPlugin.py` | `dat_pkx_shiny_route_*` on Object |
+| 2.80 | current | `bpy.props.EnumProperty` | `BlenderPlugin.py` | `dat_pkx_shiny_route_*` on Object; `dat_gx_format`, `dat_palette_format` on Image |
 | 2.80 | current | `setattr(bpy.types.Object, name, prop)` | `BlenderPlugin.py` | Register shiny properties on Object type |
 | 2.80 | current | `delattr(bpy.types.Object, name)` | `BlenderPlugin.py` | Unregister shiny properties |
 | 2.80 | current | Property `update` callback | `BlenderPlugin.py` | `_on_shiny_toggle_update`, `_on_shiny_param_update`, `_on_particles_visible_update` |

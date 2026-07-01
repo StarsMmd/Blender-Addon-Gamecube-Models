@@ -73,6 +73,11 @@ def main():
                     old_fmt = img.dat_gx_format
                     img.dat_gx_format = fmt_name
 
+                    # Indexed formats need a TLUT format too: RGB5A3 keeps
+                    # alpha, RGB565 gives more colour precision when opaque.
+                    if fmt_name in ('C4', 'C8', 'C14X2') and hasattr(img, 'dat_palette_format'):
+                        img.dat_palette_format = 'RGB5A3' if analysis['has_alpha'] else 'RGB565'
+
                     results.append((img.name, w, h, old_fmt, fmt_name, analysis))
 
     if not results:

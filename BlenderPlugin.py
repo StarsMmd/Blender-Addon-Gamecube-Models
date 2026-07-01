@@ -677,6 +677,15 @@ _GX_FORMAT_ITEMS = [
 ]
 
 
+# Palette (TLUT) format for indexed textures (C4/C8/C14X2); ignored otherwise.
+_PALETTE_FORMAT_ITEMS = [
+    ('AUTO', 'Auto', 'Default palette format (RGB5A3) for indexed textures'),
+    ('IA8', 'IA8 (Intensity+Alpha)', '8-bit intensity + 8-bit alpha, grayscale palette'),
+    ('RGB565', 'RGB565 (No Alpha)', '16-bit RGB, no alpha'),
+    ('RGB5A3', 'RGB5A3 (RGB+Alpha)', '16-bit with optional alpha'),
+]
+
+
 def register():
     for prop_name, prop in _dat_props:
         setattr(bpy.types.Object, prop_name, prop)
@@ -684,6 +693,12 @@ def register():
         name="GX Texture Format",
         description="GX texture format used when exporting this texture. Auto selects based on pixel content.",
         items=_GX_FORMAT_ITEMS,
+        default='AUTO',
+    )
+    bpy.types.Image.dat_palette_format = EnumProperty(
+        name="GX Palette Format",
+        description="GX palette (TLUT) format used when exporting an indexed (C4/C8/C14X2) texture. Ignored for other formats.",
+        items=_PALETTE_FORMAT_ITEMS,
         default='AUTO',
     )
     for cls in classes:
@@ -702,3 +717,5 @@ def unregister():
             delattr(bpy.types.Object, prop_name)
     if hasattr(bpy.types.Image, 'dat_gx_format'):
         delattr(bpy.types.Image, 'dat_gx_format')
+    if hasattr(bpy.types.Image, 'dat_palette_format'):
+        delattr(bpy.types.Image, 'dat_palette_format')

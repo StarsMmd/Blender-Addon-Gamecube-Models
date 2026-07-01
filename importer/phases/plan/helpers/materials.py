@@ -586,6 +586,8 @@ def _to_br_image(ir_image):
         cache_key=(ir_image.image_id, ir_image.palette_id),
         gx_format_override=(ir_image.gx_format_override.value
                             if ir_image.gx_format_override else None),
+        palette_format_override=(ir_image.palette_format_override.value
+                                 if ir_image.palette_format_override else None),
     )
 
 

@@ -22,7 +22,7 @@ try:
     from .....shared.IR.enums import (
         ColorSource, LightingModel, CoordType, WrapMode,
         TextureInterpolation, LayerBlendMode, LightmapChannel,
-        GXTextureFormat,
+        GXTextureFormat, GXPaletteFormat,
     )
     from .....shared.helpers.srgb import linear_to_srgb, srgb_to_linear
     from .....shared.helpers.logger import StubLogger
@@ -33,7 +33,7 @@ except (ImportError, SystemError):
     from shared.IR.enums import (
         ColorSource, LightingModel, CoordType, WrapMode,
         TextureInterpolation, LayerBlendMode, LightmapChannel,
-        GXTextureFormat,
+        GXTextureFormat, GXPaletteFormat,
     )
     from shared.helpers.srgb import linear_to_srgb, srgb_to_linear
     from shared.helpers.logger import StubLogger
@@ -764,6 +764,11 @@ def _br_image_to_ir(br_image, cache):
     except (ValueError, KeyError):
         gx_format = GXTextureFormat.AUTO
 
+    try:
+        palette_format = GXPaletteFormat(br_image.palette_format_override or 'AUTO')
+    except (ValueError, KeyError):
+        palette_format = GXPaletteFormat.AUTO
+
     ir_image = IRImage(
         name=br_image.name,
         width=br_image.width,
@@ -772,6 +777,7 @@ def _br_image_to_ir(br_image, cache):
         image_id=0,
         palette_id=0,
         gx_format_override=gx_format,
+        palette_format_override=palette_format,
     )
     cache[key] = ir_image
     return ir_image

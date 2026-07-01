@@ -17,7 +17,7 @@ try:
         GX_VA_TEX0, GX_VA_PNMTXIDX,
         GX_INDEX16, GX_DIRECT, GX_F32, GX_RGBA8,
         GX_POS_XYZ, GX_NRM_XYZ, GX_TEX_ST,
-        GX_DRAW_TRIANGLES, GX_DRAW_QUADS,
+        GX_DRAW_TRIANGLES, GX_DRAW_QUADS, GX_DRAW_TRIANGLE_STRIP,
     )
     from .....shared.Constants.hsd import (
         POBJ_CULLFRONT, POBJ_CULLBACK, POBJ_SKIN, POBJ_ENVELOPE,
@@ -28,6 +28,7 @@ try:
     from .....shared.helpers.math_shim import Matrix, Vector
     from .....shared.helpers.logger import StubLogger
     from .materials import compose_material
+    from .stripify import stripify
 except (ImportError, SystemError):
     from shared.Nodes.Classes.Mesh.Mesh import Mesh
     from shared.Nodes.Classes.Mesh.PObject import PObject
@@ -39,7 +40,7 @@ except (ImportError, SystemError):
         GX_VA_TEX0, GX_VA_PNMTXIDX,
         GX_INDEX16, GX_DIRECT, GX_F32, GX_RGBA8,
         GX_POS_XYZ, GX_NRM_XYZ, GX_TEX_ST,
-        GX_DRAW_TRIANGLES, GX_DRAW_QUADS,
+        GX_DRAW_TRIANGLES, GX_DRAW_QUADS, GX_DRAW_TRIANGLE_STRIP,
     )
     from shared.Constants.hsd import (
         POBJ_CULLFRONT, POBJ_CULLBACK, POBJ_SKIN, POBJ_ENVELOPE,
@@ -50,6 +51,7 @@ except (ImportError, SystemError):
     from shared.helpers.math_shim import Matrix, Vector
     from shared.helpers.logger import StubLogger
     from exporter.phases.compose.helpers.materials import compose_material
+    from exporter.phases.compose.helpers.stripify import stripify
 
 
 # Counter for generating unique synthetic base_pointer values.
@@ -962,29 +964,67 @@ def _encode_display_list(faces, vertices, vertex_descs, vertex_buffers,
 
     buf = bytearray()
 
-    # Emit blocks in face order — contiguous runs of same primitive type
-    # stay batched so mixed-primitive meshes (tri, quad, tri) preserve
-    # their per-loop UV/normal/color buffer order through round-trip.
+    # Emit blocks in face order. Quad runs emit GX_DRAW_QUADS directly; triangle
+    # runs are stripified — adjacent triangles welding on identical vertex
+    # records collapse into GX_DRAW_TRIANGLE_STRIP runs, with whatever can't be
+    # stripped (attribute seams, isolated triangles) emitted as one trailing
+    # GX_DRAW_TRIANGLES block. Per-loop buffers are referenced by explicit
+    # index, so reordering emission within a run does not perturb them.
     for kind, prims, loop_idx_lists in ordered_blocks:
         if kind == 'quad':
             buf.append(GX_DRAW_QUADS)
             buf.extend(pack('ushort', len(prims) * 4))
-            swap = [3, 2, 1, 0]
+            for p_idx, prim in enumerate(prims):
+                lidxs = loop_idx_lists[p_idx]
+                for vi in (3, 2, 1, 0):
+                    _write_dl_vertex(buf, prim[vi], lidxs[vi],
+                                     vertex_descs, vertex_buffers)
         else:
-            buf.append(GX_DRAW_TRIANGLES)
-            buf.extend(pack('ushort', len(prims) * 3))
-            swap = [0, 2, 1]
-        for p_idx, prim in enumerate(prims):
-            lidxs = loop_idx_lists[p_idx]
-            for vi in swap:
-                _write_dl_vertex(buf, prim[vi], lidxs[vi],
-                                 vertex_descs, vertex_buffers)
+            _emit_triangle_run(buf, prims, loop_idx_lists,
+                               vertex_descs, vertex_buffers)
 
     # Pad to 32-byte alignment
     while len(buf) % 32 != 0:
         buf.append(0x00)
 
     return bytes(buf)
+
+
+def _emit_triangle_run(buf, prims, loop_idx_lists, vertex_descs, vertex_buffers):
+    """Stripify a run of triangles and emit GX_DRAW_TRIANGLE_STRIP blocks plus a
+    trailing GX_DRAW_TRIANGLES block for whatever stays loose.
+
+    Each triangle is reduced to its three vertex *records* (the exact bytes
+    emitted per corner) in IR face winding — the order the importer's
+    GX_DRAW_TRIANGLES decode reproduces, i.e. the source ``prim`` order. The
+    stripifier groups those records; a strip is emitted in strip-vertex order
+    (the importer's strip decode handles winding), loose triangles keep the
+    ``[0, 2, 1]`` swap that round-trips a GX_DRAW_TRIANGLES face.
+    """
+    tri_tokens = []
+    for p_idx, prim in enumerate(prims):
+        lidxs = loop_idx_lists[p_idx]
+        tri_tokens.append((
+            _dl_vertex_bytes(prim[0], lidxs[0], vertex_descs, vertex_buffers),
+            _dl_vertex_bytes(prim[1], lidxs[1], vertex_descs, vertex_buffers),
+            _dl_vertex_bytes(prim[2], lidxs[2], vertex_descs, vertex_buffers),
+        ))
+
+    strips, leftover = stripify(tri_tokens)
+
+    for strip in strips:
+        buf.append(GX_DRAW_TRIANGLE_STRIP)
+        buf.extend(pack('ushort', len(strip)))
+        for rec in strip:
+            buf.extend(rec)
+
+    if leftover:
+        buf.append(GX_DRAW_TRIANGLES)
+        buf.extend(pack('ushort', len(leftover) * 3))
+        for ta, tb, tc in leftover:
+            buf.extend(ta)
+            buf.extend(tc)
+            buf.extend(tb)
 
 
 def _group_faces_for_display_list(faces):
@@ -1026,8 +1066,15 @@ def _group_faces_for_display_list(faces):
     return blocks
 
 
-def _write_dl_vertex(buf, pos_index, loop_index, vertex_descs, vertex_buffers):
-    """Write one vertex's attribute indices into the display list buffer."""
+def _dl_vertex_bytes(pos_index, loop_index, vertex_descs, vertex_buffers):
+    """The display-list byte record for one vertex (one index per descriptor).
+
+    This is the unit a triangle strip welds on: two corners with identical
+    records are the same strip vertex, corners differing in any attribute
+    (position, normal, UV, colour, matrix index) differ here and so break a
+    strip. Used both as the strip token (see stripify) and for emission.
+    """
+    rec = bytearray()
     for desc_idx, desc in enumerate(vertex_descs):
         vbuf = vertex_buffers[desc_idx]
 
@@ -1039,9 +1086,9 @@ def _write_dl_vertex(buf, pos_index, loop_index, vertex_descs, vertex_buffers):
             assert env_idx < 10, (
                 f"PNMTXIDX {env_idx} >= 10: mesh needs display list "
                 f"splitting (should have been handled by _build_split_pobjs)")
-            buf.append(env_idx * 3)
+            rec.append(env_idx * 3)
         elif desc.attribute == GX_VA_POS:
-            buf.extend(pack('ushort', pos_index))
+            rec.extend(pack('ushort', pos_index))
         elif isinstance(vbuf, tuple) and len(vbuf) == 3:
             # Per-loop attribute (normals, UVs, colors)
             _, _, per_loop_indices = vbuf
@@ -1049,8 +1096,14 @@ def _write_dl_vertex(buf, pos_index, loop_index, vertex_descs, vertex_buffers):
                 idx = per_loop_indices[loop_index]
             else:
                 idx = 0
-            buf.extend(pack('ushort', idx))
+            rec.extend(pack('ushort', idx))
         else:
-            buf.extend(pack('ushort', pos_index))
+            rec.extend(pack('ushort', pos_index))
+    return bytes(rec)
+
+
+def _write_dl_vertex(buf, pos_index, loop_index, vertex_descs, vertex_buffers):
+    """Write one vertex's attribute indices into the display list buffer."""
+    buf.extend(_dl_vertex_bytes(pos_index, loop_index, vertex_descs, vertex_buffers))
 
 

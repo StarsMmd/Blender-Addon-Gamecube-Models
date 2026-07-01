@@ -150,34 +150,36 @@ def _compose_bound_box(model, logger):
     anim_sets = model.bone_animations or []
     anim_count = max(1, len(anim_sets))
 
-    aabb_blobs = []
-    frame_counts = []
+    # One list of 24-byte AABB chunks per animation set. The game stores set 0
+    # flat and prefixes every later set with its uint32 frame count; BoundBox
+    # serialises that layout (see BoundBox.build_blob / iter_frames).
+    per_set_frames = []
 
     if not anim_sets:
         rest_world = _rest_bone_world_matrices(model)
         mn, mx = _compute_skinned_aabb(skin_samples, rest_world)
-        aabb_blobs.append(struct.pack('>ffffff', mn[0], mn[1], mn[2], mx[0], mx[1], mx[2]))
-        frame_counts.append(1)
+        per_set_frames.append([struct.pack('>ffffff', mn[0], mn[1], mn[2], mx[0], mx[1], mx[2])])
     else:
         for anim_set in anim_sets:
             max_ef = max((int(t.end_frame) for t in anim_set.tracks), default=1)
             # Animation plays over inclusive range [0, end_frame], so emit
             # (end_frame + 1) AABBs per set to match game-native PKXs.
             frame_count = max(1, max_ef + 1)
-            frame_counts.append(frame_count)
+            frames = []
             for f in range(frame_count):
                 world = _animated_bone_world_matrices(model, anim_set, f)
                 mn, mx = _compute_skinned_aabb(skin_samples, world)
-                aabb_blobs.append(struct.pack('>ffffff',
-                                              mn[0], mn[1], mn[2],
-                                              mx[0], mx[1], mx[2]))
+                frames.append(struct.pack('>ffffff',
+                                          mn[0], mn[1], mn[2],
+                                          mx[0], mx[1], mx[2]))
+            per_set_frames.append(frames)
 
-    raw_data = b''.join(aabb_blobs)
     bb = BoundBox(address=None, blender_obj=None)
     bb.anim_set_count = anim_count
-    bb.first_anim_frame_count = frame_counts[0]
-    bb.raw_aabb_data = raw_data
+    bb.first_anim_frame_count = len(per_set_frames[0])
+    bb.raw_aabb_data = BoundBox.build_blob(per_set_frames)
 
+    frame_counts = [len(fs) for fs in per_set_frames]
     total_frames = sum(frame_counts)
     logger.info("    Bound box: %d set(s), %d total frames (per-frame skinned, %d samples)",
                 anim_count, total_frames, len(skin_samples))

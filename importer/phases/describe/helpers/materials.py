@@ -12,7 +12,7 @@ try:
         ColorSource, LightingModel, CoordType, WrapMode, TextureInterpolation,
         LayerBlendMode, LightmapChannel, CombinerInputSource, CombinerOp,
         CombinerBias, CombinerScale, OutputBlendEffect, BlendFactor,
-        GXTextureFormat,
+        GXTextureFormat, GXPaletteFormat,
     )
     from .....shared.Constants.hsd import *
     from .....shared.Constants.gx import *
@@ -25,7 +25,7 @@ except (ImportError, SystemError):
         ColorSource, LightingModel, CoordType, WrapMode, TextureInterpolation,
         LayerBlendMode, LightmapChannel, CombinerInputSource, CombinerOp,
         CombinerBias, CombinerScale, OutputBlendEffect, BlendFactor,
-        GXTextureFormat,
+        GXTextureFormat, GXPaletteFormat,
     )
     from shared.Constants.hsd import *
     from shared.Constants.gx import *
@@ -234,6 +234,24 @@ def _gx_format_id_to_enum(format_id):
     return _GX_FORMAT_ID_TO_ENUM.get(format_id, GXTextureFormat.AUTO)
 
 
+# Map GX TLUT (palette) format ID → GXPaletteFormat enum, preserving the
+# original palette format for indexed images so the exporter can reproduce it.
+_PALETTE_FORMAT_ID_TO_ENUM = {
+    0x0: GXPaletteFormat.IA8,
+    0x1: GXPaletteFormat.RGB565,
+    0x2: GXPaletteFormat.RGB5A3,
+}
+
+
+def _palette_format_id_to_enum(format_id):
+    """Convert a GX TLUT format ID to a GXPaletteFormat enum value.
+
+    In: format_id (int, 0x0..0x2).
+    Out: GXPaletteFormat — GXPaletteFormat.AUTO if id unrecognized.
+    """
+    return _PALETTE_FORMAT_ID_TO_ENUM.get(format_id, GXPaletteFormat.AUTO)
+
+
 def _build_ir_image(texture):
     """Build an IRImage from a Texture node's pre-decoded RGBA pixel buffer.
 
@@ -252,6 +270,10 @@ def _build_ir_image(texture):
     # Preserve the original GX texture format so the exporter can reproduce it
     gx_format = _gx_format_id_to_enum(image_node.format)
 
+    # Indexed images carry a separate TLUT (palette) format; preserve it too.
+    palette_format = (_palette_format_id_to_enum(texture.palette.format)
+                      if texture.palette else GXPaletteFormat.AUTO)
+
     return IRImage(
         name=f"tex_{image_node.address:X}",
         width=width,
@@ -260,6 +282,7 @@ def _build_ir_image(texture):
         image_id=image_node.address,
         palette_id=texture.palette.address if texture.palette else 0,
         gx_format_override=gx_format,
+        palette_format_override=palette_format,
     )
 
 

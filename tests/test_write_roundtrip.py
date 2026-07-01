@@ -762,6 +762,24 @@ class TestTextureAlignment:
             def align_buffer(self):
                 while self._currentRelativeAddress() % 32 != 0:
                     self.write(0, 'uchar')
+            def write_dedup_blob(self, raw, namespace, align=0, matches_original=False):
+                if not raw:
+                    return 0
+                if not hasattr(self, '_cache'):
+                    self._cache = {}
+                cache = self._cache.setdefault(namespace, {})
+                key = bytes(raw)
+                if key in cache:
+                    return cache[key]
+                self.seek(0, 'end')
+                if align:
+                    while self._currentRelativeAddress() % align != 0:
+                        self.write(0, 'uchar')
+                offset = self._currentRelativeAddress()
+                for b in key:
+                    self.write(b, 'uchar')
+                cache[key] = offset
+                return offset
 
         builder = MockBuilder(writer)
 
@@ -794,6 +812,24 @@ class TestTextureAlignment:
             def align_buffer(self):
                 while self._currentRelativeAddress() % 32 != 0:
                     self.write(0, 'uchar')
+            def write_dedup_blob(self, raw, namespace, align=0, matches_original=False):
+                if not raw:
+                    return 0
+                if not hasattr(self, '_cache'):
+                    self._cache = {}
+                cache = self._cache.setdefault(namespace, {})
+                key = bytes(raw)
+                if key in cache:
+                    return cache[key]
+                self.seek(0, 'end')
+                if align:
+                    while self._currentRelativeAddress() % align != 0:
+                        self.write(0, 'uchar')
+                offset = self._currentRelativeAddress()
+                for b in key:
+                    self.write(b, 'uchar')
+                cache[key] = offset
+                return offset
 
         builder = MockBuilder(writer)
 
@@ -824,6 +860,24 @@ class TestTextureAlignment:
             def align_buffer(self):
                 while self._currentRelativeAddress() % 32 != 0:
                     self.write(0, 'uchar')
+            def write_dedup_blob(self, raw, namespace, align=0, matches_original=False):
+                if not raw:
+                    return 0
+                if not hasattr(self, '_cache'):
+                    self._cache = {}
+                cache = self._cache.setdefault(namespace, {})
+                key = bytes(raw)
+                if key in cache:
+                    return cache[key]
+                self.seek(0, 'end')
+                if align:
+                    while self._currentRelativeAddress() % align != 0:
+                        self.write(0, 'uchar')
+                offset = self._currentRelativeAddress()
+                for b in key:
+                    self.write(b, 'uchar')
+                cache[key] = offset
+                return offset
 
         builder = MockBuilder(writer)
 
@@ -945,6 +999,141 @@ class TestTextureAlignment:
         assert len(relocations) == 1, f"Expected 1 relocation, got {len(relocations)}"
         assert relocations[0] == 0x100, \
             f"Relocation at wrong offset: 0x{relocations[0]:X} (expected 0x100)"
+
+
+class TestBufferDedup:
+    """The serializer's generic content-addressed blob writer: identical raw
+    buffers within a namespace share one written block, namespaces don't
+    cross-contaminate, and keyframe (Frame.ad) buffers dedup in practice."""
+
+    def _builder(self, dedup_buffers=True):
+        from exporter.phases.serialize.helpers.dat_builder import DATBuilder
+        return DATBuilder(io.BytesIO(), [], dedup_buffers=dedup_buffers)
+
+    def test_flag_off_disables_optional_dedup_but_not_image(self):
+        b = self._builder(dedup_buffers=False)
+        # Optional namespaces (palette/keyframe) write every buffer fresh.
+        f1 = b.write_dedup_blob(b'\x01\x02\x03', 'frame_ad')
+        f2 = b.write_dedup_blob(b'\x01\x02\x03', 'frame_ad')
+        assert f1 != f2
+        p1 = b.write_dedup_blob(b'\xAA' * 4, 'palette', align=32)
+        p2 = b.write_dedup_blob(b'\xAA' * 4, 'palette', align=32)
+        assert p1 != p2
+        # Image dedup matches the original compiler, so it stays on regardless.
+        i1 = b.write_dedup_blob(b'PIX!', 'image', align=32, matches_original=True)
+        i2 = b.write_dedup_blob(b'PIX!', 'image', align=32, matches_original=True)
+        assert i1 == i2
+
+    def test_identical_buffers_share_one_block(self):
+        b = self._builder()
+        o1 = b.write_dedup_blob(b'\x01\x02\x03\x04', 'frame_ad')
+        size_after_first = b.file.tell()
+        o2 = b.write_dedup_blob(b'\x01\x02\x03\x04', 'frame_ad')
+        # Second identical buffer reuses the offset and writes nothing.
+        assert o1 == o2
+        assert b.file.tell() == size_after_first
+
+    def test_distinct_buffers_get_distinct_offsets(self):
+        b = self._builder()
+        o1 = b.write_dedup_blob(b'\xAA\xBB', 'frame_ad')
+        o2 = b.write_dedup_blob(b'\xCC\xDD', 'frame_ad')
+        assert o1 != o2
+
+    def test_namespaces_do_not_cross_dedup(self):
+        b = self._builder()
+        o_img = b.write_dedup_blob(b'SAME', 'image', align=32)
+        o_pal = b.write_dedup_blob(b'SAME', 'palette', align=32)
+        # Identical bytes in different categories are written separately so each
+        # keeps its own alignment/layout discipline.
+        assert o_img != o_pal
+
+    def test_empty_buffer_returns_zero(self):
+        b = self._builder()
+        assert b.write_dedup_blob(b'', 'frame_ad') == 0
+        assert b.write_dedup_blob(None, 'image', align=32) == 0
+
+    def test_alignment_respected_for_fresh_block(self):
+        b = self._builder()
+        b.write_dedup_blob(b'\x01\x02\x03', 'image', align=32)  # advance to a non-aligned tail
+        off = b.write_dedup_blob(b'\x09' * 10, 'image', align=32)
+        assert off % 32 == 0
+
+    def test_identical_frame_buffers_share_ad(self):
+        from shared.Nodes.Classes.Animation.Frame import Frame
+        b = self._builder()
+
+        def make_frame(raw):
+            f = Frame(address=None, blender_obj=None)
+            f.next = None
+            f.data_length = len(raw)
+            f.start_frame = 0.0
+            f.type = 1
+            f.frac_value = 0
+            f.frac_slope = 0
+            f.ad = 0
+            f.raw_ad = raw
+            f._raw_pointer_fields = set()
+            return f
+
+        b.file.write(b'\x00' * 4)  # advance past data offset 0 (the null sentinel)
+        f1, f2, f3 = make_frame(b'\x10\x20\x30'), make_frame(b'\x10\x20\x30'), make_frame(b'\x40')
+        for f in (f1, f2, f3):
+            f.writePrivateData(b)
+        assert f1.ad == f2.ad and f1.ad != 0      # identical channels share a buffer
+        assert f3.ad != f1.ad                       # different channel, own buffer
+        assert 'ad' in f1._raw_pointer_fields       # both still emit a relocation
+        assert 'ad' in f2._raw_pointer_fields
+
+
+class TestBoundBoxBlobRoundtrip:
+    """BoundBox carries its per-frame AABB data as a raw attribute
+    (raw_aabb_data), not a declared field. Its multi-set layout (set 0 flat,
+    each later set prefixed by a uint32 frame count) must survive serialize ->
+    reparse byte-for-byte — the data the round-trip scorers now also compare."""
+
+    @staticmethod
+    def _frame(v):
+        import struct as _struct
+        return _struct.pack('>6f', v, v + 1, v + 2, v + 3, v + 4, v + 5)
+
+    def test_build_blob_iter_frames_inverse(self):
+        from shared.Nodes.Classes.RootNodes.BoundBox import BoundBox
+        per_set = [[self._frame(0.0), self._frame(1.0), self._frame(2.0), self._frame(3.0)],
+                   [self._frame(10.0), self._frame(11.0)],
+                   [self._frame(20.0), self._frame(21.0), self._frame(22.0)]]
+        blob = BoundBox.build_blob(per_set)
+        # 9 frames * 24 + 2 set-count prefixes * 4 bytes
+        assert len(blob) == 9 * 24 + 2 * 4
+        recovered = list(BoundBox.iter_frames(blob, anim_set_count=3, first_count=4))
+        assert recovered == [f for fs in per_set for f in fs]
+
+    def test_multiset_blob_survives_serialize_reparse(self):
+        from shared.Nodes.Classes.RootNodes.BoundBox import BoundBox
+
+        per_set = [[self._frame(0.0), self._frame(1.0), self._frame(2.0), self._frame(3.0)],
+                   [self._frame(10.0), self._frame(11.0)],
+                   [self._frame(20.0), self._frame(21.0), self._frame(22.0)]]
+        blob = BoundBox.build_blob(per_set)
+        bb = BoundBox(address=None, blender_obj=None)
+        bb.anim_set_count = 3
+        bb.first_anim_frame_count = 4
+        bb.raw_aabb_data = blob
+
+        out = io.BytesIO()
+        DATBuilder(out, [bb], ['bound_box']).build()
+        sections = _parse_sections(out.getvalue(), section_map=None)
+
+        rebuilt = [s.root_node for s in sections
+                   if type(s.root_node).__name__ == 'BoundBox']
+        assert len(rebuilt) == 1, "BoundBox section did not round-trip"
+        rt_bb = rebuilt[0]
+        assert rt_bb.anim_set_count == 3
+        assert rt_bb.first_anim_frame_count == 4
+        # The structured blob (count prefixes included) must come back exactly,
+        # with the trailing alignment padding stripped by loadFromBinary.
+        assert rt_bb.raw_aabb_data == blob
+        assert list(BoundBox.iter_frames(rt_bb.raw_aabb_data, 3, 4)) == \
+            [f for fs in per_set for f in fs]
 
 
 # ---------------------------------------------------------------------------

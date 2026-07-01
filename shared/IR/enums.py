@@ -187,3 +187,15 @@ class GXTextureFormat(Enum):
     C4 = "C4"
     C8 = "C8"
     C14X2 = "C14X2"
+
+
+class GXPaletteFormat(Enum):
+    """GX palette (TLUT) format for export encoding.
+
+    Only meaningful for the indexed image formats (C4/C8/C14X2); ignored
+    for every other GXTextureFormat. AUTO lets the encoder pick its default.
+    """
+    AUTO = "AUTO"
+    IA8 = "IA8"
+    RGB565 = "RGB565"
+    RGB5A3 = "RGB5A3"

@@ -166,6 +166,7 @@ def _serialise_image(bpy_image, cache):
         pixels=pixels,
         cache_key=(key,),
         gx_format_override=getattr(bpy_image, 'dat_gx_format', 'AUTO') or 'AUTO',
+        palette_format_override=getattr(bpy_image, 'dat_palette_format', 'AUTO') or 'AUTO',
     )
     cache[key] = br_image
     return br_image

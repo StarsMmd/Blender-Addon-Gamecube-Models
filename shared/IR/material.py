@@ -5,7 +5,7 @@ from .enums import (
     ColorSource, LightingModel, CoordType, WrapMode, TextureInterpolation,
     LayerBlendMode, LightmapChannel, CombinerInputSource, CombinerOp,
     CombinerBias, CombinerScale, OutputBlendEffect, BlendFactor,
-    GXTextureFormat,
+    GXTextureFormat, GXPaletteFormat,
 )
 
 
@@ -63,6 +63,8 @@ class IRImage:
     image_id: int
     palette_id: int
     gx_format_override: GXTextureFormat = GXTextureFormat.AUTO
+    # TLUT format for indexed (C4/C8/C14X2) images; ignored otherwise.
+    palette_format_override: GXPaletteFormat = GXPaletteFormat.AUTO
 
 
 @dataclass

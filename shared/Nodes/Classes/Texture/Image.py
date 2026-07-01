@@ -60,26 +60,19 @@ class Image(Node):
     def writeImageData(self, builder):
         """Write image pixel data. Runs after parsed structs so images land
         at the end of the data section, matching Sysdolphin's compiler layout.
-        Identical pixel buffers across Image instances share one data block.
+        Identical pixel buffers across Image instances share one data block
+        (32-byte aligned for GX hardware).
         """
         if not hasattr(self, '_raw_pointer_fields'):
             self._raw_pointer_fields = set()
-        if not self.raw_image_data:
-            self.data_address = 0
-            return
-        if not hasattr(builder, '_image_data_cache'):
-            builder._image_data_cache = {}
-        key = bytes(self.raw_image_data)
-        cached = builder._image_data_cache.get(key)
-        if cached is None:
-            builder.seek(0, 'end')
-            builder.align_buffer()
-            cached = builder._currentRelativeAddress()
-            for byte in key:
-                builder.write(byte, 'uchar')
-            builder._image_data_cache[key] = cached
-        self.data_address = cached
-        self._raw_pointer_fields.add('data_address')
+        # Image pixel dedup matches the original compiler's layout, so it is
+        # applied even when optional buffer dedup is disabled (round-trips).
+        self.data_address = builder.write_dedup_blob(
+            self.raw_image_data, 'image', align=32, matches_original=True)
+        if self.raw_image_data:
+            # Gate on the buffer, not the returned offset: a buffer legitimately
+            # at data offset 0 must still record a relocation.
+            self._raw_pointer_fields.add('data_address')
 
     def decodeFromRawData(self, palette):
         """Decode raw_image_data into RGBA pixels without needing the parser.

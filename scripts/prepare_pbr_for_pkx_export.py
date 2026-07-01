@@ -44,17 +44,22 @@ import math
 # Optimisation knobs
 # ---------------------------------------------------------------------------
 #
-# Trade visual fidelity for in-game performance. Lower values reduce
-# PObject count, matrix-pool usage, and file size — critical for arbitrary
-# (non-XD-native) model exports because the game's renderer chokes when
-# these go past empirically observed caps. Game-native PKX bodies sit
-# around 8–15 PObjects per material; if a prepped model's largest mesh
-# lands well above that in the export log, tighten the knobs and re-prep.
+# Trade visual fidelity for in-game performance and file size. The defaults
+# below favour fidelity; LOWER them to shrink the export. Two ceilings make
+# that necessary:
+#   - PObject / matrix-pool: the renderer chokes past ~240 PObjects. Game-
+#     native PKX bodies sit around 8–15 PObjects per material; if a prepped
+#     model's largest mesh lands well above that in the export log, tighten
+#     the knobs and re-prep.
+#   - File size: an oversized model can crash the game when it loads in a
+#     battle. Aim for well under 1 MB. Output size is dominated by texture
+#     pixels, so drop MAX_TEXTURE_DIM first, then the weight knobs.
 
 # Hard cap on bone influences per vertex. GX hardware allows up to 4
-# (PNMTXIDX selects from 4 blend weights). Game models commonly use 2 or
-# 3 to keep envelope-combination explosion in check.
-MAX_WEIGHTS_PER_VERTEX = 3
+# (PNMTXIDX selects from 4 blend weights); 4 is the default for best
+# deformation fidelity. Lowering to 3 (or 2) collapses unique envelopes,
+# cutting PObject count and file size on dense rigs.
+MAX_WEIGHTS_PER_VERTEX = 4
 
 # Step size for weight quantisation, in absolute weight units (0..1).
 # Larger steps collapse more near-identical envelopes into one, shrinking
@@ -72,9 +77,10 @@ WEIGHT_QUANTISATION_STEP = 0.1
 REDISTRIBUTE_SUB_THRESHOLD_WEIGHTS = False
 WEIGHT_DROP_THRESHOLD = 0.1
 
-# Maximum texture dimension on either axis; larger textures are
-# downscaled proportionally. GX hardware cap is 1024×1024, but XD's
-# texture-memory budget makes 512 the practical safe ceiling.
+# Maximum texture dimension on either axis; larger textures are downscaled
+# proportionally. GX hardware cap is 1024×1024; 512 is the practical safe
+# ceiling for XD's texture-memory budget. Textures dominate output size, so
+# this is the first knob to lower (256 / 128 / 64) when shrinking a model.
 MAX_TEXTURE_DIM = 512
 
 
@@ -1010,14 +1016,16 @@ def prepare_texture_sizes(armature):
 # ---------------------------------------------------------------------------
 
 def _analyze_texture(img):
-    """Analyze an image's pixels and return a suitable GX format name.
+    """Analyze an image's pixels and return a suitable GX format.
 
     Checks for grayscale, alpha usage, and color count to pick the most
-    efficient format. Returns a format string like 'CMPR', 'I8', etc.
+    efficient format. Returns (gx_format, palette_format): gx_format is a
+    string like 'CMPR' or 'C8'; palette_format is 'RGB565'/'RGB5A3' for
+    indexed formats (the TLUT format suggestion) or None otherwise.
     """
     w, h = img.size[0], img.size[1]
     if w == 0 or h == 0:
-        return None
+        return None, None
 
     pixels = img.pixels[:]
     num_pixels = w * h
@@ -1046,20 +1054,24 @@ def _analyze_texture(img):
 
     n_colors = len(unique_colors)
 
+    # Indexed formats need a TLUT format too: RGB5A3 keeps alpha, RGB565
+    # gives an extra bit of colour precision when the palette is opaque.
+    palette_fmt = 'RGB5A3' if has_alpha else 'RGB565'
+
     # Format selection logic (matches shared/texture_encoder.py)
     if is_gray:
         if has_alpha:
-            return 'IA8'
+            return 'IA8', None
         else:
-            return 'I8'
+            return 'I8', None
     elif n_colors <= 16:
-        return 'C4'
+        return 'C4', palette_fmt
     elif n_colors <= 256:
-        return 'C8'
+        return 'C8', palette_fmt
     elif has_alpha:
-        return 'RGB5A3'
+        return 'RGB5A3', None
     else:
-        return 'CMPR'
+        return 'CMPR', None
 
 
 def prepare_texture_formats(armature):
@@ -1087,11 +1099,15 @@ def prepare_texture_formats(armature):
                     if img.dat_gx_format != 'AUTO':
                         continue
 
-                    fmt = _analyze_texture(img)
+                    fmt, palette_fmt = _analyze_texture(img)
                     if fmt:
                         img.dat_gx_format = fmt
+                        if palette_fmt and img.dat_palette_format == 'AUTO':
+                            img.dat_palette_format = palette_fmt
                         count += 1
-                        print("    %s (%dx%d): %s" % (img.name, img.size[0], img.size[1], fmt))
+                        suffix = ("/%s" % palette_fmt) if palette_fmt else ""
+                        print("    %s (%dx%d): %s%s" %
+                              (img.name, img.size[0], img.size[1], fmt, suffix))
 
     return count
 
@@ -1882,22 +1898,37 @@ _GX_FORMAT_ITEMS = [
 ]
 
 
+_PALETTE_FORMAT_ITEMS = [
+    ('AUTO', 'Auto', 'Default palette format (RGB5A3) for indexed textures'),
+    ('IA8', 'IA8 (Intensity+Alpha)', '8-bit intensity + 8-bit alpha, grayscale palette'),
+    ('RGB565', 'RGB565 (No Alpha)', '16-bit RGB, no alpha'),
+    ('RGB5A3', 'RGB5A3 (RGB+Alpha)', '16-bit with optional alpha'),
+]
+
+
 def _register_image_props():
-    """Register `dat_gx_format` on bpy.types.Image if not already registered.
+    """Register `dat_gx_format`/`dat_palette_format` on bpy.types.Image if not
+    already registered.
 
     Mirrors the addon's definition in BlenderPlugin.py so the prep script
     works even when the addon is disabled or its register() hasn't run in
     the current session (e.g. after a botched script reload).
     """
-    if hasattr(bpy.types.Image, 'dat_gx_format'):
-        return
     from bpy.props import EnumProperty
-    bpy.types.Image.dat_gx_format = EnumProperty(
-        name="GX Texture Format",
-        description="GX texture format used when exporting this texture. Auto selects based on pixel content.",
-        items=_GX_FORMAT_ITEMS,
-        default='AUTO',
-    )
+    if not hasattr(bpy.types.Image, 'dat_gx_format'):
+        bpy.types.Image.dat_gx_format = EnumProperty(
+            name="GX Texture Format",
+            description="GX texture format used when exporting this texture. Auto selects based on pixel content.",
+            items=_GX_FORMAT_ITEMS,
+            default='AUTO',
+        )
+    if not hasattr(bpy.types.Image, 'dat_palette_format'):
+        bpy.types.Image.dat_palette_format = EnumProperty(
+            name="GX Palette Format",
+            description="GX palette (TLUT) format used when exporting an indexed (C4/C8/C14X2) texture. Ignored for other formats.",
+            items=_PALETTE_FORMAT_ITEMS,
+            default='AUTO',
+        )
 
 
 def _register_pkx_panel():
