@@ -44,17 +44,22 @@ import math
 # Optimisation knobs
 # ---------------------------------------------------------------------------
 #
-# Trade visual fidelity for in-game performance. Lower values reduce
-# PObject count, matrix-pool usage, and file size — critical for arbitrary
-# (non-XD-native) model exports because the game's renderer chokes when
-# these go past empirically observed caps. Game-native PKX bodies sit
-# around 8–15 PObjects per material; if a prepped model's largest mesh
-# lands well above that in the export log, tighten the knobs and re-prep.
+# Trade visual fidelity for in-game performance and file size. The defaults
+# below favour fidelity; LOWER them to shrink the export. Two ceilings make
+# that necessary:
+#   - PObject / matrix-pool: the renderer chokes past ~240 PObjects. Game-
+#     native PKX bodies sit around 8–15 PObjects per material; if a prepped
+#     model's largest mesh lands well above that in the export log, tighten
+#     the knobs and re-prep.
+#   - File size: an oversized model can crash the game when it loads in a
+#     battle. Aim for well under 1 MB. Output size is dominated by texture
+#     pixels, so drop MAX_TEXTURE_DIM first, then the weight knobs.
 
 # Hard cap on bone influences per vertex. GX hardware allows up to 4
-# (PNMTXIDX selects from 4 blend weights). Game models commonly use 2 or
-# 3 to keep envelope-combination explosion in check.
-MAX_WEIGHTS_PER_VERTEX = 3
+# (PNMTXIDX selects from 4 blend weights); 4 is the default for best
+# deformation fidelity. Lowering to 3 (or 2) collapses unique envelopes,
+# cutting PObject count and file size on dense rigs.
+MAX_WEIGHTS_PER_VERTEX = 4
 
 # Step size for weight quantisation, in absolute weight units (0..1).
 # Larger steps collapse more near-identical envelopes into one, shrinking
@@ -72,9 +77,10 @@ WEIGHT_QUANTISATION_STEP = 0.1
 REDISTRIBUTE_SUB_THRESHOLD_WEIGHTS = False
 WEIGHT_DROP_THRESHOLD = 0.1
 
-# Maximum texture dimension on either axis; larger textures are
-# downscaled proportionally. GX hardware cap is 1024×1024, but XD's
-# texture-memory budget makes 512 the practical safe ceiling.
+# Maximum texture dimension on either axis; larger textures are downscaled
+# proportionally. GX hardware cap is 1024×1024; 512 is the practical safe
+# ceiling for XD's texture-memory budget. Textures dominate output size, so
+# this is the first knob to lower (256 / 128 / 64) when shrinking a model.
 MAX_TEXTURE_DIM = 512
 
 

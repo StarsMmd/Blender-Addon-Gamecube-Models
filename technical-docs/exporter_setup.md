@@ -57,7 +57,7 @@ What the exporter can and cannot read from your Blender scene.
 
 | Blender feature | Export support | Notes |
 |---|---|---|
-| Vertex groups (multi-bone) | ✅ Envelope | The preparation script limits to 3 influences and quantizes to 10% steps |
+| Vertex groups (multi-bone) | ✅ Envelope | The preparation script limits to up to 4 influences (default) and quantizes to 10% steps |
 | Vertex groups (single bone) | ✅ Single-bone | All verts in one group |
 | No vertex groups | ✅ Rigid | Bound to parent bone |
 | Armature modifier | ✅ Required | Must be present for skinning |
@@ -167,15 +167,16 @@ The plugin uses real-world meters (matching Blender's default 1 unit = 1 meter).
 Because the GameCube has limited RAM, the [preparation script](#3-preparation-script) automatically applies some optimisations:
 
 - **All child meshes of each armature are joined into a single mesh.** The compose phase splits PObjects back out by material and by the 10-unique-weight-combo cap, so no data is lost — but joining lets compose pack weight-combos across the whole model instead of per mesh object. Without this step, every mesh object contributes at least one PObject per material slot, which is the dominant cause of PObject-count-driven crashes on arbitrary GLB/FBX rips. The runtime blows a matrix-palette pool somewhere around 240 PObjects; joining typically keeps an arbitrary-model export under 200.
-- Bone weights limited to **3 influences per vertex**
+- Bone weights limited to **up to 4 influences per vertex** (`MAX_WEIGHTS_PER_VERTEX`, the GX hardware max)
 - Weights quantised to **10% steps**
 
-**If the model doesn't work in-game, try these manual optimisations:**
+**If the game crashes while loading the model, try these optimisations to shrink it:**
 
+- **Reduce file size.** An over-large model can **crash the game in battle** while it loads — one of the most common failure modes. Keep the export well under **1 MB** (ideally far smaller — see the target below). The easiest way to shrink it is to **lower the values at the top of the prep script** (see [Tuning the script](#tuning-the-script)): drop `MAX_TEXTURE_DIM` first (textures dominate the file), then `MAX_WEIGHTS_PER_VERTEX`, then raise `WEIGHT_QUANTISATION_STEP`. Re-run the script and re-export after each change.
 - **Mesh splitting:** split your model into separate body parts (head, torso, arms, legs) before running the script. Splitting by body region reduces per-mesh complexity and is the single most effective optimisation.
 - **Polygon reduction:** try bringing the total face count **below ~15,000** faces. The upper boundary hasn't been properly tested, so higher counts may still work.
 
-**Target file size:** game Pokémon models range from 65–430 KB; aim for under 500 KB.
+**Target file size:** Original Pokémon range from 65–430 KB. Large files may not load in game. Aim for <1 MB ideally.
 
 ---
 
@@ -195,9 +196,9 @@ For models **not** imported through the DAT plugin, run the appropriate script f
 **Both scripts** (shared steps):
 - Bake `matrix_world` to identity on every armature + child mesh (the exporter rejects unbaked transforms)
 - Stamp `dat_camera_aspect = 1.18` on any scene camera missing it (camera creation is not part of prep — use `scripts/add_debug_camera.py`)
-- Limit vertex bone weights to 3 per vertex and quantise to 10% steps
+- Limit vertex bone weights to `MAX_WEIGHTS_PER_VERTEX` per vertex (default 4) and quantise to 10% steps
 - Cull unused material slots
-- Downscale any texture larger than 512×512 proportionally (UVs are in normalised [0, 1] space in Blender so no UV remapping is needed)
+- Downscale any texture whose longer axis exceeds `MAX_TEXTURE_DIM` (default 512) proportionally (UVs are in normalised [0, 1] space in Blender so no UV remapping is needed)
 - Auto-select GX texture formats based on image content
 
 **`prepare_for_pkx_export.py` additionally:**
@@ -208,6 +209,20 @@ For models **not** imported through the DAT plugin, run the appropriate script f
 - Creates a 4-light preview rig (ambient + 3 SUN), namespaced `DATPlugin_Prep_*` so re-runs are idempotent
 
 Models imported through the DAT plugin already have the shared properties set.
+
+### Tuning the script
+
+The optimisation behaviour is controlled by a block of constants at the **very top of each prep script**, just under the module docstring. To change them, open the script in Blender's Text Editor, edit the values, and click **Run Script** again. The defaults favour visual fidelity; **lower them to cut PObject count and file size** (see [GameCube constraints](#gamecube-constraints) — an over-large model can crash the game in battle).
+
+| Constant | Default | What it does | When to change |
+|---|---|---|---|
+| `MAX_TEXTURE_DIM` | `512` | Longer-axis pixel cap; larger textures are downscaled proportionally. | **Lower this first to shrink the file** — textures dominate output size. Try `256` / `128` / `64`. |
+| `MAX_WEIGHTS_PER_VERTEX` | `4` | Max bone influences per vertex (GX hardware allows 4). | Lower to `3` / `2` to collapse skinning envelopes — cuts PObject count and size on dense rigs, at some deformation quality. |
+| `WEIGHT_QUANTISATION_STEP` | `0.1` | Rounds bone weights to this step (`0.1` = 10%). | Raise to `0.25` on high-bone-count rips to merge near-identical envelopes more aggressively. |
+| `REDISTRIBUTE_SUB_THRESHOLD_WEIGHTS` | `False` | When `True`, drops tiny weights (below `WEIGHT_DROP_THRESHOLD`) and redistributes their slack to the dominant bone. | Flip `True` for GLB/FBX rips with shrunken or floating vertices; leave `False` for game-native models. |
+| `WEIGHT_DROP_THRESHOLD` | `0.1` | Weight below which an influence is dropped (only applies when the option above is `True`). | Raise to prune influences more aggressively. |
+
+All three prep scripts share this block — keep the values in sync if you edit more than one. For heavier optimisations beyond these knobs (polygon decimation, keyframe thinning, vertex merging), see `scripts/optimize.py` in [scripts.md](scripts.md).
 
 ---
 

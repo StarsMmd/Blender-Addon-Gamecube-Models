@@ -389,7 +389,7 @@ The prep script joins every armature-child mesh into one object before weight op
 Joining typically produces roughly one-third the PObject count of the same geometry exported as separate meshes, without any weight-handling changes.
 
 ### Weight optimisation
-The prep script limits vertices to `MAX_WEIGHTS_PER_VERTEX = 3` influences (the hardware cap is 4) and quantises weights to 10% steps. Weight limiting and quantisation are the prep script's job; the compose phase only renormalises against floating-point drift so the Blender viewport preview of weights matches what ships to the DAT.
+The prep script limits vertices to `MAX_WEIGHTS_PER_VERTEX = 4` influences (the GX hardware cap) and quantises weights to 10% steps. Weight limiting and quantisation are the prep script's job; the compose phase only renormalises against floating-point drift so the Blender viewport preview of weights matches what ships to the DAT.
 
 `pre_process._validate_vertex_weight_count` rejects any vertex with more than 4 non-zero weights as a backstop for rigs that bypass the prep script.
 
