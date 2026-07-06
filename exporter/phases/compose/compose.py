@@ -224,12 +224,24 @@ def _rest_bone_world_matrices(model):
 
 def _build_skin_samples(model, SkinType):
     """Return one entry per mesh vertex: a list of
-    `(bone_idx, weight, local_rest_Vector)` tuples.
+    `(bone_idx, weight, local_rest_Vector)` tuples. Skinning at frame f
+    is then `sum_b weight_b * anim_world[b] @ local_rest_b`.
 
-    `local_rest = inv_bind[bone_idx] @ vertex_rest_world`. Skinning at
-    frame f is then `sum_b weight_b * anim_world[b] @ local_rest_b`.
-    Pre-computing `inv_bind @ vertex` here turns each per-frame vertex
-    evaluation into one matrix-vector multiply per weight.
+    The per-bone `local_rest` mirrors the runtime's matrix selection so
+    the recomputed box reproduces the rest geometry exactly:
+
+    - Single-bone full-weight combos (and SINGLE_BONE/RIGID meshes) use
+      `inv(rest_world)` — the runtime's weight-1.0 short-circuit skips
+      the stored inverse-bind matrix, which need not invert the rest
+      pose (see implementation notes § envelope-weight-1.0 IBM
+      short-circuit).
+    - Multi-weight combos first undo the rest-pose blend: IR vertices
+      are the *deformed* rest positions, so
+      `local_rest = inv_bind[b] @ inv(sum_b w*rest_world[b]@inv_bind[b]) @ v_world`.
+      At rest this reproduces `v_world` by construction.
+
+    Meshes owned by hidden joints are excluded — the game's boxes only
+    cover visible geometry.
     """
     try:
         from ....shared.helpers.math_shim import Matrix, Vector
@@ -243,18 +255,47 @@ def _build_skin_samples(model, SkinType):
     bone_name_to_index = {b.name: i for i, b in enumerate(model.bones)}
     rest_world = _rest_bone_world_matrices(model)
 
+    rest_inv = []
+    for i in range(n_bones):
+        try:
+            rest_inv.append(rest_world[i].inverted())
+        except ValueError:
+            rest_inv.append(Matrix.Identity(4))
+
     inv_bind = []
     for i, b in enumerate(model.bones):
         if b.inverse_bind_matrix:
             inv_bind.append(Matrix(b.inverse_bind_matrix))
         else:
+            inv_bind.append(rest_inv[i])
+
+    blend_inv_cache = {}
+
+    def _blend_inverse(combo):
+        """inv(sum_b w * rest_world[b] @ inv_bind[b]) for a weight combo."""
+        key = tuple(combo)
+        cached = blend_inv_cache.get(key)
+        if cached is None:
+            rows = [[0.0] * 4 for _ in range(4)]
+            for b_idx, w in combo:
+                m = rest_world[b_idx] @ inv_bind[b_idx]
+                for r in range(4):
+                    for c in range(4):
+                        rows[r][c] += w * m[r][c]
             try:
-                inv_bind.append(rest_world[i].inverted())
+                cached = Matrix(rows).inverted()
             except ValueError:
-                inv_bind.append(Matrix.Identity(4))
+                cached = Matrix.Identity(4)
+            blend_inv_cache[key] = cached
+        return cached
+
+    hidden_bones = {i for i, b in enumerate(model.bones)
+                    if getattr(b, 'is_hidden', False)}
 
     samples = []
     for mesh in model.meshes:
+        if mesh.parent_bone_index in hidden_bones:
+            continue
         bw = mesh.bone_weights
 
         weighted_map = None
@@ -285,9 +326,15 @@ def _build_skin_samples(model, SkinType):
             if weighted_map is not None:
                 assigned = weighted_map.get(v_idx)
                 if assigned:
-                    entries = [(bi, w, inv_bind[bi] @ v_world) for bi, w in assigned]
+                    if len(assigned) == 1 and assigned[0][1] >= 0.999:
+                        b_idx = assigned[0][0]
+                        entries = [(b_idx, 1.0, rest_inv[b_idx] @ v_world)]
+                    else:
+                        undeformed = _blend_inverse(assigned) @ v_world
+                        entries = [(bi, w, inv_bind[bi] @ undeformed)
+                                   for bi, w in assigned]
             if entries is None:
-                entries = [(default_bone, 1.0, inv_bind[default_bone] @ v_world)]
+                entries = [(default_bone, 1.0, rest_inv[default_bone] @ v_world)]
             samples.append(entries)
 
     return samples

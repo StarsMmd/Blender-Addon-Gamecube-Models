@@ -36,27 +36,93 @@ except (ImportError, SystemError):
     )
 
 
+def _is_pose_action(action):
+    """True when an action targets pose bones (an armature animation)."""
+    if getattr(action, 'id_root', None) != 'OBJECT':
+        return False
+    for fc in action.fcurves:
+        if fc.data_path.startswith('pose.bones['):
+            return True
+    return False
+
+
+def _actions_for_armature(all_actions, armature, armature_count):
+    """Select the actions that belong to one armature, in iteration order.
+
+    Single-armature scenes keep the permissive legacy behavior — every
+    pose action (plus name-prefix matches) attaches — preserving the
+    loose-action workflow where animations sit in the Action Editor
+    without being assigned at export time.
+
+    Multi-armature scenes bind strictly, because a catch-all there would
+    attach every action to every armature (quadratic unbake cost, wrong
+    per-model DAT contents). An action attaches when it is assigned on
+    the armature's animation_data or referenced from one of its NLA
+    strips; otherwise its OBJECT action slots decide — Blender names a
+    slot after the ID it animates, so a slot whose name matches the
+    armature is a durable binding, and slots naming *another* ID are an
+    explicit non-match (this is what splits the shared name prefix of a
+    multi-model map import). Only slot-less legacy actions fall back to
+    the name-prefix heuristic. Unclaimed pose actions are warned about
+    by describe_scene.
+
+    Duck-typed on purpose (no bpy imports) so the selection rules are
+    unit-testable without Blender.
+    """
+    anim_data = getattr(armature, 'animation_data', None)
+    assigned = getattr(anim_data, 'action', None) if anim_data else None
+    nla_actions = set()
+    if anim_data:
+        for track in getattr(anim_data, 'nla_tracks', ()) or ():
+            for strip in getattr(track, 'strips', ()) or ():
+                strip_action = getattr(strip, 'action', None)
+                if strip_action is not None:
+                    nla_actions.add(id(strip_action))
+
+    prefix = (armature.name.split('_skeleton_')[0]
+              if '_skeleton_' in armature.name else armature.name)
+
+    def _prefix_match(action):
+        return action.name.startswith(prefix + '_')
+
+    def _object_slots(action):
+        return [s for s in getattr(action, 'slots', ()) or ()
+                if getattr(s, 'target_id_type', None) == 'OBJECT']
+
+    actions = []
+    for action in all_actions:
+        if action is assigned or id(action) in nla_actions:
+            actions.append(action)
+            continue
+        if armature_count == 1:
+            if _is_pose_action(action) or _prefix_match(action):
+                actions.append(action)
+            continue
+        obj_slots = _object_slots(action)
+        if obj_slots:
+            # Slot bindings are authoritative: attach iff one names this
+            # armature, even when another armature's name prefix matches.
+            if any(getattr(s, 'name_display', None) == armature.name
+                   for s in obj_slots):
+                actions.append(action)
+        elif _prefix_match(action):
+            actions.append(action)
+    return actions
+
+
 def describe_bone_animations(armature, bones, logger=StubLogger(), use_bezier=True,
                               referenced_actions=None,
                               meshes=None, mesh_materials=None):
     """Read Blender Actions and produce IRBoneAnimationSet list.
 
-    Finds all actions associated with the armature, samples each
-    frame-by-frame, unbakes from Blender pose space to HSD SRT values,
-    and applies sparsification to reduce keyframe count. Also scans each
-    action for material animation fcurves and attaches them as
+    Finds all actions bound to the armature (see _actions_for_armature),
+    samples each frame-by-frame, unbakes from Blender pose space to HSD
+    SRT values, and applies sparsification to reduce keyframe count. Also
+    scans each action for material animation fcurves and attaches them as
     ``material_tracks`` on the resulting IRBoneAnimationSet.
     """
-    armature_prefix = armature.name.split('_skeleton_')[0] if '_skeleton_' in armature.name else armature.name
-    actions = []
-    for action in bpy.data.actions:
-        if action.name.startswith(armature_prefix + '_'):
-            actions.append(action)
-        elif action.id_root == 'OBJECT':
-            for fc in action.fcurves:
-                if fc.data_path.startswith('pose.bones['):
-                    actions.append(action)
-                    break
+    armature_count = sum(1 for o in bpy.data.objects if o.type == 'ARMATURE')
+    actions = _actions_for_armature(bpy.data.actions, armature, armature_count)
 
     if referenced_actions:
         before = len(actions)

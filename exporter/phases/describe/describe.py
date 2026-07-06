@@ -91,6 +91,24 @@ def describe_scene(context, options=None, logger=StubLogger(), output_ext=''):
         br_model = _describe_one_model(armature, use_bezier, logger, image_cache)
         br_models.append(br_model)
 
+    # In multi-armature scenes actions attach only when bound to an armature
+    # (assigned / NLA / matching OBJECT slot / name prefix) — surface any
+    # pose action nobody claimed so a dropped animation is loud, not silent.
+    if len(armatures) > 1:
+        try:
+            from .helpers.animations_decode import _is_pose_action
+        except (ImportError, SystemError):
+            from exporter.phases.describe.helpers.animations_decode import _is_pose_action
+        claimed = {a.name for m in br_models for a in m.actions}
+        orphans = [a.name for a in bpy.data.actions
+                   if _is_pose_action(a) and a.name not in claimed]
+        if orphans:
+            logger.warning(
+                "  %d pose action(s) are not bound to any armature and will "
+                "not be exported: %s. Assign the action (or an NLA strip / "
+                "OBJECT action slot named after the armature) to include it.",
+                len(orphans), ", ".join(sorted(orphans)))
+
     br_lights = describe_lights(context, logger=logger)
     br_cameras = describe_cameras(context, logger=logger)
     br_fogs = _describe_fogs(context, logger=logger)
