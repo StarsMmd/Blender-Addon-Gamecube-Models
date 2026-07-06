@@ -304,11 +304,12 @@ class DATBuilder(BinaryWriter):
 		(which already matches game-native for every phase except materials,
 		handled specially, and envelopes, see below).
 
-		Envelopes are grouped at their phase position but **not** internally
-		reordered (their convention isn't cracked yet): because the set of
-		envelope structs is fixed, the grouped region has the correct total
-		size, so the downstream phases still land at the right offsets — only
-		the envelope structs themselves stay internally mis-ordered. See
+		Envelopes are grouped at their phase position and internally ordered
+		by the reconstructed allocation convention (see
+		``_envelope_emission_order``); because the set of envelope structs is
+		fixed, the grouped region always has the correct total size, so the
+		downstream phases land at the right offsets even where the internal
+		order is only approximate. See
 		technical-docs/implementation_notes.md § Struct ordering convention.
 		"""
 		nl = self.node_list
@@ -318,10 +319,10 @@ class DATBuilder(BinaryWriter):
 
 		# Materials and vertex descriptors are emitted as blocks (a contiguous
 		# node_list run ending at the MaterialObject / VertexList) ordered by
-		# their leaf's reverse joint-post rank. Envelopes are *grouped* at
-		# their phase position but kept in node_list order (their convention
-		# isn't cracked); grouping them — even mis-ordered internally — keeps
-		# the downstream phases contiguous so they stay correctly ordered.
+		# their leaf's reverse joint-post rank. Envelopes are grouped at
+		# their phase position and sorted by the reconstructed allocation
+		# order; grouping keeps the downstream phases contiguous so they stay
+		# correctly ordered even where the internal order is approximate.
 		# Geometry, skeleton and the rest (animations + scene) keep their
 		# node_list-relative order.
 		material_blocks, mat_cur = [], []
@@ -356,6 +357,16 @@ class DATBuilder(BinaryWriter):
 		rest.extend(vtx_cur)
 		material_blocks.sort(key=lambda b: mobj_rank.get(id(b[-1]), 1 << 30))
 		vertex_blocks.sort(key=lambda b: vl_rank.get(id(b[-1]), 1 << 30))
+
+		# Envelope structs: sort by the reconstructed allocation order (stable,
+		# so aliases of one content key and any unranked stragglers keep their
+		# node_list-relative order).
+		env_rank = self._envelope_emission_order()
+		if env_rank:
+			default_rank = len(env_rank)
+			envelopes.sort(key=lambda n: env_rank.get(
+				self._envelope_content_key(n), default_rank)
+				if kind(n) == 'EnvelopeList' else default_rank)
 
 		# Palette structs and the scene tail trail the rest: the compiler emits
 		# them after the animation region as [palettes][scene tail][BoundBox].
@@ -428,6 +439,201 @@ class DATBuilder(BinaryWriter):
 				yield getattr(po, 'vertex_list', None)
 				po = getattr(po, 'next', None)
 		return self._reverse_joint_post_order(extract)
+
+	# Byte width of each display-list vertex component format (Vertex.getFormat()).
+	_DL_FORMAT_SIZES = {
+		'uchar': 1, 'char': 1, 'ushort': 2, 'short': 2,
+		'float': 4, 'uint': 4, 'void': 0, 'RGBAColor': 4, 'RGBColor': 3,
+	}
+
+	@classmethod
+	def _dl_format_size(cls, fmt):
+		"""Byte width of one display-list component, supporting 'base[n]' forms."""
+		if fmt.endswith(']'):
+			base, count = fmt[:-1].split('[')
+			return cls._DL_FORMAT_SIZES[base] * int(count)
+		return cls._DL_FORMAT_SIZES[fmt]
+
+	@classmethod
+	def _dl_slot_first_positions(cls, pobj):
+		"""Scan a PObject's raw display list and return {matrix_slot:
+		position_index_at_first_use}. Position indices are only meaningful for
+		indexed POS attributes; direct-position or missing data yields no
+		entry (callers fall back to a large sentinel)."""
+		data = getattr(pobj, 'raw_display_list', b'') or b''
+		vertex_list = getattr(pobj, 'vertex_list', None)
+		if not data or vertex_list is None:
+			return {}
+		descs = []
+		for v in vertex_list.vertices:
+			try:
+				size = cls._dl_format_size(v.getFormat())
+			except (KeyError, ValueError):
+				return {}
+			descs.append((v.attribute, v.attribute_type, size))
+		stride = sum(size for _, _, size in descs)
+		if stride == 0:
+			return {}
+		first = {}
+		off = 0
+		end = len(data)
+		while off < end:
+			opcode = data[off] & gx.GX_OPCODE_MASK
+			off += 1
+			if opcode == gx.GX_NOP or off + 2 > end:
+				break
+			count = int.from_bytes(data[off:off + 2], 'big')
+			off += 2
+			for _ in range(count):
+				if off + stride > end:
+					return first
+				o = off
+				slot = pos = None
+				for attr, attr_type, size in descs:
+					if attr == gx.GX_VA_PNMTXIDX and size == 1:
+						slot = data[o] // 3
+					elif attr == gx.GX_VA_POS and attr_type != gx.GX_DIRECT:
+						if size == 1:
+							pos = data[o]
+						elif size == 2:
+							pos = int.from_bytes(data[o:o + 2], 'big')
+					o += size
+				if slot is not None and pos is not None and slot not in first:
+					first[slot] = pos
+				off += stride
+		return first
+
+	def _envelope_emission_order(self):
+		"""Rank envelope structs by the compiler's reconstructed allocation order.
+
+		Convention (validated against game-native models — see
+		technical-docs/implementation_notes.md § struct ordering convention):
+		- Combos are allocated per mesh (DObject). DObjects are processed in
+		  reverse pre-order of the joint tree with each joint's mesh chain in
+		  forward order; a combo shared between DObjects belongs to the first
+		  processing DObject that uses it.
+		- The finished per-DObject blocks are emitted in reverse processing
+		  order (head-inserted list), each block's internal order preserved.
+		- Within a block, combos follow the original tool's vertex scan,
+		  reconstructed by merging the PObject palette-slot chains (slot index
+		  ≈ local first-need order), always popping the chain head whose first
+		  display-list position index is smallest.
+
+		Returns {content_key: rank} over unique envelope contents; empty when
+		the tree has no enveloped meshes.
+		"""
+		nl = self.node_list
+		kind = lambda n: type(n).__name__
+		joints = [n for n in nl if kind(n) == 'Joint']
+		if not joints:
+			return {}
+		referenced = set()
+		for j in joints:
+			for fn in ('child', 'next'):
+				v = getattr(j, fn, None)
+				if isinstance(v, Node):
+					referenced.add(id(v))
+		roots = [j for j in joints if id(j) not in referenced]
+		mesh_by_addr = {n.address: n for n in nl if kind(n) == 'Mesh'}
+
+		pre = []
+		seen_j = set()
+
+		def visit(j):
+			while isinstance(j, Node) and kind(j) == 'Joint' and id(j) not in seen_j:
+				seen_j.add(id(j))
+				pre.append(j)
+				visit(getattr(j, 'child', None))
+				j = getattr(j, 'next', None)
+		for r in roots:
+			visit(r)
+
+		# Collect DObjects in traversal order with their envelope usage stats:
+		# per content key, per local PObject index -> (slot, first position).
+		SENTINEL = 1 << 30
+		dobjs = []  # (joint_rank, mesh_i, {key: {p_local: (slot, fpos)}})
+		seen_m = set()
+		seen_p = set()
+		for j_rank, j in enumerate(pre):
+			prop = getattr(j, 'property', None)
+			mesh = mesh_by_addr.get(prop) if isinstance(prop, int) else (
+				prop if isinstance(prop, Node) and kind(prop) == 'Mesh' else None)
+			mesh_i = 0
+			while isinstance(mesh, Node):
+				if id(mesh) in seen_m:
+					break
+				seen_m.add(id(mesh))
+				stats = {}
+				pobj = getattr(mesh, 'pobject', None)
+				p_local = 0
+				while isinstance(pobj, Node) and kind(pobj) == 'PObject':
+					if id(pobj) in seen_p:
+						break
+					seen_p.add(id(pobj))
+					slots = getattr(pobj, 'property', None)
+					if isinstance(slots, list) and slots:
+						first_pos = self._dl_slot_first_positions(pobj)
+						for slot, env_list in enumerate(slots):
+							if env_list is None:
+								continue
+							key = self._envelope_content_key(env_list)
+							uses = stats.setdefault(key, {})
+							if p_local not in uses:
+								uses[p_local] = (slot, first_pos.get(slot, SENTINEL))
+					pobj = getattr(pobj, 'next', None)
+					p_local += 1
+				if stats:
+					dobjs.append((j_rank, mesh_i, stats))
+				mesh = getattr(mesh, 'next', None)
+				mesh_i += 1
+		if not dobjs:
+			return {}
+
+		# Membership: the first DObject in processing order (reverse pre-order
+		# of joints, forward mesh chains) that uses a combo owns it.
+		processing = sorted(range(len(dobjs)),
+		                    key=lambda i: (-dobjs[i][0], dobjs[i][1]))
+		owner = {}
+		for di in processing:
+			for key in dobjs[di][2]:
+				owner.setdefault(key, di)
+
+		# Emission: blocks in reverse processing order; within a block, merge
+		# the per-PObject slot chains by smallest first-position head.
+		rank = {}
+		for di in reversed(processing):
+			stats = dobjs[di][2]
+			block = [key for key in stats if owner[key] == di]
+			chains = {}
+			for key in block:
+				for p_local, (slot, _) in stats[key].items():
+					chains.setdefault(p_local, []).append((slot, key))
+			for p_local in chains:
+				chains[p_local].sort()
+			pointers = {p_local: 0 for p_local in chains}
+			emitted = set()
+			for _ in range(len(block)):
+				best = None
+				for p_local, chain in chains.items():
+					i = pointers[p_local]
+					while i < len(chain) and chain[i][1] in emitted:
+						i += 1
+					pointers[p_local] = i
+					if i < len(chain):
+						key = chain[i][1]
+						fpos = min(f for _, f in stats[key].values())
+						head = (fpos, p_local, chain[i][0], key)
+						if best is None or head < best:
+							best = head
+				if best is None:
+					break
+				key = best[3]
+				emitted.add(key)
+				rank[key] = len(rank)
+			for key in block:
+				if key not in emitted:
+					rank[key] = len(rank)
+		return rank
 
 	def _write_frame_run(self, frames):
 		"""Pool a run of Frame nodes: every keyframe buffer (4-byte aligned)
