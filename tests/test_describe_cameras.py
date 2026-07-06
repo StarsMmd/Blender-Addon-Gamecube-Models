@@ -199,6 +199,21 @@ class TestDescribeCameraAnimations:
         result = describe_camera_animations(cs)
         assert result == []
 
+    def test_trackless_animation_still_emitted(self):
+        # An empty CameraAnimation node (all child pointers null) carries no
+        # tracks but is real scene structure — its presence must round-trip,
+        # so describe emits a track-less IRCameraKeyframes rather than
+        # dropping it.
+        cam_anim = _make_camera_animation()  # all None
+        cs = _make_camera_set(animations=[cam_anim])
+
+        result = describe_camera_animations(cs)
+        assert len(result) == 1
+        kf = result[0]
+        assert all(getattr(kf, f) is None for f in
+                   ('eye_x', 'eye_y', 'eye_z', 'target_x', 'target_y',
+                    'target_z', 'roll', 'fov', 'near', 'far'))
+
     def test_fov_track_decoded(self):
         fov_frame = _make_frame(HSD_A_C_FOVY, [27.0, 40.0, 55.0])
         aobj = _make_aobj(end_frame=2.0, frame=fov_frame)
@@ -316,11 +331,14 @@ class TestDescribeCameraAnimations:
         result = describe_camera_animations(cs)
         assert len(result) == 2
 
-    def test_no_aobj_no_wobject_returns_empty(self):
+    def test_no_aobj_no_wobject_still_emits_trackless_clip(self):
+        # A CameraAnimation node with no AOBJ/WObj children is empty but
+        # present — describe preserves its presence as a track-less clip.
         cam_anim = _make_camera_animation()
         cs = _make_camera_set(animations=[cam_anim])
         result = describe_camera_animations(cs)
-        assert result == []
+        assert len(result) == 1
+        assert result[0].fov is None and result[0].eye_x is None
 
     def test_wobject_end_frame_fallback(self):
         """When CObj AOBJ is missing, end_frame comes from WObj AOBJ."""

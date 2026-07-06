@@ -114,15 +114,39 @@ def post_process(armature_names, shiny_params=None, options=None, logger=StubLog
                                     model_type=model_type)
 
     scene = bpy.context.scene
-    if selected_actions:
-        start = min(int(a.frame_range[0]) for a in selected_actions)
-        end = max(int(a.frame_range[1]) for a in selected_actions)
+    ranges = [r for r in (_bone_frame_range(a) for a in selected_actions) if r]
+    if ranges:
+        start = min(r[0] for r in ranges)
+        end = max(r[1] for r in ranges)
         scene.frame_start = start
         scene.frame_end = end
         logger.info("  Scene frame range set to %d-%d from %d action(s)",
-                    start, end, len(selected_actions))
+                    start, end, len(ranges))
     scene.frame_set(scene.frame_start)
     logger.info("=== Phase 6 complete ===")
+
+
+def _bone_frame_range(action):
+    """Frame extent of an action's *bone* (pose) F-curves.
+
+    The playback range should track the joint animation the user watches, not
+    the whole action: a paired material-animation slot can run longer than the
+    pose animation (different GX clip lengths), and ``action.frame_range``
+    aggregates across every slot, which would stretch the timeline past the
+    pose animation's last frame.
+
+    In: action (bpy.types.Action).
+    Out: (int start, int end) over pose-bone F-curves, or None if there are none.
+    """
+    frames = [
+        keyframe.co[0]
+        for fcurve in action.fcurves
+        if fcurve.data_path.startswith('pose.bones')
+        for keyframe in fcurve.keyframe_points
+    ]
+    if not frames:
+        return None
+    return int(min(frames)), int(max(frames))
 
 
 def bake_imported_transforms(armatures, logger=StubLogger()):
@@ -171,6 +195,20 @@ def bake_imported_transforms(armatures, logger=StubLogger()):
             continue
         if _is_identity_matrix(arm.matrix_world):
             continue
+        # Pose bones pinned to targets outside the armature (FOLLOW_PATH
+        # onto a path curve, TRACK_TO an external object) evaluate against
+        # world-space state that does not commute with rewriting the rest
+        # data: after the bake, `pose @ rest⁻¹` no longer cancels for the
+        # constrained chain and skinned meshes drift off the skeleton.
+        # Internal constraints (IK between bones of the same armature)
+        # rotate with the rest data and stay transparent. Leave externally
+        # constrained armatures in their viewing-rotation form — correct
+        # placement beats canonical identity transforms.
+        if _has_externally_constrained_pose(arm):
+            logger.info(
+                "  Skipping transform bake on '%s': pose bones are driven by "
+                "external-target constraints (e.g. FOLLOW_PATH)", arm.name)
+            continue
 
         # Mute any action that's been assigned so depsgraph re-evaluation
         # during the bake doesn't read stale pose state.
@@ -205,6 +243,11 @@ def bake_imported_transforms(armatures, logger=StubLogger()):
         # we still source the bake transform from the armature so the
         # mesh data is guaranteed to land in the same Z-up frame as the
         # bones regardless of cache state.
+        #
+        # This assumes every child mesh sits at identity local placement.
+        # Build upholds that: normal meshes are authored at the armature
+        # origin, and JOBJ_INSTANCE copies bake their instance offset into
+        # their own geometry rather than carrying a live matrix_local.
         arm_world = arm.matrix_world.copy()
         targets = [(arm, arm_world)]
         for obj in bpy.data.objects:
@@ -224,6 +267,20 @@ def bake_imported_transforms(armatures, logger=StubLogger()):
                 obj.matrix_parent_inverse = identity
             baked += 1
 
+        # Non-mesh children parented straight to the armature object (e.g.
+        # the FOLLOW_PATH Path_* curves) get no data bake — fold the old
+        # armature world into their basis instead, so their world placement
+        # survives the parent's reset to identity. Bone-parented children
+        # need no adjustment: Armature.transform already rotates the bone
+        # frames they hang off, so their world is unchanged.
+        for obj in bpy.data.objects:
+            if (obj.parent is arm and obj.type != 'MESH'
+                    and obj.parent_type == 'OBJECT'):
+                obj.matrix_basis = (arm_world @ obj.matrix_parent_inverse
+                                    @ obj.matrix_basis)
+                obj.matrix_parent_inverse = identity
+                baked += 1
+
         if ad is not None:
             ad.action = saved_action
             if saved_use_nla is not None:
@@ -237,6 +294,19 @@ def bake_imported_transforms(armatures, logger=StubLogger()):
 
     bpy.context.view_layer.update()
     return baked
+
+
+def _has_externally_constrained_pose(arm):
+    """True when any pose bone carries a constraint whose target lives
+    outside the armature (or a FOLLOW_PATH, whose curve target is always
+    external). Such poses are world-pinned and don't survive the rest-data
+    rewrite bake_imported_transforms performs."""
+    for pb in arm.pose.bones:
+        for c in pb.constraints:
+            target = getattr(c, 'target', None)
+            if c.type == 'FOLLOW_PATH' or (target is not None and target != arm):
+                return True
+    return False
 
 
 def _is_identity_matrix(m, tol=1e-5):

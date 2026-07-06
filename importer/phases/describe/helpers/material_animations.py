@@ -28,6 +28,43 @@ _MAT_TRACK_MAP = {
     HSD_A_M_ALPHA:     'alpha',
 }
 
+def _clamp_to_end(keyframes, end_frame):
+    """Trim a material/texture channel to the animation's ``end_frame``,
+    preserving the played-range interpolation.
+
+    HSD FObj streams keep interpolation control points *past* ``end_frame``:
+    the game interpolates the played range toward them and then loops, so those
+    keyframes shape the played animation even though they sit beyond its last
+    frame. Dropping them outright would freeze the final segment (a UV that
+    should slide toward a target at frame 160 would stick). Instead, where the
+    channel is mid-segment at ``end_frame`` we substitute the value interpolated
+    *at* ``end_frame`` and discard the rest — mirroring the bone bake, which
+    samples up to ``end_frame`` and throws the tail away. This keeps the played
+    animation identical while stopping the F-curve from stretching the timeline
+    past the animation the user is watching. Material tracks are CONSTANT/LINEAR
+    (a CONSTANT segment already holds its value, so no substitute is needed).
+
+    In: keyframes (list[IRKeyframe], ascending frame); end_frame (float).
+    Out: list[IRKeyframe] ending at or before ``end_frame``.
+    """
+    kept = [kf for kf in keyframes if kf.frame <= end_frame]
+    if len(kept) == len(keyframes) or not kept or kept[-1].frame == end_frame:
+        return kept if kept else keyframes[:1]
+
+    kf_a = kept[-1]
+    kf_b = keyframes[len(kept)]  # first keyframe past end_frame
+    if kf_a.interpolation == Interpolation.LINEAR and kf_b.frame != kf_a.frame:
+        t = (end_frame - kf_a.frame) / (kf_b.frame - kf_a.frame)
+        value = kf_a.value + t * (kf_b.value - kf_a.value)
+        kept.append(IRKeyframe(frame=end_frame, value=value,
+                               interpolation=Interpolation.LINEAR))
+    elif kf_a.interpolation != Interpolation.CONSTANT:
+        # Not a plain hold or lerp — keep the first out-of-range control point
+        # so its interpolation into the played range is preserved exactly.
+        kept.append(kf_b)
+    return kept
+
+
 # HSD texture UV track type → (IR field name on IRTextureUVTrack)
 _TEX_UV_MAP = {
     HSD_A_T_TRAU: 'translation_u',
@@ -146,7 +183,7 @@ def _describe_material_track(mat_anim, mesh, bone_name, mesh_idx, logger, mesh_d
             field = _MAT_TRACK_MAP.get(fobj.type)
             if field:
                 keyframes = decode_fobjdesc(fobj, bias=0, scale=1.0, logger=logger, options=options)
-                setattr(track, field, keyframes)
+                setattr(track, field, _clamp_to_end(keyframes, aobj.end_frame))
             fobj = fobj.next
 
     # Build lookup of static texture nodes by index
@@ -183,12 +220,13 @@ def _describe_texture_uv_track(tex_anim, static_texture, logger, options=None):
 
     uv_track = IRTextureUVTrack(texture_index=tex_anim.id)
 
+    end_frame = tex_anim.animation.end_frame
     fobj = tex_anim.animation.frame
     while fobj:
         field = _TEX_UV_MAP.get(fobj.type)
         if field:
             keyframes = decode_fobjdesc(fobj, logger=logger, options=options)
-            setattr(uv_track, field, keyframes)
+            setattr(uv_track, field, _clamp_to_end(keyframes, end_frame))
         fobj = fobj.next
 
     # Apply V-flip: v_corrected = 1 - scale_v - translation_v
