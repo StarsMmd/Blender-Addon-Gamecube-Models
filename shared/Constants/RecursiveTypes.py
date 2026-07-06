@@ -58,6 +58,13 @@ def getSubType(field_type):
 
 	return sub_type
 
+def getArrayBoundString(field_type):
+	"""Raw text between an array type's trailing brackets — an int literal,
+	a bound-variable field name, or '' for an unbounded array."""
+	if field_type[-1:] != "]":
+		return ""
+	return field_type[field_type.rindex("[") + 1:-1]
+
 def getArrayTypeBound(field_type):
 	bound_string = ""
 	current_char_index = -1
