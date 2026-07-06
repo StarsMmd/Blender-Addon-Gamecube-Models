@@ -9,12 +9,12 @@ import os
 
 try:
     from .....shared.BR.armature import BRArmature, BRBone, BRBoneSpline
+    from .animations import build_bake_skeleton, scale_baked_indices
 except (ImportError, SystemError):
     from shared.BR.armature import BRArmature, BRBone, BRBoneSpline
-
-
-_NEAR_ZERO = 0.001
-_UNIFORM_RATIO = 1.1
+    from importer.phases.plan.helpers.animations import (
+        build_bake_skeleton, scale_baked_indices,
+    )
 
 # GameCube Y-up → Blender Z-up: π/2 around X.
 _Y_UP_TO_Z_UP = [
@@ -25,24 +25,21 @@ _Y_UP_TO_Z_UP = [
 ]
 
 
-def choose_inherit_scale(accumulated_scale):
-    """Pick Blender's inherit_scale enum value for a bone's accumulated scale.
+def choose_inherit_scale(is_baked):
+    """Blender inherit_scale enum for one bone.
 
-    ALIGNED: accumulated chain is uniform (correct under HSD's aligned scale
-    inheritance, no shear under TRS decomposition).
-    NONE: non-uniform accumulation (avoids cascading shear that TRS can't
-    represent; caller accepts that the child won't inherit parent's scale).
+    The bake poses every bone; ``inherit_scale`` only picks how that identical
+    pose is read back. Baked bones (in the skeleton's ``scale_baked_indices``:
+    non-uniform rest scale, scale-animated, or a descendant of either) use
+    ``'NONE'`` — the safe universal inverse. The rest — bones with a uniform,
+    un-animated rest scale and no such ancestor — use ``'ALIGNED'`` so the
+    read-back is a sparse scale channel and native inheritance works when
+    hand-editing. See implementation_notes.md § Scale inheritance.
 
-    The thresholds mirror the pre-Plan build_skeleton heuristic so this
-    refactor produces byte-identical output.
-
-    In: accumulated_scale (tuple[float, float, float]).
-    Out: str, Blender inherit_scale enum value ('ALIGNED' or 'NONE').
+    In: is_baked (bool) — True if the bone is in the baked closure.
+    Out: str, ``'NONE'`` if is_baked else ``'ALIGNED'``.
     """
-    mn = min(abs(x) for x in accumulated_scale)
-    mx = max(abs(x) for x in accumulated_scale)
-    is_uniform = (mn < _NEAR_ZERO) or (mx / max(mn, 1e-9) < _UNIFORM_RATIO)
-    return 'ALIGNED' if is_uniform else 'NONE'
+    return 'NONE' if is_baked else 'ALIGNED'
 
 
 def choose_tail_offset(ir_bone, ik_hack):
@@ -108,18 +105,21 @@ def plan_armature(ir_model, options=None, model_index=0):
     options = options or {}
     ik_hack = bool(options.get("ik_hack"))
 
+    bake_skeleton = build_bake_skeleton(ir_model.bones, ir_model.bone_animations)
+    baked = scale_baked_indices(bake_skeleton)
+
     br_bones = [
         BRBone(
             name=ir_bone.name,
             parent_index=ir_bone.parent_index,
             edit_matrix=ir_bone.normalized_world_matrix,
             tail_offset=choose_tail_offset(ir_bone, ik_hack),
-            inherit_scale=choose_inherit_scale(ir_bone.accumulated_scale),
+            inherit_scale=choose_inherit_scale(i in baked),
             rotation_mode='XYZ',
             is_hidden=ir_bone.is_hidden,
             spline=_plan_bone_spline(ir_bone.spline),
         )
-        for ir_bone in ir_model.bones
+        for i, ir_bone in enumerate(ir_model.bones)
     ]
 
     return BRArmature(
@@ -127,4 +127,5 @@ def plan_armature(ir_model, options=None, model_index=0):
         bones=br_bones,
         display_type='STICK' if ik_hack else 'OCTAHEDRAL',
         matrix_basis=_Y_UP_TO_Z_UP,
+        bake_skeleton=bake_skeleton,
     )

@@ -8,8 +8,9 @@ shell repackages each one into a BRAction with concrete BRBoneTracks
 and BRMaterialTracks so the rest of the pipeline runs through BR types
 without a side-channel stash.
 
-The export side does not populate ``BRBoneTrack.bake_context`` — the
-basis math is only used by `build_blender` on the importer side.
+The export side carries only decoded keyframes on each BRBoneTrack — the
+per-frame pose bake (BRArmature.bake_skeleton + ``bake_frame``) is only used
+by `build_blender` on the importer side.
 """
 try:
     from .....shared.BR.actions import BRAction, BRBoneTrack, BRMaterialTrack
@@ -69,7 +70,6 @@ def _ir_bone_track_to_br(ir_track):
         rest_position=ir_track.rest_position,
         rest_scale=ir_track.rest_scale,
         end_frame=ir_track.end_frame,
-        bake_context=None,  # Importer-only; exporter doesn't use it.
         spline_path=ir_track.spline_path,
     )
 

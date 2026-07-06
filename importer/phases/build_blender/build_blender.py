@@ -49,7 +49,8 @@ def build_blender_scene(br_scene, context, options, logger=StubLogger()):
         if br_model.actions:
             logger.info("  Building %d animation set(s)", len(br_model.actions))
             actions, mat_slot_indices = build_bone_animations(
-                br_model.actions, armature, options, logger=logger,
+                br_model.actions, armature, options,
+                br_model.armature.bake_skeleton, logger=logger,
                 material_lookup=material_lookup,
             )
 

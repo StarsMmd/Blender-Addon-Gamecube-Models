@@ -42,3 +42,6 @@ class BRArmature:
     display_type: str = 'OCTAHEDRAL'  # Blender enum: OCTAHEDRAL/STICK/BBONE/.../WIRE
     matrix_basis: list[list[float]] | None = None  # 4x4 armature object transform
     custom_props: dict[str, object] = field(default_factory=dict)
+    # Importer-only: full-skeleton rest data driving the per-frame pose bake
+    # (BRBakeSkeleton). The exporter direction leaves this None.
+    bake_skeleton: object = None  # shared.BR.actions.BRBakeSkeleton | None

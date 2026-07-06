@@ -34,7 +34,7 @@ The IR uses standard, widely-adopted conventions so that any build phase can con
 | **Bone transforms** | Local-space SRT | `position`, `rotation`, `scale` are relative to parent bone |
 | **Bone matrices** | World-space | `world_matrix`, `normalized_world_matrix` etc. are absolute transforms |
 | **Mesh vertices** | World-space positions | All vertices are in world space regardless of skin type. Phase 4 transforms RIGID/SINGLE_BONE vertices from bone-local to world space (`parent_world @ vertex`), and ENVELOPE vertices via deformation (`bone_world @ IBM @ vertex`). The compose phase reverses these transforms per skin type |
-| **Animation values** | Raw per-channel SRT | Keyframe values are raw rotation/translation/scale from the source. Phase 5a builds a `BRBakeContext` so Phase 5b can compose them via `compute_pose_basis`. Format-specific corrections (e.g. aligned scale inheritance) are pre-baked into `rest_local_matrix` by Phase 4 |
+| **Animation values** | Raw per-channel SRT | Keyframe values are raw rotation/translation/scale from the source. Phase 5b's `bake_frame` composes each bone's GX world per frame from these + the `BRBakeSkeleton` rest data, reproducing HSD's aligned scale inheritance under Blender's `inherit_scale='NONE'` |
 | **Angles** | Radians | All rotation values throughout the IR |
 | **Units** | Meters | All position values are in meters (Blender units). GameCube positions are converted using `GC_TO_METERS = 0.10` on import (Phase 4) and `METERS_TO_GC = 10.0` on export (compose phase). The scale constant is defined in `shared/helpers/scale.py` |
 
@@ -236,9 +236,9 @@ class FragmentBlending:
 
 **File:** `shared/IR/animation.py`
 
-All keyframes are fully decoded into explicit frame/value pairs with interpolation and bezier handles. Keyframe values are raw per-channel SRT — Phase 5a builds per-bone `BRBakeContext` with strategy-dependent rest data, and Phase 5b uses `compute_pose_basis` to turn (rest, animated SRT) pairs into pose deltas at each frame.
+All keyframes are fully decoded into explicit frame/value pairs with interpolation and bezier handles. Keyframe values are raw per-channel SRT — Phase 5a builds the model-wide `BRBakeSkeleton` (rest data + parent-first order), and Phase 5b's `bake_frame` composes each bone's GX world per frame and inverts Blender's `inherit_scale='NONE'` forward map to a shear-free pose basis. See [br_specification.md](br_specification.md) § BRBakeSkeleton and [implementation_notes.md](implementation_notes.md) § Scale inheritance.
 
-Format-specific corrections (e.g. HSD's aligned scale inheritance) are pre-baked into `rest_local_matrix` by Phase 4 and carried through into `BRBakeContext.rest_base`. The build phase never recomputes them.
+HSD's aligned scale inheritance is reproduced by that per-frame GX composition (`Rot · diag(accumulated_scale)`), not pre-baked into any single rest matrix — so it stays correct even when an ancestor's scale is animated.
 
 For bones hidden at rest (near-zero scale), Phase 4's `fix_near_zero_bone_matrices` scans every animation's keyframes for a max-abs visible scale and uses that for a numerically stable rest matrix. All transitive descendants are rebuilt through `_compose_bone_transforms` so the full six-field transform record stays consistent (see implementation_notes.md § "Near-zero-rest-scale rebind").
 

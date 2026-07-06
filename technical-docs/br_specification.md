@@ -47,6 +47,7 @@ BRModel
 | `display_type` | `str` | Blender armature display enum: `'OCTAHEDRAL'` / `'STICK'` / `'BBONE'` / `'ENVELOPE'` / `'WIRE'`. `'STICK'` when `options['ik_hack']` is set, else `'OCTAHEDRAL'`. |
 | `matrix_basis` | `list[list[float]] \| None` | 4×4 transform for the armature *object*. Plan sets the π/2 X-rotation here so GC Y-up data lands in Blender Z-up automatically. |
 | `custom_props` | `dict[str, object]` | Extra `armature["key"] = value` props. Empty by default; `build_skeleton` still stamps `dat_leniencies` from the logger separately. |
+| `bake_skeleton` | `BRBakeSkeleton \| None` | Importer-only. Full-skeleton rest data (per-bone SRT, rest world, normalized rest, classical-scaling flag) + a parent-first `dfs_order`, driving the per-frame pose bake. `None` on the exporter side. |
 
 ### BRBone
 
@@ -56,7 +57,7 @@ BRModel
 | `parent_index` | `int \| None` | Index into `bones`. |
 | `edit_matrix` | `list[list[float]]` | 4×4 world-space matrix assigned to `edit_bone.matrix`. Comes from IR's `normalized_world_matrix`. |
 | `tail_offset` | `tuple[float, float, float]` | Relative head→tail offset. `(0, 0.01, 0)` by default; IK-effector shrink reduces the Y component. |
-| `inherit_scale` | `str` | Blender's `bone.inherit_scale` enum: `'ALIGNED'` (uniform chain) or `'NONE'` (non-uniform). Decided by `choose_inherit_scale(accumulated_scale)` — threshold `mx/mn < 1.1` or `mn < 1e-3`. |
+| `inherit_scale` | `str` | Blender's `bone.inherit_scale` enum. Always `'NONE'` — the per-frame bake injects each bone's full GX pose and inverts NONE's forward map, so scale never propagates through Blender (see § Scale inheritance in implementation_notes.md). |
 | `rotation_mode` | `str` | Blender's `pose_bone.rotation_mode` enum. Always `'XYZ'`. |
 | `use_connect` | `bool` | Reserved; currently `False` everywhere. |
 | `is_hidden` | `bool` | Mirrors `IRBone.is_hidden` for post-process consumption. |
@@ -122,25 +123,43 @@ Instances model `JOBJ_INSTANCE` bones: Plan expands one source bone with `instan
 | `rotation` / `location` / `scale` | `list[list[IRKeyframe]]` | Three channels each; IRKeyframe instances carried through as opaque data so Blender's fcurve interpolator can evaluate them at integer frames. |
 | `rest_rotation` / `rest_position` / `rest_scale` | tuples of 3 floats | Constants used when a channel has no keyframes (build fills with these). |
 | `end_frame` | `float` | |
-| `bake_context` | `BRBakeContext` | Pre-computed rest data for the per-frame basis formula. |
-| `spline_path` | `object` | IRSplinePath pass-through for FOLLOW_PATH-animated bones. |
+| `spline_path` | `object` | IRSplinePath pass-through for FOLLOW_PATH-animated bones (baked via a constraint, not the pose bake). |
 
-### BRBakeContext
+### BRBakeSkeleton / BRBakeBone
 
-Everything the pose-basis formula needs at each frame, as plain data.
+Model-wide rest data for the per-frame pose bake, produced once by
+`build_bake_skeleton(ir_bones)` and stored on `BRArmature.bake_skeleton`.
+`plan/helpers/animations.py::bake_frame` composes each bone's GX world top-down
+(`Rot · diag(accumulated_scale)`, division-free), rebases it against the
+normalized edit-bone rest, and returns the *target* pose per bone (pure math,
+no bpy — unit-tested in `tests/test_plan_actions.py`). `compute_bake_plan`
+selects which bones to pose: every animated bone plus every non-uniform-
+accumulated-scale bone (NONE doesn't inherit non-uniform scale, and it
+propagates down-chain). `build_blender/helpers/animations.py::_bake_action`
+samples the raw SRT F-curves per frame, calls `bake_frame`, and drops each
+target onto the pose bone (`pose_bone.matrix = target`) depth-level by
+depth-level — Blender performs the `inherit_scale='NONE'` inversion — then
+writes the read-back loc/rot/scale as the final F-curves. See
+implementation_notes.md § Scale inheritance.
+
+**BRBakeSkeleton**
 
 | Field | Type | Notes |
 |---|---|---|
-| `strategy` | `'aligned'` \| `'direct'` | Chosen by `choose_bake_strategy(accumulated_scale)` — uniform → `aligned` (sandwich formula), non-uniform → `direct` (SRT delta). |
-| `rest_base` | `list[list[float]]` | 4×4 `rest_local_matrix` with path-rotation baked in for FOLLOW_PATH bones. |
-| `rest_base_inv` | `list[list[float]]` | Fallback for aligned when the sandwich's edit-matrix inversion fails. |
-| `has_path` | `bool` | |
-| `rest_translation` | `tuple[float, float, float]` | Direct-path pre-decomposed rest translation. |
-| `rest_rotation_quat` | `tuple[float, float, float, float]` | `(w, x, y, z)` rest quaternion. |
-| `rest_scale` | `tuple[float, float, float]` | |
-| `local_edit` | `list[list[float]] \| None` | Aligned-path only: bone's `normalized_local_matrix`. |
-| `edit_scale_correction` | `list[list[float]] \| None` | Aligned-path only. |
-| `parent_edit_scale_correction` | `list[list[float]] \| None` | Aligned-path only; resolved via a second pass (`attach_parent_edit_scale_corrections`) once all bone tracks have been created. |
+| `bones` | `list[BRBakeBone]` | Index-aligned with the armature's bones / track `bone_index`. |
+| `dfs_order` | `list[int]` | Bone indices ordered parent-before-child so the chain composition runs in one forward pass. |
+
+**BRBakeBone**
+
+| Field | Type | Notes |
+|---|---|---|
+| `name` | `str` | Pose-bone name; build looks up the bone to pose. |
+| `parent_index` | `int \| None` | |
+| `rest_scale` / `rest_rotation` / `rest_position` | tuples of 3 floats | GX joint local SRT; used for un-animated bones during composition. |
+| `rest_world_matrix` | `list[list[float]]` | 4×4 GX rest world (scale baked in) = `IRBone.world_matrix`. Rebase denominator. |
+| `normalized_rest_matrix` | `list[list[float]]` | 4×4 edit-bone matrix (rotation only) = `IRBone.normalized_world_matrix`. |
+| `accumulated_scale` | tuple of 3 floats | Rest accumulated scale (rebound); drives the non-uniform bake-set decision + un-animated local-scale reconstruction. |
+| `classical_scaling` | `bool` | `JOBJ_CLASSICAL_SCALING` — the bone passes the parent's accumulated scale to its children unchanged. |
 
 ### BRMaterialTrack
 

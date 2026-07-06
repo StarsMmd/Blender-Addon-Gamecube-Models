@@ -3,41 +3,53 @@ from dataclasses import dataclass, field
 
 
 @dataclass
-class BRBakeContext:
-    """Everything a pose-basis computation needs at each animation frame.
+class BRBakeBone:
+    """Rest-pose + hierarchy data for one bone, consumed by the per-frame
+    NONE-inheritance bake in ``build_blender/helpers/animations.py``.
 
-    Produced by Plan once per bone track; consumed by the per-frame basis
-    formula (pure, see importer/phases/plan/helpers/animations.py::
-    compute_pose_basis). All fields are plain data — no bpy or mathutils.
-
-    ``strategy`` selects between two mathematically distinct paths:
-      - ``'aligned'``: legacy edit_scale_correction sandwich. Correct for
-        uniform parent scales (no shear); carries scale information for
-        ALIGNED inheritance propagation.
-      - ``'direct'``: per-channel SRT delta against the rest pose. Used
-        when the accumulated parent scale is non-uniform, because the
-        sandwich formula would produce a sheared matrix that TRS
-        decomposition can't represent.
+    The bake reproduces the GX runtime pose exactly by (1) composing each
+    bone's GX world per frame from its animated SRT and its ancestors'
+    accumulated scale, then (2) inverting Blender's ``inherit_scale='NONE'``
+    forward formula in pure math to recover a shear-free pose basis. Every
+    field is plain data — no bpy or mathutils.
     """
-    strategy: str  # 'aligned' | 'direct'
-    rest_base: list[list[float]]          # 4x4 rest_local (with path rotation baked in)
-    rest_base_inv: list[list[float]]      # 4x4 — fallback for aligned when local_edit is singular
-    has_path: bool
+    name: str
+    parent_index: int | None
+    rest_scale: tuple[float, float, float]      # GX joint local SRT
+    rest_rotation: tuple[float, float, float]   # Euler XYZ radians
+    rest_position: tuple[float, float, float]
+    rest_world_matrix: list[list[float]]        # 4x4 GX rest world (scale baked in)
+    normalized_rest_matrix: list[list[float]]   # 4x4 edit-bone matrix (rotation only)
+    accumulated_scale: tuple[float, float, float]  # rest accumulated scale (rebound)
+    classical_scaling: bool                     # JOBJ_CLASSICAL_SCALING
 
-    # Direct-path pre-decomposition (also used as constants in aligned's fallback):
-    rest_translation: tuple[float, float, float]
-    rest_rotation_quat: tuple[float, float, float, float]  # (w, x, y, z)
-    rest_scale: tuple[float, float, float]
 
-    # Aligned-path only:
-    local_edit: list[list[float]] | None = None
-    edit_scale_correction: list[list[float]] | None = None
-    parent_edit_scale_correction: list[list[float]] | None = None
+@dataclass
+class BRBakeSkeleton:
+    """Full-skeleton rest data + parent-first ordering for the pose bake.
+
+    Shared across every action of a model. ``dfs_order`` lists bone indices
+    parent-before-child so the per-frame chain composition and the NONE
+    inversion (which needs each bone's parent pose already resolved) can run
+    in a single forward pass.
+
+    ``scale_baked_indices`` lists the bones that read back under ``NONE`` rather
+    than native ``ALIGNED``: their own or an ancestor's accumulated rest scale
+    is non-uniform, or their (or an ancestor's) scale is animated. Precomputed
+    once so plan (inherit_scale) and build (posed set) agree.
+    """
+    bones: list[BRBakeBone] = field(default_factory=list)
+    dfs_order: list[int] = field(default_factory=list)
+    scale_baked_indices: list[int] = field(default_factory=list)
 
 
 @dataclass
 class BRBoneTrack:
-    """One bone's animation keyframes + pre-computed bake context."""
+    """One bone's animation keyframes.
+
+    Carries only the decoded keyframes + rest constants; the pose-basis math is
+    driven by the shared BRBakeSkeleton (see BRArmature.bake_skeleton).
+    """
     bone_name: str
     bone_index: int
     # IR-decoded keyframes per channel (3 components each).
@@ -49,11 +61,6 @@ class BRBoneTrack:
     rest_position: tuple[float, float, float]
     rest_scale: tuple[float, float, float]
     end_frame: float
-    # Importer-only: pre-computed pose-basis bake context, consumed by
-    # `build_blender/helpers/animations.py`. The exporter direction
-    # leaves this `None` — its plan converts BRBoneTrack back to
-    # IRBoneTrack without ever touching the basis math.
-    bake_context: BRBakeContext | None = None
     # Pass-through until later stages migrate these:
     spline_path: object = None  # IRSplinePath
 

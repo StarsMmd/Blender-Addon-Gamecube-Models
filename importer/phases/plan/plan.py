@@ -8,7 +8,7 @@ try:
     from ....shared.helpers.logger import StubLogger
     from .helpers.armature import plan_armature
     from .helpers.meshes import plan_meshes
-    from .helpers.animations import plan_actions, attach_parent_edit_scale_corrections
+    from .helpers.animations import plan_actions
     from .helpers.scene import (
         plan_lights, plan_cameras, plan_constraints, plan_particle_summary,
         plan_fogs,
@@ -18,9 +18,7 @@ except (ImportError, SystemError):
     from shared.helpers.logger import StubLogger
     from importer.phases.plan.helpers.armature import plan_armature
     from importer.phases.plan.helpers.meshes import plan_meshes
-    from importer.phases.plan.helpers.animations import (
-        plan_actions, attach_parent_edit_scale_corrections,
-    )
+    from importer.phases.plan.helpers.animations import plan_actions
     from importer.phases.plan.helpers.scene import (
         plan_lights, plan_cameras, plan_constraints, plan_particle_summary,
         plan_fogs,
@@ -43,7 +41,6 @@ def plan_scene(ir_scene, options=None, logger=StubLogger()):
     for i, ir_model in enumerate(ir_scene.models):
         br_meshes, br_instances, br_materials = plan_meshes(ir_model)
         br_actions = plan_actions(ir_model.bone_animations, ir_model.bones)
-        attach_parent_edit_scale_corrections(br_actions, ir_model.bones)
         models.append(BRModel(
             name=ir_model.name,
             armature=plan_armature(ir_model, options, model_index=i),
