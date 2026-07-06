@@ -6,7 +6,10 @@ from importer.phases.parse.helpers.dat_parser import DATParser
 from shared.Nodes.Classes.Joints.Joint import Joint
 from shared.IR.skeleton import IRBone
 from shared.IR.enums import ScaleInheritance
-from importer.phases.describe.helpers.bones import describe_bones
+from importer.phases.describe.helpers.bones import (
+    describe_bones, _effector_bind_position,
+)
+from shared.Nodes.Classes.Joints.BoneReference import BoneReference
 from shared.helpers.math_shim import compile_srt_matrix
 from shared.helpers.scale import GC_TO_METERS
 
@@ -313,3 +316,53 @@ class TestCompileSRTMatrix:
         assert abs(m[0][0] - 2.0) < 1e-6
         assert abs(m[1][1] - 3.0) < 1e-6
         assert abs(m[2][2] - 4.0) < 1e-6
+
+
+class _FakeBoneRef:
+    """Minimal stand-in for the Reference→BoneReference chain used by IK hints."""
+    def __init__(self, length):
+        self.property = BoneReference(address=None, blender_obj=None)
+        self.property.length = length
+
+
+class _FakeParent:
+    def __init__(self, bone_ref):
+        self._bone_ref = bone_ref
+    def getReferenceObject(self, node_type, sub_type):
+        return self._bone_ref
+
+
+class TestEffectorBindPosition:
+    """A JOBJ_EFFECTOR's stored translation is the IK target reach; the real
+    bind-pose length lives in the parent's BoneReference. Rescale to it,
+    keeping direction, so the crown doesn't fling off the model."""
+
+    def test_rescales_to_bone_reference_length(self):
+        pos = (6.0, 0.0, 8.0)  # magnitude 10 in metres
+        parent = _FakeParent(_FakeBoneRef(length=2.0 / GC_TO_METERS))  # 2.0 m
+        out = _effector_bind_position(object(), parent, pos)
+        mag = math.sqrt(sum(c * c for c in out))
+        assert abs(mag - 2.0) < 1e-6
+        # Direction preserved (still 3:4 ratio along x:z).
+        assert abs(out[0] / out[2] - 6.0 / 8.0) < 1e-6
+
+    def test_no_bone_reference_leaves_position_untouched(self):
+        pos = (6.0, 0.0, 8.0)
+        parent = _FakeParent(None)
+        assert _effector_bind_position(object(), parent, pos) == pos
+
+    def test_no_parent_leaves_position_untouched(self):
+        pos = (6.0, 0.0, 8.0)
+        assert _effector_bind_position(object(), None, pos) == pos
+
+    def test_degenerate_zero_translation_is_safe(self):
+        parent = _FakeParent(_FakeBoneRef(length=5.0))
+        assert _effector_bind_position(object(), parent, (0.0, 0.0, 0.0)) == (0.0, 0.0, 0.0)
+
+    def test_already_correct_length_is_noop(self):
+        # A well-formed chain where |translation| already equals the bind length.
+        length_m = 10.0
+        pos = (6.0, 0.0, 8.0)  # magnitude 10 m
+        parent = _FakeParent(_FakeBoneRef(length=length_m / GC_TO_METERS))
+        out = _effector_bind_position(object(), parent, pos)
+        assert all(abs(a - b) < 1e-6 for a, b in zip(out, pos))
