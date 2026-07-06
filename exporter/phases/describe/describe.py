@@ -17,6 +17,7 @@ import bpy
 
 try:
     from ....shared.BR.scene import BRScene, BRModel
+    from ....shared.BR.fog import BRFog
     from ....shared.helpers.logger import StubLogger
     from .helpers.armature import describe_armature
     from .helpers.meshes import describe_meshes
@@ -35,6 +36,7 @@ try:
     from ..plan.helpers.merge_meshes import merge_meshes
 except (ImportError, SystemError):
     from shared.BR.scene import BRScene, BRModel
+    from shared.BR.fog import BRFog
     from shared.helpers.logger import StubLogger
     from exporter.phases.describe.helpers.armature import describe_armature
     from exporter.phases.describe.helpers.meshes import describe_meshes
@@ -80,15 +82,21 @@ def describe_scene(context, options=None, logger=StubLogger(), output_ext=''):
     use_bezier = options.get('sparsify_bezier', True)
 
     br_models = []
+    # One image cache spans all armatures so a bpy Image datablock shared
+    # across models is serialised into a single BRImage (pixel readback is
+    # the expensive part; sharing also lets plan/compose dedup downstream).
+    image_cache = {}
     for armature in armatures:
         logger.info("  Processing armature '%s'", armature.name)
-        br_model = _describe_one_model(armature, use_bezier, logger)
+        br_model = _describe_one_model(armature, use_bezier, logger, image_cache)
         br_models.append(br_model)
 
     br_lights = describe_lights(context, logger=logger)
     br_cameras = describe_cameras(context, logger=logger)
+    br_fogs = _describe_fogs(context, logger=logger)
 
-    br_scene = BRScene(models=br_models, lights=br_lights, cameras=br_cameras)
+    br_scene = BRScene(models=br_models, lights=br_lights, cameras=br_cameras,
+                       fogs=br_fogs)
 
     shiny_params = extract_shiny_params(armatures, logger)
 
@@ -108,7 +116,31 @@ def describe_scene(context, options=None, logger=StubLogger(), output_ext=''):
     return br_scene, shiny_params, pkx_header
 
 
-def _describe_one_model(armature, use_bezier, logger):
+def _describe_fogs(context, logger=StubLogger()):
+    """Recover scene fog from the world's native Mist settings.
+
+    Fog exists iff the scene has a world with ``mist_settings.use_mist``
+    enabled (how build signals fog presence — and how an arbitrary user
+    scene opts into exporting fog). Returns [] otherwise.
+    """
+    world = context.scene.world
+    if not world or not world.mist_settings.use_mist:
+        return []
+    mist = world.mist_settings
+    c = world.color
+    fog = BRFog(
+        color=(c[0], c[1], c[2]),
+        mist_start=mist.start,
+        mist_depth=mist.depth,
+        falloff=mist.falloff,
+        intensity=mist.intensity,
+    )
+    logger.info("  Recovered fog from world mist (start=%.3f depth=%.3f)",
+                mist.start, mist.depth)
+    return [fog]
+
+
+def _describe_one_model(armature, use_bezier, logger, image_cache=None):
     """Pull one armature's full BR description out of Blender.
 
     Computes IR bones + merged IR meshes inline because the bpy-side
@@ -124,7 +156,7 @@ def _describe_one_model(armature, use_bezier, logger):
     ir_bones = plan_armature(br_armature, logger=logger)
 
     br_meshes, _br_instances, br_materials, blender_materials = describe_meshes(
-        armature, br_armature, logger=logger,
+        armature, br_armature, logger=logger, image_cache=image_cache,
     )
     ir_meshes = plan_meshes(br_meshes, br_materials, ir_bones, logger=logger)
     ir_meshes, blender_materials_merged = merge_meshes(

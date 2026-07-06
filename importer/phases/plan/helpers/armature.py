@@ -8,9 +8,9 @@ import math
 import os
 
 try:
-    from .....shared.BR.armature import BRArmature, BRBone
+    from .....shared.BR.armature import BRArmature, BRBone, BRBoneSpline
 except (ImportError, SystemError):
-    from shared.BR.armature import BRArmature, BRBone
+    from shared.BR.armature import BRArmature, BRBone, BRBoneSpline
 
 
 _NEAR_ZERO = 0.001
@@ -75,6 +75,28 @@ def derive_armature_name(ir_model, options, model_index):
     return f"{base_name}_skeleton_{model_index}"
 
 
+# GX spline type (flags >> 8) → Blender curve type. 0 linear → POLY,
+# 1 cubic-bezier → BEZIER, 2 B-spline / 3 cardinal → NURBS.
+_GX_SPLINE_CURVE_TYPE = {0: 'POLY', 1: 'BEZIER', 2: 'NURBS', 3: 'NURBS'}
+
+
+def _plan_bone_spline(ir_spline):
+    """Convert an IRBoneSpline into a Blender-native BRBoneSpline (or None).
+
+    Lossy by design: the control points map onto a Blender Curve, but the GX
+    spline type collapses onto POLY/BEZIER/NURBS and the precomputed knots /
+    coefficients are dropped (Blender recomputes interpolation from the
+    points). Reads IRBoneSpline attributes directly (no IR import).
+    """
+    if ir_spline is None:
+        return None
+    gx_type = ir_spline.flags >> 8
+    return BRBoneSpline(
+        curve_type=_GX_SPLINE_CURVE_TYPE.get(gx_type, 'POLY'),
+        control_points=[list(p) for p in ir_spline.control_points],
+    )
+
+
 def plan_armature(ir_model, options=None, model_index=0):
     """Convert IRModel to BRArmature.
 
@@ -95,6 +117,7 @@ def plan_armature(ir_model, options=None, model_index=0):
             inherit_scale=choose_inherit_scale(ir_bone.accumulated_scale),
             rotation_mode='XYZ',
             is_hidden=ir_bone.is_hidden,
+            spline=_plan_bone_spline(ir_bone.spline),
         )
         for ir_bone in ir_model.bones
     ]

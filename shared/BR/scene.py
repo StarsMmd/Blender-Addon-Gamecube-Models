@@ -7,6 +7,7 @@ from .actions import BRAction
 from .materials import BRMaterial
 from .lights import BRLight
 from .cameras import BRCamera
+from .fog import BRFog
 from .constraints import BRConstraints, BRParticleSummary
 
 
@@ -30,3 +31,4 @@ class BRScene:
     models: list[BRModel] = field(default_factory=list)
     lights: list[BRLight] = field(default_factory=list)
     cameras: list[BRCamera] = field(default_factory=list)
+    fogs: list[BRFog] = field(default_factory=list)

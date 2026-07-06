@@ -13,17 +13,47 @@ attachment is known.
 import math
 
 try:
-    from .....shared.IR.skeleton import IRBone
+    from .....shared.IR.skeleton import IRBone, IRBoneSpline
     from .....shared.IR.enums import ScaleInheritance
-    from .....shared.Constants.hsd import JOBJ_HIDDEN
+    from .....shared.Constants.hsd import JOBJ_HIDDEN, JOBJ_SPLINE
     from .....shared.helpers.math_shim import compile_srt_matrix
     from .....shared.helpers.logger import StubLogger
 except (ImportError, SystemError):
-    from shared.IR.skeleton import IRBone
+    from shared.IR.skeleton import IRBone, IRBoneSpline
     from shared.IR.enums import ScaleInheritance
-    from shared.Constants.hsd import JOBJ_HIDDEN
+    from shared.Constants.hsd import JOBJ_HIDDEN, JOBJ_SPLINE
     from shared.helpers.math_shim import compile_srt_matrix
     from shared.helpers.logger import StubLogger
+
+
+# Blender curve type → GX spline type (flags high byte). Inverse of the
+# importer's _GX_SPLINE_CURVE_TYPE; B-spline and cardinal both map from NURBS,
+# so NURBS resolves to B-spline (2) — the more common of the two.
+_CURVE_TYPE_TO_GX = {'POLY': 0, 'BEZIER': 1, 'NURBS': 2}
+
+
+def _plan_bone_spline(br_spline):
+    """Recover an IRBoneSpline from a Blender-native BRBoneSpline (or None).
+
+    Lossy reverse of the curve mapping: control points survive, the Blender
+    curve type resolves to a representative GX spline type, and the knots /
+    coefficients are left None (they aren't recoverable from a Blender curve —
+    the compose serializer omits the corresponding pointers). n is the control
+    point count; f0/f1 default to 0.
+    """
+    if br_spline is None:
+        return None
+    gx_type = _CURVE_TYPE_TO_GX.get(br_spline.curve_type, 0)
+    control_points = [list(p) for p in br_spline.control_points]
+    return IRBoneSpline(
+        flags=gx_type << 8,
+        n=len(control_points),
+        f0=0.0,
+        f1=0.0,
+        control_points=control_points,
+        knots=None,
+        coefficients=None,
+    )
 
 
 def plan_armature(br_armature, logger=StubLogger()):
@@ -80,7 +110,11 @@ def plan_armature(br_armature, logger=StubLogger()):
         else:
             accumulated_scale = scale
 
+        ir_spline = _plan_bone_spline(getattr(br_bone, 'spline', None))
+
         flags = JOBJ_HIDDEN if br_bone.is_hidden else 0
+        if ir_spline is not None:
+            flags |= JOBJ_SPLINE
 
         identity_list = _identity_4x4()
         inverse_bind = _inverse_4x4(world)
@@ -102,6 +136,7 @@ def plan_armature(br_armature, logger=StubLogger()):
             normalized_local_matrix=_clone_4x4(srt_local),
             scale_correction=identity_list,
             accumulated_scale=accumulated_scale,
+            spline=ir_spline,
         ))
 
     root_count = sum(1 for b in bones if b.parent_index is None)

@@ -67,5 +67,38 @@ def build_blender_scene(br_scene, context, options, logger=StubLogger()):
     if br_scene.cameras and options.get("import_cameras", False):
         build_cameras(br_scene.cameras, logger)
 
+    _store_fog(getattr(br_scene, 'fogs', None), context, logger)
+
     logger.info("=== Phase 5 complete ===")
     return build_results
+
+
+def _store_fog(br_fogs, context, logger):
+    """Apply the scene fog to the world's native Mist settings.
+
+    Blender's world holds one mist range, so only the first BRFog is applied
+    (map archives carry at most one). ``use_mist`` is the presence signal the
+    export describe reads back. When there's no fog we clear ``use_mist`` so a
+    fog-carrying model built earlier in the same session can't leave stale
+    mist on a later fog-less scene.
+    """
+    if context is None:
+        return
+    import bpy
+    scene = context.scene
+    if not scene.world:
+        scene.world = bpy.data.worlds.new("World")
+    mist = scene.world.mist_settings
+
+    if br_fogs:
+        fog = br_fogs[0]
+        scene.world.color = fog.color
+        mist.use_mist = True
+        mist.start = fog.mist_start
+        mist.depth = fog.mist_depth
+        mist.falloff = fog.falloff
+        mist.intensity = fog.intensity
+        logger.info("  Applied fog to world mist (start=%.3f depth=%.3f falloff=%s)",
+                    fog.mist_start, fog.mist_depth, fog.falloff)
+    else:
+        mist.use_mist = False

@@ -8,12 +8,36 @@ from collections import defaultdict
 
 try:
     from .....shared.Nodes.Classes.Joints.Joint import Joint
+    from .....shared.Nodes.Classes.Misc.Spline import Spline
     from .....shared.Constants.hsd import JOBJ_INSTANCE
     from .....shared.helpers.logger import StubLogger
 except (ImportError, SystemError):
     from shared.Nodes.Classes.Joints.Joint import Joint
+    from shared.Nodes.Classes.Misc.Spline import Spline
     from shared.Constants.hsd import JOBJ_INSTANCE
     from shared.helpers.logger import StubLogger
+
+
+def _compose_joint_spline(bone):
+    """Rebuild a Spline node from a bone's IRBoneSpline, or None.
+
+    The Spline serializer writes its s1/s2/s3 arrays from Python lists, so we
+    hand the resolved control-point / knot / coefficient lists straight back.
+    Values are already in GC units (carried verbatim through the IR).
+    """
+    ir_spline = getattr(bone, 'spline', None)
+    if ir_spline is None:
+        return None
+
+    spline = Spline(address=None, blender_obj=None)
+    spline.flags = ir_spline.flags
+    spline.n = ir_spline.n
+    spline.f0 = ir_spline.f0
+    spline.f1 = ir_spline.f1
+    spline.s1 = [list(p) for p in ir_spline.control_points] if ir_spline.control_points else None
+    spline.s2 = list(ir_spline.knots) if ir_spline.knots else None
+    spline.s3 = [list(c) for c in ir_spline.coefficients] if ir_spline.coefficients else None
+    return spline
 
 
 def compose_bones(bones, logger=StubLogger()):
@@ -43,7 +67,7 @@ def compose_bones(bones, logger=StubLogger()):
             [list(row) for row in bone.inverse_bind_matrix]
             if bone.inverse_bind_matrix is not None else None
         )
-        joint.property = None
+        joint.property = _compose_joint_spline(bone)
         joint.reference = None
         joint.child = None
         joint.next = None

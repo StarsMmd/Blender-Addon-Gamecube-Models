@@ -34,7 +34,8 @@ from .helpers.bones import describe_bones
 from .helpers.meshes import describe_meshes
 from .helpers.animations import describe_bone_animations
 from .helpers.constraints import describe_constraints
-from .helpers.lights import describe_light
+from .helpers.lights import describe_light, describe_light_animations
+from .helpers.fog import describe_fog
 from .helpers.cameras import describe_camera, describe_camera_animations
 from .helpers.material_animations import describe_material_animations
 
@@ -52,8 +53,10 @@ def describe_scene(sections, options, logger=StubLogger()):
     # Route sections into model sets and lights (matching legacy ModelBuilder logic)
     model_sets = []
     light_nodes = []
+    light_set_nodes = []   # parallel to light_nodes: owning LightSet (or None)
     camera_nodes = []      # Camera nodes (for static properties)
     camera_set_nodes = []  # CameraSet nodes (for animations)
+    fog_nodes = []         # Fog nodes (from SceneData)
     disjoint_root_joints = []
     disjoint_anim_joints = []
     disjoint_mat_anim_joints = []
@@ -77,9 +80,11 @@ def describe_scene(sections, options, logger=StubLogger()):
         elif isinstance(root, LightSet):
             if hasattr(root, 'light') and root.light:
                 light_nodes.append(root.light)
+                light_set_nodes.append(root)
 
         elif isinstance(root, Light):
             light_nodes.append(root)
+            light_set_nodes.append(None)
 
         elif isinstance(root, CameraSet):
             if root.camera:
@@ -93,9 +98,12 @@ def describe_scene(sections, options, logger=StubLogger()):
                 for light_set in root.lights:
                     if hasattr(light_set, 'light') and light_set.light:
                         light_nodes.append(light_set.light)
+                        light_set_nodes.append(light_set)
             if root.camera and root.camera.camera:
                 camera_nodes.append(root.camera.camera)
                 camera_set_nodes.append(root.camera)
+            if getattr(root, 'fog', None) is not None:
+                fog_nodes.append(root.fog)
 
         elif isinstance(root, KirbyDataGroup):
             # Each non-null variant points to a Kirby ModelRef whose +0x00 is
@@ -249,6 +257,10 @@ def describe_scene(sections, options, logger=StubLogger()):
     for i, light_node in enumerate(light_nodes):
         ir_light = describe_light(light_node, i)
         if ir_light:
+            light_set = light_set_nodes[i] if i < len(light_set_nodes) else None
+            if light_set is not None:
+                ir_light.animations = describe_light_animations(
+                    light_set, light_index=i, logger=logger, options=options)
             ir_lights.append(ir_light)
     if ir_lights:
         logger.info("Lights: %d", len(ir_lights))
@@ -266,10 +278,19 @@ def describe_scene(sections, options, logger=StubLogger()):
     if ir_cameras:
         logger.info("Cameras: %d", len(ir_cameras))
 
+    # Describe fog
+    ir_fogs = []
+    for fog_node in fog_nodes:
+        ir_fog = describe_fog(fog_node)
+        if ir_fog is not None:
+            ir_fogs.append(ir_fog)
+    if ir_fogs:
+        logger.info("Fog: %d", len(ir_fogs))
+
     if logger.leniency_count:
         summary = ", ".join("%d %s" % (v, k) for k, v in sorted(logger.leniency_categories.items()))
         logger.warning("Leniencies applied: %d (%s)", logger.leniency_count, summary)
 
-    logger.info("=== Phase 4 complete: %d model(s), %d light(s), %d camera(s) ===",
-                len(ir_models), len(ir_lights), len(ir_cameras))
-    return IRScene(models=ir_models, lights=ir_lights, cameras=ir_cameras)
+    logger.info("=== Phase 4 complete: %d model(s), %d light(s), %d camera(s), %d fog ===",
+                len(ir_models), len(ir_lights), len(ir_cameras), len(ir_fogs))
+    return IRScene(models=ir_models, lights=ir_lights, cameras=ir_cameras, fogs=ir_fogs)

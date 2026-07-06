@@ -29,11 +29,14 @@ except (ImportError, SystemError):
     from exporter.phases.plan.helpers.materials import plan_material
 
 
-def describe_meshes(armature, br_armature, logger=StubLogger()):
+def describe_meshes(armature, br_armature, logger=StubLogger(), image_cache=None):
     """Read mesh objects parented to an armature into a BRMesh list.
 
     In: armature (bpy.types.Object, type='ARMATURE'); br_armature
-        (BRArmature, used to validate parent_bone_name); logger.
+        (BRArmature, used to validate parent_bone_name); logger;
+        image_cache (dict|None, id(bpy_image) → BRImage, passed by
+        describe_scene so image datablocks shared across armatures
+        serialise once).
     Out: (br_meshes, br_instances, br_materials, blender_materials).
         br_meshes / blender_materials are parallel lists.
         br_materials is the deduped pool BRMesh.material_index points into.
@@ -47,7 +50,8 @@ def describe_meshes(armature, br_armature, logger=StubLogger()):
     )
 
     material_cache = {}
-    image_cache = {}
+    if image_cache is None:
+        image_cache = {}
     br_materials = []
     material_dedup = {}  # id(BRMaterial) → index into br_materials
 

@@ -153,6 +153,18 @@ def _scale_light(light, f):
         light.position = tuple(c * f for c in light.position)
     if light.target_position is not None:
         light.target_position = tuple(c * f for c in light.target_position)
+    for anim in getattr(light, 'animations', None) or []:
+        _scale_light_keyframes(anim, f)
+
+
+def _scale_light_keyframes(anim, f):
+    # Only the eye/target position channels are distances. Colour (LITC_*),
+    # visibility, and cutoff (an angle) are not scaled.
+    for attr in ('eye_x', 'eye_y', 'eye_z',
+                 'target_x', 'target_y', 'target_z'):
+        kfs = getattr(anim, attr, None)
+        if kfs:
+            setattr(anim, attr, [_scale_kf(kf, f) for kf in kfs])
 
 
 def _scale_limit_constraint(c, f):

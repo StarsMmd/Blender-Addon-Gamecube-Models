@@ -21,7 +21,7 @@ try:
     from .helpers.constraints import plan_constraints
     from .helpers.lights import plan_lights
     from .helpers.cameras import plan_cameras
-    from .helpers.scene import refine_bone_flags
+    from .helpers.scene import refine_bone_flags, plan_fogs
 except (ImportError, SystemError):
     from shared.IR import IRScene, IRModel
     from shared.helpers.logger import StubLogger
@@ -32,7 +32,7 @@ except (ImportError, SystemError):
     from exporter.phases.plan.helpers.constraints import plan_constraints
     from exporter.phases.plan.helpers.lights import plan_lights
     from exporter.phases.plan.helpers.cameras import plan_cameras
-    from exporter.phases.plan.helpers.scene import refine_bone_flags
+    from exporter.phases.plan.helpers.scene import refine_bone_flags, plan_fogs
 
 
 def plan_scene(br_scene, options=None, logger=StubLogger()):
@@ -59,22 +59,29 @@ def plan_scene(br_scene, options=None, logger=StubLogger()):
 
     do_merge = options.get('merge_meshes', True)
     ir_models = []
+    # One image cache spans all models so a BRImage shared across models
+    # (deduped by describe's scene-wide cache) maps to a single IRImage —
+    # downstream compose then encodes it once per scene.
+    image_cache = {}
     for br_model in br_scene.models:
-        ir_models.append(_plan_one_model(br_model, logger, merge=do_merge))
+        ir_models.append(_plan_one_model(br_model, logger, merge=do_merge,
+                                         image_cache=image_cache))
 
     ir_lights = plan_lights(br_scene.lights, logger=logger)
     ir_cameras = plan_cameras(br_scene.cameras, logger=logger)
+    ir_fogs = plan_fogs(getattr(br_scene, 'fogs', None), logger=logger)
 
-    return IRScene(models=ir_models, lights=ir_lights, cameras=ir_cameras)
+    return IRScene(models=ir_models, lights=ir_lights, cameras=ir_cameras, fogs=ir_fogs)
 
 
-def _plan_one_model(br_model, logger, merge=True):
+def _plan_one_model(br_model, logger, merge=True, image_cache=None):
     # Derive IR bones + merged IR meshes straight from BR. These are pure
     # numerical transforms, so plan owns them — describe computes its own
     # copy only because the bpy-side animation unbaker / constraint walker
     # need IR bones while they still have a live Blender context.
     ir_bones = plan_armature(br_model.armature, logger=logger)
-    ir_meshes = plan_meshes(br_model.meshes, br_model.materials, ir_bones, logger=logger)
+    ir_meshes = plan_meshes(br_model.meshes, br_model.materials, ir_bones,
+                            logger=logger, image_cache=image_cache)
     if merge:
         ir_meshes = merge_meshes(ir_meshes, logger=logger)
 

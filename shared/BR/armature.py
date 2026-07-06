@@ -3,6 +3,21 @@ from dataclasses import dataclass, field
 
 
 @dataclass
+class BRBoneSpline:
+    """A JOBJ_SPLINE joint's curve, as a Blender-native Curve spec.
+
+    build_blender creates a real Curve object parented to the bone (so the
+    user can see/edit it); describe reads it back. This is a *lossy* native
+    mapping: control points survive, but the GX spline type collapses onto a
+    Blender curve type and the precomputed segment coefficients (`s3` / knots)
+    are dropped — accepted per the round-trip leniency note. Control points
+    are in the game's native GC units. BR must not import IR.
+    """
+    curve_type: str = 'POLY'  # Blender enum: POLY / BEZIER / NURBS
+    control_points: list[list[float]] = field(default_factory=list)
+
+
+@dataclass
 class BRBone:
     """One edit-bone + pose-bone spec, ready for bpy to instantiate.
 
@@ -16,6 +31,7 @@ class BRBone:
     rotation_mode: str = 'XYZ'  # Blender enum: XYZ/XZY/YXZ/.../QUATERNION
     use_connect: bool = False
     is_hidden: bool = False
+    spline: BRBoneSpline | None = None  # JOBJ_SPLINE curve (maps only)
 
 
 @dataclass

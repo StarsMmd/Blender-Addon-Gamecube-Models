@@ -7,29 +7,46 @@ and wraps them in a LightSet.
 try:
     from .....shared.Nodes.Classes.Light.Light import Light
     from .....shared.Nodes.Classes.Light.LightSet import LightSet
+    from .....shared.Nodes.Classes.Light.LightAnimation import LightAnimation
     from .....shared.Nodes.Classes.Light.PointLight import PointLight
     from .....shared.Nodes.Classes.Light.SpotLight import SpotLight
     from .....shared.Nodes.Classes.Rendering.WObject import WObject
+    from .....shared.Nodes.Classes.Rendering.WObjectAnimation import WObjectAnimation
+    from .....shared.Nodes.Classes.Animation.Animation import Animation
     from .....shared.Nodes.Classes.Colors.RGBAColor import RGBAColor
     from .....shared.Constants.hsd import (
         LOBJ_INFINITE, LOBJ_POINT, LOBJ_SPOT,
         LOBJ_DIFFUSE, LOBJ_SPECULAR,
+        HSD_A_L_LITC_R, HSD_A_L_LITC_G, HSD_A_L_LITC_B, HSD_A_L_LITC_A,
+        HSD_A_L_VIS, HSD_A_L_CUTOFF,
+        HSD_A_W_TRAX, HSD_A_W_TRAY, HSD_A_W_TRAZ,
+        AOBJ_ANIM_LOOP,
     )
     from .....shared.IR.enums import LightType
     from .....shared.helpers.logger import StubLogger
 except (ImportError, SystemError):
     from shared.Nodes.Classes.Light.Light import Light
     from shared.Nodes.Classes.Light.LightSet import LightSet
+    from shared.Nodes.Classes.Light.LightAnimation import LightAnimation
     from shared.Nodes.Classes.Light.PointLight import PointLight
     from shared.Nodes.Classes.Light.SpotLight import SpotLight
     from shared.Nodes.Classes.Rendering.WObject import WObject
+    from shared.Nodes.Classes.Rendering.WObjectAnimation import WObjectAnimation
+    from shared.Nodes.Classes.Animation.Animation import Animation
     from shared.Nodes.Classes.Colors.RGBAColor import RGBAColor
     from shared.Constants.hsd import (
         LOBJ_INFINITE, LOBJ_POINT, LOBJ_SPOT,
         LOBJ_DIFFUSE, LOBJ_SPECULAR,
+        HSD_A_L_LITC_R, HSD_A_L_LITC_G, HSD_A_L_LITC_B, HSD_A_L_LITC_A,
+        HSD_A_L_VIS, HSD_A_L_CUTOFF,
+        HSD_A_W_TRAX, HSD_A_W_TRAY, HSD_A_W_TRAZ,
+        AOBJ_ANIM_LOOP,
     )
     from shared.IR.enums import LightType
     from shared.helpers.logger import StubLogger
+
+# Reuse the keyframe frame-chain encoders from camera composition.
+from .cameras import _build_frame_chain, _build_wobject_animation
 
 
 _TYPE_TO_FLAG = {
@@ -64,7 +81,8 @@ def compose_lights(ir_lights, logger=StubLogger()):
         if light_node is not None:
             light_set = LightSet(address=None, blender_obj=None)
             light_set.light = light_node
-            light_set.animations = None
+            light_set.animations = _compose_light_animations(
+                getattr(ir_light, 'animations', None), logger)
             light_sets.append(light_set)
 
     if not light_sets:
@@ -72,6 +90,72 @@ def compose_lights(ir_lights, logger=StubLogger()):
 
     logger.info("    Composed %d light(s) in %d LightSet(s)", len(light_sets), len(light_sets))
     return light_sets
+
+
+def _compose_light_animations(animations, logger):
+    """Encode an IRLightKeyframes list into a LightAnimation pointer array.
+
+    Mirrors the LightSet.animations layout: each clip becomes one
+    LightAnimation node (sibling `next` left null, matching the null-
+    terminated array form the parser reads). A track-less clip round-trips
+    an empty-but-present LightAnimation.
+
+    Returns list[LightAnimation] or None if empty.
+    """
+    if not animations:
+        return None
+
+    nodes = [_compose_single_light_animation(a, logger) for a in animations]
+    return nodes if nodes else None
+
+
+def _compose_single_light_animation(anim, logger):
+    """Encode one IRLightKeyframes into a LightAnimation node.
+
+    The LObj AOBJ carries colour (LITC_*), visibility, and cutoff tracks;
+    eye/target position tracks go into the WObjectAnimations. Values are
+    already in GC units by compose time.
+    """
+    light_anim = LightAnimation(address=None, blender_obj=None)
+    light_anim.next = None
+
+    lobj_channels = [
+        (anim.color_r, HSD_A_L_LITC_R),
+        (anim.color_g, HSD_A_L_LITC_G),
+        (anim.color_b, HSD_A_L_LITC_B),
+        (anim.color_a, HSD_A_L_LITC_A),
+        (anim.visibility, HSD_A_L_VIS),
+        (anim.cutoff, HSD_A_L_CUTOFF),
+    ]
+    lobj_frames = _build_frame_chain(lobj_channels)
+    if lobj_frames:
+        aobj = Animation(address=None, blender_obj=None)
+        aobj.flags = AOBJ_ANIM_LOOP if anim.loop else 0
+        aobj.end_frame = float(anim.end_frame)
+        aobj.frame = lobj_frames
+        aobj.joint = None
+        light_anim.animation = aobj
+    else:
+        light_anim.animation = None
+
+    eye_channels = [
+        (anim.eye_x, HSD_A_W_TRAX),
+        (anim.eye_y, HSD_A_W_TRAY),
+        (anim.eye_z, HSD_A_W_TRAZ),
+    ]
+    light_anim.eye_position_animation = _build_wobject_animation(
+        eye_channels, anim.end_frame, anim.loop)
+
+    target_channels = [
+        (anim.target_x, HSD_A_W_TRAX),
+        (anim.target_y, HSD_A_W_TRAY),
+        (anim.target_z, HSD_A_W_TRAZ),
+    ]
+    light_anim.interest_animation = _build_wobject_animation(
+        target_channels, anim.end_frame, anim.loop)
+
+    logger.debug("    Composed light animation '%s'", anim.name)
+    return light_anim
 
 
 def _compose_light(ir_light, logger):

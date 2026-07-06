@@ -11,6 +11,7 @@ try:
     from .helpers.animations import plan_actions, attach_parent_edit_scale_corrections
     from .helpers.scene import (
         plan_lights, plan_cameras, plan_constraints, plan_particle_summary,
+        plan_fogs,
     )
 except (ImportError, SystemError):
     from shared.BR.scene import BRScene, BRModel
@@ -22,6 +23,7 @@ except (ImportError, SystemError):
     )
     from importer.phases.plan.helpers.scene import (
         plan_lights, plan_cameras, plan_constraints, plan_particle_summary,
+        plan_fogs,
     )
 
 
@@ -63,7 +65,9 @@ def plan_scene(ir_scene, options=None, logger=StubLogger()):
         models=models,
         lights=plan_lights(ir_scene.lights),
         cameras=plan_cameras(ir_scene.cameras),
+        fogs=plan_fogs(getattr(ir_scene, 'fogs', None)),
     )
-    logger.info("  Planned %d model(s), %d light(s), %d camera(s)",
-                len(models), len(br_scene.lights), len(br_scene.cameras))
+    logger.info("  Planned %d model(s), %d light(s), %d camera(s), %d fog",
+                len(models), len(br_scene.lights), len(br_scene.cameras),
+                len(br_scene.fogs))
     return br_scene

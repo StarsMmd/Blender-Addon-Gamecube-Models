@@ -2,7 +2,7 @@
 
 from .enums import *
 from .scene import IRScene
-from .skeleton import IRModel, IRBone
+from .skeleton import IRModel, IRBone, IRBoneSpline
 from .geometry import IRMesh, IRUVLayer, IRColorLayer, IRBoneWeights, IRShapeKey
 from .material import (
     IRMaterial, IRTextureLayer, IRImage,
@@ -17,7 +17,7 @@ from .constraints import (
     IRIKConstraint, IRBoneReposition, IRCopyLocationConstraint,
     IRTrackToConstraint, IRCopyRotationConstraint, IRLimitConstraint,
 )
-from .lights import IRLight
+from .lights import IRLight, IRLightKeyframes
 from .camera import IRCamera, IRCameraKeyframes
 from .fog import IRFog
 from .particles import IRParticleSystem, IRParticleGenerator, IRParticleTexture

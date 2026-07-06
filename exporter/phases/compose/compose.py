@@ -24,6 +24,7 @@ from .helpers.animations import compose_bone_animations
 from .helpers.material_animations import compose_material_animations
 from .helpers.lights import compose_lights
 from .helpers.cameras import compose_camera
+from .helpers.fog import compose_fog
 from .helpers.constraints import compose_constraints
 from .helpers.scale import scale_scene_to_gc_units
 # compose_particles exists but is NOT wired into the export pipeline — see
@@ -56,6 +57,15 @@ def compose_scene(ir_scene, options=None, logger=StubLogger()):
     root_nodes = []
     section_names = []
 
+    # All models share a single scene_data section — SceneData.models is a
+    # ModelSet[] array, and multi-model files (map archives) store every
+    # model there rather than in per-model sections.
+    composed_models = []
+
+    # One image cache spans all models so an IRImage referenced from
+    # several models (shared textures in map archives) is GX-encoded once.
+    image_cache = {}
+
     for mi, model in enumerate(ir_scene.models):
         logger.info("  Composing model '%s' (%d bones, %d meshes)",
                     model.name, len(model.bones), len(model.meshes))
@@ -65,7 +75,8 @@ def compose_scene(ir_scene, options=None, logger=StubLogger()):
             logger.info("    Skipped: no bones")
             continue
 
-        compose_meshes(model.meshes, joints, model.bones, logger)
+        compose_meshes(model.meshes, joints, model.bones, logger,
+                       image_cache=image_cache)
 
         # Strip node names if requested (for round-trip testing against
         # original models that have empty name fields)
@@ -97,18 +108,27 @@ def compose_scene(ir_scene, options=None, logger=StubLogger()):
         model_set.animated_material_joints = mat_anim_roots
         model_set.animated_shape_joints = None
 
+        composed_models.append((model, model_set))
+
+    if composed_models:
         scene_data = SceneData(address=None, blender_obj=None)
-        scene_data.models = [model_set]
+        scene_data.models = [ms for _, ms in composed_models]
         scene_data.camera = compose_camera(ir_scene.cameras[0], logger) if ir_scene.cameras else None
         scene_data.lights = compose_lights(ir_scene.lights, logger=logger)
-        scene_data.fog = None
+        scene_data.fog = compose_fog(ir_scene.fogs[0], logger) if ir_scene.fogs else None
 
         root_nodes.append(scene_data)
         section_names.append('scene_data')
 
-        # Bound box — per-frame AABBs across all animation sets
-        if options.get('include_bound_box', True):
-            bb = _compose_bound_box(model, logger)
+        # Bound box — per-frame AABBs across all animation sets. Only
+        # emitted for single-model scenes: multi-model files (map archives)
+        # don't carry a bound_box section, and the section format has no
+        # room for more than one model's AABB stream.
+        if len(composed_models) > 1:
+            logger.info("  Bound box: skipped (%d models in scene)",
+                        len(composed_models))
+        elif options.get('include_bound_box', True):
+            bb = _compose_bound_box(composed_models[0][0], logger)
             if bb:
                 root_nodes.append(bb)
                 section_names.append('bound_box')
