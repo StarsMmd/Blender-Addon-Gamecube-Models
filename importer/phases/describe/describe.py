@@ -129,8 +129,10 @@ def describe_scene(sections, options, logger=StubLogger()):
     logger.info("Routed %d model set(s), %d light(s), %d camera(s) in %.3fs",
                 len(model_sets), len(light_nodes), len(camera_nodes), time.time() - t0)
 
-    # Describe each model
+    # Describe each model. One image cache spans all models so images shared
+    # across model sets in the same archive are decoded exactly once.
     ir_models = []
+    image_cache = {}
     for model_set in model_sets:
         root_joint = model_set.root_joint
         if root_joint is None:
@@ -162,7 +164,7 @@ def describe_scene(sections, options, logger=StubLogger()):
         fix_near_zero_bone_matrices(bones, bone_anims, logger)
 
         t2 = time.time()
-        meshes = describe_meshes(root_joint, bones, joint_to_bone_index, logger=logger, options=options)
+        meshes = describe_meshes(root_joint, bones, joint_to_bone_index, image_cache=image_cache, logger=logger, options=options)
         logger.info("  Meshes: %d (%.3fs)", len(meshes), time.time() - t2)
 
         for i, m in enumerate(meshes):

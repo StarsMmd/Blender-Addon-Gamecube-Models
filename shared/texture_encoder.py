@@ -8,6 +8,14 @@ Provides pixel analysis and format selection for automatic format choice.
 """
 import struct
 
+# numpy accelerates the CMPR hot path (whole-image vectorized encode) and
+# pixel analysis. It ships with Blender and the bpy wheel; the pure-Python
+# paths below remain the fallback so shared/ stays importable without it.
+try:
+    import numpy as _np
+except ImportError:
+    _np = None
+
 try:
     from .Constants.gx import (
         GX_TF_I4, GX_TF_I8, GX_TF_IA4, GX_TF_IA8,
@@ -39,6 +47,8 @@ def analyze_pixels(pixels, width, height):
     Returns:
         dict with keys: is_grayscale, has_alpha, unique_color_count, alpha_is_binary
     """
+    if _np is not None:
+        return _analyze_pixels_numpy(pixels, width, height)
     is_grayscale = True
     has_alpha = False
     alpha_is_binary = True
@@ -66,6 +76,24 @@ def analyze_pixels(pixels, width, height):
         'has_alpha': has_alpha,
         'unique_color_count': len(colors),
         'alpha_is_binary': alpha_is_binary,
+    }
+
+
+def _analyze_pixels_numpy(pixels, width, height):
+    """Vectorized analyze_pixels — same results as the pure-Python loop
+    (unique_color_count saturates at 257, matching its early-stop cap)."""
+    np = _np
+    n = min(width * height, len(pixels) // 4)
+    arr = np.frombuffer(bytes(pixels[:n * 4]), dtype=np.uint8).reshape(n, 4)
+    r, g, b, a = arr[:, 0], arr[:, 1], arr[:, 2], arr[:, 3]
+    non_opaque = a != 255
+    rgba32 = (r.astype(np.uint32) << 24) | (g.astype(np.uint32) << 16) \
+        | (b.astype(np.uint32) << 8) | a
+    return {
+        'is_grayscale': bool(((r == g) & (g == b)).all()),
+        'has_alpha': bool(non_opaque.any()),
+        'unique_color_count': min(int(np.unique(rgba32).size), 257),
+        'alpha_is_binary': not bool((non_opaque & (a != 0)).any()),
     }
 
 
@@ -266,6 +294,8 @@ def encode_rgba8(pixels, width, height):
 
 def encode_cmpr(pixels, width, height):
     """Encode as CMPR — 4bpp S3TC/DXT1 compressed, 8x8 macro-tiles of four 4x4 sub-blocks."""
+    if _np is not None:
+        return _encode_cmpr_numpy(pixels, width, height)
     tw, th = 8, 8  # macro-tile
     bw = (width + tw - 1) // tw
     bh = (height + th - 1) // th
@@ -281,6 +311,118 @@ def encode_cmpr(pixels, width, height):
                     _encode_dxt1_block(pixels, width, height, block_x, block_y, out, idx)
                     idx += 8
     return bytes(out[:idx])
+
+
+def _encode_cmpr_numpy(pixels, width, height):
+    """Vectorized CMPR encode — byte-identical to the _encode_dxt1_block loop.
+
+    Every choice the per-block encoder makes by scan order (first-occurrence
+    color dedup, first-strictly-greatest endpoint pair, first-minimum palette
+    index) is reproduced with row-major argmax/argmin, which also return the
+    first extremum. Blocks are processed in chunks to bound the (chunk, 16,
+    16) pairwise intermediates.
+    """
+    np = _np
+    bw = (width + 7) // 8
+    bh = (height + 7) // 8
+
+    # Source pixels padded/truncated to width*height*4 (a trailing partial
+    # pixel reads as zeros, like _get_pixel), flipped to GX top-to-bottom.
+    buf = np.zeros(width * height * 4, dtype=np.uint8)
+    src = np.frombuffer(bytes(pixels[:width * height * 4]), dtype=np.uint8)
+    usable = (len(src) // 4) * 4
+    buf[:usable] = src[:usable]
+    img = buf.reshape(height, width, 4)[::-1]
+
+    # Pad to 8-multiples with (0,0,0,0) — out-of-bounds pixels are
+    # transparent black, like _get_pixel. Carve into 4x4 sub-blocks in
+    # (macro-row, macro-col, sub-row, sub-col) emission order.
+    padded = np.zeros((bh * 8, bw * 8, 4), dtype=np.uint8)
+    padded[:height, :width] = img
+    blocks = (padded.reshape(bh, 2, 4, bw, 2, 4, 4)
+                    .transpose(0, 3, 1, 4, 2, 5, 6)
+                    .reshape(bh * bw * 4, 16, 4)
+                    .astype(np.int32))
+
+    n = blocks.shape[0]
+    out = np.empty((n, 8), dtype=np.uint8)
+    tri = np.tril(np.ones((16, 16), dtype=bool), -1)  # tri[i, j] = j < i
+    chunk = 4096
+    for start in range(0, n, chunk):
+        _encode_cmpr_chunk(np, blocks[start:start + chunk], tri,
+                           out[start:start + chunk])
+    return out.tobytes()
+
+
+def _encode_cmpr_chunk(np, b, tri, out):
+    """Encode one chunk of 4x4 blocks; writes 8 bytes per block into out."""
+    r, g, bl, a = b[..., 0], b[..., 1], b[..., 2], b[..., 3]
+    opaque = a >= 0x80
+    c565 = ((r >> 3) << 11) | ((g >> 2) << 5) | (bl >> 3)  # (m, 16)
+    m = b.shape[0]
+    rows = np.arange(m)
+
+    # Unique-color mask: pixel i stands for its RGB565 value when it is
+    # opaque and no earlier opaque pixel j<i has the same value. Pairs of
+    # such pixels enumerate the unique-color pairs in the same order the
+    # per-block encoder scans them.
+    same = c565[:, :, None] == c565[:, None, :]
+    dup = (same & opaque[:, None, :] & tri[None]).any(axis=2)
+    valid = opaque & ~dup
+
+    # Endpoint pair: greatest RGB565 distance (after RGB888 expansion),
+    # first pair wins ties — row-major argmax mirrors the nested scan.
+    dr = ((c565 >> 11) & 0x1F) << 3
+    dg = ((c565 >> 5) & 0x3F) << 2
+    db = (c565 & 0x1F) << 3
+    dist = (np.abs(dr[:, :, None] - dr[:, None, :])
+            + np.abs(dg[:, :, None] - dg[:, None, :])
+            + np.abs(db[:, :, None] - db[:, None, :]))
+    pair_ok = valid[:, :, None] & valid[:, None, :]
+    best = np.where(pair_ok, dist, -1).reshape(m, 256).argmax(axis=1)
+    bc0 = c565[rows, best // 16]
+    bc1 = c565[rows, best % 16]
+
+    # Transparent blocks need c0 <= c1; opaque blocks need c0 > c1.
+    has_transp = (~opaque).any(axis=1)
+    lo = np.minimum(bc0, bc1)
+    hi = np.maximum(bc0, bc1)
+    hex1 = np.where(has_transp, lo, hi)
+    hex2 = np.where(has_transp, hi, lo)
+
+    def _expand565(v):
+        return np.stack((((v >> 11) & 0x1F) << 3,
+                         ((v >> 5) & 0x3F) << 2,
+                         (v & 0x1F) << 3), axis=1)
+
+    p0 = _expand565(hex1)  # (m, 3)
+    p1 = _expand565(hex2)
+    four_color = (hex1 > hex2)[:, None]
+    pal = np.empty((m, 4, 3), dtype=np.int32)
+    pal[:, 0] = p0
+    pal[:, 1] = p1
+    pal[:, 2] = np.where(four_color, (2 * p0 + p1) // 3, (p0 + p1) // 2)
+    pal[:, 3] = np.where(four_color, (2 * p1 + p0) // 3, 0)
+
+    # Closest palette entry (Manhattan on RGB), first minimum wins ties;
+    # transparent pixels always take index 3.
+    pdist = (np.abs(r[:, :, None] - pal[:, None, :, 0])
+             + np.abs(g[:, :, None] - pal[:, None, :, 1])
+             + np.abs(bl[:, :, None] - pal[:, None, :, 2]))
+    idx = np.where(opaque, pdist.argmin(axis=2), 3).reshape(m, 4, 4)
+
+    row_bytes = (idx[:, :, 0] << 6) | (idx[:, :, 1] << 4) \
+        | (idx[:, :, 2] << 2) | idx[:, :, 3]
+    out[:, 0] = hex1 >> 8
+    out[:, 1] = hex1 & 0xFF
+    out[:, 2] = hex2 >> 8
+    out[:, 3] = hex2 & 0xFF
+    out[:, 4:8] = row_bytes
+
+    # Fully transparent block — null endpoints, all indices 3.
+    sentinel = ~valid.any(axis=1)
+    out[sentinel, 0:4] = 0
+    out[sentinel, 4:8] = 0xFF
 
 
 def _encode_dxt1_block(pixels, width, height, block_x, block_y, out, idx):

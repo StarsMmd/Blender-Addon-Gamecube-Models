@@ -539,6 +539,85 @@ class TestDescribeMaterial:
 
 
 # ---------------------------------------------------------------------------
+# Image decode caching (decode is describe-phase work, deduped per scene)
+# ---------------------------------------------------------------------------
+
+class TestImageDecodeCache:
+    """Pixel decode runs in describe (not parse) and exactly once per unique
+    (image, palette) pair — the image_cache guards the decode itself."""
+
+    def _parse_textured_mobj(self):
+        """Parse a MaterialObject whose texture references a real 8x8 I4 image.
+
+        Layout:
+          [0]    MaterialObject (24) — material_ptr=24, texture_ptr=44
+          [24]   Material (20)
+          [44]   Texture (92) — image_ptr=136
+          [136]  Image (24) — data_address=160
+          [160]  raw I4 pixel data (32 bytes)
+        """
+        from tests.helpers import (build_texture, build_image,
+                                   build_dat_with_sections)
+        raw_pixels = bytes(range(32))
+        data = (build_material_object(
+                    render_mode=RENDER_DIFFUSE | RENDER_DIFFUSE_MAT | RENDER_TEX0,
+                    material_ptr=MATERIALOBJECT_SIZE,
+                    texture_ptr=44)
+                + build_material()
+                + build_texture(texture_id=1, source=4, wrap_s=1, wrap_t=1,
+                                repeat_s=1, repeat_t=1, image_ptr=136)
+                + build_image(data_address=160, width=8, height=8, fmt=0)
+                + raw_pixels)
+        dat_bytes = build_dat_with_sections(
+            data_section=data,
+            relocations=[8, 12, 44 + 76],  # texture_ptr, material_ptr, image_ptr
+            sections=[(0, True)],
+            section_names=['mobj'],
+        )
+        parser = DATParser(io.BytesIO(dat_bytes), {})
+        mobj = MaterialObject(0, None)
+        mobj.loadFromBinary(parser)
+        return mobj
+
+    def test_decode_happens_in_describe_not_parse(self, monkeypatch):
+        from shared.Nodes.Classes.Texture.Image import Image
+        calls = []
+        orig = Image.decodeFromRawData
+
+        def counting(self, palette):
+            calls.append(self.data_address)
+            return orig(self, palette)
+        monkeypatch.setattr(Image, 'decodeFromRawData', counting)
+
+        mobj = self._parse_textured_mobj()
+        assert calls == []  # parse must not decode
+
+        ir = describe_material(mobj)
+        assert calls == [160]  # describe decodes exactly once
+        assert len(ir.texture_layers) == 1
+        assert ir.texture_layers[0].image is not None
+        assert len(ir.texture_layers[0].image.pixels) == 8 * 8 * 4
+
+    def test_shared_cache_decodes_once_and_shares_ir_image(self, monkeypatch):
+        from shared.Nodes.Classes.Texture.Image import Image
+        calls = []
+        orig = Image.decodeFromRawData
+
+        def counting(self, palette):
+            calls.append(self.data_address)
+            return orig(self, palette)
+        monkeypatch.setattr(Image, 'decodeFromRawData', counting)
+
+        mobj = self._parse_textured_mobj()
+        image_cache = {}
+        ir_a = describe_material(mobj, image_cache=image_cache)
+        ir_b = describe_material(mobj, image_cache=image_cache)
+
+        assert calls == [160]  # second describe hits the cache
+        assert ir_a.texture_layers[0].image is ir_b.texture_layers[0].image
+
+
+# ---------------------------------------------------------------------------
 # V-translation correction (MIRROR wrap mode)
 # ---------------------------------------------------------------------------
 
