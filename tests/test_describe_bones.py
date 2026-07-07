@@ -333,18 +333,17 @@ class _FakeParent:
 
 
 class TestEffectorBindPosition:
-    """A JOBJ_EFFECTOR's stored translation is the IK target reach; the real
-    bind-pose length lives in the parent's BoneReference. Rescale to it,
-    keeping direction, so the crown doesn't fling off the model."""
+    """A JOBJ_EFFECTOR's stored translation is the IK target (large magnitude,
+    aimed at the goal), not a bind-pose offset. The rest bone extends along its
+    parent's local +X at the BoneReference length, like every other GX joint, so
+    the corrected offset is (length, 0, 0) in the parent frame."""
 
-    def test_rescales_to_bone_reference_length(self):
-        pos = (6.0, 0.0, 8.0)  # magnitude 10 in metres
+    def test_sets_offset_along_parent_x_at_bone_reference_length(self):
+        pos = (6.0, 0.0, 8.0)  # IK target direction — discarded
         parent = _FakeParent(_FakeBoneRef(length=2.0 / GC_TO_METERS))  # 2.0 m
         out = _effector_bind_position(object(), parent, pos)
-        mag = math.sqrt(sum(c * c for c in out))
-        assert abs(mag - 2.0) < 1e-6
-        # Direction preserved (still 3:4 ratio along x:z).
-        assert abs(out[0] / out[2] - 6.0 / 8.0) < 1e-6
+        assert abs(out[0] - 2.0) < 1e-6
+        assert out[1] == 0.0 and out[2] == 0.0
 
     def test_no_bone_reference_leaves_position_untouched(self):
         pos = (6.0, 0.0, 8.0)
@@ -355,14 +354,6 @@ class TestEffectorBindPosition:
         pos = (6.0, 0.0, 8.0)
         assert _effector_bind_position(object(), None, pos) == pos
 
-    def test_degenerate_zero_translation_is_safe(self):
-        parent = _FakeParent(_FakeBoneRef(length=5.0))
-        assert _effector_bind_position(object(), parent, (0.0, 0.0, 0.0)) == (0.0, 0.0, 0.0)
-
-    def test_already_correct_length_is_noop(self):
-        # A well-formed chain where |translation| already equals the bind length.
-        length_m = 10.0
-        pos = (6.0, 0.0, 8.0)  # magnitude 10 m
-        parent = _FakeParent(_FakeBoneRef(length=length_m / GC_TO_METERS))
-        out = _effector_bind_position(object(), parent, pos)
-        assert all(abs(a - b) < 1e-6 for a, b in zip(out, pos))
+    def test_zero_length_bone_reference_is_safe(self):
+        parent = _FakeParent(_FakeBoneRef(length=0.0))
+        assert _effector_bind_position(object(), parent, (6.0, 0.0, 8.0)) == (0.0, 0.0, 0.0)

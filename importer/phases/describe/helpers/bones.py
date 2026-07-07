@@ -3,8 +3,6 @@
 Ports the pure-data computation from Joint.buildBoneHierarchy() and
 Joint.compileSRTMatrix(), producing IRBone instances without any bpy calls.
 """
-import math
-
 try:
     from .....shared.helpers.math_shim import Matrix, Vector, Euler, compile_srt_matrix, matrix_to_list
     from .....shared.IR.skeleton import IRBone, IRBoneSpline
@@ -72,32 +70,29 @@ def _describe_joint_spline(joint):
 
 
 def _effector_bind_position(joint, parent_joint, scaled_position):
-    """Rescale a JOBJ_EFFECTOR's translation to its true IK bind-pose length.
+    """Replace a JOBJ_EFFECTOR's translation with its true IK bind-pose offset.
 
-    An IK end-effector stores a translation whose *direction* is meaningful but
-    whose *magnitude* is the solver's target reach, not the bind-pose bone
-    length. Accumulating it as an ordinary joint offset flings the effector —
-    and every descendant joint plus every vertex skinned to them — far off the
-    model. The real bind length lives in the BoneReference (IK hint) on the
-    effector's parent joint. Rescaling the translation to that length, direction
-    preserved, puts the effector where the GX IK solver holds it at rest.
+    An IK end-effector's stored translation is the solver's *target* — both its
+    magnitude (the reach, tens of units) and its direction (toward the goal)
+    describe where the chain aims, not where the effector rests. Accumulating it
+    as an ordinary joint offset flings the effector — and every descendant joint
+    plus every vertex skinned to them — far off the model. The bind-pose bone,
+    like every other GX joint, simply extends along its parent's local +X axis
+    (a chain's JOINT2 sits at ``(len, 0, 0)`` in JOINT1's frame); its length is
+    the BoneReference (IK hint) on the parent joint. So the effector's rest
+    offset is ``(length, 0, 0)`` in the parent frame, which is what this returns.
 
     In: joint (Joint, the effector); parent_joint (Joint|None); scaled_position
         (3-tuple, metres).
-    Out: 3-tuple — corrected position in metres, unchanged when there is no
-         BoneReference hint or the translation is degenerate.
+    Out: 3-tuple — bind-pose offset in metres, unchanged when there is no
+         BoneReference hint to supply the length.
     """
     if parent_joint is None:
         return scaled_position
     bone_ref = parent_joint.getReferenceObject(BoneReference, 0)
     if not bone_ref or bone_ref.property is None:
         return scaled_position
-    target_length = bone_ref.property.length * GC_TO_METERS
-    magnitude = math.sqrt(sum(c * c for c in scaled_position))
-    if magnitude < 1e-6:
-        return scaled_position
-    factor = target_length / magnitude
-    return tuple(c * factor for c in scaled_position)
+    return (bone_ref.property.length * GC_TO_METERS, 0.0, 0.0)
 
 
 def describe_bones(root_joint, options=None, logger=None):
