@@ -18,7 +18,7 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.80 | current | `bpy.types.TOPBAR_MT_file_export.append()` | `BlenderPlugin.py` | |
 | 2.80 | current | `bpy.types.TOPBAR_MT_file_import.remove()` | `BlenderPlugin.py` | |
 | 2.80 | current | `bpy.types.TOPBAR_MT_file_export.remove()` | `BlenderPlugin.py` | |
-| 2.80 | current | `bpy.types.Operator` (subclass) | `BlenderPlugin.py` | ImportHSD, ExportHSD |
+| 2.80 | current | `bpy.types.Operator` (subclass) | `BlenderPlugin.py` | ImportHSD, ExportHSD, DAT_OT_SetEnumProp, DAT_OT_SubAnimBone{Add,Remove,Set} |
 | 2.80 | current | `bpy.types.Panel` (subclass) | `BlenderPlugin.py` | DAT_PT_PKXPanel |
 | 2.80 | current | `bpy.types.OperatorFileListElement` | `BlenderPlugin.py` | |
 | | | | | |
@@ -58,6 +58,7 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.80 | current | `bpy.context.mode` | `skeleton.py`, `exporter/describe/helpers/armature.py` | Check current editor mode |
 | 2.80 | current | `context.screen.areas` | `BlenderPlugin.py` | Workspace setup |
 | 3.2 | current | `context.temp_override(area=...)` | `BlenderPlugin.py` | Workspace split |
+| 2.80 | current | `context.window_manager.invoke_props_dialog(op)` | `BlenderPlugin.py` | Searchable bone picker for targeted sub-anim bone list (DAT_OT_SubAnimBoneSet) |
 | 3.2 | current | `context.temp_override(active_object=..., object=...)` | `scripts/prepare_for_pkx_export.py`, `scripts/prepare_for_dat_export.py` | Make an armature active to `mode_set` it out of Edit/Pose mode before prep runs |
 | 2.80 | current | `Object.mode` (read) | `scripts/prepare_for_pkx_export.py`, `scripts/prepare_for_dat_export.py` | Detect armatures left in Edit/Pose mode |
 | | | | | |

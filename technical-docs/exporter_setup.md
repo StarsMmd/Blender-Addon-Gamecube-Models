@@ -327,6 +327,41 @@ Practical authoring:
 - **Extra 1–4 (slots 11, 13–15)** are per-Pokémon special-purpose slots with no consistent meaning across the roster — they cover things like Groudon's Seismic Toss, some Pokémon's menu/intro poses, and other species-specific flourishes. If you don't know what a species uses a given slot for, leave it empty or duplicate Idle as a safe placeholder.
 - **Take Flight (16)** is only used by flying-mode Pokémon (where the model hovers). Leave it unset otherwise.
 
+### Sub-animations (overlays)
+
+The **Sub-Animations** section of the PKX Metadata panel holds four *overlay* animations that the game layers on top of whatever the model is currently doing. They are separate from the 17 battle slots. Each of the four blocks is bound to a fixed trigger by its position:
+
+| Block | Trigger | Fires when |
+|-------|---------|------------|
+| 0 | Sleep | The Pokémon is put to sleep |
+| 1 | Wake Up | The Pokémon wakes |
+| 2 | Extra | Idle tick — this is the blink / breathe / idle-flourish slot |
+| 3 | Unused | Normally left off |
+
+The trigger is shown read-only because it is decided by the block's position, not stored in the file — block 2 is always the idle "extra" overlay, and so on.
+
+For each block, set the **Type**:
+
+- **Off** — the block does nothing.
+- **Whole-Model Texture** — plays a **texture / material animation across the whole model** (scrolling/animated textures, glow pulses). Pick the clip in the **Animation** dropdown. No bones are involved.
+- **Targeted Joints** — plays a **skeletal animation on only the bones you list** (XD only). The rest of the body keeps playing its current animation. Pick the clip in **Animation**, then build the bone list.
+
+So the choice is essentially *material animation* (Whole-Model Texture) vs *joint animation* (Targeted Joints).
+
+**Editing the target bones (Targeted Joints only):**
+
+1. Set Type to **Targeted Joints**. A **Target Bones (n/8)** list appears.
+2. Click **Add Bone** to add a slot (up to 8). Each new slot is seeded with a bone so it's immediately valid.
+3. Click a bone button to open a searchable picker and choose the bone the overlay should drive.
+4. Click the **X** next to a bone to remove it.
+
+Notes:
+
+- **The listed bones follow the overlay clip; every other bone keeps its base animation.** So for a blink you'd list only the eyelid bones; for a cape flutter, only the cloth chain.
+- **An empty bone list means the overlay never plays** — a Targeted Joints block with zero bones is silently skipped in-game. Either add bones or set the block to Off.
+- Overlay clips are usually short (often 2-frame) target poses; the game eases into them. They can't be previewed layered in Blender without setting up NLA tracks manually.
+- Bones are stored by **name** and resolved to indices on export, so they survive bone reordering. Names must match bones on the exported armature.
+
 ---
 
 ## 5. Refine and Re-run

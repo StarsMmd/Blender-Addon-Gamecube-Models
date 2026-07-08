@@ -50,12 +50,17 @@ class PartAnimData:
         return self.has_data == 2
 
     def active_bone_indices(self):
-        """Return the bone-config indices, dropping the 0xFF "unused" sentinel.
+        """Return the target-part indices, dropping the 0xFF "unused" sentinel.
+
+        Only the first 8 bytes of bone_config are part indices; bytes 8-15
+        (block bytes 10-17) are a parallel selector array read separately by
+        the engine (see file_formats.md § Sub-Animation System), so they are
+        not bone indices and must not be included here.
 
         In: (none — derived from self.bone_config).
-        Out: list[int] of bone indices in declaration order, no 0xFF entries.
+        Out: list[int] of part indices in declaration order, no 0xFF entries.
         """
-        return [b for b in self.bone_config if b != 0xFF]
+        return [b for b in self.bone_config[:8] if b != 0xFF]
 
     @classmethod
     def from_bytes(cls, data, offset):

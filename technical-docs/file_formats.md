@@ -107,7 +107,7 @@ For standard files (17 entries, no GPT1): `align32(0xE54) = 0xE60`
 
 **Flags byte (0x68):** bit 0=flying, bit 2=skip fractional frames, bit 6=remove root joint anim
 
-**PartAnimData (19 bytes):** byte 0=has_data (0/1/2), byte 1=sub_param, bytes 2-17=bone_config (0xFF when unused), byte 18=anim_index_ref
+**PartAnimData (19 bytes):** byte 0=has_data (0/1/2), byte 1=sub_param (entry count), bytes 2-9=part index array, bytes 10-17=parallel selector array (0xFF when unused), byte 18=anim_index_ref. See § Sub-Animation System for how the two arrays are read.
 
 #### Animation Metadata Entry (0xD0 bytes)
 
@@ -710,39 +710,58 @@ Each entry has 4 float timing values (seconds). These define transition points w
 
 #### Overview
 
-Four PartAnimData blocks (19 bytes each in XD) define **overlay animations** that play on top of the current battle animation. The game overlays them using `GSmodelSetPartAnimIndex`, which targets specific bones with a dedicated animation.
+Four PartAnimData blocks (19 bytes each in XD) define **overlay animations** that play on top of the current battle/idle animation. `ModelSequence` fires them from state transitions and calls `wazaSequenceSysPartAnimationStart(model, PartAnimData*)`, which reads the block and dispatches per its type.
 
-#### Triggers
+#### Triggers (fixed by block position — not a stored field)
+
+Which block fires is decided by its slot index, so the trigger is positional and cannot be edited independently of position:
 
 | Block | Trigger | Example |
 |-------|---------|---------|
 | 0 | Sleep On | Eyelids close when put to sleep |
 | 1 | Sleep Off | Eyelids open when waking up |
-| 2 | Extra | Blinking, breathing, wing flapping |
+| 2 | Extra | Blinking, breathing, wing flapping (idle tick) |
 | 3 | (Unused) | Typically inactive |
 
-#### Sub-Animation Types
+#### Sub-Animation Types (`has_data`, byte 0)
 
-| Value | Name | Behavior |
-|-------|------|---------|
-| 0 | none | Block is inactive |
-| 1 | simple | Animation plays on ALL bones (whole-body pose) |
-| 2 | targeted | Animation plays on specific bones only |
+Verified against `wazaSequenceSysPartAnimationStart` (XD):
 
-#### Targeted Bone Indices
+| Value | Name | What the engine does |
+|-------|------|----------------------|
+| 0 | Off | Block inactive — the function returns immediately |
+| 1 | Whole-Model Texture | Fires a **whole-model texture/material animation**: `GSmodelSetTexAnimIndex` / `SetTexAnimType` / `SetTexAnimFrame` / `StartTexAnimation`, using `anim_index_ref` as the texture-anim index. No bones involved. |
+| 2 | Targeted Joints | Plays a **joint animation on the listed bones only** (bytes 2-9), each via `GSmodelSetPartAnimIndex(model, boneIndex, anim_index_ref)`. |
 
-For type=2 (targeted), the `bone_config` bytes (bytes 2-9 of the block) specify which bone indices participate. Up to 8 bones, with 0xFF marking unused slots.
+So the two active types are effectively **material/texture animation** (type 1, whole model) vs **skeletal/joint animation** (type 2, scoped to specific bones) — not "whole-body vs partial-body pose" as an earlier version of this doc claimed.
 
-Examples:
+#### The two byte arrays (type 2)
+
+For `has_data == 2` the loop runs `sub_param` (byte 1) times over **two parallel 8-entry arrays**:
+
+- **bytes 2-9 — part index** `A[i]`: the bone/part the overlay is applied to. `0xFF` = skip this entry.
+- **bytes 10-17 — selector** `B[i]`: chooses the overlay kind for that entry:
+  - `B[i] == 0xFF` → **joint animation** on `A[i]` via `GSmodelSetPartAnimIndex`.
+  - `B[i] != 0xFF` → **per-part texture animation** on `A[i]` via `GSmodelSetPartTexAnimIndex`, with `B[i]` as the tex parameter.
+
+Every entry in the block shares the single `anim_index_ref` (byte 18) as the clip/index to apply. Up to 8 entries.
+
+> **Plugin support:** the exporter authors only the pure-joint case — it writes bone indices into bytes 2-9, leaves the selector array (10-17) all `0xFF`, and sets `sub_param` from the count. Per-part texture entries (`B[i] != 0xFF`) are a format capability we don't currently author or surface in the panel.
+
+Examples (type 2, joint):
 - **Moltres** block 2: bone 116 plays animation 10 (wing fire animation)
 - **Mage** block 2: bones 39, 40, 30, 29 play animation 1 (cape/cloth movement)
 - **Umbreon** block 2: bone 78 plays animation 6 (ring glow)
 
+#### How the overlay combines with the base animation
+
+Per listed bone, `GSpartSetAnimIndex` does `HSD_JObjRemoveAnim` → `HSD_JObjAddAnim` → `HSD_JObjReqAnim`: the sub-anim's clip becomes what drives that joint, so **listed bones follow the sub-animation while every other bone keeps the base animation**. The request carries a frame/blend value, so it eases in rather than hard-cutting. The engine additionally has a per-frame mixer (`modelApplyPartAnimMixes` → `modelCalculatePartMix`) that can combine base and overlay **per component (X/Y/Z)** in one of three modes — *leave / replace / add* — plus an interpolation-factor path (`modelIntpJObjTrans/Rotate/Scale`) for smooth transitions.
+
+If a targeted block lists **no bones** (count 0 or all `0xFF`), `GSmodelSetPartAnimIndex` is never called and the overlay does nothing.
+
 #### Sub-Animations Are Target Poses
 
-Sub-animation DAT indices reference **extra animations beyond the 17 battle slots**. These animations are real bone animation sets with keyframe data, but they're typically 2-frame static poses — they define WHERE the bones should be, not a transition.
-
-The game engine smoothly blends from the current battle animation to the sub-animation's target pose. Our importer imports them as separate actions but they can't be properly previewed in Blender without NLA track layering.
+Sub-animation DAT indices reference **extra animations beyond the 17 battle slots**. These animations are real bone animation sets with keyframe data, but they're typically 2-frame static poses — they define WHERE the bones should be, not a transition. Our importer imports them as separate actions but they can't be properly previewed in Blender without NLA track layering.
 
 #### Identifying Sub-Animations
 
