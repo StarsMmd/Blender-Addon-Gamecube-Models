@@ -314,27 +314,49 @@ def _encode_channel(keyframes, channel_type):
 
     raw = bytearray()
 
-    # Encode keyframes in groups by interpolation type
-    i = 0
-    cur_slope = 0.0  # tracks the last emitted slope_out
-    while i < len(keyframes):
-        kf = keyframes[i]
-        opcode = opcode_map.get(kf.interpolation, HSD_A_OP_LIN)
+    # Encode keyframes as opcode runs, mirroring the decoder's slope
+    # state machine exactly (see keyframe_decoder): every non-SLP key
+    # takes slope_in from the running cur_slope and resets cur_slope to
+    # its own emitted slope (0 for SPL0/LIN/CON); an SLP node overrides
+    # cur_slope between keys.
+    def _opcode_for(kf):
+        op = opcode_map.get(kf.interpolation, HSD_A_OP_LIN)
+        if op == HSD_A_OP_SPL and not (kf.slope_out or 0.0):
+            # Zero outgoing tangent encodes value-only (matches the
+            # original compiler; the decoder restores slope_out = 0).
+            return HSD_A_OP_SPL0
+        return op
 
-        # Count consecutive keyframes with the same opcode
+    i = 0
+    cur_slope = 0.0  # decoder's running slope state
+    while i < len(keyframes):
+        opcode = _opcode_for(keyframes[i])
+
+        # If this spline key's incoming tangent differs from the running
+        # slope, emit an SLP override so the decoder recovers it. This
+        # applies mid-stream too — asymmetric tangents between two spline
+        # keys are carried by SLP nodes, not by the keys themselves.
+        if opcode in (HSD_A_OP_SPL, HSD_A_OP_SPL0):
+            slope_in = keyframes[i].slope_in or 0.0
+            if slope_in != cur_slope:
+                _encode_opcode(raw, HSD_A_OP_SLP, 1)
+                _encode_typed_value(raw, slope_in, slope_pack, slope_frac_bits, slope_is_float)
+                cur_slope = slope_in
+
+        # Extend the run: same opcode, and for spline keys no tangent
+        # discontinuity (which would need an SLP break).
         run_start = i
-        while i < len(keyframes) and opcode_map.get(keyframes[i].interpolation, HSD_A_OP_LIN) == opcode:
+        i += 1
+        while i < len(keyframes):
+            nxt = keyframes[i]
+            if _opcode_for(nxt) != opcode:
+                break
+            if opcode in (HSD_A_OP_SPL, HSD_A_OP_SPL0):
+                prev_out = keyframes[i - 1].slope_out or 0.0
+                if (nxt.slope_in or 0.0) != prev_out:
+                    break
             i += 1
         run_count = i - run_start
-
-        # For SPL runs: if the first keyframe's slope_in differs from
-        # cur_slope, emit an SLP preamble to set the incoming tangent.
-        if opcode == HSD_A_OP_SPL:
-            first_slope_in = keyframes[run_start].slope_in or 0.0
-            if first_slope_in != cur_slope:
-                _encode_opcode(raw, HSD_A_OP_SLP, 1)
-                _encode_typed_value(raw, first_slope_in, slope_pack, slope_frac_bits, slope_is_float)
-                cur_slope = first_slope_in
 
         # Encode the opcode + node count
         _encode_opcode(raw, opcode, run_count)
@@ -348,6 +370,10 @@ def _encode_channel(keyframes, channel_type):
                 slope_out = kf.slope_out if kf.slope_out is not None else 0.0
                 _encode_typed_value(raw, slope_out, slope_pack, slope_frac_bits, slope_is_float)
                 cur_slope = slope_out
+            else:
+                # SPL0/LIN/CON keys read no slope; the decoder resets its
+                # running slope to 0 after each of them.
+                cur_slope = 0.0
 
             if opcode != HSD_A_OP_NONE:
                 # Wait = frame delta to next keyframe
