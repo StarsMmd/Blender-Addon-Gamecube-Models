@@ -44,12 +44,6 @@ except (ImportError, SystemError):
 
 
 # Channel type constants for each SRT component
-_CHANNEL_TYPES = [
-    HSD_A_J_ROTX, HSD_A_J_ROTY, HSD_A_J_ROTZ,
-    HSD_A_J_TRAX, HSD_A_J_TRAY, HSD_A_J_TRAZ,
-    HSD_A_J_SCAX, HSD_A_J_SCAY, HSD_A_J_SCAZ,
-]
-
 _INTERP_TO_OPCODE_NO_SLOPE = {
     Interpolation.CONSTANT: HSD_A_OP_CON,
     Interpolation.LINEAR: HSD_A_OP_LIN,
@@ -72,16 +66,31 @@ _QUANT_CANDIDATES = [
 ]
 
 
+def _usable_bits(type_min, type_max):
+    """Usable magnitude bits: 8 for U8, 7 for S8, 16 for U16, 15 for S16
+    (signed types lose one bit to the sign)."""
+    if type_max <= 255:
+        return 7 if type_min < 0 else 8
+    return 15 if type_min < 0 else 16
+
+
 def _pick_quantization(values, channel_type=None):
-    """Pick the smallest quantization format for a set of float values.
+    """Pick the quantization format for a set of float values.
 
-    Uses the formula frac_bits = type_bits - ceil(log2(max_abs + 1))
-    to compute the optimal fractional precision for each type, then
-    verifies all values fit within tolerance. This matches the Colo/XD
-    compiler's behavior of maximizing precision within the type's range.
+    Two passes, both computing frac_bits = usable_bits - ceil(log2(max_abs
+    + 1)) per candidate type (usable bits: U8 8, S8 7, U16 16, S16 15):
 
-    Note: HSDLib (Melee) uses a different strategy (lowest frac_bits
-    first), but Colo/XD binaries consistently use higher frac_bits.
+    1. **Bit-exact pass** — the smallest type (1-byte before 2-byte,
+       unsigned before signed) whose formula frac represents *every*
+       value exactly. On round-tripped data the decoded stream already
+       sits on its source quantization grid, so this pass recovers the
+       original compiler's choice; corpus measurements live in
+       implementation_notes § animation quantization selection.
+
+    2. **Tolerance pass** — for values with no exact representation
+       (fresh Blender-authored animations): the smallest type where
+       every value stays within 0.004 of its dequantized form, keeping
+       export sizes compact. FLOAT only when nothing fits.
 
     Args:
         values: iterable of float values to encode.
@@ -104,19 +113,30 @@ def _pick_quantization(values, channel_type=None):
     else:
         int_bits = 0  # All values near zero
 
+    # Pass 1 — smallest bit-exact representation.
+    for type_flag, pack_type, type_min, type_max in _QUANT_CANDIDATES:
+        if type_min >= 0 and has_negative:
+            continue
+        frac_bits = _usable_bits(type_min, type_max) - int_bits
+        if not (0 <= frac_bits <= 31):
+            continue
+        scale = 1 << frac_bits
+        exact = True
+        for v in vals:
+            q = round(v * scale)
+            if q < type_min or q > type_max or q / scale != v:
+                exact = False
+                break
+        if exact:
+            return type_flag | frac_bits, pack_type
+
+    # Pass 2 — smallest type within tolerance.
     for type_flag, pack_type, type_min, type_max in _QUANT_CANDIDATES:
         # Skip unsigned types if there are negative values
         if type_min >= 0 and has_negative:
             continue
 
-        # Total usable bits: 8 for u8/s8 types, 16 for u16/s16 types
-        # Signed types lose 1 bit to the sign
-        if type_max <= 255:
-            total_bits = 7 if type_min < 0 else 8
-        else:
-            total_bits = 15 if type_min < 0 else 16
-
-        frac_bits = total_bits - int_bits
+        frac_bits = _usable_bits(type_min, type_max) - int_bits
         if frac_bits < 0 or frac_bits > 31:
             continue
 
@@ -219,18 +239,20 @@ def _build_animation(track, loop):
     anim.end_frame = float(track.end_frame)
     anim.joint = None  # Not set in original binaries
 
-    # Build Frame linked list for each SRT channel
+    # Build Frame linked list for each SRT channel. Channel-group order is
+    # scale, rotation, translation (X,Y,Z ascending within each group) —
+    # the dominant convention in game-native chains; see
+    # implementation_notes § animation channel order.
     frames = []
     all_channels = (
-        list(track.rotation) +   # [X, Y, Z]
-        list(track.location) +   # [X, Y, Z]
-        list(track.scale)        # [X, Y, Z]
+        [(HSD_A_J_SCAX + i, kfs) for i, kfs in enumerate(track.scale)] +
+        [(HSD_A_J_ROTX + i, kfs) for i, kfs in enumerate(track.rotation)] +
+        [(HSD_A_J_TRAX + i, kfs) for i, kfs in enumerate(track.location)]
     )
 
-    for ch_idx, keyframes in enumerate(all_channels):
+    for channel_type, keyframes in all_channels:
         if not keyframes:
             continue
-        channel_type = _CHANNEL_TYPES[ch_idx]
 
         # Translation channels are already in GC units — the pre-scale pass
         # at the top of compose_scene scales every location keyframe value,
