@@ -838,7 +838,7 @@ def _compare_node_trees(node_a, node_b):
             return
 
         for field_name, _ in a.fields:
-            if field_name in _NODE_SKIP_FIELDS:
+            if _skip_node_field(a, field_name):
                 continue
             val_a = getattr(a, field_name, None)
             val_b = getattr(b, field_name, None)
@@ -890,22 +890,46 @@ def _compare_node_trees(node_a, node_b):
 # address-like fields that change between builds but aren't model data
 _NODE_SKIP_FIELDS = {'address', 'data_address', 'display_list_address', 'base_pointer'}
 
+# Pointer fields that hold raw-buffer offsets on specific classes only.
+# These are skipped per-class rather than globally because the same field
+# name carries real content on other node types (e.g. SList.data). The
+# buffer bytes behind each pointer are compared via _COMPARE_BLOBS below,
+# so skipping the offset loses no coverage.
+_CLASS_SKIP_FIELDS = {
+    'Frame': {'ad'},
+    'Palette': {'data'},
+}
+
+
+def _skip_node_field(node, field_name):
+    """True when a field is an offset/pointer, not model data."""
+    if field_name in _NODE_SKIP_FIELDS:
+        return True
+    return field_name in _CLASS_SKIP_FIELDS.get(type(node).__name__, ())
+
 
 # Raw data buffers some nodes carry as plain *attributes* (set in
 # loadFromBinary), not as declared `fields`. The field-walking comparisons
-# above never see them, so the buffer contents were previously unchecked by
-# NBN/NIN. Declare them here so both comparisons validate the actual data.
-# Each entry is (attr, kind):
+# above never see them, so without these entries the buffer contents would
+# go unchecked by NBN/NIN (while their offset fields are skipped as
+# layout-dependent). Declare them here so both comparisons validate the
+# actual data. Each entry is (attr, kind):
 #   'aabb_frames' — BoundBox per-frame AABBs. The node's iter_frames() splits
 #                   the structured blob into 24-byte (min+max vec3) chunks,
 #                   skipping the per-set uint32 count prefixes, so frames are
 #                   compared 1-to-1 and aligned across animation sets. One
 #                   point per frame (matched / error / miss).
-#   'bytes'       — compared byte-for-byte as a single point.
-# Extendable to image/palette/keyframe/vertex buffers (raw_image_data,
-# raw_data, raw_ad, raw_vertex_data) when we want those covered too.
+#   'bytes'       — compared byte-for-byte as a single point. One point per
+#                   buffer keeps huge payloads (texture pixels, vertex
+#                   buffers) from drowning out the structured fields, the
+#                   same reasoning as IBI's category weighting.
 _COMPARE_BLOBS = {
     'BoundBox': (('raw_aabb_data', 'aabb_frames'),),
+    'Frame': (('raw_ad', 'bytes'),),          # keyframe opcode stream
+    'Palette': (('raw_data', 'bytes'),),      # TLUT color entries
+    'PObject': (('raw_display_list', 'bytes'),),  # GX strip/triangle stream
+    'Vertex': (('raw_vertex_data', 'bytes'),),    # attribute payload buffer
+    'Image': (('raw_image_data', 'bytes'),),      # encoded texture pixels
 }
 _BLOB_FLOAT_TOL = 1e-3
 # Recomputed AABBs are derived data (per-frame skinned boxes), not
@@ -1045,7 +1069,7 @@ def _compare_node_trees_nin(orig, composed):
 
         node_path = f"{path}({_node_label(orig_node)})"
         for field_name, _ in orig_node.fields:
-            if field_name in _NODE_SKIP_FIELDS:
+            if _skip_node_field(orig_node, field_name):
                 continue
 
             val_orig = getattr(orig_node, field_name, None)
