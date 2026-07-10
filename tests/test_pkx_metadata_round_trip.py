@@ -270,6 +270,25 @@ def test_targeted_part_anim_bones_roundtrip():
     assert rebuilt.part_anim_data[1].has_data == 2
     assert rebuilt.part_anim_data[1].active_bone_indices() == [2, 5]
     assert rebuilt.part_anim_data[1].anim_index_ref == 7
+    # selectors stay 0xFF → still classified as a joint target
+    assert rebuilt.part_anim_data[1].is_joint_target()
+
+
+def test_targeted_texture_selectors_roundtrip():
+    """A per-part texture block preserves its bone list AND selector array."""
+    h = _xd_header()
+    config = bytearray(b"\xff" * 16)
+    config[0], config[1] = 4, 7      # part indices (bytes 2-3 of block)
+    config[8], config[9] = 5, 2      # selectors (bytes 10-11) — not 0xFF
+    h.part_anim_data[1] = PartAnimData(
+        has_data=2, sub_param=2, bone_config=bytes(config), anim_index_ref=6)
+
+    rebuilt = _roundtrip(h, model_type="POKEMON")
+    pad = rebuilt.part_anim_data[1]
+    assert pad.has_data == 2
+    assert pad.is_joint_target() is False
+    assert pad.active_entries() == [(4, 5), (7, 2)]
+    assert pad.anim_index_ref == 6
 
 
 def test_damage_flags_clamp_is_expected_divergence():

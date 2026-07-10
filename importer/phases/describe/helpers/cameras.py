@@ -161,16 +161,19 @@ def describe_camera_animations(camera_set, camera_index=0, logger=StubLogger(), 
                     end_frame = getattr(interest_aobj, 'end_frame', 0.0) or 0.0
                 _decode_aobj_tracks(interest_aobj, _WOBJ_TARGET_MAP, tracks, logger, options)
 
-        if tracks:
-            ir_kf = IRCameraKeyframes(
-                name=name,
-                end_frame=end_frame,
-                loop=loop,
-                **tracks,
-            )
-            results.append(ir_kf)
-            logger.debug("  Camera animation '%s': %d tracks, end_frame=%.1f, loop=%s",
-                         name, len(tracks), end_frame, loop)
+        # Emit an IRCameraKeyframes even when the node carried no tracks:
+        # the CameraAnimation node's presence is scene structure (a camera
+        # animation slot exists), independent of whether it holds keyframes.
+        # A track-less clip composes back to an empty CameraAnimation.
+        ir_kf = IRCameraKeyframes(
+            name=name,
+            end_frame=end_frame,
+            loop=loop,
+            **tracks,
+        )
+        results.append(ir_kf)
+        logger.debug("  Camera animation '%s': %d tracks, end_frame=%.1f, loop=%s",
+                     name, len(tracks), end_frame, loop)
 
     return results
 

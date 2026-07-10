@@ -109,6 +109,8 @@ def _describe_camera_animations(cam_obj, target_obj, sensor_h, logger):
         tracks['target_loc_y'] = _extract_fcurve(ta, 'location', 1)
         tracks['target_loc_z'] = _extract_fcurve(ta, 'location', 2)
 
+    # Empty-presence clips (map camera animations are inert track-less nodes)
+    # have no fcurves to anchor and simply don't survive the Blender round-trip.
     if not any(tracks.values()):
         return []
 

@@ -107,6 +107,21 @@ def _is_identity_matrix(m, tol=1e-5):
     return True
 
 
+def _pose_is_externally_constrained(arm):
+    """True when any pose bone carries a constraint whose target lives
+    outside the armature (or a FOLLOW_PATH, whose curve target is always
+    external). Such poses are pinned to world-space state that does not
+    survive rewriting the armature's rest data: after the bake,
+    pose @ rest^-1 no longer cancels for the constrained chain and
+    skinned meshes drift off the skeleton."""
+    for pb in arm.pose.bones:
+        for c in pb.constraints:
+            target = getattr(c, 'target', None)
+            if c.type == 'FOLLOW_PATH' or (target is not None and target != arm):
+                return True
+    return False
+
+
 def _apply_world_to_data(obj, world):
     """Bake `world` into obj's data (vertex coords for meshes, bone
     head/tail/roll for armatures). Resolves multi-user data by copying
@@ -249,6 +264,15 @@ def bake_transforms():
     import re
 
     armatures = [obj for obj in bpy.data.objects if obj.type == 'ARMATURE']
+    skipped = [a for a in armatures if _pose_is_externally_constrained(a)]
+    if skipped:
+        armatures = [a for a in armatures if a not in skipped]
+        for a in skipped:
+            print("  bake_transforms: skipping '%s' -- pose bones are driven "
+                  "by external-target constraints (e.g. FOLLOW_PATH); baking "
+                  "would shift the constrained chain off the skeleton. Export "
+                  "pre-process will reject this armature until the "
+                  "constraints are applied or removed." % a.name)
     if not armatures:
         return 0
 

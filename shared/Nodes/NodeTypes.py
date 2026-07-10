@@ -93,6 +93,11 @@ def get_alignment_at_offset(field_type, offset):
 # e.g. `@Joint[]` becomes `(Joint)[]`
 @lru_cache(maxsize=256)
 def markUpFieldType(type_string):
+	# Recursion always descends one structural level at a time (the *direct*
+	# sub-type), never straight to the bottom type — collapsing to the bottom
+	# type silently discards intermediate array/pointer layers of compound
+	# declarations like '*(Image[count])' (a pointer to a counted array of
+	# Image pointers).
 
 	if type_string[0] == "@":
 		return "(" + type_string[1:] + ")"
@@ -101,15 +106,28 @@ def markUpFieldType(type_string):
 		return "(*" + type_string + ")"
 
 	if isUnboundedArrayType(type_string):
-		sub_type = getSubType(type_string)
+		sub_type = getArraySubType(type_string)
 		return "(*(" + markUpFieldType(sub_type) + "[]))"
 
+	if isBoundedArrayType(type_string):
+		sub_type = getArraySubType(type_string)
+		marked = markUpFieldType(sub_type)
+		if marked == sub_type:
+			# Primitive elements keep the declared inline-array form (e.g. 'float[4]')
+			return type_string
+		# Class elements become pointers; keep the element bracketed because
+		# '*' binds tighter than '[]' in this grammar.
+		return "(" + marked + ")[" + getArrayBoundString(type_string) + "]"
+
 	if isBracketedType(type_string):
-		sub_type = getSubType(type_string)
-		return "(" + markUpFieldType(sub_type) + ")"
+		return "(" + markUpFieldType(getBracketedSubType(type_string)) + ")"
 
 	if isPointerType(type_string):
-		sub_type = getSubType(type_string)
+		sub_type = getPointerSubType(type_string)
+		if isNodeClassType(sub_type) or (sub_type == 'string') or (sub_type == 'matrix'):
+			# The explicit '*' already is the pointer — don't let the bare-name
+			# case add the implicit second level (keeps re-markup stable).
+			return "*(" + sub_type + ")"
 		return "*(" + markUpFieldType(sub_type) + ")"
 
 	return type_string

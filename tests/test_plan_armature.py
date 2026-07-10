@@ -36,24 +36,14 @@ def _make_ir_bone(name, parent_index=None, scale=(1.0, 1.0, 1.0), accumulated=No
 
 
 class TestChooseInheritScale:
+    """The bake poses every bone; inherit_scale only picks the read-back mode.
+    Baked-closure bones read back under NONE, the rest under native ALIGNED."""
 
-    def test_uniform_accumulated_scale_picks_aligned(self):
-        assert choose_inherit_scale((1.0, 1.0, 1.0)) == 'ALIGNED'
+    def test_aligned_bone_picks_aligned(self):
+        assert choose_inherit_scale(False) == 'ALIGNED'
 
-    def test_slightly_non_uniform_within_ratio_picks_aligned(self):
-        assert choose_inherit_scale((1.0, 1.05, 1.0)) == 'ALIGNED'
-
-    def test_clearly_non_uniform_picks_none(self):
-        assert choose_inherit_scale((1.0, 0.5, 1.0)) == 'NONE'
-
-    def test_any_near_zero_component_picks_aligned(self):
-        # Near-zero in the chain defeats the ratio test and falls back to
-        # ALIGNED — safe because near-zero rest scales are handled by the
-        # rebind pass before Plan runs.
-        assert choose_inherit_scale((1e-5, 1.0, 1.0)) == 'ALIGNED'
-
-    def test_negative_uniform_picks_aligned(self):
-        assert choose_inherit_scale((-1.0, -1.0, -1.0)) == 'ALIGNED'
+    def test_baked_bone_picks_none(self):
+        assert choose_inherit_scale(True) == 'NONE'
 
 
 class TestChooseTailOffset:
@@ -110,12 +100,28 @@ class TestPlanArmature:
         assert bone.rotation_mode == 'XYZ'
         assert bone.tail_offset == (0.0, 0.01, 0.0)
 
-    def test_non_uniform_accumulated_scale_marks_bone_none(self):
+    def test_uniform_bone_aligned_nonuniform_bone_none(self):
         ir = IRModel(name="rig", bones=[
-            _make_ir_bone("Leaf", accumulated=(1.221, 0.549, 1.0)),
+            _make_ir_bone("Uniform", accumulated=(1.0, 1.0, 1.0)),
+            _make_ir_bone("NonUniform", accumulated=(1.221, 0.549, 1.0)),
         ])
         br = plan_armature(ir)
-        assert br.bones[0].inherit_scale == 'NONE'
+        assert br.bones[0].inherit_scale == 'ALIGNED'
+        assert br.bones[1].inherit_scale == 'NONE'
+
+    def test_inherit_scale_per_bone_by_accumulated_scale(self):
+        """Per-bone decision on accumulated scale. In GX a child inherits
+        accumulated scale, so a real descendant of a non-uniform bone is itself
+        non-uniform and also bakes."""
+        ir = IRModel(name="rig", bones=[
+            _make_ir_bone("Root", accumulated=(1.0, 1.0, 1.0)),
+            _make_ir_bone("NonUniform", parent_index=0, accumulated=(2.0, 1.0, 0.5)),
+            _make_ir_bone("NonUniformChild", parent_index=1, accumulated=(2.0, 1.0, 0.5)),
+        ])
+        br = plan_armature(ir)
+        assert br.bones[0].inherit_scale == 'ALIGNED'
+        assert br.bones[1].inherit_scale == 'NONE'
+        assert br.bones[2].inherit_scale == 'NONE'
 
     def test_ik_hack_option_switches_display_and_tail(self):
         ir = IRModel(name="rig", bones=[

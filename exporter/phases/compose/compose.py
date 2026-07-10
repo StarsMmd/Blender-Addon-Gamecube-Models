@@ -24,6 +24,7 @@ from .helpers.animations import compose_bone_animations
 from .helpers.material_animations import compose_material_animations
 from .helpers.lights import compose_lights
 from .helpers.cameras import compose_camera
+from .helpers.fog import compose_fog
 from .helpers.constraints import compose_constraints
 from .helpers.scale import scale_scene_to_gc_units
 # compose_particles exists but is NOT wired into the export pipeline — see
@@ -56,6 +57,15 @@ def compose_scene(ir_scene, options=None, logger=StubLogger()):
     root_nodes = []
     section_names = []
 
+    # All models share a single scene_data section — SceneData.models is a
+    # ModelSet[] array, and multi-model files (map archives) store every
+    # model there rather than in per-model sections.
+    composed_models = []
+
+    # One image cache spans all models so an IRImage referenced from
+    # several models (shared textures in map archives) is GX-encoded once.
+    image_cache = {}
+
     for mi, model in enumerate(ir_scene.models):
         logger.info("  Composing model '%s' (%d bones, %d meshes)",
                     model.name, len(model.bones), len(model.meshes))
@@ -65,7 +75,8 @@ def compose_scene(ir_scene, options=None, logger=StubLogger()):
             logger.info("    Skipped: no bones")
             continue
 
-        compose_meshes(model.meshes, joints, model.bones, logger)
+        compose_meshes(model.meshes, joints, model.bones, logger,
+                       image_cache=image_cache)
 
         # Strip node names if requested (for round-trip testing against
         # original models that have empty name fields)
@@ -97,18 +108,27 @@ def compose_scene(ir_scene, options=None, logger=StubLogger()):
         model_set.animated_material_joints = mat_anim_roots
         model_set.animated_shape_joints = None
 
+        composed_models.append((model, model_set))
+
+    if composed_models:
         scene_data = SceneData(address=None, blender_obj=None)
-        scene_data.models = [model_set]
+        scene_data.models = [ms for _, ms in composed_models]
         scene_data.camera = compose_camera(ir_scene.cameras[0], logger) if ir_scene.cameras else None
         scene_data.lights = compose_lights(ir_scene.lights, logger=logger)
-        scene_data.fog = None
+        scene_data.fog = compose_fog(ir_scene.fogs[0], logger) if ir_scene.fogs else None
 
         root_nodes.append(scene_data)
         section_names.append('scene_data')
 
-        # Bound box — per-frame AABBs across all animation sets
-        if options.get('include_bound_box', True):
-            bb = _compose_bound_box(model, logger)
+        # Bound box — per-frame AABBs across all animation sets. Only
+        # emitted for single-model scenes: multi-model files (map archives)
+        # don't carry a bound_box section, and the section format has no
+        # room for more than one model's AABB stream.
+        if len(composed_models) > 1:
+            logger.info("  Bound box: skipped (%d models in scene)",
+                        len(composed_models))
+        elif options.get('include_bound_box', True):
+            bb = _compose_bound_box(composed_models[0][0], logger)
             if bb:
                 root_nodes.append(bb)
                 section_names.append('bound_box')
@@ -204,12 +224,24 @@ def _rest_bone_world_matrices(model):
 
 def _build_skin_samples(model, SkinType):
     """Return one entry per mesh vertex: a list of
-    `(bone_idx, weight, local_rest_Vector)` tuples.
+    `(bone_idx, weight, local_rest_Vector)` tuples. Skinning at frame f
+    is then `sum_b weight_b * anim_world[b] @ local_rest_b`.
 
-    `local_rest = inv_bind[bone_idx] @ vertex_rest_world`. Skinning at
-    frame f is then `sum_b weight_b * anim_world[b] @ local_rest_b`.
-    Pre-computing `inv_bind @ vertex` here turns each per-frame vertex
-    evaluation into one matrix-vector multiply per weight.
+    The per-bone `local_rest` mirrors the runtime's matrix selection so
+    the recomputed box reproduces the rest geometry exactly:
+
+    - Single-bone full-weight combos (and SINGLE_BONE/RIGID meshes) use
+      `inv(rest_world)` — the runtime's weight-1.0 short-circuit skips
+      the stored inverse-bind matrix, which need not invert the rest
+      pose (see implementation notes § envelope-weight-1.0 IBM
+      short-circuit).
+    - Multi-weight combos first undo the rest-pose blend: IR vertices
+      are the *deformed* rest positions, so
+      `local_rest = inv_bind[b] @ inv(sum_b w*rest_world[b]@inv_bind[b]) @ v_world`.
+      At rest this reproduces `v_world` by construction.
+
+    Meshes owned by hidden joints are excluded — the game's boxes only
+    cover visible geometry.
     """
     try:
         from ....shared.helpers.math_shim import Matrix, Vector
@@ -223,18 +255,47 @@ def _build_skin_samples(model, SkinType):
     bone_name_to_index = {b.name: i for i, b in enumerate(model.bones)}
     rest_world = _rest_bone_world_matrices(model)
 
+    rest_inv = []
+    for i in range(n_bones):
+        try:
+            rest_inv.append(rest_world[i].inverted())
+        except ValueError:
+            rest_inv.append(Matrix.Identity(4))
+
     inv_bind = []
     for i, b in enumerate(model.bones):
         if b.inverse_bind_matrix:
             inv_bind.append(Matrix(b.inverse_bind_matrix))
         else:
+            inv_bind.append(rest_inv[i])
+
+    blend_inv_cache = {}
+
+    def _blend_inverse(combo):
+        """inv(sum_b w * rest_world[b] @ inv_bind[b]) for a weight combo."""
+        key = tuple(combo)
+        cached = blend_inv_cache.get(key)
+        if cached is None:
+            rows = [[0.0] * 4 for _ in range(4)]
+            for b_idx, w in combo:
+                m = rest_world[b_idx] @ inv_bind[b_idx]
+                for r in range(4):
+                    for c in range(4):
+                        rows[r][c] += w * m[r][c]
             try:
-                inv_bind.append(rest_world[i].inverted())
+                cached = Matrix(rows).inverted()
             except ValueError:
-                inv_bind.append(Matrix.Identity(4))
+                cached = Matrix.Identity(4)
+            blend_inv_cache[key] = cached
+        return cached
+
+    hidden_bones = {i for i, b in enumerate(model.bones)
+                    if getattr(b, 'is_hidden', False)}
 
     samples = []
     for mesh in model.meshes:
+        if mesh.parent_bone_index in hidden_bones:
+            continue
         bw = mesh.bone_weights
 
         weighted_map = None
@@ -265,9 +326,15 @@ def _build_skin_samples(model, SkinType):
             if weighted_map is not None:
                 assigned = weighted_map.get(v_idx)
                 if assigned:
-                    entries = [(bi, w, inv_bind[bi] @ v_world) for bi, w in assigned]
+                    if len(assigned) == 1 and assigned[0][1] >= 0.999:
+                        b_idx = assigned[0][0]
+                        entries = [(b_idx, 1.0, rest_inv[b_idx] @ v_world)]
+                    else:
+                        undeformed = _blend_inverse(assigned) @ v_world
+                        entries = [(bi, w, inv_bind[bi] @ undeformed)
+                                   for bi, w in assigned]
             if entries is None:
-                entries = [(default_bone, 1.0, inv_bind[default_bone] @ v_world)]
+                entries = [(default_bone, 1.0, rest_inv[default_bone] @ v_world)]
             samples.append(entries)
 
     return samples

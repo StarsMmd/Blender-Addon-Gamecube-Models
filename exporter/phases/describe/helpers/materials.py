@@ -153,11 +153,14 @@ def _serialise_image(bpy_image, cache):
     if pixel_count == 0:
         pixels = b''
     else:
-        flat = list(bpy_image.pixels)
-        pixel_bytes = bytearray(pixel_count * 4)
-        for i in range(pixel_count * 4):
-            pixel_bytes[i] = min(255, max(0, int(flat[i] * 255 + 0.5)))
-        pixels = bytes(pixel_bytes)
+        # Bulk float→u8 conversion: foreach_get reads the whole pixel
+        # buffer in one C call, and the vectorized floor/clip matches the
+        # scalar formula min(255, max(0, int(v * 255 + 0.5))) exactly.
+        import numpy as np
+        flat = np.empty(pixel_count * 4, dtype=np.float32)
+        bpy_image.pixels.foreach_get(flat)
+        scaled = np.floor(flat.astype(np.float64) * 255.0 + 0.5)
+        pixels = np.clip(scaled, 0, 255).astype(np.uint8).tobytes()
 
     br_image = BRImage(
         name=bpy_image.name,

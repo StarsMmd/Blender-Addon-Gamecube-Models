@@ -249,3 +249,85 @@ class _NullLogger:
     def info(self, *a, **kw): pass
     def debug(self, *a, **kw): pass
     def warning(self, *a, **kw): pass
+
+
+def _translation(x, y, z):
+    return [
+        [1.0, 0.0, 0.0, x],
+        [0.0, 1.0, 0.0, y],
+        [0.0, 0.0, 1.0, z],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+
+
+_IDENTITY = _translation(0.0, 0.0, 0.0)
+
+
+def test_single_full_weight_uses_rest_world_not_stale_ibm():
+    """Single-bone weight-1.0 samples mirror the runtime's IBM short-circuit:
+    the stored inverse-bind matrix is skipped, so a bind matrix that doesn't
+    invert the rest pose must not displace the rest-pose box."""
+    bone = _FakeBone('root', None, (0, 0, 0), (0, 0, 0), (1, 1, 1),
+                     world_matrix=_translation(0.0, 1.0, 0.0),
+                     inverse_bind_matrix=_IDENTITY)  # NOT inv(world)
+    mesh = _make_mesh(
+        vertices=[(0.0, 2.0, 0.0)],
+        bw=_IRBW(type=SkinType.WEIGHTED, assignments=[(0, [('root', 1.0)])]),
+        parent_bone_index=0,
+    )
+    model = _FakeModel(bones=[bone], meshes=[mesh])
+    samples = compose_mod._build_skin_samples(model, SkinType)
+    rest = compose_mod._rest_bone_world_matrices(model)
+    mn, mx = compose_mod._compute_skinned_aabb(samples, rest)
+    # Rest-pose skinning must reproduce the rest geometry exactly.
+    assert abs(mn[1] - 2.0) < 1e-6 and abs(mx[1] - 2.0) < 1e-6
+
+
+def test_multi_weight_undoes_rest_blend_before_redeforming():
+    """IR vertices are deformed rest positions; when the blended rest
+    bind (sum w * world @ ibm) isn't identity, the sampler must undo it
+    so the rest-pose box reproduces the rest geometry exactly."""
+    bone_a = _FakeBone('a', None, (0, 0, 0), (0, 0, 0), (1, 1, 1),
+                       world_matrix=_translation(0.0, 2.0, 0.0),
+                       inverse_bind_matrix=_IDENTITY)  # world @ ibm = T(0,2,0)
+    bone_b = _FakeBone('b', None, (0, 0, 0), (0, 0, 0), (1, 1, 1),
+                       world_matrix=_IDENTITY,
+                       inverse_bind_matrix=_IDENTITY)  # world @ ibm = I
+    mesh = _make_mesh(
+        vertices=[(0.0, 0.0, 5.0)],
+        bw=_IRBW(type=SkinType.WEIGHTED,
+                 assignments=[(0, [('a', 0.5), ('b', 0.5)])]),
+        parent_bone_index=0,
+    )
+    model = _FakeModel(bones=[bone_a, bone_b], meshes=[mesh])
+    samples = compose_mod._build_skin_samples(model, SkinType)
+    rest = compose_mod._rest_bone_world_matrices(model)
+    mn, mx = compose_mod._compute_skinned_aabb(samples, rest)
+    assert abs(mn[1]) < 1e-6 and abs(mx[1]) < 1e-6   # not shifted to y=1
+    assert abs(mn[2] - 5.0) < 1e-6 and abs(mx[2] - 5.0) < 1e-6
+
+
+def test_hidden_joint_meshes_excluded_from_box():
+    """The game's boxes only cover visible geometry — meshes owned by
+    hidden joints must not contribute samples."""
+    visible = _FakeBone('vis', None, (0, 0, 0), (0, 0, 0), (1, 1, 1),
+                        world_matrix=_IDENTITY)
+    hidden = _FakeBone('hid', None, (0, 0, 0), (0, 0, 0), (1, 1, 1),
+                       world_matrix=_IDENTITY)
+    hidden.is_hidden = True
+    mesh_vis = _make_mesh(
+        vertices=[(1.0, 1.0, 1.0)],
+        bw=_IRBW(type=SkinType.RIGID, bone_name='vis'),
+        parent_bone_index=0,
+    )
+    mesh_hid = _make_mesh(
+        vertices=[(100.0, -100.0, 100.0)],
+        bw=_IRBW(type=SkinType.RIGID, bone_name='hid'),
+        parent_bone_index=1,
+    )
+    model = _FakeModel(bones=[visible, hidden], meshes=[mesh_vis, mesh_hid])
+    samples = compose_mod._build_skin_samples(model, SkinType)
+    assert len(samples) == 1
+    rest = compose_mod._rest_bone_world_matrices(model)
+    mn, mx = compose_mod._compute_skinned_aabb(samples, rest)
+    assert mx[0] < 2.0 and mn[1] > -2.0

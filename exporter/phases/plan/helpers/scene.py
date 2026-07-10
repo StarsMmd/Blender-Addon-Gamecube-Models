@@ -7,6 +7,7 @@ becomes derivable.
 """
 try:
     from .....shared.IR.enums import SkinType
+    from .....shared.IR.fog import IRFog
     from .....shared.Constants.hsd import (
         JOBJ_SKELETON, JOBJ_SKELETON_ROOT, JOBJ_ENVELOPE_MODEL,
         JOBJ_LIGHTING, JOBJ_OPA, JOBJ_TEXEDGE,
@@ -15,12 +16,47 @@ try:
     from .....shared.helpers.logger import StubLogger
 except (ImportError, SystemError):
     from shared.IR.enums import SkinType
+    from shared.IR.fog import IRFog
     from shared.Constants.hsd import (
         JOBJ_SKELETON, JOBJ_SKELETON_ROOT, JOBJ_ENVELOPE_MODEL,
         JOBJ_LIGHTING, JOBJ_OPA, JOBJ_TEXEDGE,
         JOBJ_ROOT_OPA, JOBJ_ROOT_TEXEDGE, JOBJ_HIDDEN,
     )
     from shared.helpers.logger import StubLogger
+
+
+# Blender mist falloff → a representative GX fog type (perspective variants).
+_FALLOFF_TO_GX_FOG = {
+    'LINEAR': 2,             # GX_FOG_PERSP_LIN
+    'QUADRATIC': 4,          # GX_FOG_PERSP_EXP
+    'INVERSE_QUADRATIC': 5,  # GX_FOG_PERSP_EXP2
+}
+
+
+def plan_fogs(br_fogs, logger=StubLogger()):
+    """Recover IRFog list from Blender-native BRFog (World Mist).
+
+    Lossy reverse of the importer's mist mapping: mist start/depth →
+    start_z/end_z, falloff → a representative GX fog type, world colour →
+    RGBA u8 (alpha forced opaque). The exact original fog type/alpha aren't
+    recoverable from mist — accepted per the round-trip leniency note.
+
+    In: br_fogs (list[BRFog]); logger.
+    Out: list[IRFog], same length and order.
+    """
+    out = []
+    for f in (br_fogs or []):
+        r = max(0, min(255, int(round(f.color[0] * 255))))
+        g = max(0, min(255, int(round(f.color[1] * 255))))
+        b = max(0, min(255, int(round(f.color[2] * 255))))
+        out.append(IRFog(
+            type=_FALLOFF_TO_GX_FOG.get(f.falloff, 2),
+            start_z=f.mist_start,
+            end_z=f.mist_start + f.mist_depth,
+            color=(r, g, b, 255),
+            has_adj=False,
+        ))
+    return out
 
 
 def refine_bone_flags(bones, meshes, logger=StubLogger()):

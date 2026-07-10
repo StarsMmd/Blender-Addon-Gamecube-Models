@@ -118,7 +118,8 @@ def _describe_texture(texture, image_cache, logger=None, options=None, mobj_addr
     In: texture (Texture, parsed); image_cache (dict, mutated as cache); logger (Logger|None); options (dict|None); mobj_addr (int, owning MObj address for diagnostics); texture_number (int, ≥0).
     Out: IRTextureLayer|None — None if image pixels are missing.
     """
-    # Get pre-decoded image pixels (decoded during parsing)
+    # Decode image pixels on first use; the cache dedups shared images so
+    # each unique (image, palette) pair is decoded exactly once per scene.
     ir_image = None
     if texture.image:
         image_id = texture.image.data_address
@@ -135,7 +136,7 @@ def _describe_texture(texture, image_cache, logger=None, options=None, mobj_addr
     if ir_image is None:
         if logger is not None and texture.image:
             logger.leniency("texture_missing_pixels",
-                            "MObj 0x%X texture %d referenced image but decoded_pixels was empty; game would sample garbage/default",
+                            "MObj 0x%X texture %d referenced image but pixel decode produced nothing; game would sample garbage/default",
                             mobj_addr, texture_number)
         return None
 
@@ -253,15 +254,22 @@ def _palette_format_id_to_enum(format_id):
 
 
 def _build_ir_image(texture):
-    """Build an IRImage from a Texture node's pre-decoded RGBA pixel buffer.
+    """Build an IRImage by decoding a Texture node's raw GX pixel data.
 
-    In: texture (Texture, parsed; needs .image and .decoded_pixels).
-    Out: IRImage|None — None if image_node missing or decoded_pixels empty; pixels stored as raw u8 bytes.
+    In: texture (Texture, parsed; needs .image with raw_image_data, and
+        .palette for indexed formats).
+    Out: IRImage|None — None if image_node missing or decode produced no
+         pixels; pixels stored as raw u8 RGBA bytes.
+
+    Callers cache the result by (image_id, palette_id) — see
+    _describe_texture — so the decode runs once per unique image.
     """
     image_node = texture.image
-    pixel_data = getattr(texture, 'decoded_pixels', None)
+    if image_node is None:
+        return None
+    pixel_data = image_node.decodeFromRawData(texture.palette)
 
-    if pixel_data is None or image_node is None:
+    if pixel_data is None:
         return None
 
     width = image_node.width

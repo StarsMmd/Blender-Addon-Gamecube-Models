@@ -17,6 +17,14 @@ try:
 except (ImportError, SystemError):
     from shared.Constants import gx
 
+# numpy accelerates the CMPR hot path (whole-image vectorized decode).
+# It ships with Blender and the bpy wheel; the per-block pure-Python
+# decoders below remain the fallback so shared/ stays importable without it.
+try:
+    import numpy as _np
+except ImportError:
+    _np = None
+
 # ---------------------------------------------------------------------------
 # Tile dimensions and bits per pixel
 # ---------------------------------------------------------------------------
@@ -266,6 +274,72 @@ FORMAT_INFO = {
 
 
 # ---------------------------------------------------------------------------
+# Vectorized whole-image CMPR decode (numpy fast path)
+# ---------------------------------------------------------------------------
+
+def _decode_cmpr_image_numpy(raw_data, width, height):
+    """Decode a full CMPR image in one vectorized pass.
+
+    Produces output byte-identical to iterating decode_CMPR_block over the
+    tile grid, then cropping and flipping — the same integer arithmetic on
+    whole-image arrays instead of per-block Python loops.
+
+    Returns array.array('B') RGBA (width*height*4), bottom-to-top row order.
+    """
+    np = _np
+    bx = (width + 7) // 8
+    by = (height + 7) // 8
+    n_macro = bx * by
+    needed = n_macro * 32
+
+    # (macro, sub-block, 8 bytes); sub-blocks ordered (sy, sx) as on disk
+    d = np.frombuffer(bytes(raw_data[:needed]), dtype=np.uint8)
+    d = d.reshape(n_macro * 4, 8).astype(np.int32)
+    n = n_macro * 4
+
+    c0 = (d[:, 0] << 8) | d[:, 1]
+    c1 = (d[:, 2] << 8) | d[:, 3]
+
+    # Endpoint colors — same bit expansion as decode_CMPR_block
+    def _expand(hi, lo):
+        r = (hi >> 3) << 3
+        g = (((hi & 0x7) << 3) | ((lo >> 5) & 0x7)) << 2
+        b = (lo & 0x1F) << 3
+        return r, g, b
+
+    r0, g0, b0 = _expand(d[:, 0], d[:, 1])
+    r1, g1, b1 = _expand(d[:, 2], d[:, 3])
+
+    palette = np.empty((n, 4, 4), dtype=np.int32)
+    palette[:, 0, 0], palette[:, 0, 1], palette[:, 0, 2] = r0, g0, b0
+    palette[:, 1, 0], palette[:, 1, 1], palette[:, 1, 2] = r1, g1, b1
+    palette[:, 0, 3] = 0xFF
+    palette[:, 1, 3] = 0xFF
+
+    four_color = c0 > c1
+    for ch, (e0, e1) in enumerate(((r0, r1), (g0, g1), (b0, b1))):
+        palette[:, 2, ch] = np.where(four_color, (2 * e0 + e1) // 3, (e0 + e1) // 2)
+        palette[:, 3, ch] = np.where(four_color, (e0 + 2 * e1) // 3, (e0 + e1) // 2)
+    palette[:, 2, 3] = 0xFF
+    palette[:, 3, 3] = np.where(four_color, 0xFF, 0x0)
+
+    # 2-bit indices: one byte per row, MSB-first pixel order
+    rows = d[:, 4:8]  # (n, 4)
+    shifts = np.array([6, 4, 2, 0], dtype=np.int32)
+    idx = (rows[:, :, None] >> shifts[None, None, :]) & 0x3  # (n, 4, 4)
+
+    pix = palette[np.arange(n)[:, None, None], idx]  # (n, 4, 4, 4) rgba
+
+    # Assemble padded image: (by, bx, sy, sx, row, col, rgba) → (H, W, 4)
+    pix = pix.reshape(by, bx, 2, 2, 4, 4, 4)
+    padded = pix.transpose(0, 2, 4, 1, 3, 5, 6).reshape(by * 8, bx * 8, 4)
+
+    # Crop to actual size and flip vertically (GX top-to-bottom → bottom-to-top)
+    out = padded[:height, :width][::-1]
+    return array.array('B', out.astype(np.uint8).tobytes())
+
+
+# ---------------------------------------------------------------------------
 # High-level decode function
 # ---------------------------------------------------------------------------
 
@@ -299,6 +373,9 @@ def decode_texture(raw_data, width, height, format_id, palette=None):
     needed = blocks_x * blocks_y * tile_bytes
     if len(raw_data) < needed:
         return None
+
+    if format_id == gx.GX_TF_CMPR and _np is not None:
+        return _decode_cmpr_image_numpy(raw_data, width, height)
 
     # Decode all tiles into padded buffer
     padded_w = blocks_x * tile_w

@@ -108,9 +108,23 @@ def test_active_part_anim_refs_xd_skips_inactive_and_zero():
         PartAnimData(has_data=1, anim_index_ref=6),  # active -> kept
         PartAnimData(has_data=0, anim_index_ref=7),  # inactive -> dropped
         PartAnimData(has_data=1, anim_index_ref=0),  # active but anim 0 -> dropped
-        PartAnimData(has_data=1, anim_index_ref=9),  # 4th block ignored (only 0..2)
+        PartAnimData(has_data=1, anim_index_ref=9),  # 4th block (talk) -> kept
     ]
-    assert active_part_anim_refs(h) == [(0, 6)]
+    assert active_part_anim_refs(h) == [(0, 6), (3, 9)]
+
+
+def test_name_map_xd_talk_trigger_named():
+    """XD block 3 is the talk/speak trigger and gets a Sub Talk label."""
+    h = PKXHeader.default_xd()
+    h.part_anim_data = [
+        PartAnimData(has_data=0, anim_index_ref=0),
+        PartAnimData(has_data=0, anim_index_ref=0),
+        PartAnimData(has_data=2, anim_index_ref=4),  # blink
+        PartAnimData(has_data=1, anim_index_ref=8),  # talk
+    ]
+    name_map = _build_anim_name_map(h, 'PKX_POKEMON')
+    assert name_map[4] == 'Sub Blink'
+    assert name_map[8] == 'Sub Talk'
 
 
 def test_active_part_anim_refs_colo_skips_sentinel_and_zero():
@@ -126,4 +140,4 @@ def test_name_map_colo_sub_triggers_named():
     name_map = _build_anim_name_map(h, 'PKX_POKEMON')
     assert name_map[6] == 'Sub SleepOnPose'
     assert name_map[7] == 'Sub SleepOffPose'
-    assert name_map[5] == 'Sub Extra'
+    assert name_map[5] == 'Sub Blink'

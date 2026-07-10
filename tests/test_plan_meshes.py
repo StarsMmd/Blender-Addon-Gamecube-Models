@@ -134,6 +134,47 @@ class TestPlanMeshInstances:
             assert i.target_parent_bone_name == 'Target'
             assert i.matrix_local[0][3] == 5.0
 
+    def test_instance_copies_geometry_under_target_subtree(self):
+        # Tree/palm rig: the instanced target bone owns no mesh directly; its
+        # geometry hangs off a child bone. Every mesh under the subtree copies.
+        inst_world = matrix_to_list(Matrix.Identity(4))
+        inst_world[0][3] = 5.0
+        ir = IRModel(
+            name="rig",
+            bones=[
+                _make_bone("Template"),                       # 0: instanced target, no mesh
+                _make_bone("TemplateChild", parent_index=0),  # 1: holds the geometry
+                _make_bone("Instance", instance_child_bone_index=0,
+                           world_matrix=inst_world),          # 2
+            ],
+            meshes=[_make_mesh("leaf", parent_bone_index=1)],
+        )
+        instances = plan_mesh_instances(ir)
+        assert len(instances) == 1
+        assert instances[0].source_mesh_index == 0
+        assert instances[0].target_parent_bone_name == 'Instance'
+
+    def test_matrix_local_accounts_for_non_origin_target(self):
+        # Vertices are world-space, so a copy transform must undo the target's
+        # own world position: matrix_local = I_world @ T_world^-1, not I_world.
+        target_world = matrix_to_list(Matrix.Identity(4))
+        target_world[2][3] = 26.0  # target sits at Z=26
+        inst_world = matrix_to_list(Matrix.Identity(4))
+        inst_world[2][3] = 7.0     # instance sits at Z=7
+        ir = IRModel(
+            name="rig",
+            bones=[
+                _make_bone("Target", world_matrix=target_world),
+                _make_bone("Instance", instance_child_bone_index=0,
+                           world_matrix=inst_world),
+            ],
+            meshes=[_make_mesh("m0", parent_bone_index=0)],
+        )
+        instances = plan_mesh_instances(ir)
+        assert len(instances) == 1
+        # A vertex authored at the target (Z=26) must land at the instance (Z=7).
+        assert instances[0].matrix_local[2][3] == -19.0
+
 
 class TestPlanMeshes:
 

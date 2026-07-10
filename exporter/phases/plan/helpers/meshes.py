@@ -24,12 +24,15 @@ except (ImportError, SystemError):
     from exporter.phases.plan.helpers.materials import plan_materials
 
 
-def plan_meshes(br_meshes, br_materials, ir_bones, logger=StubLogger()):
+def plan_meshes(br_meshes, br_materials, ir_bones, logger=StubLogger(),
+                image_cache=None):
     """Convert BR meshes (Blender frame) into IR meshes (GC frame).
 
     In: br_meshes (list[BRMesh]); br_materials (list[BRMaterial] indexed by
         BRMesh.material_index); ir_bones (list[IRBone] for parent_bone
-        resolution); logger.
+        resolution); logger; image_cache (dict|None, id(BRImage) → IRImage,
+        passed by plan_scene so images shared across models plan to one
+        IRImage).
     Out: list[IRMesh].
     """
     bone_name_to_index = {b.name: i for i, b in enumerate(ir_bones)}
@@ -49,6 +52,7 @@ def plan_meshes(br_meshes, br_materials, ir_bones, logger=StubLogger()):
 
     ir_materials = plan_materials(
         br_materials, uv_layer_names_per_material, logger=logger,
+        image_cache=image_cache,
     )
 
     ir_meshes = []

@@ -134,7 +134,10 @@ class DATParser(BinaryReader):
 		elif isPointerType(field_type):
 			pointer = self.read('uint', address, offset, relative_to_header, whence)
 			if pointer == 0:
-				if self.relocation_table.get(pointer) == None:
+				# A 0-valued pointer is a real data-section-offset-0 pointer
+				# (not null) only when its own location is listed in the
+				# relocation table — the same rule the game's loader applies.
+				if self.relocation_table.get(address + offset) == None:
 					return None
 			return self.read(getPointerSubType(field_type), pointer)
 
@@ -251,6 +254,10 @@ class DATParser(BinaryReader):
 			bound_replacements["[" + name + "]"] = "[" + str(number) + "]"
 
 		if bound_replacements:
+			# Work on a copy: ``fields`` is usually the class-level list, and
+			# mutating it in place would bake this instance's counts into
+			# every node of the class parsed later (in this or any other file).
+			fields = list(fields)
 			for i, field in enumerate(fields):
 				field_type = markUpFieldType(field[1])
 				for bound_string, replacement_bound in bound_replacements.items():

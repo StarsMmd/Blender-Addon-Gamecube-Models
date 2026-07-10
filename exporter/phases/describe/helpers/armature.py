@@ -6,10 +6,10 @@ bpy lives here. Pure transformation (BR → IR) lives in
 import bpy
 
 try:
-    from .....shared.BR.armature import BRArmature, BRBone
+    from .....shared.BR.armature import BRArmature, BRBone, BRBoneSpline
     from .....shared.helpers.logger import StubLogger
 except (ImportError, SystemError):
-    from shared.BR.armature import BRArmature, BRBone
+    from shared.BR.armature import BRArmature, BRBone, BRBoneSpline
     from shared.helpers.logger import StubLogger
 
 
@@ -59,6 +59,10 @@ def describe_armature(armature, logger=StubLogger()):
         pb.name: pb.rotation_mode for pb in armature.pose.bones
     } if armature.pose else {}
 
+    # JOBJ_SPLINE curves are separate Curve objects bone-parented to this
+    # armature. Map each back to its bone via parent_bone.
+    bone_splines = _collect_bone_splines(armature)
+
     bpy.context.view_layer.objects.active = prev_active
 
     bones = []
@@ -76,6 +80,7 @@ def describe_armature(armature, logger=StubLogger()):
             rotation_mode=pose_rotation_modes.get(snap['name'], 'XYZ'),
             use_connect=snap['use_connect'],
             is_hidden=snap['hide'],
+            spline=bone_splines.get(snap['name']),
         ))
 
     custom_props = {k: armature[k] for k in armature.keys()}
@@ -88,6 +93,33 @@ def describe_armature(armature, logger=StubLogger()):
         matrix_basis=[list(row) for row in armature.matrix_basis],
         custom_props=custom_props,
     )
+
+
+def _collect_bone_splines(armature):
+    """Map bone name → BRBoneSpline for every Curve object bone-parented here.
+
+    The importer builds one Curve object per JOBJ_SPLINE bone, parented via
+    parent_type='BONE' + parent_bone. Read each curve's control points and
+    type back; the coordinates are the curve's local spline points.
+    """
+    out = {}
+    for obj in bpy.data.objects:
+        if obj.type != 'CURVE':
+            continue
+        if obj.parent is not armature or obj.parent_type != 'BONE':
+            continue
+        if not obj.parent_bone or not obj.data.splines:
+            continue
+        sp = obj.data.splines[0]
+        if sp.type == 'BEZIER':
+            points = [[p.co[0], p.co[1], p.co[2]] for p in sp.bezier_points]
+        else:
+            points = [[p.co[0], p.co[1], p.co[2]] for p in sp.points]
+        out[obj.parent_bone] = BRBoneSpline(
+            curve_type=sp.type,
+            control_points=points,
+        )
+    return out
 
 
 def _collect_depth_first(siblings, result):

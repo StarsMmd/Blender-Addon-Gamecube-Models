@@ -4,12 +4,14 @@ Pure — no bpy. Converts linear RGB to sRGB and Blender Z-up positions
 to GameCube Y-up: Blender (x, y, z) → GC (x, z, -y).
 """
 try:
-    from .....shared.IR.lights import IRLight
+    from .....shared.IR.lights import IRLight, IRLightKeyframes
+    from .....shared.IR.animation import IRKeyframe
     from .....shared.IR.enums import LightType
     from .....shared.helpers.srgb import linear_to_srgb
     from .....shared.helpers.logger import StubLogger
 except (ImportError, SystemError):
-    from shared.IR.lights import IRLight
+    from shared.IR.lights import IRLight, IRLightKeyframes
+    from shared.IR.animation import IRKeyframe
     from shared.IR.enums import LightType
     from shared.helpers.srgb import linear_to_srgb
     from shared.helpers.logger import StubLogger
@@ -33,7 +35,8 @@ def plan_lights(br_lights, logger=StubLogger()):
         )
 
         if br.is_ambient:
-            out.append(IRLight(name=br.name, type=LightType.AMBIENT, color=color))
+            out.append(IRLight(name=br.name, type=LightType.AMBIENT, color=color,
+                               animations=_plan_light_animations(br)))
             continue
 
         ir_type = _BLENDER_TYPE_TO_IR.get(br.blender_type)
@@ -61,8 +64,48 @@ def plan_lights(br_lights, logger=StubLogger()):
             position=position,
             target_position=target_position,
             brightness=br.energy,
+            animations=_plan_light_animations(br),
         ))
     return out
+
+
+def _plan_light_animations(br_light):
+    """Recover IRLightKeyframes list from a BRLight's animation clips.
+
+    Reverses the importer's coord flip (Blender x, y, z → GC x, z, -y) on
+    position channels; colour/visibility/cutoff pass through. Empty channel
+    lists become None so a track-less clip round-trips to a bare
+    IRLightKeyframes (an empty-but-present LightAnimation).
+    """
+    out = []
+    for a in (getattr(br_light, 'animations', None) or []):
+        out.append(IRLightKeyframes(
+            name=a.name,
+            end_frame=a.end_frame,
+            loop=a.loop,
+            color_r=_passthrough(a.color_r),
+            color_g=_passthrough(a.color_g),
+            color_b=_passthrough(a.color_b),
+            color_a=_passthrough(a.color_a),
+            visibility=_passthrough(a.visibility),
+            cutoff=_passthrough(a.cutoff),
+            eye_x=_passthrough(a.loc_x),
+            eye_y=_passthrough(a.loc_z),
+            eye_z=_negate(a.loc_y),
+            target_x=_passthrough(a.target_loc_x),
+            target_y=_passthrough(a.target_loc_z),
+            target_z=_negate(a.target_loc_y),
+        ))
+    return out
+
+
+def _passthrough(keyframes):
+    return list(keyframes) if keyframes else None
+
+
+def _negate(keyframes):
+    return ([IRKeyframe(frame=kf.frame, value=-kf.value, interpolation=kf.interpolation)
+             for kf in keyframes] if keyframes else None)
 
 
 def _zup_to_yup(p):

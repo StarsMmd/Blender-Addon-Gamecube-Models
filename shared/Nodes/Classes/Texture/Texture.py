@@ -27,6 +27,9 @@ class Texture(Node):
     def loadFromBinary(self, parser):
         super().loadFromBinary(parser)
         self.id = self.address
+        # Pixel decoding is deferred to the describe phase (Node -> IR), which
+        # calls Image.decodeFromRawData behind a per-scene image cache. Parse
+        # only captures raw bytes (Image.raw_image_data / Palette.raw_data).
         if self.image:
             wrap_names = {0: 'CLAMP', 1: 'REPEAT', 2: 'MIRROR'}
             parser.logger.debug("Texture 0x%X: image at 0x%X, palette=%s, flags=0x%08X, source=%d, "
@@ -37,8 +40,6 @@ class Texture(Node):
                                 wrap_names.get(self.wrap_s, str(self.wrap_s)),
                                 wrap_names.get(self.wrap_t, str(self.wrap_t)),
                                 self.repeat_s, self.repeat_t)
-            self.decoded_pixels = self.image.decodeFromRawData(self.palette)
         else:
             parser.logger.debug("Texture 0x%X: no image", self.address)
-            self.decoded_pixels = None
 

@@ -50,12 +50,44 @@ class PartAnimData:
         return self.has_data == 2
 
     def active_bone_indices(self):
-        """Return the bone-config indices, dropping the 0xFF "unused" sentinel.
+        """Return the target-part indices, dropping the 0xFF "unused" sentinel.
+
+        Only the first 8 bytes of bone_config are part indices; bytes 8-15
+        (block bytes 10-17) are a parallel selector array read separately by
+        the engine (see file_formats.md § Sub-Animation System), so they are
+        not bone indices and must not be included here.
 
         In: (none — derived from self.bone_config).
-        Out: list[int] of bone indices in declaration order, no 0xFF entries.
+        Out: list[int] of part indices in declaration order, no 0xFF entries.
         """
-        return [b for b in self.bone_config if b != 0xFF]
+        return [a for a, _ in self.active_entries()]
+
+    def active_entries(self):
+        """Return the active (part_index, selector) pairs for a type-2 block.
+
+        bone_config splits into two parallel 8-entry arrays: bytes 0-7 are part
+        indices, bytes 8-15 are the matching selectors. An entry is active when
+        its part index is not the 0xFF sentinel. A selector of 0xFF means the
+        entry is a joint animation on that part; any other value means a
+        per-part texture animation (the selector is its parameter). Trailing
+        unused entries are 0xFF, so scanning by index reproduces the engine's
+        per-entry read without depending on sub_param.
+
+        In: (none — derived from self.bone_config).
+        Out: list[(part_index, selector)] for active entries, in order.
+        """
+        cfg = self.bone_config
+        entries = []
+        for i in range(min(8, len(cfg))):
+            if cfg[i] != 0xFF:
+                selector = cfg[8 + i] if 8 + i < len(cfg) else 0xFF
+                entries.append((cfg[i], selector))
+        return entries
+
+    def is_joint_target(self):
+        """True iff every active entry is a joint animation (selector 0xFF)."""
+        entries = self.active_entries()
+        return bool(entries) and all(b == 0xFF for _, b in entries)
 
     @classmethod
     def from_bytes(cls, data, offset):
@@ -573,16 +605,17 @@ def active_part_anim_refs(header):
 
     Abstracts over the two layouts: XD stores these as PartAnimData blocks,
     Colosseum as three plain int refs (colo_part_anim_refs). Both share the
-    positional trigger meaning (0 = sleep-on, 1 = sleep-off, 2 = extra). Only
-    refs pointing at a real animation (index > 0) are returned — index 0 is
-    the idle/default and carries no sub-animation.
+    positional trigger meaning (0 = sleep-on, 1 = sleep-off, 2 = blink); XD adds
+    a fourth block (3 = talk/speak) that Colosseum lacks. Only refs pointing at
+    a real animation (index > 0) are returned — index 0 is the idle/default and
+    carries no sub-animation.
 
     In: header (PKXHeader).
-    Out: list[tuple[int, int]] — (trigger slot 0..2, referenced DAT anim index).
+    Out: list[tuple[int, int]] — (trigger slot 0..3, referenced DAT anim index).
     """
     refs = []
     if header.is_xd:
-        for i, pad in enumerate(header.part_anim_data[:3]):
+        for i, pad in enumerate(header.part_anim_data[:4]):
             if pad.has_data > 0 and pad.anim_index_ref > 0:
                 refs.append((i, pad.anim_index_ref))
     else:

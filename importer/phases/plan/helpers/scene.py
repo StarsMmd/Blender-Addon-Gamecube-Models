@@ -3,17 +3,65 @@ wrappers (constraints, particle summaries)."""
 import math
 
 try:
-    from .....shared.BR.lights import BRLight
+    from .....shared.BR.lights import BRLight, BRLightAnimation
     from .....shared.BR.cameras import BRCamera, BRCameraAnimation
+    from .....shared.BR.fog import BRFog
     from .....shared.BR.constraints import BRConstraints, BRParticleSummary
     from .....shared.IR.enums import CameraProjection
     from .....shared.helpers.srgb import srgb_to_linear
 except (ImportError, SystemError):
-    from shared.BR.lights import BRLight
+    from shared.BR.lights import BRLight, BRLightAnimation
     from shared.BR.cameras import BRCamera, BRCameraAnimation
+    from shared.BR.fog import BRFog
     from shared.BR.constraints import BRConstraints, BRParticleSummary
     from shared.IR.enums import CameraProjection
     from shared.helpers.srgb import srgb_to_linear
+
+
+# ---------------------------------------------------------------------------
+# Fog
+# ---------------------------------------------------------------------------
+
+
+# GX fog type → Blender mist falloff. GX perspective fog types: 2 = LIN,
+# 4 = EXP, 5 = EXP2, 6 = REVEXP, 7 = REVEXP2 (ortho variants +8). Anything
+# unrecognised (incl. degenerate map-fog values) falls back to LINEAR.
+_GX_FOG_LINEAR = {2, 10}
+_GX_FOG_EXP = {4, 6, 12, 14}
+_GX_FOG_EXP2 = {5, 7, 13, 15}
+
+
+def _fog_falloff_for_type(fog_type):
+    if fog_type in _GX_FOG_LINEAR:
+        return 'LINEAR'
+    if fog_type in _GX_FOG_EXP:
+        return 'QUADRATIC'
+    if fog_type in _GX_FOG_EXP2:
+        return 'INVERSE_QUADRATIC'
+    return 'LINEAR'
+
+
+def plan_fogs(ir_fogs):
+    """Convert IRFog list to Blender-native BRFog (World Mist) list.
+
+    Lossy by design (see BRFog): GX start_z/end_z become mist start/depth,
+    the fog type collapses onto Blender's three falloff modes, and the RGBA
+    color becomes an 0-1 RGB world colour (alpha dropped). Reads IRFog
+    attributes directly (no IR import).
+
+    In: ir_fogs (list[IRFog]).
+    Out: list[BRFog], same length and order.
+    """
+    out = []
+    for f in (ir_fogs or []):
+        r, g, b = f.color[0] / 255.0, f.color[1] / 255.0, f.color[2] / 255.0
+        out.append(BRFog(
+            color=(r, g, b),
+            mist_start=f.start_z,
+            mist_depth=f.end_z - f.start_z,
+            falloff=_fog_falloff_for_type(f.type),
+        ))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -54,6 +102,7 @@ def plan_light(ir_light):
             color=color_linear,
             energy=0.0,
             is_ambient=True,
+            animations=_plan_light_animations(ir_light),
         )
 
     blender_type = _LIGHT_TYPE_MAP.get(ir_light.type.value, 'POINT')
@@ -79,7 +128,38 @@ def plan_light(ir_light):
         energy=ir_light.brightness,
         location=location,
         target_location=target_location,
+        animations=_plan_light_animations(ir_light),
     )
+
+
+def _plan_light_animations(ir_light):
+    """Convert an IRLight's animation clips into BRLightAnimation list.
+
+    Position channels get the same GC Y-up → Blender Z-up flip the camera
+    path uses (eye/target x,y,z → x, -z, y). Colour/visibility/cutoff
+    channels pass through. Map clips are empty presence nodes, so this is
+    usually a no-op that preserves the clip's existence.
+    """
+    return [
+        BRLightAnimation(
+            name=anim.name,
+            color_r=anim.color_r or [],
+            color_g=anim.color_g or [],
+            color_b=anim.color_b or [],
+            color_a=anim.color_a or [],
+            visibility=anim.visibility or [],
+            cutoff=anim.cutoff or [],
+            loc_x=anim.eye_x or [],
+            loc_y=_negate_keyframes(anim.eye_z),
+            loc_z=anim.eye_y or [],
+            target_loc_x=anim.target_x or [],
+            target_loc_y=_negate_keyframes(anim.target_z),
+            target_loc_z=anim.target_y or [],
+            end_frame=anim.end_frame,
+            loop=anim.loop,
+        )
+        for anim in (getattr(ir_light, 'animations', None) or [])
+    ]
 
 
 # ---------------------------------------------------------------------------

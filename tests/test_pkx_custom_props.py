@@ -152,7 +152,7 @@ def test_colo_sub_anim_refs_resolved():
     h = _colo_header()
     actions = [_action("A%d" % i) for i in range(10)]
     props = _derive_pkx_custom_props(h, actions=actions)
-    assert props["dat_pkx_sub_anim_1_type"] == "simple"
+    assert props["dat_pkx_sub_anim_1_type"] == "whole_texture"
     assert props["dat_pkx_sub_anim_1_anim_ref"] == "A5"
     assert props["dat_pkx_sub_anim_0_type"] == "none"
     assert props["dat_pkx_sub_anim_0_anim_ref"] == ""
@@ -275,7 +275,7 @@ class TestDeriveSubAnimProps:
             _build_bone_name_resolver([]),
         )
         assert props["dat_pkx_sub_anim_0_anim_ref"] == "C"
-        assert props["dat_pkx_sub_anim_0_type"] == "simple"
+        assert props["dat_pkx_sub_anim_0_type"] == "whole_texture"
 
     def test_xd_inactive_pad_yields_empty_ref(self):
         h = _xd_pokemon_header()
@@ -305,7 +305,7 @@ class TestDeriveSubAnimProps:
             h, _build_action_name_resolver([_action("A%d" % i) for i in range(10)]),
             _build_bone_name_resolver([]),
         )
-        assert props["dat_pkx_sub_anim_1_type"] == "simple"
+        assert props["dat_pkx_sub_anim_1_type"] == "whole_texture"
         assert props["dat_pkx_sub_anim_1_anim_ref"] == "A5"
         assert props["dat_pkx_sub_anim_0_type"] == "none"
 

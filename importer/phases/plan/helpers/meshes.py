@@ -11,12 +11,14 @@ try:
         BRMesh, BRMeshInstance, BRUVLayer, BRColorLayer, BRVertexGroup,
     )
     from .....shared.IR.enums import SkinType
+    from .....shared.helpers.math_shim import Matrix, matrix_to_list
     from .materials import plan_material
 except (ImportError, SystemError):
     from shared.BR.meshes import (
         BRMesh, BRMeshInstance, BRUVLayer, BRColorLayer, BRVertexGroup,
     )
     from shared.IR.enums import SkinType
+    from shared.helpers.math_shim import Matrix, matrix_to_list
     from importer.phases.plan.helpers.materials import plan_material
 
 
@@ -125,26 +127,74 @@ def plan_vertex_groups(ir_mesh):
     return []
 
 
+def _subtree_bone_indices(ir_model, root_index):
+    """Indices of every bone in the subtree rooted at ``root_index`` (inclusive).
+
+    In: ir_model (IRModel); root_index (int).
+    Out: set[int] — root plus all transitive descendants via parent_index.
+    """
+    children = {}
+    for idx, bone in enumerate(ir_model.bones):
+        if bone.parent_index is not None:
+            children.setdefault(bone.parent_index, []).append(idx)
+
+    result = set()
+    stack = [root_index]
+    while stack:
+        idx = stack.pop()
+        if idx in result:
+            continue
+        result.add(idx)
+        stack.extend(children.get(idx, ()))
+    return result
+
+
 def plan_mesh_instances(ir_model):
     """Expand JOBJ_INSTANCE bones into BRMeshInstance entries.
 
+    An instance bone references a *target* bone whose whole subtree of geometry
+    is redrawn at the instance bone's location. The geometry is not necessarily
+    parented directly to the target bone — palm/tree rigs hang their meshes off a
+    child of the instanced bone — so every mesh under the target subtree must be
+    copied, not just the ones directly parented to the target.
+
+    Mesh vertices are baked in world (bind) space, so relocating the target
+    subtree to the instance bone is the single transform ``I_world @ T_world⁻¹``
+    (which reduces to ``I_world`` when the target sits at the origin). The same
+    transform applies to every mesh in the subtree.
+
     In: ir_model (IRModel).
-    Out: list[BRMeshInstance] — one entry per (instanced source mesh, target bone)
-         pair, carrying the target bone's world matrix as matrix_local.
+    Out: list[BRMeshInstance] — one entry per (subtree source mesh, instance bone)
+         pair, carrying ``I_world @ T_world⁻¹`` as matrix_local.
     """
-    meshes_by_source_bone = {}
+    meshes_by_bone = {}
     for mesh_index, ir_mesh in enumerate(ir_model.meshes):
-        meshes_by_source_bone.setdefault(ir_mesh.parent_bone_index, []).append(mesh_index)
+        meshes_by_bone.setdefault(ir_mesh.parent_bone_index, []).append(mesh_index)
 
     instances = []
     for bone in ir_model.bones:
-        if bone.instance_child_bone_index is None:
+        target_index = bone.instance_child_bone_index
+        if target_index is None:
             continue
-        for mesh_index in meshes_by_source_bone.get(bone.instance_child_bone_index, []):
+
+        subtree = _subtree_bone_indices(ir_model, target_index)
+        source_meshes = sorted(
+            mesh_index
+            for bone_index in subtree
+            for mesh_index in meshes_by_bone.get(bone_index, ())
+        )
+        if not source_meshes:
+            continue
+
+        target_world = Matrix(ir_model.bones[target_index].world_matrix)
+        matrix_local = matrix_to_list(
+            Matrix(bone.world_matrix) @ target_world.inverted_safe()
+        )
+        for mesh_index in source_meshes:
             instances.append(BRMeshInstance(
                 source_mesh_index=mesh_index,
                 target_parent_bone_name=bone.name,
-                matrix_local=bone.world_matrix,
+                matrix_local=matrix_local,
             ))
     return instances
 

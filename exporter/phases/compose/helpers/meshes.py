@@ -115,7 +115,7 @@ def _material_dedup_key(ir_material):
     )
 
 
-def compose_meshes(meshes, joints, bones, logger=StubLogger()):
+def compose_meshes(meshes, joints, bones, logger=StubLogger(), image_cache=None):
     """Convert IRMesh list into Mesh node chains attached to Joints.
 
     Groups meshes by parent_bone_index. Within each bone, meshes that
@@ -129,6 +129,9 @@ def compose_meshes(meshes, joints, bones, logger=StubLogger()):
         joints: list[Joint] indexed by bone index (from compose_bones).
         bones: list[IRBone] from the IR (for bone name lookup).
         logger: Logger instance.
+        image_cache: optional dict id(IRImage) → (Image node, encode_result),
+            shared across models by compose_scene so an IRImage referenced
+            from several models is encoded once per scene.
 
     Returns:
         None (mutates joints in-place by setting joint.property).
@@ -154,11 +157,13 @@ def compose_meshes(meshes, joints, bones, logger=StubLogger()):
     # the same MaterialObject node. The serialize DFS then writes the
     # MObject + its TObject + Image + pixel data exactly once.
     mobj_cache = {}
-    # Per-pass IRImage → (Image node, encode_result) cache. Plan already
-    # dedupes IRImage across IRMaterials; this keeps that dedup intact on
-    # the compose side so multiple TObj chains share one Image node + one
-    # pixel-data buffer in the output.
-    image_cache = {}
+    # IRImage → (Image node, encode_result) cache. Plan already dedupes
+    # IRImage across IRMaterials; this keeps that dedup intact on the
+    # compose side so multiple TObj chains share one Image node + one
+    # pixel-data buffer in the output — and, when the caller passes a
+    # scene-wide cache, the expensive GX encode runs once per unique image.
+    if image_cache is None:
+        image_cache = {}
 
     for bone_idx, ir_meshes in meshes_by_bone.items():
         # Group IRMeshes by material identity. Meshes with the same

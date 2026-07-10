@@ -910,7 +910,7 @@ class TestTextureAnimationNode:
 class TestTextureNode:
 
     def test_texture_solo_no_image(self):
-        """Texture with no image → decoded_pixels is None."""
+        """Texture with no image parses cleanly; parse never decodes pixels."""
         data = build_texture(
             texture_id=42, source=4,
             rotation=(0.0, 0.0, 0.0),
@@ -928,8 +928,29 @@ class TestTextureNode:
         assert node.repeat_t == 1
         assert node.flags == 0x10
         assert node.image is None
-        assert node.decoded_pixels is None
+        # Pixel decoding is deferred to the describe phase; parse must not
+        # produce decoded pixels.
+        assert not hasattr(node, 'decoded_pixels')
         assert node.id == 0  # id set from address
+
+    def test_texture_parse_does_not_decode_image(self, monkeypatch):
+        """Parsing a Texture with an image captures raw bytes but never
+        invokes the pixel decoder (decode is a describe-phase concern)."""
+        from shared.Nodes.Classes.Texture.Image import Image
+
+        def _fail_decode(self, palette):
+            raise AssertionError("parse phase must not decode image pixels")
+        monkeypatch.setattr(Image, 'decodeFromRawData', _fail_decode)
+
+        # Layout: Texture (92) | Image (24) | raw I4 pixel data (32 = 8x8 @ 4bpp)
+        raw_pixels = bytes(range(32))
+        data = (build_texture(texture_id=1, source=4, image_ptr=92)
+                + build_image(data_address=116, width=8, height=8, fmt=0)
+                + raw_pixels)
+        node = _parse(Texture, 0, data)
+        assert node.image is not None
+        assert bytes(node.image.raw_image_data) == raw_pixels
+        assert not hasattr(node, 'decoded_pixels')
 
 
 class TestPaletteNode:

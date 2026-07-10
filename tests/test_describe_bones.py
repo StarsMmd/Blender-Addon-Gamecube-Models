@@ -6,7 +6,10 @@ from importer.phases.parse.helpers.dat_parser import DATParser
 from shared.Nodes.Classes.Joints.Joint import Joint
 from shared.IR.skeleton import IRBone
 from shared.IR.enums import ScaleInheritance
-from importer.phases.describe.helpers.bones import describe_bones
+from importer.phases.describe.helpers.bones import (
+    describe_bones, _effector_bind_position,
+)
+from shared.Nodes.Classes.Joints.BoneReference import BoneReference
 from shared.helpers.math_shim import compile_srt_matrix
 from shared.helpers.scale import GC_TO_METERS
 
@@ -313,3 +316,44 @@ class TestCompileSRTMatrix:
         assert abs(m[0][0] - 2.0) < 1e-6
         assert abs(m[1][1] - 3.0) < 1e-6
         assert abs(m[2][2] - 4.0) < 1e-6
+
+
+class _FakeBoneRef:
+    """Minimal stand-in for the Reference→BoneReference chain used by IK hints."""
+    def __init__(self, length):
+        self.property = BoneReference(address=None, blender_obj=None)
+        self.property.length = length
+
+
+class _FakeParent:
+    def __init__(self, bone_ref):
+        self._bone_ref = bone_ref
+    def getReferenceObject(self, node_type, sub_type):
+        return self._bone_ref
+
+
+class TestEffectorBindPosition:
+    """A JOBJ_EFFECTOR's stored translation is the IK target (large magnitude,
+    aimed at the goal), not a bind-pose offset. The rest bone extends along its
+    parent's local +X at the BoneReference length, like every other GX joint, so
+    the corrected offset is (length, 0, 0) in the parent frame."""
+
+    def test_sets_offset_along_parent_x_at_bone_reference_length(self):
+        pos = (6.0, 0.0, 8.0)  # IK target direction — discarded
+        parent = _FakeParent(_FakeBoneRef(length=2.0 / GC_TO_METERS))  # 2.0 m
+        out = _effector_bind_position(object(), parent, pos)
+        assert abs(out[0] - 2.0) < 1e-6
+        assert out[1] == 0.0 and out[2] == 0.0
+
+    def test_no_bone_reference_leaves_position_untouched(self):
+        pos = (6.0, 0.0, 8.0)
+        parent = _FakeParent(None)
+        assert _effector_bind_position(object(), parent, pos) == pos
+
+    def test_no_parent_leaves_position_untouched(self):
+        pos = (6.0, 0.0, 8.0)
+        assert _effector_bind_position(object(), None, pos) == pos
+
+    def test_zero_length_bone_reference_is_safe(self):
+        parent = _FakeParent(_FakeBoneRef(length=0.0))
+        assert _effector_bind_position(object(), parent, (6.0, 0.0, 8.0)) == (0.0, 0.0, 0.0)

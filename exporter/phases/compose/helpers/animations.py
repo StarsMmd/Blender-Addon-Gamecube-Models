@@ -44,12 +44,6 @@ except (ImportError, SystemError):
 
 
 # Channel type constants for each SRT component
-_CHANNEL_TYPES = [
-    HSD_A_J_ROTX, HSD_A_J_ROTY, HSD_A_J_ROTZ,
-    HSD_A_J_TRAX, HSD_A_J_TRAY, HSD_A_J_TRAZ,
-    HSD_A_J_SCAX, HSD_A_J_SCAY, HSD_A_J_SCAZ,
-]
-
 _INTERP_TO_OPCODE_NO_SLOPE = {
     Interpolation.CONSTANT: HSD_A_OP_CON,
     Interpolation.LINEAR: HSD_A_OP_LIN,
@@ -72,16 +66,31 @@ _QUANT_CANDIDATES = [
 ]
 
 
+def _usable_bits(type_min, type_max):
+    """Usable magnitude bits: 8 for U8, 7 for S8, 16 for U16, 15 for S16
+    (signed types lose one bit to the sign)."""
+    if type_max <= 255:
+        return 7 if type_min < 0 else 8
+    return 15 if type_min < 0 else 16
+
+
 def _pick_quantization(values, channel_type=None):
-    """Pick the smallest quantization format for a set of float values.
+    """Pick the quantization format for a set of float values.
 
-    Uses the formula frac_bits = type_bits - ceil(log2(max_abs + 1))
-    to compute the optimal fractional precision for each type, then
-    verifies all values fit within tolerance. This matches the Colo/XD
-    compiler's behavior of maximizing precision within the type's range.
+    Two passes, both computing frac_bits = usable_bits - ceil(log2(max_abs
+    + 1)) per candidate type (usable bits: U8 8, S8 7, U16 16, S16 15):
 
-    Note: HSDLib (Melee) uses a different strategy (lowest frac_bits
-    first), but Colo/XD binaries consistently use higher frac_bits.
+    1. **Bit-exact pass** — the smallest type (1-byte before 2-byte,
+       unsigned before signed) whose formula frac represents *every*
+       value exactly. On round-tripped data the decoded stream already
+       sits on its source quantization grid, so this pass recovers the
+       original compiler's choice; corpus measurements live in
+       implementation_notes § animation quantization selection.
+
+    2. **Tolerance pass** — for values with no exact representation
+       (fresh Blender-authored animations): the smallest type where
+       every value stays within 0.004 of its dequantized form, keeping
+       export sizes compact. FLOAT only when nothing fits.
 
     Args:
         values: iterable of float values to encode.
@@ -104,19 +113,30 @@ def _pick_quantization(values, channel_type=None):
     else:
         int_bits = 0  # All values near zero
 
+    # Pass 1 — smallest bit-exact representation.
+    for type_flag, pack_type, type_min, type_max in _QUANT_CANDIDATES:
+        if type_min >= 0 and has_negative:
+            continue
+        frac_bits = _usable_bits(type_min, type_max) - int_bits
+        if not (0 <= frac_bits <= 31):
+            continue
+        scale = 1 << frac_bits
+        exact = True
+        for v in vals:
+            q = round(v * scale)
+            if q < type_min or q > type_max or q / scale != v:
+                exact = False
+                break
+        if exact:
+            return type_flag | frac_bits, pack_type
+
+    # Pass 2 — smallest type within tolerance.
     for type_flag, pack_type, type_min, type_max in _QUANT_CANDIDATES:
         # Skip unsigned types if there are negative values
         if type_min >= 0 and has_negative:
             continue
 
-        # Total usable bits: 8 for u8/s8 types, 16 for u16/s16 types
-        # Signed types lose 1 bit to the sign
-        if type_max <= 255:
-            total_bits = 7 if type_min < 0 else 8
-        else:
-            total_bits = 15 if type_min < 0 else 16
-
-        frac_bits = total_bits - int_bits
+        frac_bits = _usable_bits(type_min, type_max) - int_bits
         if frac_bits < 0 or frac_bits > 31:
             continue
 
@@ -219,18 +239,20 @@ def _build_animation(track, loop):
     anim.end_frame = float(track.end_frame)
     anim.joint = None  # Not set in original binaries
 
-    # Build Frame linked list for each SRT channel
+    # Build Frame linked list for each SRT channel. Channel-group order is
+    # scale, rotation, translation (X,Y,Z ascending within each group) —
+    # the dominant convention in game-native chains; see
+    # implementation_notes § animation channel order.
     frames = []
     all_channels = (
-        list(track.rotation) +   # [X, Y, Z]
-        list(track.location) +   # [X, Y, Z]
-        list(track.scale)        # [X, Y, Z]
+        [(HSD_A_J_SCAX + i, kfs) for i, kfs in enumerate(track.scale)] +
+        [(HSD_A_J_ROTX + i, kfs) for i, kfs in enumerate(track.rotation)] +
+        [(HSD_A_J_TRAX + i, kfs) for i, kfs in enumerate(track.location)]
     )
 
-    for ch_idx, keyframes in enumerate(all_channels):
+    for channel_type, keyframes in all_channels:
         if not keyframes:
             continue
-        channel_type = _CHANNEL_TYPES[ch_idx]
 
         # Translation channels are already in GC units — the pre-scale pass
         # at the top of compose_scene scales every location keyframe value,
@@ -292,27 +314,49 @@ def _encode_channel(keyframes, channel_type):
 
     raw = bytearray()
 
-    # Encode keyframes in groups by interpolation type
-    i = 0
-    cur_slope = 0.0  # tracks the last emitted slope_out
-    while i < len(keyframes):
-        kf = keyframes[i]
-        opcode = opcode_map.get(kf.interpolation, HSD_A_OP_LIN)
+    # Encode keyframes as opcode runs, mirroring the decoder's slope
+    # state machine exactly (see keyframe_decoder): every non-SLP key
+    # takes slope_in from the running cur_slope and resets cur_slope to
+    # its own emitted slope (0 for SPL0/LIN/CON); an SLP node overrides
+    # cur_slope between keys.
+    def _opcode_for(kf):
+        op = opcode_map.get(kf.interpolation, HSD_A_OP_LIN)
+        if op == HSD_A_OP_SPL and not (kf.slope_out or 0.0):
+            # Zero outgoing tangent encodes value-only (matches the
+            # original compiler; the decoder restores slope_out = 0).
+            return HSD_A_OP_SPL0
+        return op
 
-        # Count consecutive keyframes with the same opcode
+    i = 0
+    cur_slope = 0.0  # decoder's running slope state
+    while i < len(keyframes):
+        opcode = _opcode_for(keyframes[i])
+
+        # If this spline key's incoming tangent differs from the running
+        # slope, emit an SLP override so the decoder recovers it. This
+        # applies mid-stream too — asymmetric tangents between two spline
+        # keys are carried by SLP nodes, not by the keys themselves.
+        if opcode in (HSD_A_OP_SPL, HSD_A_OP_SPL0):
+            slope_in = keyframes[i].slope_in or 0.0
+            if slope_in != cur_slope:
+                _encode_opcode(raw, HSD_A_OP_SLP, 1)
+                _encode_typed_value(raw, slope_in, slope_pack, slope_frac_bits, slope_is_float)
+                cur_slope = slope_in
+
+        # Extend the run: same opcode, and for spline keys no tangent
+        # discontinuity (which would need an SLP break).
         run_start = i
-        while i < len(keyframes) and opcode_map.get(keyframes[i].interpolation, HSD_A_OP_LIN) == opcode:
+        i += 1
+        while i < len(keyframes):
+            nxt = keyframes[i]
+            if _opcode_for(nxt) != opcode:
+                break
+            if opcode in (HSD_A_OP_SPL, HSD_A_OP_SPL0):
+                prev_out = keyframes[i - 1].slope_out or 0.0
+                if (nxt.slope_in or 0.0) != prev_out:
+                    break
             i += 1
         run_count = i - run_start
-
-        # For SPL runs: if the first keyframe's slope_in differs from
-        # cur_slope, emit an SLP preamble to set the incoming tangent.
-        if opcode == HSD_A_OP_SPL:
-            first_slope_in = keyframes[run_start].slope_in or 0.0
-            if first_slope_in != cur_slope:
-                _encode_opcode(raw, HSD_A_OP_SLP, 1)
-                _encode_typed_value(raw, first_slope_in, slope_pack, slope_frac_bits, slope_is_float)
-                cur_slope = first_slope_in
 
         # Encode the opcode + node count
         _encode_opcode(raw, opcode, run_count)
@@ -326,6 +370,10 @@ def _encode_channel(keyframes, channel_type):
                 slope_out = kf.slope_out if kf.slope_out is not None else 0.0
                 _encode_typed_value(raw, slope_out, slope_pack, slope_frac_bits, slope_is_float)
                 cur_slope = slope_out
+            else:
+                # SPL0/LIN/CON keys read no slope; the decoder resets its
+                # running slope to 0 after each of them.
+                cur_slope = 0.0
 
             if opcode != HSD_A_OP_NONE:
                 # Wait = frame delta to next keyframe

@@ -107,7 +107,7 @@ For standard files (17 entries, no GPT1): `align32(0xE54) = 0xE60`
 
 **Flags byte (0x68):** bit 0=flying, bit 2=skip fractional frames, bit 6=remove root joint anim
 
-**PartAnimData (19 bytes):** byte 0=has_data (0/1/2), byte 1=sub_param, bytes 2-17=bone_config (0xFF when unused), byte 18=anim_index_ref
+**PartAnimData (19 bytes):** byte 0=has_data (0/1/2), byte 1=sub_param (entry count), bytes 2-9=part index array, bytes 10-17=parallel selector array (0xFF when unused), byte 18=anim_index_ref. See § Sub-Animation System for how the two arrays are read.
 
 #### Animation Metadata Entry (0xD0 bytes)
 
@@ -710,39 +710,62 @@ Each entry has 4 float timing values (seconds). These define transition points w
 
 #### Overview
 
-Four PartAnimData blocks (19 bytes each in XD) define **overlay animations** that play on top of the current battle animation. The game overlays them using `GSmodelSetPartAnimIndex`, which targets specific bones with a dedicated animation.
+Four PartAnimData blocks (19 bytes each in XD) define **overlay animations** that play on top of the current battle/idle animation. `ModelSequence` fires them from state transitions and calls `wazaSequenceSysPartAnimationStart(model, PartAnimData*)`, which reads the block and dispatches per its type.
 
-#### Triggers
+#### Triggers (fixed by block position — not a stored field)
+
+Which block fires is decided by its slot index, so the trigger is positional and cannot be edited independently of position:
 
 | Block | Trigger | Example |
 |-------|---------|---------|
-| 0 | Sleep On | Eyelids close when put to sleep |
-| 1 | Sleep Off | Eyelids open when waking up |
-| 2 | Extra | Blinking, breathing, wing flapping |
-| 3 | (Unused) | Typically inactive |
+| 0 | Sleep On | Eyelids close when put to sleep (`Sleep()`) |
+| 1 | Sleep Off | Eyelids open when waking up (`WakeUp()`) |
+| 2 | Blink | Blinking / breathing / idle flourish, re-fired by `_eyeAnimEnded` |
+| 3 | Talk | Speak overlay, fired by `Talk()` and looped by `_mouthAnimEnded` — populated on talking NPCs, empty on battle Pokémon |
 
-#### Sub-Animation Types
+The block → trigger mapping is set once in the shared `ModelSequence` (`LoadData` stores the four blocks into fields `0x84`/`0x88`/`0x8c`/`0x90`), so it is identical for every model type — trainers use the same four triggers, not a separate set. In the game corpus, Pokémon populate Sleep/Blink; trainer/people models leave Sleep and Wake empty and use only Blink (cape/cloth). The Talk block is unused across the battle-model corpus (battle actors don't speak).
 
-| Value | Name | Behavior |
-|-------|------|---------|
-| 0 | none | Block is inactive |
-| 1 | simple | Animation plays on ALL bones (whole-body pose) |
-| 2 | targeted | Animation plays on specific bones only |
+#### Sub-Animation Types (`has_data`, byte 0)
 
-#### Targeted Bone Indices
+Verified against `wazaSequenceSysPartAnimationStart` (XD):
 
-For type=2 (targeted), the `bone_config` bytes (bytes 2-9 of the block) specify which bone indices participate. Up to 8 bones, with 0xFF marking unused slots.
+| Value | Name | What the engine does |
+|-------|------|----------------------|
+| 0 | Off | Block inactive — the function returns immediately |
+| 1 | Whole-Model Texture | Fires a **whole-model texture/material animation**: `GSmodelSetTexAnimIndex` / `SetTexAnimType` / `SetTexAnimFrame` / `StartTexAnimation`, using `anim_index_ref` as the texture-anim index. No bones involved. |
+| 2 | Targeted Joints | Plays a **joint animation on the listed bones only** (bytes 2-9), each via `GSmodelSetPartAnimIndex(model, boneIndex, anim_index_ref)`. |
 
-Examples:
-- **Moltres** block 2: bone 116 plays animation 10 (wing fire animation)
-- **Mage** block 2: bones 39, 40, 30, 29 play animation 1 (cape/cloth movement)
-- **Umbreon** block 2: bone 78 plays animation 6 (ring glow)
+So the two active types are effectively **material/texture animation** (type 1, whole model) vs **skeletal/joint animation** (type 2, scoped to specific bones) — not "whole-body vs partial-body pose" as an earlier version of this doc claimed.
+
+#### The two byte arrays (type 2)
+
+For `has_data == 2` the loop runs `sub_param` (byte 1) times over **two parallel 8-entry arrays**:
+
+- **bytes 2-9 — part index** `A[i]`: the bone/part the overlay is applied to. `0xFF` = skip this entry.
+- **bytes 10-17 — selector** `B[i]`: chooses the overlay kind for that entry:
+  - `B[i] == 0xFF` → **joint animation** on `A[i]` via `GSmodelSetPartAnimIndex`.
+  - `B[i] != 0xFF` → **per-part texture animation** on `A[i]` via `GSmodelSetPartTexAnimIndex`, with `B[i]` as the tex parameter.
+
+Every entry in the block shares the single `anim_index_ref` (byte 18) as the clip/index to apply. Up to 8 entries.
+
+> **Plugin support:** both kinds round-trip. The PKX Metadata panel exposes four sub-anim types — Off (`has_data 0`), Whole-Model Texture (`has_data 1`), Targeted Texture (`has_data 2`, selectors carry per-part values) and Targeted Joints (`has_data 2`, selectors all `0xFF`). Import classifies a `has_data 2` block by `is_joint_target()`; a Targeted Texture block additionally stores its selector array as `dat_pkx_sub_anim_N_selectors` (parallel to the bone list). Export writes bytes 2-9 from the bone list, bytes 10-17 from the selectors (Targeted Texture) or `0xFF` (Targeted Joints), and derives `sub_param` from the count.
+
+**Corpus usage (76 game-native XD PKX).** Only 8 blocks use `has_data == 2`, all in block 2 (the idle "extra" tick), and they split cleanly by the selector array:
+
+- **Genuine targeted joint (selector all `0xFF`) — 4 models, all trainers:** multi-bone cape/cloth sway. `mage_0101` bones 39,40,30,29; `rinto_0101` bones 50,51,54,55; `rinto_1101` / `rinto_1102` bones 52,53,56,57 — each anim 1.
+- **Per-part texture (selector `!= 0xFF`) — 4 Pokémon:** single-bone glow/flame overlays. Umbreon (bone 78, sel 0), Moltres (bone 116, sel 2), Rapidash (bone 76, sel 5), #345 (bone 107, sel 5). These are *texture* animations on one part, not joint animations — the visible ring glow / wing fire is an animated texture.
+
+So in the shipped corpus, **skeletal joint targeting is a trainer/people-model feature** (cloth), while the Pokémon that use block 2 do per-part texture effects.
+
+#### How the overlay combines with the base animation
+
+Per listed bone, `GSpartSetAnimIndex` does `HSD_JObjRemoveAnim` → `HSD_JObjAddAnim` → `HSD_JObjReqAnim`: the sub-anim's clip becomes what drives that joint, so **listed bones follow the sub-animation while every other bone keeps the base animation**. The request carries a frame/blend value, so it eases in rather than hard-cutting. The engine additionally has a per-frame mixer (`modelApplyPartAnimMixes` → `modelCalculatePartMix`) that can combine base and overlay **per component (X/Y/Z)** in one of three modes — *leave / replace / add* — plus an interpolation-factor path (`modelIntpJObjTrans/Rotate/Scale`) for smooth transitions.
+
+If a targeted block lists **no bones** (count 0 or all `0xFF`), `GSmodelSetPartAnimIndex` is never called and the overlay does nothing.
 
 #### Sub-Animations Are Target Poses
 
-Sub-animation DAT indices reference **extra animations beyond the 17 battle slots**. These animations are real bone animation sets with keyframe data, but they're typically 2-frame static poses — they define WHERE the bones should be, not a transition.
-
-The game engine smoothly blends from the current battle animation to the sub-animation's target pose. Our importer imports them as separate actions but they can't be properly previewed in Blender without NLA track layering.
+Sub-animation DAT indices reference **extra animations beyond the 17 battle slots**. These animations are real bone animation sets with keyframe data, but they're typically 2-frame static poses — they define WHERE the bones should be, not a transition. Our importer imports them as separate actions but they can't be properly previewed in Blender without NLA track layering.
 
 #### Identifying Sub-Animations
 

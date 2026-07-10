@@ -2,7 +2,7 @@
 from types import SimpleNamespace
 
 from importer.phases.describe.helpers.material_animations import (
-    _flip_translation_v, _evaluate_track,
+    _flip_translation_v, _evaluate_track, _clamp_to_end,
 )
 from shared.IR.animation import IRKeyframe, IRTextureUVTrack
 from shared.IR.enums import Interpolation
@@ -129,3 +129,41 @@ class TestMaterialKeyframeScale:
         source = inspect.getsource(mod._describe_material_track)
         # Find the decode_fobjdesc call and verify scale parameter
         assert 'decode_fobjdesc(fobj, bias=0, scale=1.0' in source
+
+
+# ---------------------------------------------------------------------------
+# Clamping material/texture tracks to the animation's end_frame
+# ---------------------------------------------------------------------------
+
+class TestClampToEnd:
+    """Material/texture FObj streams keep interpolation control points past the
+    animation's end_frame; _clamp_to_end trims them while preserving the played
+    range (mirrors the bone bake capping at end_frame)."""
+
+    def test_no_keyframes_past_end_unchanged(self):
+        kfs = [_kf(0, 0.0), _kf(30, 1.0), _kf(59, 0.0)]
+        assert _clamp_to_end(kfs, 59) == kfs
+
+    def test_linear_segment_substitutes_value_at_end(self):
+        # 72→160 slides -0.375→0.0; at end_frame 111 the game is ~44% through.
+        kfs = [_kf(0, 0.0), _kf(72, -0.375), _kf(160, 0.0)]
+        out = _clamp_to_end(kfs, 111)
+        assert [k.frame for k in out] == [0, 72, 111]
+        # value at 111 = -0.375 + (39/88)*(0.375)
+        expected = -0.375 + (111 - 72) / (160 - 72) * (0.0 - -0.375)
+        assert abs(out[-1].value - expected) < 1e-9
+
+    def test_constant_segment_holds_without_substitute(self):
+        # A CONSTANT keyframe holds its value through end_frame, so the stray
+        # past-end keyframe is simply dropped (no substitute needed).
+        kfs = [_kf(0, 0.0), _kf(30, -0.5, interp=Interpolation.CONSTANT), _kf(100, 0.0)]
+        out = _clamp_to_end(kfs, 59)
+        assert [k.frame for k in out] == [0, 30]
+
+    def test_redundant_past_end_keyframe_trimmed(self):
+        # Idle's UV: both control points are 0.0, so trimming leaves a flat curve
+        # ending at end_frame instead of stretching to 100.
+        kfs = [_kf(0, 0.0), _kf(100, 0.0)]
+        out = _clamp_to_end(kfs, 59)
+        assert max(k.frame for k in out) <= 59
+        assert all(abs(k.value) < 1e-9 for k in out)

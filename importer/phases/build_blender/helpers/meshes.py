@@ -48,7 +48,20 @@ def build_meshes(br_model, armature, context, logger=StubLogger()):
         original = mesh_objects[instance.source_mesh_index]
         copy = original.copy()
         copy.parent = armature
-        copy.matrix_local = Matrix(instance.matrix_local)
+        # An instance copy is a static, fully-placed duplicate. Bake the
+        # instance offset straight into its own geometry (give it a private
+        # mesh datablock first so the transform doesn't drag the shared
+        # original) rather than leaving it as a live matrix_local. The object
+        # then arrives at identity, so the post-process coordinate bake treats
+        # it like any other mesh — there is no live transform for that bake to
+        # clobber. Drop the armature modifier too: the copy's vertex groups
+        # still name the template's bones, so keeping it would re-deform the
+        # baked geometry about the template whenever those bones are posed.
+        copy.data = copy.data.copy()
+        copy.data.transform(Matrix(instance.matrix_local))
+        for modifier in list(copy.modifiers):
+            if modifier.type == 'ARMATURE':
+                copy.modifiers.remove(modifier)
         bpy.context.scene.collection.objects.link(copy)
         instance_count += 1
 

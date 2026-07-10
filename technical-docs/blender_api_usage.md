@@ -18,7 +18,7 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.80 | current | `bpy.types.TOPBAR_MT_file_export.append()` | `BlenderPlugin.py` | |
 | 2.80 | current | `bpy.types.TOPBAR_MT_file_import.remove()` | `BlenderPlugin.py` | |
 | 2.80 | current | `bpy.types.TOPBAR_MT_file_export.remove()` | `BlenderPlugin.py` | |
-| 2.80 | current | `bpy.types.Operator` (subclass) | `BlenderPlugin.py` | ImportHSD, ExportHSD |
+| 2.80 | current | `bpy.types.Operator` (subclass) | `BlenderPlugin.py` | ImportHSD, ExportHSD, DAT_OT_SetEnumProp, DAT_OT_SubAnimBone{Add,Remove,Set}, DAT_OT_SubAnimSelectorSet |
 | 2.80 | current | `bpy.types.Panel` (subclass) | `BlenderPlugin.py` | DAT_PT_PKXPanel |
 | 2.80 | current | `bpy.types.OperatorFileListElement` | `BlenderPlugin.py` | |
 | | | | | |
@@ -58,6 +58,7 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.80 | current | `bpy.context.mode` | `skeleton.py`, `exporter/describe/helpers/armature.py` | Check current editor mode |
 | 2.80 | current | `context.screen.areas` | `BlenderPlugin.py` | Workspace setup |
 | 3.2 | current | `context.temp_override(area=...)` | `BlenderPlugin.py` | Workspace split |
+| 2.80 | current | `context.window_manager.invoke_props_dialog(op)` | `BlenderPlugin.py` | Searchable bone picker for targeted sub-anim bone list (DAT_OT_SubAnimBoneSet) |
 | 3.2 | current | `context.temp_override(active_object=..., object=...)` | `scripts/prepare_for_pkx_export.py`, `scripts/prepare_for_dat_export.py` | Make an armature active to `mode_set` it out of Edit/Pose mode before prep runs |
 | 2.80 | current | `Object.mode` (read) | `scripts/prepare_for_pkx_export.py`, `scripts/prepare_for_dat_export.py` | Detect armatures left in Edit/Pose mode |
 | | | | | |
@@ -113,15 +114,17 @@ Every Blender Python API call used by this addon, with the Blender version range
 | | | | | |
 | | | **Armature & Bones** | | |
 | 2.80 | current | `armature_data.edit_bones.new(name)` | `skeleton.py` | Requires EDIT mode |
-| 2.82 | current | `bone.inherit_scale = 'ALIGNED'` | `skeleton.py` | Was boolean before 2.82 |
+| 2.82 | current | `bone.inherit_scale = 'NONE'` | `skeleton.py` | Was boolean before 2.82; always NONE — pose bake injects full GX pose (see implementation_notes § Scale inheritance) |
 | 2.80 | current | `bone.tail = Vector(...)` | `skeleton.py` | |
 | 2.80 | current | `bone.matrix = Matrix(...)` | `skeleton.py` | Edit bone matrix |
 | 2.80 | current | `bone.parent = edit_bone` | `skeleton.py` | |
 | 2.80 | current | `armature_data.display_type = '...'` | `skeleton.py` | |
 | | | | | |
 | | | **Pose Bones** | | |
-| 2.80 | current | `armature.pose.bones` | `skeleton.py`, `constraints.py`, `export/constraints.py` | |
-| 2.80 | current | `pose_bone.rotation_mode = 'XYZ'` | `skeleton.py` | |
+| 2.80 | current | `armature.pose.bones` | `skeleton.py`, `constraints.py`, `animations.py`, `export/constraints.py` | |
+| 2.80 | current | `pose_bone.rotation_mode = 'XYZ'` | `skeleton.py`, `animations.py` | |
+| 2.80 | current | `pose_bone.matrix = Matrix(...)` (write) | `animations.py` | Drop the GX target pose on the bone; Blender performs the `inherit_scale='NONE'` inversion into `matrix_basis`. Set depth-level-by-level with `view_layer.update()` between levels. |
+| 2.80 | current | `pose_bone.location` / `.rotation_euler` / `.scale` (read) | `animations.py` | Read back the basis the matrix-setter computed, to write final F-curves |
 | | | | | |
 | | | **Constraints** | | |
 | 2.80 | current | `pose_bone.constraints.new(type=...)` | `constraints.py` | IK, COPY_LOCATION, TRACK_TO, COPY_ROTATION, LIMIT_* |
@@ -230,6 +233,7 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 4.5 | current | `action.slots.new(type, name)` | `animations.py`, `material_animations.py` | Guarded: `>= (4, 5, 0)` |
 | 4.5 | current | `action.slots.active = slot` | `animations.py`, `material_animations.py` | Guarded: `>= (4, 5, 0)` |
 | 4.4 | current | `animation_data.action_slot = slot` | `animations.py`, `material_animations.py` | Guarded: `>= (4, 4, 0)` |
+| 4.5 | current | `slot.target_id_type` / `slot.name_display` | `exporter/describe/helpers/animations_decode.py` | Action→armature binding: an OBJECT slot named after the armature attaches the action to it (multi-armature scenes) |
 | 2.80 | current | `action.use_fake_user = True` | `animations.py`, `material_animations.py` | |
 | | | | | |
 | | | **F-Curves & Keyframes** | | |
@@ -258,8 +262,19 @@ Every Blender Python API call used by this addon, with the Blender version range
 | | | **Light Data** | | |
 | 2.80 | current | `light_data.color = [r, g, b]` | `lights.py` | |
 | 2.80 | current | `light_data.energy` | `lights.py` | Brightness value; 0 for ambient no-op lights |
+| 2.80 | current | `light_data.spot_size` | `build_blender/helpers/lights.py`, `export/describe/helpers/lights.py` | Spot cone angle; animation-cutoff fcurve target |
+| 2.80 | current | Light Action fcurves on `data.color`/`data.energy`/`data.spot_size`/`location` | `build_blender/helpers/lights.py`, `export/describe/helpers/lights.py` | Light animation clips build as real fcurves (mirrors camera path) |
 | | | **Light Custom Properties** | | |
 | 2.80 | current | `obj["dat_light_type"] = "AMBIENT"` | `lights.py`, `prepare_for_pkx_export.py`, `prepare_for_dat_export.py` | Marks a POINT light as an ambient light |
+| | | | | |
+| | | **World / Fog** | | |
+| 2.80 | current | `scene.world` / `bpy.data.worlds.new(name)` | `build_blender/build_blender.py`, `export/describe/describe.py` | Get/create the scene world to carry fog |
+| 2.80 | current | `world.mist_settings.{use_mist, start, depth, falloff, intensity}` | `build_blender/build_blender.py`, `export/describe/describe.py` | Scene fog mapped onto native World Mist (use_mist is the fog-presence signal) |
+| 2.80 | current | `world.color = [r, g, b]` | `build_blender/build_blender.py`, `export/describe/describe.py` | Fog colour → world background |
+| | | | | |
+| | | **Curve (bone splines)** | | |
+| 2.80 | current | `bpy.data.curves.new(name, type='CURVE')` + `curve.splines.new('POLY'/'BEZIER'/'NURBS')` | `build_blender/helpers/skeleton.py` | JOBJ_SPLINE joint curves build as real Curve objects |
+| 2.80 | current | `curve_obj.parent_type = 'BONE'` / `parent_bone` | `build_blender/helpers/skeleton.py`, `export/describe/helpers/armature.py` | Bone-parent the spline curve; parent_bone maps it back on export |
 | | | | | |
 | | | **Image Data** | | |
 | 2.80 | current | `image.pixels = [...]` | `materials.py` | Flat RGBA float list |
@@ -334,6 +349,7 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.80 | current | `tex_node.extension` | `exporter/describe/helpers/materials_decode.py` | Texture wrap/extension mode |
 | 2.80 | current | `image.size` | `exporter/describe/helpers/materials_decode.py` | Image dimensions |
 | 2.80 | current | `image.pixels` | `exporter/describe/helpers/materials_decode.py` | Read image pixel data (float RGBA) |
+| 2.80 | current | `image.pixels.foreach_get(seq)` | `exporter/describe/helpers/materials.py` | Bulk pixel readback into a numpy buffer for BRImage serialisation |
 | 2.80 | current | `link.from_node` / `link.to_node` | `exporter/describe/helpers/materials_decode.py` | Trace node connections |
 | 2.80 | current | `link.from_socket` / `link.to_socket` | `exporter/describe/helpers/materials_decode.py` | Identify connected sockets |
 | | | | | |

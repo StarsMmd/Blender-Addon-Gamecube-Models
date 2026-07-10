@@ -5,6 +5,26 @@ from .enums import ScaleInheritance
 
 
 @dataclass
+class IRBoneSpline:
+    """A curve carried by a JOBJ_SPLINE joint (HSD_Spline).
+
+    Fields mirror the Spline node verbatim. Control points (`control_points`,
+    the `s1` cv array), `knots` (`s2`), and `coefficients` (`s3`, per-segment
+    polynomial coefficients for linear/cardinal splines) are kept in the
+    game's native GC units — no meters conversion — so the raw values round-
+    trip exactly. `flags` high byte selects the spline type (0 linear,
+    1 cubic-bezier, 2 B-spline, 3 cardinal).
+    """
+    flags: int
+    n: int
+    f0: float
+    f1: float
+    control_points: list[list[float]] = field(default_factory=list)
+    knots: list[float] | None = None
+    coefficients: list[list[float]] | None = None
+
+
+@dataclass
 class IRBone:
     """One bone in a flat list. Parent relationship via index."""
     name: str
@@ -30,6 +50,8 @@ class IRBone:
     mesh_indices: list[int] = field(default_factory=list)
     # Instancing
     instance_child_bone_index: int | None = None
+    # JOBJ_SPLINE curve carried as the joint's `property` (maps only)
+    spline: IRBoneSpline | None = None
 
 
 @dataclass

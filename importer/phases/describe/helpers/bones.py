@@ -5,7 +5,7 @@ Joint.compileSRTMatrix(), producing IRBone instances without any bpy calls.
 """
 try:
     from .....shared.helpers.math_shim import Matrix, Vector, Euler, compile_srt_matrix, matrix_to_list
-    from .....shared.IR.skeleton import IRBone
+    from .....shared.IR.skeleton import IRBone, IRBoneSpline
     from .....shared.IR.enums import ScaleInheritance
     from .....shared.Constants.hsd import (
         JOBJ_HIDDEN, JOBJ_INSTANCE, JOBJ_EFFECTOR, JOBJ_SPLINE,
@@ -15,12 +15,14 @@ try:
     )
     from .....shared.helpers.scale import GC_TO_METERS
     from .....shared.helpers.pkx_header import BODY_MAP_NAMES
+    from .....shared.Nodes.Classes.Joints.BoneReference import BoneReference
 except (ImportError, SystemError):
     from shared.helpers.math_shim import Matrix, Vector, Euler, compile_srt_matrix, matrix_to_list
-    from shared.IR.skeleton import IRBone
+    from shared.IR.skeleton import IRBone, IRBoneSpline
     from shared.IR.enums import ScaleInheritance
     from shared.helpers.scale import GC_TO_METERS
     from shared.helpers.pkx_header import BODY_MAP_NAMES
+    from shared.Nodes.Classes.Joints.BoneReference import BoneReference
     from shared.Constants.hsd import (
         JOBJ_HIDDEN, JOBJ_INSTANCE, JOBJ_EFFECTOR, JOBJ_SPLINE,
         JOBJ_TYPE_MASK, JOBJ_CLASSICAL_SCALING, JOBJ_USE_QUATERNION,
@@ -35,6 +37,62 @@ except (ImportError, SystemError):
 # vertex-group names), so collapse to PascalCase here. Order matches
 # BODY_MAP_NAMES exactly.
 _PKX_BONE_SUFFIXES = [name.replace(" ", "") for name in BODY_MAP_NAMES]
+
+
+def _describe_joint_spline(joint):
+    """Lift a JOBJ_SPLINE joint's `property` Spline into an IRBoneSpline.
+
+    Returns None unless the joint is flagged JOBJ_SPLINE and its property is
+    a parsed Spline. Curve values are carried verbatim in GC units (see
+    IRBoneSpline) so they round-trip exactly.
+    """
+    if not (joint.flags & JOBJ_SPLINE):
+        return None
+    spline = getattr(joint, 'property', None)
+    # A parsed Spline exposes the resolved cv/knot/coeff arrays (or None)
+    # via its s1/s2/s3 fields; a bare int means it wasn't resolved.
+    if spline is None or not hasattr(spline, 'n'):
+        return None
+
+    control_points = [list(p) for p in spline.s1] if isinstance(spline.s1, list) else []
+    knots = list(spline.s2) if isinstance(spline.s2, list) else None
+    coefficients = [list(c) for c in spline.s3] if isinstance(spline.s3, list) else None
+
+    return IRBoneSpline(
+        flags=spline.flags,
+        n=spline.n,
+        f0=spline.f0,
+        f1=spline.f1,
+        control_points=control_points,
+        knots=knots,
+        coefficients=coefficients,
+    )
+
+
+def _effector_bind_position(joint, parent_joint, scaled_position):
+    """Replace a JOBJ_EFFECTOR's translation with its true IK bind-pose offset.
+
+    An IK end-effector's stored translation is the solver's *target* — both its
+    magnitude (the reach, tens of units) and its direction (toward the goal)
+    describe where the chain aims, not where the effector rests. Accumulating it
+    as an ordinary joint offset flings the effector — and every descendant joint
+    plus every vertex skinned to them — far off the model. The bind-pose bone,
+    like every other GX joint, simply extends along its parent's local +X axis
+    (a chain's JOINT2 sits at ``(len, 0, 0)`` in JOINT1's frame); its length is
+    the BoneReference (IK hint) on the parent joint. So the effector's rest
+    offset is ``(length, 0, 0)`` in the parent frame, which is what this returns.
+
+    In: joint (Joint, the effector); parent_joint (Joint|None); scaled_position
+        (3-tuple, metres).
+    Out: 3-tuple — bind-pose offset in metres, unchanged when there is no
+         BoneReference hint to supply the length.
+    """
+    if parent_joint is None:
+        return scaled_position
+    bone_ref = parent_joint.getReferenceObject(BoneReference, 0)
+    if not bone_ref or bone_ref.property is None:
+        return scaled_position
+    return (bone_ref.property.length * GC_TO_METERS, 0.0, 0.0)
 
 
 def describe_bones(root_joint, options=None, logger=None):
@@ -90,14 +148,16 @@ def describe_bones(root_joint, options=None, logger=None):
             elif len(labels) == 1:
                 _body_map_suffixes[idx] = labels[0]
 
-    def _walk(joint, parent_index, parent_data):
+    def _walk(joint, parent_index, parent_data, parent_joint):
         """Recursively describe a Joint and its children/siblings.
 
         parent_data is the transform record returned by
         _compose_bone_transforms for the parent bone — or None for roots.
 
         In: joint (Joint); parent_index (int|None);
-            parent_data (dict|None, record from _compose_bone_transforms).
+            parent_data (dict|None, record from _compose_bone_transforms);
+            parent_joint (Joint|None, the parent node — needed to read an IK
+            effector's BoneReference bind length).
         Out: None. ``bones`` and ``joint_to_bone_index`` are mutated in place
              through the closure.
         """
@@ -134,6 +194,8 @@ def describe_bones(root_joint, options=None, logger=None):
         )
 
         scaled_position = tuple(p * GC_TO_METERS for p in joint.position)
+        if (joint.flags & JOBJ_TYPE_MASK) == JOBJ_EFFECTOR:
+            scaled_position = _effector_bind_position(joint, parent_joint, scaled_position)
         record = _compose_bone_transforms(
             joint.scale, joint.rotation, scaled_position,
             bool(joint.flags & JOBJ_CLASSICAL_SCALING),
@@ -171,6 +233,7 @@ def describe_bones(root_joint, options=None, logger=None):
             normalized_local_matrix=matrix_to_list(record['normalized_local']),
             scale_correction=matrix_to_list(record['scale_correction']),
             accumulated_scale=record['accumulated_scale'],
+            spline=_describe_joint_spline(joint),
         )
         bones.append(bone)
 
@@ -179,13 +242,13 @@ def describe_bones(root_joint, options=None, logger=None):
 
         # Recurse into children (skip instances)
         if joint.child and not (joint.flags & JOBJ_INSTANCE):
-            _walk(joint.child, my_index, my_data)
+            _walk(joint.child, my_index, my_data, joint)
 
         # Recurse into siblings (same parent)
         if joint.next:
-            _walk(joint.next, parent_index, parent_data)
+            _walk(joint.next, parent_index, parent_data, parent_joint)
 
-    _walk(root_joint, None, None)
+    _walk(root_joint, None, None, None)
 
     # Set instance_child_bone_index for JOBJ_INSTANCE bones
     _set_instance_refs(root_joint, bones, joint_to_bone_index)

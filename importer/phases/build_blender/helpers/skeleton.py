@@ -63,6 +63,8 @@ def build_skeleton(br_armature, context, logger=StubLogger()):
     bpy.ops.object.mode_set(mode='OBJECT')
     bpy.context.view_layer.update()
 
+    _build_bone_splines(br_armature, armature, logger)
+
     for key, value in br_armature.custom_props.items():
         armature[key] = value
 
@@ -74,3 +76,47 @@ def build_skeleton(br_armature, context, logger=StubLogger()):
         ]
 
     return armature
+
+
+def _build_bone_splines(br_armature, armature, logger):
+    """Create a Curve object per JOBJ_SPLINE bone, parented to that bone.
+
+    Blender has no native curve-on-bone, so each spline becomes a real Curve
+    object bone-parented to its joint. Control points go in the curve's local
+    space (visual placement isn't fidelity-critical); the ``parent_bone`` link
+    is how the exporter maps the curve back to its bone.
+    """
+    for br_bone in br_armature.bones:
+        spline = getattr(br_bone, 'spline', None)
+        if spline is None:
+            continue
+        curve_data = bpy.data.curves.new(
+            name="%s_%s_spline" % (armature.name, br_bone.name), type='CURVE')
+        curve_data.dimensions = '3D'
+        _add_spline_points(curve_data, spline)
+        curve_obj = bpy.data.objects.new(curve_data.name, curve_data)
+        bpy.context.scene.collection.objects.link(curve_obj)
+        curve_obj.parent = armature
+        curve_obj.parent_type = 'BONE'
+        curve_obj.parent_bone = br_bone.name
+        logger.debug("  Built spline curve for bone '%s' (%d cvs)",
+                     br_bone.name, len(spline.control_points))
+
+
+def _add_spline_points(curve_data, spline):
+    """Populate a Curve datablock with the BRBoneSpline's control points."""
+    points = spline.control_points or []
+    if not points:
+        return
+    if spline.curve_type == 'BEZIER':
+        sp = curve_data.splines.new('BEZIER')
+        sp.bezier_points.add(len(points) - 1)
+        for bp, p in zip(sp.bezier_points, points):
+            bp.co = (p[0], p[1], p[2])
+            bp.handle_left_type = 'AUTO'
+            bp.handle_right_type = 'AUTO'
+    else:
+        sp = curve_data.splines.new(spline.curve_type)  # POLY or NURBS
+        sp.points.add(len(points) - 1)
+        for pt, p in zip(sp.points, points):
+            pt.co = (p[0], p[1], p[2], 1.0)

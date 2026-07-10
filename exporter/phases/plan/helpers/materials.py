@@ -117,7 +117,7 @@ def plan_material(br_material, logger=StubLogger(), image_cache=None,
 
 
 def plan_materials(br_materials, uv_layer_names_per_material=None,
-                   logger=StubLogger()):
+                   logger=StubLogger(), image_cache=None):
     """Convert a list of BRMaterials to IRMaterials, deduping IRImages
     across the list so identical source images share an IRImage.
 
@@ -125,8 +125,12 @@ def plan_materials(br_materials, uv_layer_names_per_material=None,
     gives the UV layer names from the first mesh using material i, so
     plan_material can resolve UVMap.uv_map references to a positional
     index. Omit when the caller has no mesh context (round-trip fixtures).
+
+    image_cache (dict|None, id(BRImage) → IRImage) may be supplied by
+    plan_scene to extend the IRImage dedup across models.
     """
-    image_cache = {}
+    if image_cache is None:
+        image_cache = {}
     if uv_layer_names_per_material is None:
         uv_layer_names_per_material = [[]] * len(br_materials)
     return [

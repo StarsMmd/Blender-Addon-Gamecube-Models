@@ -59,6 +59,65 @@ def test_part_anim_complex():
     assert p.to_bytes() == bytes(raw)
 
 
+def test_active_bone_indices_excludes_selector_array():
+    """Only bytes 2-9 are part indices; bytes 10-17 are the parallel selector
+    array and must not be reported as target bones."""
+    raw = bytearray(19)
+    raw[2:18] = b'\xff' * 16   # unused sentinel, as in real files
+    raw[0] = 2       # has_data = targeted
+    raw[1] = 1       # sub_param = 1 entry
+    raw[2] = 0x74    # part index (byte 2)
+    raw[10] = 2      # selector for entry 0 (byte 10) — NOT a bone index
+    raw[18] = 0x0A
+    p = PartAnimData.from_bytes(bytes(raw), 0)
+    assert p.active_bone_indices() == [0x74]
+
+
+def test_active_bone_indices_multiple_parts():
+    """All non-0xFF entries in bytes 2-9 are returned, in declaration order."""
+    raw = bytearray(19)
+    raw[2:18] = b'\xff' * 16
+    raw[0] = 2
+    raw[1] = 4
+    raw[2], raw[3], raw[4], raw[5] = 39, 40, 30, 29
+    raw[18] = 1
+    p = PartAnimData.from_bytes(bytes(raw), 0)
+    assert p.active_bone_indices() == [39, 40, 30, 29]
+
+
+def test_active_entries_joint_pairs_selector_0xff():
+    """A joint block pairs each part with a 0xFF selector and reads as joint."""
+    raw = bytearray(19)
+    raw[2:18] = b'\xff' * 16
+    raw[0] = 2
+    raw[1] = 4
+    raw[2], raw[3], raw[4], raw[5] = 39, 40, 30, 29   # parts (bytes 2-9)
+    p = PartAnimData.from_bytes(bytes(raw), 0)
+    assert p.active_entries() == [(39, 0xFF), (40, 0xFF), (30, 0xFF), (29, 0xFF)]
+    assert p.is_joint_target() is True
+
+
+def test_active_entries_texture_pairs_real_selector():
+    """A texture block carries a non-0xFF selector and is not a joint target."""
+    raw = bytearray(19)
+    raw[2:18] = b'\xff' * 16
+    raw[0] = 2
+    raw[1] = 1
+    raw[2] = 78     # part index (byte 2)
+    raw[10] = 5     # selector (byte 10)
+    p = PartAnimData.from_bytes(bytes(raw), 0)
+    assert p.active_entries() == [(78, 5)]
+    assert p.active_bone_indices() == [78]
+    assert p.is_joint_target() is False
+
+
+def test_is_joint_target_false_when_empty():
+    """A block with no active entries is not a joint target."""
+    p = PartAnimData(has_data=2, sub_param=0, bone_config=b'\xff' * 16)
+    assert p.active_entries() == []
+    assert p.is_joint_target() is False
+
+
 # ---- AnimMetadataEntry ----
 
 def test_entry_unused_defaults():

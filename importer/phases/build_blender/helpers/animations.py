@@ -1,8 +1,10 @@
 """Create Blender Actions from a BR action list.
 
-Pure bpy executor for everything except the per-frame pose-basis formula,
-which lives in the Plan phase's ``compute_pose_basis`` helper so it can be
-unit-tested without a Blender runtime.
+Pure bpy executor for everything except the per-frame pose bake, which lives
+in the Plan phase's ``bake_frame`` helper (pure math, no bpy) so it can be
+unit-tested without a Blender runtime. This module only samples the raw
+keyframe F-curves per frame, hands the whole chain's SRT to ``bake_frame``,
+and writes the resulting shear-free loc/rot/scale basis back as F-curves.
 """
 import math
 import bpy
@@ -10,21 +12,27 @@ from mathutils import Matrix, Vector
 
 try:
     from .....shared.helpers.logger import StubLogger
-    from ...plan.helpers.animations import compute_pose_basis
+    from ...plan.helpers.animations import bake_frame, compute_bake_plan
 except (ImportError, SystemError):
     from shared.helpers.logger import StubLogger
-    from importer.phases.plan.helpers.animations import compute_pose_basis
+    from importer.phases.plan.helpers.animations import bake_frame, compute_bake_plan
 
 
-def build_bone_animations(br_actions, armature, options, logger=StubLogger(), material_lookup=None):
+def build_bone_animations(br_actions, armature, options, bake_skeleton,
+                          logger=StubLogger(), material_lookup=None):
     """Create Blender Actions from a list of BRAction specs.
 
-    Each Action gets an OBJECT slot for the armature plus MATERIAL slots
-    for any paired material tracks (multi-slot actions).
+    Each Action gets an OBJECT slot named after the armature object plus
+    MATERIAL slots for any paired material tracks (multi-slot actions).
+    Naming the slot after its target follows Blender's own convention and
+    gives the action a durable armature binding — the exporter's describe
+    phase uses it to attach each action to the right armature in
+    multi-model scenes.
 
     In: br_actions (list[BRAction]); armature (bpy.types.Object, armature);
-        options (dict, reads 'max_frame'); logger (Logger);
-        material_lookup (dict[str, bpy.types.Material]|None, keyed by id).
+        options (dict, reads 'max_frame'); bake_skeleton (BRBakeSkeleton,
+        full-skeleton rest data driving the per-frame pose bake);
+        logger (Logger); material_lookup (dict[str, bpy.types.Material]|None).
     Out: (list[bpy.types.Action], dict[bpy.types.Material, int]) — Actions in
          the order given + slot index map for material animations.
     """
@@ -38,7 +46,7 @@ def build_bone_animations(br_actions, armature, options, logger=StubLogger(), ma
         action = bpy.data.actions.new(br_action.name)
         action.use_fake_user = True
 
-        armature_slot = action.slots.new('OBJECT', 'Armature')
+        armature_slot = action.slots.new('OBJECT', armature.name)
         action.slots.active = armature_slot
 
         bpy.context.view_layer.objects.active = armature
@@ -53,8 +61,8 @@ def build_bone_animations(br_actions, armature, options, logger=StubLogger(), ma
         armature.animation_data.action = action
         armature.animation_data.action_slot = armature_slot
 
-        for track in br_action.bone_tracks:
-            _bake_bone_track(track, action, max_frame, logger, armature)
+        _bake_action(br_action.bone_tracks, action, max_frame, bake_skeleton,
+                     logger, armature)
 
         mat_fcurve_count = _build_material_tracks(
             br_action, action, material_lookup, mat_slot_indices, max_frame,
@@ -97,30 +105,109 @@ _LOC_INDICES = (4, 5, 6)
 _SCL_INDICES = (7, 8, 9)
 
 
-def _bake_bone_track(track, action, max_frame, logger, armature):
-    """Insert raw IR keyframes into temp fcurves, evaluate frame-by-frame,
-    run them through the pure pose-basis formula, and batch-write final
-    rotation_euler / location / scale fcurves.
+def _bake_action(bone_tracks, action, max_frame, bake_skeleton, logger, armature):
+    """Bake one action into final loc/rot/scale fcurves.
 
-    In: track (BRBoneTrack); action (bpy.types.Action, mutated);
-        max_frame (int, upper bake bound); logger (Logger);
-        armature (bpy.types.Object|None, needed for FOLLOW_PATH setup).
-    Out: None. The temporary raw fcurves are removed before returning.
+    Every posed bone goes through one mechanism: Plan (``bake_frame``) composes
+    its exact GX world for the frame and returns a mesh-correct *target* pose;
+    build drops that target onto the pose bone (``pose_bone.matrix = target``)
+    and reads back the resulting loc/rot/scale. The bone's ``inherit_scale``
+    (ALIGNED for uniform un-animated-scale bones, NONE for the baked closure)
+    only changes how Blender inverts the identical target — so the pose stays
+    exact either way while ALIGNED bones keep sparse, inheritance-driven scale.
+    Bones are posed depth-level by depth-level with a dependency-graph update
+    between levels so each child inverts against its parent's freshly-posed
+    matrix. Bones with no track but in the baked closure are posed too (their
+    still pose must follow a scaled/animated ancestor). Path-constrained bones
+    get a FOLLOW_PATH constraint instead.
+
+    In: bone_tracks (list[BRBoneTrack]); action (bpy.types.Action, mutated);
+        max_frame (int, upper bake bound); bake_skeleton (BRBakeSkeleton);
+        logger (Logger); armature (bpy.types.Object|None, for FOLLOW_PATH).
+    Out: None. Temporary raw fcurves are removed before returning.
     """
-    if track.spline_path is not None and armature is not None:
-        _apply_path_constraint(track, action, armature, logger)
+    path_indices = set()
+    pose_tracks = []
+    for track in bone_tracks:
+        if track.spline_path is not None and armature is not None:
+            _apply_path_constraint(track, action, armature, logger)
+            path_indices.add(track.bone_index)
+        else:
+            pose_tracks.append(track)
 
-    raw_curves = _insert_raw_keyframes(track, action)
-    _fill_missing_channels_with_rest(track, action, raw_curves)
+    if not pose_tracks:
+        return
 
-    final_curves = _create_final_fcurves(track.bone_name, action)
-    end_frame = min(int(track.end_frame), max_frame)
-    baked_values = _bake_frames(track, raw_curves, end_frame, logger)
-    _write_baked_values(final_curves, baked_values)
+    # Raw fcurves for every animated bone stay live for the whole frame loop
+    # so we can sample the full chain's SRT at each frame.
+    raw_by_bone = {}      # bone_index -> list[FCurve|None] (channel layout)
+    end_by_bone = {}      # bone_index -> exclusive last frame for this bone
+    for track in pose_tracks:
+        raw = _insert_raw_keyframes(track, action)
+        _fill_missing_channels_with_rest(track, action, raw)
+        raw_by_bone[track.bone_index] = raw
+        end_by_bone[track.bone_index] = min(int(track.end_frame), max_frame)
 
-    for curve in raw_curves:
-        if curve is not None:
-            action.fcurves.remove(curve)
+    global_end = max(end_by_bone.values())
+
+    bake_indices, levels = compute_bake_plan(bake_skeleton, set(raw_by_bone))
+    bake_indices = [i for i in bake_indices if i not in path_indices]
+    levels = [[i for i in lvl if i not in path_indices] for lvl in levels]
+
+    name_of = {i: bake_skeleton.bones[i].name for i in bake_indices}
+    pose_bone_of = {i: armature.pose.bones[name_of[i]] for i in bake_indices}
+    baked_by_bone = {i: [[] for _ in range(_CHANNEL_COUNT)] for i in bake_indices}
+
+    # Detach the action while we drive the pose by hand: an assigned action
+    # would re-evaluate on each depsgraph update and could clobber the matrices
+    # we set. Raw-fcurve sampling (`fc.evaluate`) works detached.
+    saved_action = armature.animation_data.action
+    armature.animation_data.action = None
+
+    for frame in range(global_end):
+        frame_srts = {}
+        for idx, raw in raw_by_bone.items():
+            frame_srts[idx] = (
+                (raw[7].evaluate(frame), raw[8].evaluate(frame), raw[9].evaluate(frame)),
+                (raw[0].evaluate(frame), raw[1].evaluate(frame), raw[2].evaluate(frame)),
+                (raw[4].evaluate(frame), raw[5].evaluate(frame), raw[6].evaluate(frame)),
+            )
+        targets = bake_frame(bake_skeleton, frame_srts, bake_indices)
+        for level in levels:
+            for idx in level:
+                pose_bone = pose_bone_of[idx]
+                pose_bone.matrix = Matrix(targets[idx])
+                # matrix_basis (and loc/rot/scale) are set synchronously by the
+                # matrix setter — read them back before the depsgraph update.
+                if frame < end_by_bone.get(idx, global_end):
+                    baked = baked_by_bone[idx]
+                    euler = pose_bone.rotation_euler
+                    loc = pose_bone.location
+                    scale = pose_bone.scale
+                    baked[0].append((frame, euler[0]))
+                    baked[1].append((frame, euler[1]))
+                    baked[2].append((frame, euler[2]))
+                    baked[4].append((frame, loc[0]))
+                    baked[5].append((frame, loc[1]))
+                    baked[6].append((frame, loc[2]))
+                    baked[7].append((frame, scale[0]))
+                    baked[8].append((frame, scale[1]))
+                    baked[9].append((frame, scale[2]))
+            bpy.context.view_layer.update()
+
+    reset_pose(armature)
+    armature.animation_data.action = saved_action
+
+    for idx in bake_indices:
+        final_curves = _create_final_fcurves(name_of[idx], action)
+        accum = bake_skeleton.bones[idx].accumulated_scale
+        tol_scale = max(min(abs(c) for c in accum), _MIN_ACCUM_FOR_TOL)
+        _write_baked_values(final_curves, baked_by_bone[idx], tol_scale)
+
+    for raw in raw_by_bone.values():
+        for curve in raw:
+            if curve is not None:
+                action.fcurves.remove(curve)
 
 
 def _insert_raw_keyframes(track, action):
@@ -205,69 +292,90 @@ def _create_final_fcurves(bone_name, action):
     return curves
 
 
-def _bake_frames(track, raw_curves, end_frame, logger):
-    """Evaluate raw fcurves at every integer frame and run the result
-    through compute_pose_basis.
-
-    In: track (BRBoneTrack, read for bake_context); raw_curves (list[FCurve]);
-        end_frame (int, exclusive upper bound); logger (Logger).
-    Out: list[list[tuple[int, float]]] of length _CHANNEL_COUNT — per-channel
-         (frame, value) pairs ready for bulk insert.
-    """
-    baked = [[] for _ in range(_CHANNEL_COUNT)]
-    ctx = track.bake_context
-
-    for frame in range(end_frame):
-        s = (raw_curves[7].evaluate(frame),
-             raw_curves[8].evaluate(frame),
-             raw_curves[9].evaluate(frame))
-        r = (raw_curves[0].evaluate(frame),
-             raw_curves[1].evaluate(frame),
-             raw_curves[2].evaluate(frame))
-        l = (raw_curves[4].evaluate(frame),
-             raw_curves[5].evaluate(frame),
-             raw_curves[6].evaluate(frame))
-
-        if frame <= 3 or frame == end_frame - 1:
-            logger.info("  EVAL %s f=%d r=(%.6f,%.6f,%.6f) l=(%.6f,%.6f,%.6f) s=(%.6f,%.6f,%.6f)",
-                        track.bone_name, frame, r[0], r[1], r[2], l[0], l[1], l[2], s[0], s[1], s[2])
-
-        trans, rot, scl = compute_pose_basis(ctx, s, r, l)
-
-        if frame <= 3 or frame == end_frame - 1:
-            logger.info("  BAKE %s f=%d loc=(%.6f,%.6f,%.6f) rot=(%.6f,%.6f,%.6f) scl=(%.6f,%.6f,%.6f)",
-                        track.bone_name, frame, trans[0], trans[1], trans[2],
-                        rot[0], rot[1], rot[2], scl[0], scl[1], scl[2])
-
-        baked[0].append((frame, rot[0]))
-        baked[1].append((frame, rot[1]))
-        baked[2].append((frame, rot[2]))
-        baked[4].append((frame, trans[0]))
-        baked[5].append((frame, trans[1]))
-        baked[6].append((frame, trans[2]))
-        baked[7].append((frame, scl[0]))
-        baked[8].append((frame, scl[1]))
-        baked[9].append((frame, scl[2]))
-    return baked
+# Per-channel decimation tolerance. The bake produces a dense keyframe on
+# every frame; most are redundant (a channel that barely moves, or moves
+# near-linearly). Collapsing those to a sparse set within a visually
+# imperceptible tolerance cuts fcurve-evaluation cost during playback by ~an
+# order of magnitude without changing the pose the user sees (and the exporter
+# re-samples the curve densely anyway). Rotation is in radians, so ~6e-4 rad ≈
+# 0.03°; location/scale are in the model's units.
+_DECIMATE_TOL = {0: 6e-4, 1: 6e-4, 2: 6e-4,
+                 4: 1e-3, 5: 1e-3, 6: 1e-3,
+                 7: 1e-3, 8: 1e-3, 9: 1e-3}
+# Never scale the decimation tolerance below this — a genuinely tiny (hidden)
+# accumulated scale would otherwise force a near-zero tolerance (no reduction);
+# those bones are collapsed/invisible so a small residual error doesn't show.
+_MIN_ACCUM_FOR_TOL = 0.05
 
 
-def _write_baked_values(curves, baked):
-    """Bulk-write per-frame values with BEZIER interpolation. Using add()
-    once + per-slot assignment is O(n); per-frame insert() is O(n log k).
+def _write_baked_values(curves, baked, tol_scale=1.0):
+    """Decimate each dense per-frame channel, then bulk-write it with BEZIER
+    interpolation. Using add() once + per-slot assignment is O(n); per-frame
+    insert() is O(n log k).
 
-    In: curves (list[FCurve|None]); baked (list[list[tuple[int, float]]]).
+    ``tol_scale`` tightens the decimation tolerance for bones bound with a small
+    accumulated scale: the skin deform amplifies a pose error by ``1/rest_scale``
+    (a vertex bound to a 0.04-scale bone moves ~24× the bone's pose error), so
+    the per-channel tolerance is scaled down by that rest scale to keep the
+    *mesh* deviation within budget. Uniform bones (scale ≈ 1) decimate freely.
+
+    In: curves (list[FCurve|None]); baked (list[list[tuple[int, float]]]);
+        tol_scale (float, per-bone tolerance multiplier).
     Out: None; fcurves are mutated in place.
     """
     for idx in (0, 1, 2, 4, 5, 6, 7, 8, 9):
         curve = curves[idx]
-        values = baked[idx]
+        values = _decimate_keyframes(baked[idx], _DECIMATE_TOL[idx] * tol_scale)
         if not values:
             continue
         curve.keyframe_points.add(len(values))
         for i, (frame, value) in enumerate(values):
             point = curve.keyframe_points[i]
             point.co = (frame, value)
-            point.interpolation = 'BEZIER'
+            # LINEAR (not BEZIER): the RDP decimation bounds the piecewise-linear
+            # reconstruction error to the tolerance. BEZIER through the sparse
+            # kept points would overshoot between them (unbounded), which on a
+            # large-magnitude basis channel throws the pose off. Linear also
+            # evaluates cheaper.
+            point.interpolation = 'LINEAR'
+
+
+def _decimate_keyframes(points, tol):
+    """Ramer–Douglas–Peucker reduction of a dense (frame, value) sequence.
+
+    Frames are monotonic, so deviation is measured vertically (value error)
+    against the straight line between kept neighbours: a keyframe is kept only
+    if dropping it would move the interpolated value by more than ``tol``.
+    Endpoints are always kept.
+
+    In: points (list[tuple[int, float]]); tol (float).
+    Out: list[tuple[int, float]] — the retained keyframes, in order.
+    """
+    n = len(points)
+    if n <= 2:
+        return points
+    keep = [False] * n
+    keep[0] = keep[n - 1] = True
+    stack = [(0, n - 1)]
+    while stack:
+        a, b = stack.pop()
+        x0, y0 = points[a]
+        x1, y1 = points[b]
+        span = (x1 - x0) or 1.0
+        worst_dev = tol
+        worst_i = -1
+        for i in range(a + 1, b):
+            x, y = points[i]
+            interpolated = y0 + (y1 - y0) * (x - x0) / span
+            dev = abs(y - interpolated)
+            if dev > worst_dev:
+                worst_dev = dev
+                worst_i = i
+        if worst_i != -1:
+            keep[worst_i] = True
+            stack.append((a, worst_i))
+            stack.append((worst_i, b))
+    return [points[i] for i in range(n) if keep[i]]
 
 
 def _build_material_tracks(br_action, action, material_lookup, mat_slot_indices,

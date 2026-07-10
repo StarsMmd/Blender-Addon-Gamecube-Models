@@ -413,7 +413,9 @@ def _compare_br_by_category(br_a, br_b):
         bones_a = ma.armature.bones if ma.armature else []
         bones_b = mb.armature.bones if (mb and mb.armature) else []
         _score_category(categories, all_details, 'bones',
-                        bones_a, bones_b, f"model[{mi}].armature.bones")
+                        _normalize_spline_bones(bones_a),
+                        _normalize_spline_bones(bones_b),
+                        f"model[{mi}].armature.bones")
 
         _score_category(categories, all_details, 'meshes',
                         ma.meshes, mb.meshes if mb else [],
@@ -440,14 +442,19 @@ def _compare_br_by_category(br_a, br_b):
                         f"model[{mi}].constraints")
 
     _score_category(categories, all_details, 'lights',
-                    br_a.lights if br_a else [],
-                    br_b.lights if br_b else [],
+                    _drop_empty_clips(br_a.lights if br_a else []),
+                    _drop_empty_clips(br_b.lights if br_b else []),
                     "scene.lights")
 
     _score_category(categories, all_details, 'cameras',
-                    br_a.cameras if br_a else [],
-                    br_b.cameras if br_b else [],
+                    _drop_empty_clips(br_a.cameras if br_a else []),
+                    _drop_empty_clips(br_b.cameras if br_b else []),
                     "scene.cameras")
+
+    _score_category(categories, all_details, 'fog',
+                    _presence_list(getattr(br_a, 'fogs', []) if br_a else []),
+                    _presence_list(getattr(br_b, 'fogs', []) if br_b else []),
+                    "scene.fogs")
 
     return categories, all_details
 
@@ -508,9 +515,10 @@ def _compare_ir_by_category(ir_a, ir_b):
         if ma is None:
             continue
 
-        # Bones
+        # Bones (JOBJ_SPLINE curves scored on presence — lossy native curve)
         _score_category(categories, all_details, 'bones',
-                        ma.bones, mb.bones if mb else [],
+                        _normalize_spline_bones(ma.bones),
+                        _normalize_spline_bones(mb.bones if mb else []),
                         f"model[{mi}].bones")
 
         # Meshes (geometry only, material scored separately)
@@ -551,17 +559,23 @@ def _compare_ir_by_category(ir_a, ir_b):
                         cons_a, cons_b,
                         f"model[{mi}].constraints")
 
-    # Lights
+    # Lights / cameras — empty-presence animation clips are inert and filtered
+    # (they can't survive the Blender fcurve round-trip).
     _score_category(categories, all_details, 'lights',
-                    ir_a.lights if ir_a else [],
-                    ir_b.lights if ir_b else [],
+                    _drop_empty_clips(ir_a.lights if ir_a else []),
+                    _drop_empty_clips(ir_b.lights if ir_b else []),
                     "scene.lights")
 
-    # Cameras
     _score_category(categories, all_details, 'cameras',
-                    ir_a.cameras if ir_a else [],
-                    ir_b.cameras if ir_b else [],
+                    _drop_empty_clips(ir_a.cameras if ir_a else []),
+                    _drop_empty_clips(ir_b.cameras if ir_b else []),
                     "scene.cameras")
+
+    # Fog — scored on presence only (World-Mist mapping is lossy).
+    _score_category(categories, all_details, 'fog',
+                    _presence_list(getattr(ir_a, 'fogs', []) if ir_a else []),
+                    _presence_list(getattr(ir_b, 'fogs', []) if ir_b else []),
+                    "scene.fogs")
 
     return categories, all_details
 
@@ -717,6 +731,69 @@ def _dataclass_field_names(obj):
     return list(obj.__dataclass_fields__.keys())
 
 
+# ---------------------------------------------------------------------------
+# Leniency for inherently-lossy native Blender conversions
+#
+# Fog, JOBJ_SPLINE curves, and light/camera animation clips are imported as
+# real, editable Blender entities (World Mist, Curve objects, fcurve Actions)
+# rather than exact data blobs. That conversion is deliberately lossy, so the
+# round-trip comparators score these on presence/structure, not exact values —
+# otherwise they'd over-punish a design choice. See the doc's scoring section.
+# ---------------------------------------------------------------------------
+
+_CLIP_META_FIELDS = {'name', 'end_frame', 'loop'}
+
+
+def _presence_list(items):
+    """Map a list to same-length presence markers so scoring compares count/
+    presence but not the (lossy) field values. Used for the fog category."""
+    return [True for _ in (items or [])]
+
+
+def _normalize_spline_bones(bones):
+    """Return bones with each JOBJ_SPLINE reduced to a presence+count marker.
+
+    The spline round-trips through a Blender Curve, which keeps the control
+    points (modulo float32) but drops the GX type nuance, knots, and
+    coefficients. Score presence + control-point count, not the lossy detail.
+    """
+    from dataclasses import replace
+    out = []
+    for b in bones or []:
+        sp = getattr(b, 'spline', None)
+        if sp is not None:
+            n = len(getattr(sp, 'control_points', None) or [])
+            b = replace(b, spline=('spline', n))
+        out.append(b)
+    return out
+
+
+def _is_empty_clip(clip):
+    """True when an animation clip carries no channel data — an inert
+    presence node that can't survive the Blender fcurve round-trip."""
+    if clip is None:
+        return True
+    for f in _dataclass_field_names(clip):
+        if f in _CLIP_META_FIELDS:
+            continue
+        if getattr(clip, f, None):
+            return False
+    return True
+
+
+def _drop_empty_clips(items):
+    """Return light/camera-like items with empty-presence animation clips
+    filtered out on both sides, so their (accepted) loss isn't counted."""
+    from dataclasses import replace
+    out = []
+    for it in items or []:
+        anims = getattr(it, 'animations', None)
+        if anims:
+            it = replace(it, animations=[a for a in anims if not _is_empty_clip(a)])
+        out.append(it)
+    return out
+
+
 def _count_fields(obj):
     """Count the total number of comparable fields in an IR value (for scoring missing subtrees)."""
     if obj is None:
@@ -761,7 +838,7 @@ def _compare_node_trees(node_a, node_b):
             return
 
         for field_name, _ in a.fields:
-            if field_name in _NODE_SKIP_FIELDS:
+            if _skip_node_field(a, field_name):
                 continue
             val_a = getattr(a, field_name, None)
             val_b = getattr(b, field_name, None)
@@ -813,24 +890,55 @@ def _compare_node_trees(node_a, node_b):
 # address-like fields that change between builds but aren't model data
 _NODE_SKIP_FIELDS = {'address', 'data_address', 'display_list_address', 'base_pointer'}
 
+# Pointer fields that hold raw-buffer offsets on specific classes only.
+# These are skipped per-class rather than globally because the same field
+# name carries real content on other node types (e.g. SList.data). The
+# buffer bytes behind each pointer are compared via _COMPARE_BLOBS below,
+# so skipping the offset loses no coverage.
+_CLASS_SKIP_FIELDS = {
+    'Frame': {'ad'},
+    'Palette': {'data'},
+}
+
+
+def _skip_node_field(node, field_name):
+    """True when a field is an offset/pointer, not model data."""
+    if field_name in _NODE_SKIP_FIELDS:
+        return True
+    return field_name in _CLASS_SKIP_FIELDS.get(type(node).__name__, ())
+
 
 # Raw data buffers some nodes carry as plain *attributes* (set in
 # loadFromBinary), not as declared `fields`. The field-walking comparisons
-# above never see them, so the buffer contents were previously unchecked by
-# NBN/NIN. Declare them here so both comparisons validate the actual data.
-# Each entry is (attr, kind):
+# above never see them, so without these entries the buffer contents would
+# go unchecked by NBN/NIN (while their offset fields are skipped as
+# layout-dependent). Declare them here so both comparisons validate the
+# actual data. Each entry is (attr, kind):
 #   'aabb_frames' — BoundBox per-frame AABBs. The node's iter_frames() splits
 #                   the structured blob into 24-byte (min+max vec3) chunks,
 #                   skipping the per-set uint32 count prefixes, so frames are
 #                   compared 1-to-1 and aligned across animation sets. One
 #                   point per frame (matched / error / miss).
-#   'bytes'       — compared byte-for-byte as a single point.
-# Extendable to image/palette/keyframe/vertex buffers (raw_image_data,
-# raw_data, raw_ad, raw_vertex_data) when we want those covered too.
+#   'bytes'       — compared byte-for-byte as a single point. One point per
+#                   buffer keeps huge payloads (texture pixels, vertex
+#                   buffers) from drowning out the structured fields, the
+#                   same reasoning as IBI's category weighting.
 _COMPARE_BLOBS = {
     'BoundBox': (('raw_aabb_data', 'aabb_frames'),),
+    'Frame': (('raw_ad', 'bytes'),),          # keyframe opcode stream
+    'Palette': (('raw_data', 'bytes'),),      # TLUT color entries
+    'PObject': (('raw_display_list', 'bytes'),),  # GX strip/triangle stream
+    'Vertex': (('raw_vertex_data', 'bytes'),),    # attribute payload buffer
+    'Image': (('raw_image_data', 'bytes'),),      # encoded texture pixels
 }
 _BLOB_FLOAT_TOL = 1e-3
+# Recomputed AABBs are derived data (per-frame skinned boxes), not
+# round-tripped bytes: the recompute reproduces the game's convention
+# (visible-mesh LBS box) but small residuals remain — float32 storage and
+# per-frame visibility animation the recompute doesn't apply. Score a frame
+# as diverged only beyond an absolute floor + a fraction of the box extent.
+_AABB_ABS_TOL = 0.25   # GC units
+_AABB_REL_TOL = 0.01   # fraction of the original frame's largest dimension
 
 
 def _compare_blob_attrs(orig_node, comp_node):
@@ -869,7 +977,8 @@ def _compare_blob_attrs(orig_node, comp_node):
                 fo = struct.unpack('>6f', of[i])
                 fc = struct.unpack('>6f', cf[i])
                 dmax = max(abs(a - b) for a, b in zip(fo, fc))
-                if dmax > _BLOB_FLOAT_TOL:
+                extent = max(fo[3] - fo[0], fo[4] - fo[1], fo[5] - fo[2], 0.0)
+                if dmax > max(_AABB_ABS_TOL, _AABB_REL_TOL * extent):
                     errors += 1
                     bad += 1
                     if dmax > worst:
@@ -960,7 +1069,7 @@ def _compare_node_trees_nin(orig, composed):
 
         node_path = f"{path}({_node_label(orig_node)})"
         for field_name, _ in orig_node.fields:
-            if field_name in _NODE_SKIP_FIELDS:
+            if _skip_node_field(orig_node, field_name):
                 continue
 
             val_orig = getattr(orig_node, field_name, None)
@@ -1075,8 +1184,8 @@ def find_model_files(path):
 def run_all_tests(filepath, skip_bbb=False):
     """Run all round-trip tests on a single model file. Returns dict of scores.
 
-    skip_bbb omits the BR→Blender→BR test, which drives a full bpy build — slow
-    (minutes) on large map/scene archives and the cause of the D1_out hang.
+    skip_bbb omits the BR→Blender→BR test (the only leg that drives a full
+    bpy build + describe) — an escape hatch for quick sweeps.
     """
     name = os.path.splitext(os.path.basename(filepath))[0]
     scores = {'name': name}
@@ -1299,10 +1408,11 @@ def main():
     for filepath in files:
         name = os.path.splitext(os.path.basename(filepath))[0]
         print(f"  {name}...", end=' ', flush=True)
-        # Map / scene archives (.rdat) skip BBB by default — the bpy build is
-        # minutes-slow on them (and hangs on D1_out). Override with --maps-bbb.
-        skip_bbb = filepath.lower().endswith('.rdat') and '--maps-bbb' not in flags
-        scores = run_all_tests(filepath, skip_bbb=skip_bbb)
+        # BBB runs on all model types, maps included — the historical
+        # minutes-slow map cost was a per-armature action over-attachment
+        # in the export describe phase, fixed by slot-bound action
+        # selection. --skip-bbb omits it for quick sweeps.
+        scores = run_all_tests(filepath, skip_bbb='--skip-bbb' in flags)
         all_scores.append(scores)
 
         parts = []

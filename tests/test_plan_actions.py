@@ -1,26 +1,28 @@
 """Unit tests for the Plan phase's IR animations → BR actions helper and the
-pure compute_pose_basis formula.
+pure-math NONE-inheritance pose bake.
 
-compute_pose_basis was previously entangled with bpy inside _bake_bone_track;
-lifting it out means the per-frame pose-basis math can be directly tested
-with synthetic inputs, no Blender runtime required.
+The bake (``bake_frame``) reproduces the GX runtime pose under Blender's
+``inherit_scale='NONE'`` without a Blender runtime: it composes each bone's GX
+world per frame and inverts NONE's closed-form forward map to a shear-free
+basis. These tests validate the round trip invert∘forward against independently
+composed GX chains — including non-uniform, compound-rotated, multi-level
+chains that the old aligned/direct hybrid could not represent. The forward map
+itself is validated against real bpy end-to-end in the scale-inheritance probes
+(not run here, no bpy).
 """
 import math
 
-from shared.IR.skeleton import IRBone, IRModel
+from shared.IR.skeleton import IRBone
 from shared.IR.enums import ScaleInheritance, Interpolation
-from shared.IR.animation import (
-    IRBoneAnimationSet, IRBoneTrack, IRKeyframe,
-)
-from shared.BR.actions import BRAction, BRBoneTrack, BRBakeContext, BRMaterialTrack
-from shared.helpers.math_shim import (
-    Matrix, Vector, compile_srt_matrix, matrix_to_list,
-)
+from shared.IR.animation import IRBoneAnimationSet, IRBoneTrack, IRKeyframe
+from shared.BR.actions import BRAction, BRBoneTrack, BRMaterialTrack, BRBakeSkeleton
+from shared.helpers.math_shim import Matrix, compile_srt_matrix, matrix_to_list
 from importer.phases.plan.helpers.animations import (
     plan_actions,
-    choose_bake_strategy,
-    compute_pose_basis,
-    attach_parent_edit_scale_corrections,
+    build_bake_skeleton,
+    bake_frame,
+    compute_bake_plan,
+    scale_baked_indices,
 )
 
 
@@ -31,32 +33,34 @@ def _kf(frame, value):
     return IRKeyframe(frame=frame, value=value, interpolation=Interpolation.LINEAR)
 
 
-def _make_bone(name, parent_index=None, scale=(1.0, 1.0, 1.0), accumulated=None,
-               scale_correction=None):
+def _make_bone(name, parent_index=None, scale=(1.0, 1.0, 1.0),
+               rotation=(0.0, 0.0, 0.0), position=(0.0, 0.0, 0.0),
+               world_matrix=None, normalized_world_matrix=None, flags=0,
+               accumulated=None):
     return IRBone(
         name=name,
         parent_index=parent_index,
-        position=(0.0, 0.0, 0.0),
-        rotation=(0.0, 0.0, 0.0),
+        position=position,
+        rotation=rotation,
         scale=scale,
         inverse_bind_matrix=None,
-        flags=0,
+        flags=flags,
         is_hidden=False,
-        inherit_scale=ScaleInheritance.ALIGNED,
+        inherit_scale=ScaleInheritance.ALIGNED,  # don't-care for the NONE bake
         ik_shrink=False,
-        world_matrix=IDENTITY,
+        world_matrix=world_matrix if world_matrix is not None else IDENTITY,
         local_matrix=IDENTITY,
-        normalized_world_matrix=IDENTITY,
+        normalized_world_matrix=(normalized_world_matrix
+                                 if normalized_world_matrix is not None else IDENTITY),
         normalized_local_matrix=IDENTITY,
-        scale_correction=scale_correction if scale_correction is not None else IDENTITY,
+        scale_correction=IDENTITY,
         accumulated_scale=accumulated if accumulated is not None else scale,
     )
 
 
 def _make_ir_track(bone_index, bone_name="B", rest_scale=(1.0, 1.0, 1.0),
                    rest_rotation=(0, 0, 0), rest_position=(0, 0, 0),
-                   rotation=None, location=None, scale=None,
-                   end_frame=10, spline_path=None):
+                   rotation=None, location=None, scale=None, end_frame=10):
     rest_local = compile_srt_matrix(rest_scale, rest_rotation, rest_position)
     return IRBoneTrack(
         bone_name=bone_name,
@@ -69,26 +73,52 @@ def _make_ir_track(bone_index, bone_name="B", rest_scale=(1.0, 1.0, 1.0),
         rest_position=rest_position,
         rest_scale=rest_scale,
         end_frame=end_frame,
-        spline_path=spline_path,
+        spline_path=None,
     )
 
 
-class TestChooseBakeStrategy:
+# ---------------------------------------------------------------------------
+# GX reference chain (independent of the bake code under test).
+# ---------------------------------------------------------------------------
 
-    def test_uniform_accumulated_scale_picks_aligned(self):
-        assert choose_bake_strategy((1.0, 1.0, 1.0)) == 'aligned'
+def _gx_chain(joints):
+    """Compose a GX bone chain. joints: list of dicts scale/rot/pos, each bone's
+    parent is the previous. Returns (world_matrices, accumulated_scales)."""
+    worlds, accums = [], []
+    pw, pa = None, None
+    for j in joints:
+        local = compile_srt_matrix(j['scale'], j['rot'], j['pos'], pa)
+        world = local if pw is None else pw @ local
+        accum = tuple(j['scale']) if pa is None else tuple(j['scale'][c] * pa[c] for c in range(3))
+        worlds.append(world)
+        accums.append(accum)
+        pw, pa = world, accum
+    return worlds, accums
 
-    def test_non_uniform_picks_direct(self):
-        assert choose_bake_strategy((1.221, 0.549, 1.0)) == 'direct'
 
-    def test_all_zero_accumulated_picks_direct(self):
-        assert choose_bake_strategy((0.0, 0.0, 0.0)) == 'direct'
+def _normalized(m):
+    nw = m.to_3x3().normalized().to_4x4()
+    t = m.translation
+    rows = [[nw[i][j] for j in range(4)] for i in range(4)]
+    rows[0][3], rows[1][3], rows[2][3] = t[0], t[1], t[2]
+    return Matrix(rows)
 
-    def test_slight_variation_within_ratio_picks_aligned(self):
-        assert choose_bake_strategy((1.0, 1.05, 1.03)) == 'aligned'
 
-    def test_negative_uniform_picks_aligned(self):
-        assert choose_bake_strategy((-1.0, -1.0, -1.0)) == 'aligned'
+def _skeleton_from_chain(rest_joints):
+    """Build a linear-chain BRBakeSkeleton whose edit-bone rests come from the
+    GX rest worlds of ``rest_joints``."""
+    rest_w, rest_accums = _gx_chain(rest_joints)
+    bones = []
+    for i, j in enumerate(rest_joints):
+        bone = _make_bone(
+            f"b{i}", parent_index=(i - 1 if i > 0 else None),
+            scale=j['scale'], rotation=j['rot'], position=j['pos'],
+            world_matrix=matrix_to_list(rest_w[i]),
+            normalized_world_matrix=matrix_to_list(_normalized(rest_w[i])),
+            accumulated=rest_accums[i],
+        )
+        bones.append(bone)
+    return build_bake_skeleton(bones), rest_w
 
 
 class TestPlanActions:
@@ -97,31 +127,20 @@ class TestPlanActions:
         assert plan_actions([], []) == []
 
     def test_single_track_translates_to_br_action(self):
-        bones = [_make_bone("Root")]
         ir_track = _make_ir_track(bone_index=0, bone_name="Root")
         anim_set = IRBoneAnimationSet(name="Idle", tracks=[ir_track])
-        br_actions = plan_actions([anim_set], bones)
+        br_actions = plan_actions([anim_set], [_make_bone("Root")])
 
         assert len(br_actions) == 1
         action = br_actions[0]
         assert isinstance(action, BRAction)
         assert action.name == "Idle"
-        assert len(action.bone_tracks) == 1
-
         track = action.bone_tracks[0]
         assert isinstance(track, BRBoneTrack)
         assert track.bone_name == "Root"
         assert track.bone_index == 0
-        assert track.bake_context.strategy == 'aligned'
 
-    def test_non_uniform_ancestor_selects_direct_strategy(self):
-        bones = [_make_bone("Root", accumulated=(1.2, 0.5, 1.0))]
-        ir_track = _make_ir_track(bone_index=0, bone_name="Root")
-        anim_set = IRBoneAnimationSet(name="A", tracks=[ir_track])
-        br_actions = plan_actions([anim_set], bones)
-        assert br_actions[0].bone_tracks[0].bake_context.strategy == 'direct'
-
-    def test_material_tracks_carried_through_as_br_material_track(self):
+    def test_material_tracks_carried_through(self):
         from shared.IR.animation import IRMaterialTrack
         mat_track = IRMaterialTrack(
             material_mesh_name='mesh_0_Root',
@@ -130,122 +149,156 @@ class TestPlanActions:
         )
         anim_set = IRBoneAnimationSet(name="A", tracks=[], material_tracks=[mat_track])
         br_actions = plan_actions([anim_set], [])
-        assert len(br_actions[0].material_tracks) == 1
         assert isinstance(br_actions[0].material_tracks[0], BRMaterialTrack)
         assert br_actions[0].material_tracks[0].material_mesh_name == 'mesh_0_Root'
 
-    def test_parent_edit_scale_correction_attached(self):
-        """attach_parent_edit_scale_corrections fills the aligned-path link
-        that can't be resolved from the track alone."""
-        parent_sc = matrix_to_list(Matrix.Scale(2.0, 4))
+
+class TestBuildBakeSkeleton:
+
+    def test_parent_first_order(self):
+        # Bones listed child-before-parent; dfs_order must fix that.
         bones = [
-            _make_bone("Root", scale_correction=parent_sc),
-            _make_bone("Child", parent_index=0),
+            _make_bone("child", parent_index=1),
+            _make_bone("root", parent_index=None),
         ]
-        ir_track = _make_ir_track(bone_index=1, bone_name="Child")
-        anim_set = IRBoneAnimationSet(name="A", tracks=[ir_track])
-        br_actions = plan_actions([anim_set], bones)
-        assert br_actions[0].bone_tracks[0].bake_context.parent_edit_scale_correction is None
-        attach_parent_edit_scale_corrections(br_actions, bones)
-        assert br_actions[0].bone_tracks[0].bake_context.parent_edit_scale_correction == parent_sc
+        skel = build_bake_skeleton(bones)
+        assert isinstance(skel, BRBakeSkeleton)
+        assert skel.dfs_order.index(1) < skel.dfs_order.index(0)
+
+    def test_classical_scaling_flag_extracted(self):
+        from shared.Constants.hsd import JOBJ_CLASSICAL_SCALING
+        bones = [
+            _make_bone("plain", flags=0),
+            _make_bone("classical", flags=JOBJ_CLASSICAL_SCALING),
+        ]
+        skel = build_bake_skeleton(bones)
+        assert skel.bones[0].classical_scaling is False
+        assert skel.bones[1].classical_scaling is True
 
 
-class TestComputePoseBasisDirectPath:
-    """Direct-path formula: used when accumulated parent scale is non-uniform.
-    Translation and rotation are decomposed against the rest; scale is the
-    per-channel animated/rest ratio."""
+class TestScaleBakedIndices:
+    """Bake-default partition: a bone reads back under NONE if its rest scale is
+    non-uniform, its scale is animated, or any ancestor's is (the closure). The
+    rest read back under native ALIGNED. Precomputed on the skeleton."""
 
-    def _make_ctx(self, rest_scale=(1.0, 1.0, 1.0), rest_position=(0.0, 0.0, 0.0),
-                  rest_rotation=(0.0, 0.0, 0.0), has_path=False):
-        rest_base = compile_srt_matrix(rest_scale, rest_rotation, rest_position)
-        trans, quat, scl = rest_base.decompose()
-        return BRBakeContext(
-            strategy='direct',
-            rest_base=matrix_to_list(rest_base),
-            rest_base_inv=matrix_to_list(rest_base.inverted_safe()),
-            has_path=has_path,
-            rest_translation=(trans.x, trans.y, trans.z),
-            rest_rotation_quat=(quat.w, quat.x, quat.y, quat.z),
-            rest_scale=(scl.x, scl.y, scl.z),
-        )
+    def test_fully_uniform_no_scale_anim_is_empty(self):
+        rest = [dict(scale=(1, 1, 1), rot=(0, 0, 0), pos=(0, 0, 0)),
+                dict(scale=(2, 2, 2), rot=(0, 0, 0), pos=(0, 1, 0)),   # uniform non-identity
+                dict(scale=(1, 1, 1), rot=(0, 0, 0), pos=(0, 1, 0))]
+        skel, _ = _skeleton_from_chain(rest)
+        assert scale_baked_indices(skel) == set()
 
-    def test_rest_pose_yields_identity_basis(self):
-        """Animated SRT == rest SRT → pose basis is identity."""
-        ctx = self._make_ctx()
-        loc, rot, scl = compute_pose_basis(ctx, (1.0, 1.0, 1.0), (0, 0, 0), (0, 0, 0))
-        assert all(abs(v) < 1e-6 for v in loc)
-        assert all(abs(v) < 1e-6 for v in rot)
-        assert all(abs(v - 1.0) < 1e-6 for v in scl)
+    def test_nonuniform_rest_and_descendants_baked(self):
+        rest = [dict(scale=(1, 1, 1), rot=(0, 0, 0), pos=(0, 0, 0)),
+                dict(scale=(2, 1, 0.5), rot=(0, 0, 0), pos=(0, 1, 0)),  # non-uniform
+                dict(scale=(1, 1, 1), rot=(0, 0, 0), pos=(0, 1, 0))]    # inherits non-uniform accum
+        skel, _ = _skeleton_from_chain(rest)
+        assert scale_baked_indices(skel) == {1, 2}
 
-    def test_scale_is_per_channel_ratio_against_rest(self):
-        """Direct path divides animated scale by rest scale."""
-        ctx = self._make_ctx(rest_scale=(2.0, 4.0, 0.5))
-        _, _, scl = compute_pose_basis(ctx, (1.0, 1.0, 1.0), (0, 0, 0), (0, 0, 0))
-        assert abs(scl[0] - 0.5) < 1e-6
-        assert abs(scl[1] - 0.25) < 1e-6
-        assert abs(scl[2] - 2.0) < 1e-6
+    def test_scale_animated_bone_and_descendants_baked(self):
+        """A bone with uniform rest scale but any scale animation reads back
+        under NONE, and so do its descendants (they'd inherit its scale)."""
+        bones = [
+            _make_bone("b0", accumulated=(1, 1, 1)),
+            _make_bone("b1", parent_index=0, accumulated=(1, 1, 1)),
+            _make_bone("b2", parent_index=1, accumulated=(1, 1, 1)),
+        ]
+        track = _make_ir_track(1, "b1", scale=[[_kf(0, 1.0), _kf(5, 2.0)], [], []])
+        anim = IRBoneAnimationSet(name="A", tracks=[track])
+        skel = build_bake_skeleton(bones, [anim])
+        assert scale_baked_indices(skel) == {1, 2}
 
-    def test_near_zero_rest_scale_falls_back_to_animated(self):
-        """When rest component is near zero, the basis uses the animated
-        value directly (avoiding division by ~0)."""
-        ctx = self._make_ctx(rest_scale=(1e-9, 1.0, 1.0))
-        _, _, scl = compute_pose_basis(ctx, (3.0, 1.0, 1.0), (0, 0, 0), (0, 0, 0))
-        assert abs(scl[0] - 3.0) < 1e-6
-
-    def test_translated_animated_loc_produces_rotated_delta(self):
-        """When rest is at origin with no rotation, animated translation
-        passes through as the basis location."""
-        ctx = self._make_ctx()
-        loc, _, _ = compute_pose_basis(ctx, (1.0, 1.0, 1.0), (0, 0, 0), (5.0, 0.0, 0.0))
-        assert abs(loc[0] - 5.0) < 1e-5
-        assert abs(loc[1]) < 1e-5
-        assert abs(loc[2]) < 1e-5
-
-    def test_basis_scale_clamped_at_max(self):
-        """A pathological rest/animated combination shouldn't produce
-        unbounded basis scale — the 100.0 clamp keeps runaway values sane."""
-        ctx = self._make_ctx(rest_scale=(0.01, 1.0, 1.0))
-        _, _, scl = compute_pose_basis(ctx, (100.0, 1.0, 1.0), (0, 0, 0), (0, 0, 0))
-        # 100.0 / 0.01 = 10000, but clamp caps at 100.
-        assert abs(scl[0] - 100.0) < 1e-5
+    def test_rotation_only_animation_stays_aligned(self):
+        """Rotation/location animation alone does not force NONE."""
+        bones = [_make_bone("b0", accumulated=(1, 1, 1))]
+        track = _make_ir_track(0, "b0", rotation=[[_kf(0, 0.0), _kf(5, 1.0)], [], []])
+        anim = IRBoneAnimationSet(name="A", tracks=[track])
+        skel = build_bake_skeleton(bones, [anim])
+        assert scale_baked_indices(skel) == set()
 
 
-class TestComputePoseBasisAlignedPath:
-    """Aligned-path formula: legacy edit_scale_correction sandwich."""
+class TestComputeBakePlan:
 
-    def _make_ctx(self):
-        """Trivial aligned context: identity rest, identity edit corrections."""
-        return BRBakeContext(
-            strategy='aligned',
-            rest_base=IDENTITY,
-            rest_base_inv=IDENTITY,
-            has_path=False,
-            rest_translation=(0.0, 0.0, 0.0),
-            rest_rotation_quat=(1.0, 0.0, 0.0, 0.0),
-            rest_scale=(1.0, 1.0, 1.0),
-            local_edit=IDENTITY,
-            edit_scale_correction=IDENTITY,
-            parent_edit_scale_correction=None,
-        )
+    def test_animated_and_nonuniform_bones_are_baked(self):
+        rest = [dict(scale=(1, 1, 1), rot=(0, 0, 0), pos=(0, 0, 0)),       # uniform root
+                dict(scale=(2, 1, 0.5), rot=(0, 0, 0), pos=(0, 1, 0)),     # non-uniform
+                dict(scale=(1, 1, 1), rot=(0, 0, 0), pos=(0, 1, 0))]       # uniform child (inherits nonuniform accum)
+        skel, _ = _skeleton_from_chain(rest)
+        bake_indices, levels = compute_bake_plan(skel, animated_indices=set())
+        # bone 1 is non-uniform; bone 2 inherits a non-uniform accumulated scale.
+        assert 1 in bake_indices and 2 in bake_indices
+        # A purely-uniform root with no animation need not be baked.
+        assert 0 not in bake_indices
+        # Depth levels are parent-before-child.
+        d1 = next(d for d, lvl in enumerate(levels) if 1 in lvl)
+        d2 = next(d for d, lvl in enumerate(levels) if 2 in lvl)
+        assert d1 < d2
 
-    def test_rest_pose_yields_identity_basis(self):
-        ctx = self._make_ctx()
-        loc, rot, scl = compute_pose_basis(ctx, (1.0, 1.0, 1.0), (0, 0, 0), (0, 0, 0))
-        assert all(abs(v) < 1e-6 for v in loc)
-        assert all(abs(v) < 1e-6 for v in rot)
-        assert all(abs(v - 1.0) < 1e-6 for v in scl)
+    def test_animated_uniform_bone_is_baked(self):
+        rest = [dict(scale=(1, 1, 1), rot=(0, 0, 0), pos=(0, 0, 0))]
+        skel, _ = _skeleton_from_chain(rest)
+        bake_indices, _ = compute_bake_plan(skel, animated_indices={0})
+        assert bake_indices == [0]
 
-    def test_animated_translation_passes_through(self):
-        ctx = self._make_ctx()
-        loc, _, _ = compute_pose_basis(ctx, (1.0, 1.0, 1.0), (0, 0, 0), (3.0, 2.0, 1.0))
-        assert abs(loc[0] - 3.0) < 1e-5
-        assert abs(loc[1] - 2.0) < 1e-5
-        assert abs(loc[2] - 1.0) < 1e-5
 
-    def test_animated_scale_passes_through(self):
-        """Identity corrections + identity rest → basis scale equals animated scale."""
-        ctx = self._make_ctx()
-        _, _, scl = compute_pose_basis(ctx, (2.5, 0.5, 1.5), (0, 0, 0), (0, 0, 0))
-        assert abs(scl[0] - 2.5) < 1e-5
-        assert abs(scl[1] - 0.5) < 1e-5
-        assert abs(scl[2] - 1.5) < 1e-5
+class TestBakeFrame:
+    """The core: bake_frame emits the GX target pose per bone. Build applies it
+    via pose_bone.matrix so Blender inverts NONE (verified end-to-end under bpy
+    in the scale-inheritance probes / deoxys validation, not here)."""
+
+    def test_rest_frame_targets_equal_normalized_rest(self):
+        """At rest, the target pose is the normalized edit-bone rest (identity
+        pose delta)."""
+        rest = [dict(scale=(2, 1, 0.5), rot=(0, 0, 0), pos=(0, 0, 0)),
+                dict(scale=(1, 1, 1), rot=(0.2, 0.1, 0.0), pos=(0.3, 1, 0.2))]
+        skel, _ = _skeleton_from_chain(rest)
+        frame_srts = {i: (rest[i]['scale'], rest[i]['rot'], rest[i]['pos'])
+                      for i in range(len(rest))}
+        bake_indices, _ = compute_bake_plan(skel, set(frame_srts))
+        targets = bake_frame(skel, frame_srts, bake_indices)
+        for i in bake_indices:
+            norm_rest = Matrix(skel.bones[i].normalized_rest_matrix)
+            got = Matrix(targets[i])
+            err = max(abs(got[r][c] - norm_rest[r][c]) for r in range(3) for c in range(4))
+            assert err < 1e-6
+
+    def test_targets_reproduce_gx_nonuniform_compound_chain(self):
+        rest = [dict(scale=(2, 1, 0.5), rot=(0, 0, 0), pos=(0, 0, 0)),
+                dict(scale=(1.3, 0.6, 1.4), rot=(math.radians(10), 0, math.radians(5)), pos=(0.3, 1, 0.2)),
+                dict(scale=(1, 1, 1), rot=(0, math.radians(20), 0), pos=(0.1, 1, 0)),
+                dict(scale=(1, 1, 1), rot=(0, 0, 0), pos=(0, 1, 0))]
+        anim = [dict(scale=(2.5, 1.2, 0.4), rot=(0, 0, math.radians(15)), pos=(0, 0, 0)),
+                dict(scale=(0.9, 1.5, 1.1), rot=(math.radians(30), math.radians(25), math.radians(15)), pos=(0.3, 1, 0.2)),
+                dict(scale=(1, 1, 1), rot=(math.radians(20), math.radians(-15), math.radians(10)), pos=(0.1, 1, 0)),
+                dict(scale=(1.4, 0.7, 1.0), rot=(math.radians(-12), math.radians(8), math.radians(22)), pos=(0, 1, 0))]
+        skel, rest_w = _skeleton_from_chain(rest)
+        anim_w, _ = _gx_chain(anim)
+        animated = set(range(len(anim)))
+        frame_srts = {i: (anim[i]['scale'], anim[i]['rot'], anim[i]['pos']) for i in animated}
+        bake_indices, _ = compute_bake_plan(skel, animated)
+        targets = bake_frame(skel, frame_srts, bake_indices)
+        for i in animated:
+            norm_rest = Matrix(skel.bones[i].normalized_rest_matrix)
+            expected = anim_w[i] @ rest_w[i].inverted_safe() @ norm_rest
+            got = Matrix(targets[i])
+            err = max(abs(got[r][c] - expected[r][c]) for r in range(3) for c in range(4))
+            assert err < 1e-5, f"bone {i} target err {err}"
+
+    def test_unanimated_bone_follows_animated_ancestor(self):
+        """An un-animated non-uniform bone still gets a target that tracks its
+        animated parent (not the static rest world)."""
+        rest = [dict(scale=(2, 1, 0.5), rot=(0, 0, 0), pos=(0, 0, 0)),
+                dict(scale=(1, 1, 1), rot=(0, 0, 0), pos=(0.3, 1, 0.2))]
+        anim = [dict(scale=(2, 1, 0.5), rot=(0, 0, math.radians(40)), pos=(0, 0, 0)),
+                dict(scale=(1, 1, 1), rot=(0, 0, 0), pos=(0.3, 1, 0.2))]
+        skel, rest_w = _skeleton_from_chain(rest)
+        anim_w, _ = _gx_chain(anim)
+        frame_srts = {0: (anim[0]['scale'], anim[0]['rot'], anim[0]['pos'])}  # only bone 0 animated
+        bake_indices, _ = compute_bake_plan(skel, {0})
+        assert 1 in bake_indices  # non-uniform-accum → baked even though un-animated
+        targets = bake_frame(skel, frame_srts, bake_indices)
+        norm_rest = Matrix(skel.bones[1].normalized_rest_matrix)
+        expected = anim_w[1] @ rest_w[1].inverted_safe() @ norm_rest
+        got = Matrix(targets[1])
+        err = max(abs(got[r][c] - expected[r][c]) for r in range(3) for c in range(4))
+        assert err < 1e-5
