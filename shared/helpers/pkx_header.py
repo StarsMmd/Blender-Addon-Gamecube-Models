@@ -60,7 +60,34 @@ class PartAnimData:
         In: (none — derived from self.bone_config).
         Out: list[int] of part indices in declaration order, no 0xFF entries.
         """
-        return [b for b in self.bone_config[:8] if b != 0xFF]
+        return [a for a, _ in self.active_entries()]
+
+    def active_entries(self):
+        """Return the active (part_index, selector) pairs for a type-2 block.
+
+        bone_config splits into two parallel 8-entry arrays: bytes 0-7 are part
+        indices, bytes 8-15 are the matching selectors. An entry is active when
+        its part index is not the 0xFF sentinel. A selector of 0xFF means the
+        entry is a joint animation on that part; any other value means a
+        per-part texture animation (the selector is its parameter). Trailing
+        unused entries are 0xFF, so scanning by index reproduces the engine's
+        per-entry read without depending on sub_param.
+
+        In: (none — derived from self.bone_config).
+        Out: list[(part_index, selector)] for active entries, in order.
+        """
+        cfg = self.bone_config
+        entries = []
+        for i in range(min(8, len(cfg))):
+            if cfg[i] != 0xFF:
+                selector = cfg[8 + i] if 8 + i < len(cfg) else 0xFF
+                entries.append((cfg[i], selector))
+        return entries
+
+    def is_joint_target(self):
+        """True iff every active entry is a joint animation (selector 0xFF)."""
+        entries = self.active_entries()
+        return bool(entries) and all(b == 0xFF for _, b in entries)
 
     @classmethod
     def from_bytes(cls, data, offset):

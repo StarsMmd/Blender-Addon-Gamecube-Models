@@ -340,27 +340,29 @@ The **Sub-Animations** section of the PKX Metadata panel holds four *overlay* an
 
 The trigger is shown read-only because it is decided by the block's position, not stored in the file — block 2 is always the idle "extra" overlay, and so on.
 
-For each block, set the **Type**:
+For each block, set the **Type** (the last two are XD only):
 
 - **Off** — the block does nothing.
 - **Whole-Model Texture** — plays a **texture / material animation across the whole model** (scrolling/animated textures, glow pulses). Pick the clip in the **Animation** dropdown. No bones are involved.
-- **Targeted Joints** — plays a **skeletal animation on only the bones you list** (XD only). The rest of the body keeps playing its current animation. Pick the clip in **Animation**, then build the bone list.
+- **Targeted Texture** — plays a **texture animation on specific parts** (e.g. a glow ring or wing-fire tied to one bone). You list the parts *and* a per-part texture **selector** value. This is how the game's single-part Pokémon glow/flame overlays are built.
+- **Targeted Joints** — plays a **skeletal animation on only the bones you list**. The rest of the body keeps playing its current animation. Used by the game's trainer models for cloth/cape sway.
 
-So the choice is essentially *material animation* (Whole-Model Texture) vs *joint animation* (Targeted Joints).
+So the four options are, in effect: off · whole-model *material* animation · per-part *material* animation · per-part *joint* animation. The two targeted kinds share one bone/part list; they differ only by whether a per-part texture selector is attached (behind the scenes: selector `0xFF` = joint, any other value = texture).
 
-**Editing the target bones (Targeted Joints only):**
+**Editing the target list (either targeted type):**
 
-1. Set Type to **Targeted Joints**. A **Target Bones (n/8)** list appears.
-2. Click **Add Bone** to add a slot (up to 8). Each new slot is seeded with a bone so it's immediately valid.
-3. Click a bone button to open a searchable picker and choose the bone the overlay should drive.
-4. Click the **X** next to a bone to remove it.
+1. Set Type to **Targeted Texture** or **Targeted Joints**. A **Target Parts/Bones (n/8)** list appears.
+2. Click **Add Bone/Part** to add a slot (up to 8). Each new slot is seeded with a bone so it's immediately valid.
+3. Click a bone button to open a searchable picker and choose the bone the overlay drives.
+4. **Targeted Texture only:** click the **tex N** button next to a bone to set that part's texture selector (0–254).
+5. Click the **X** to remove an entry.
 
 Notes:
 
-- **The listed bones follow the overlay clip; every other bone keeps its base animation.** So for a blink you'd list only the eyelid bones; for a cape flutter, only the cloth chain.
-- **An empty bone list means the overlay never plays** — a Targeted Joints block with zero bones is silently skipped in-game. Either add bones or set the block to Off.
+- **The listed bones/parts follow the overlay clip; everything else keeps its base animation.** For a blink you'd list only the eyelid bones; for a cape flutter, only the cloth chain; for a glow, the single bone the effect rides on.
+- **An empty list means the overlay never plays** — a targeted block with zero entries is silently skipped in-game. Either add entries or set the block to Off.
 - Overlay clips are usually short (often 2-frame) target poses; the game eases into them. They can't be previewed layered in Blender without setting up NLA tracks manually.
-- Bones are stored by **name** and resolved to indices on export, so they survive bone reordering. Names must match bones on the exported armature.
+- Bones are stored by **name** and resolved to indices on export, so they survive bone reordering. Names must match bones on the exported armature. Texture selectors are stored alongside as plain integers.
 
 ---
 

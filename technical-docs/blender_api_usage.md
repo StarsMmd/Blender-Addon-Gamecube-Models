@@ -18,7 +18,7 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.80 | current | `bpy.types.TOPBAR_MT_file_export.append()` | `BlenderPlugin.py` | |
 | 2.80 | current | `bpy.types.TOPBAR_MT_file_import.remove()` | `BlenderPlugin.py` | |
 | 2.80 | current | `bpy.types.TOPBAR_MT_file_export.remove()` | `BlenderPlugin.py` | |
-| 2.80 | current | `bpy.types.Operator` (subclass) | `BlenderPlugin.py` | ImportHSD, ExportHSD, DAT_OT_SetEnumProp, DAT_OT_SubAnimBone{Add,Remove,Set} |
+| 2.80 | current | `bpy.types.Operator` (subclass) | `BlenderPlugin.py` | ImportHSD, ExportHSD, DAT_OT_SetEnumProp, DAT_OT_SubAnimBone{Add,Remove,Set}, DAT_OT_SubAnimSelectorSet |
 | 2.80 | current | `bpy.types.Panel` (subclass) | `BlenderPlugin.py` | DAT_PT_PKXPanel |
 | 2.80 | current | `bpy.types.OperatorFileListElement` | `BlenderPlugin.py` | |
 | | | | | |

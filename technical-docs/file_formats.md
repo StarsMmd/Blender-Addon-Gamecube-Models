@@ -746,12 +746,14 @@ For `has_data == 2` the loop runs `sub_param` (byte 1) times over **two parallel
 
 Every entry in the block shares the single `anim_index_ref` (byte 18) as the clip/index to apply. Up to 8 entries.
 
-> **Plugin support:** the exporter authors only the pure-joint case — it writes bone indices into bytes 2-9, leaves the selector array (10-17) all `0xFF`, and sets `sub_param` from the count. Per-part texture entries (`B[i] != 0xFF`) are a format capability we don't currently author or surface in the panel.
+> **Plugin support:** both kinds round-trip. The PKX Metadata panel exposes four sub-anim types — Off (`has_data 0`), Whole-Model Texture (`has_data 1`), Targeted Texture (`has_data 2`, selectors carry per-part values) and Targeted Joints (`has_data 2`, selectors all `0xFF`). Import classifies a `has_data 2` block by `is_joint_target()`; a Targeted Texture block additionally stores its selector array as `dat_pkx_sub_anim_N_selectors` (parallel to the bone list). Export writes bytes 2-9 from the bone list, bytes 10-17 from the selectors (Targeted Texture) or `0xFF` (Targeted Joints), and derives `sub_param` from the count.
 
-Examples (type 2, joint):
-- **Moltres** block 2: bone 116 plays animation 10 (wing fire animation)
-- **Mage** block 2: bones 39, 40, 30, 29 play animation 1 (cape/cloth movement)
-- **Umbreon** block 2: bone 78 plays animation 6 (ring glow)
+**Corpus usage (76 game-native XD PKX).** Only 8 blocks use `has_data == 2`, all in block 2 (the idle "extra" tick), and they split cleanly by the selector array:
+
+- **Genuine targeted joint (selector all `0xFF`) — 4 models, all trainers:** multi-bone cape/cloth sway. `mage_0101` bones 39,40,30,29; `rinto_0101` bones 50,51,54,55; `rinto_1101` / `rinto_1102` bones 52,53,56,57 — each anim 1.
+- **Per-part texture (selector `!= 0xFF`) — 4 Pokémon:** single-bone glow/flame overlays. Umbreon (bone 78, sel 0), Moltres (bone 116, sel 2), Rapidash (bone 76, sel 5), #345 (bone 107, sel 5). These are *texture* animations on one part, not joint animations — the visible ring glow / wing fire is an animated texture.
+
+So in the shipped corpus, **skeletal joint targeting is a trainer/people-model feature** (cloth), while the Pokémon that use block 2 do per-part texture effects.
 
 #### How the overlay combines with the base animation
 

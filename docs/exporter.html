@@ -656,10 +656,72 @@
 
         <div class="callout">
             <strong>Note:</strong> the timings for the animations can be left unset for now —
-            they'll be automatically assigned in step 7.
+            they'll be automatically assigned in step 8.
         </div>
 
-        <h3>Step 7 — Re-run the script</h3>
+        <h3>Step 7 — Sub-animations (optional)</h3>
+
+        <p>Below the animation slots, the <strong>Sub-Animations</strong> section holds four
+        <em>overlay</em> animations the game layers on top of whatever the model is currently doing —
+        separate from the 17 battle slots. Most models leave these at their defaults; this step is
+        only needed for effects like blinking, breathing, a glowing body part, or a fluttering cape.</p>
+
+        <p>Each of the four blocks is tied to a fixed trigger by its position (shown read-only,
+        because the game decides it, not the file):</p>
+
+        <table>
+            <thead><tr><th>Block</th><th>Trigger</th><th>Fires when</th></tr></thead>
+            <tbody>
+                <tr><td>0</td><td>Sleep</td><td>The Pokémon is put to sleep.</td></tr>
+                <tr><td>1</td><td>Wake Up</td><td>The Pokémon wakes.</td></tr>
+                <tr><td>2</td><td>Extra</td><td>Idle tick — the blink / breathe / idle-flourish slot.</td></tr>
+                <tr><td>3</td><td>Unused</td><td>Normally left off.</td></tr>
+            </tbody>
+        </table>
+
+        <p>For each block, pick a <strong>Type</strong> (the two targeted types are XD only):</p>
+
+        <table>
+            <thead><tr><th>Type</th><th>What it does</th></tr></thead>
+            <tbody>
+                <tr><td><strong>Off</strong></td><td>The block does nothing.</td></tr>
+                <tr><td><strong>Whole-Model Texture</strong></td>
+                    <td>Plays a texture / material animation across the whole model (scrolling textures,
+                    glow pulses). Pick the clip in the <strong>Animation</strong> dropdown; no bones involved.</td></tr>
+                <tr><td><strong>Targeted Texture</strong></td>
+                    <td>Plays a texture animation on specific parts (e.g. a glow ring or wing-fire tied to
+                    one bone). You list the parts <em>and</em> a per-part texture selector. This is how the
+                    game's single-part Pokémon glow/flame overlays are built.</td></tr>
+                <tr><td><strong>Targeted Joints</strong></td>
+                    <td>Plays a skeletal animation on only the bones you list; the rest of the body keeps
+                    its current animation. The game uses this on trainer models for cloth / cape sway.</td></tr>
+            </tbody>
+        </table>
+
+        <p>In short: off · whole-model <em>material</em> animation · per-part <em>material</em> animation ·
+        per-part <em>joint</em> animation. The two targeted kinds share one bone/part list and differ only
+        by whether a per-part texture selector is attached.</p>
+
+        <p>To edit a targeted list (either targeted type):</p>
+
+        <ol>
+            <li>Set the Type to <strong>Targeted Texture</strong> or <strong>Targeted Joints</strong> — a
+            <strong>Target Parts/Bones</strong> list appears.</li>
+            <li>Click <strong>Add Bone/Part</strong> to add a slot (up to 8). Each new slot is seeded with a
+            bone so it's immediately valid.</li>
+            <li>Click a bone button to open a searchable picker and choose the bone the overlay drives.</li>
+            <li><strong>Targeted Texture only:</strong> click the <strong>tex&nbsp;N</strong> button beside a
+            bone to set that part's texture selector (0–254).</li>
+            <li>Click the <strong>X</strong> to remove an entry.</li>
+        </ol>
+
+        <div class="callout">
+            <strong>Note:</strong> the listed bones/parts follow the overlay; everything else keeps its base
+            animation. A targeted block with an <em>empty</em> list is silently skipped in-game — either add
+            entries or set the block to Off.
+        </div>
+
+        <h3>Step 8 — Re-run the script</h3>
 
         <p>After assigning actions, run the script again. It auto-derives animation timing values
         from the action durations you assigned. The timings can be adjusted afterward if necessary,

@@ -73,6 +73,23 @@ def _is_identity_matrix(m, tol=1e-5):
     return True
 
 
+def _parse_selectors(raw):
+    """Parse the comma-joined targeted-texture selector string into ints.
+
+    Non-integer tokens fall back to 0. Returns [] for a missing/blank value.
+    """
+    if not isinstance(raw, str) or not raw.strip():
+        return []
+    out = []
+    for tok in raw.split(','):
+        tok = tok.strip()
+        try:
+            out.append(int(tok))
+        except ValueError:
+            out.append(0)
+    return out
+
+
 def collect_pkx_referenced_actions(armature):
     """Return the set of action names referenced by this armature's PKX slots.
 
@@ -186,28 +203,37 @@ def extract_pkx_header(armatures, action_name_to_index, logger=StubLogger()):
         except AttributeError:
             pass
 
-        _SUB_TYPE_MAP = {"none": 0, "simple": 1, "targeted": 2}
+        # sub-anim type → has_data byte. Both targeted kinds are has_data==2;
+        # they differ only by the selector array (see § Sub-Animation System):
+        # targeted_joint leaves selectors 0xFF, targeted_texture carries values.
+        _SUB_TYPE_MAP = {"none": 0, "whole_texture": 1,
+                         "targeted_texture": 2, "targeted_joint": 2}
         if is_xd:
             h.part_anim_data = []
             for i in range(4):
                 prefix = "dat_pkx_sub_anim_%d" % i
-                has_data = _SUB_TYPE_MAP.get(arm.get(prefix + "_type", "none"), 0)
-                bone_config = b'\xff' * 16
+                sub_type = arm.get(prefix + "_type", "none")
+                has_data = _SUB_TYPE_MAP.get(sub_type, 0)
+                config = bytearray(b'\xff' * 16)
+                sub_param = 0
                 if has_data == 2:
                     bones_str = arm.get(prefix + "_bones", "")
-                    if bones_str:
-                        bone_names_list = [n.strip() for n in bones_str.split(',') if n.strip()]
-                        config = bytearray(16)
-                        for bi, bn in enumerate(bone_names_list[:8]):
-                            idx = bone_name_to_idx.get(bn, 0xFF)
-                            config[bi] = idx if idx < 256 else 0xFF
-                        for bi in range(len(bone_names_list), 16):
-                            config[bi] = 0xFF
-                        bone_config = bytes(config)
+                    bone_names_list = [n.strip() for n in bones_str.split(',') if n.strip()] if bones_str else []
+                    selectors = _parse_selectors(arm.get(prefix + "_selectors", ""))
+                    is_texture = (sub_type == "targeted_texture")
+                    for bi, bn in enumerate(bone_names_list[:8]):
+                        idx = bone_name_to_idx.get(bn, 0xFF)
+                        config[bi] = idx if idx < 256 else 0xFF
+                        if is_texture:
+                            # A texture selector must never be 0xFF (that would
+                            # read back as a joint entry); clamp into 0-254.
+                            sel = selectors[bi] if bi < len(selectors) else 0
+                            config[8 + bi] = max(0, min(254, sel))
+                    sub_param = len([n for n in config[:8] if n != 0xFF])
                 pad = PartAnimData(
                     has_data=has_data,
-                    sub_param=len([n for n in bone_config[:8] if n != 0xFF]) if has_data == 2 else 0,
-                    bone_config=bone_config,
+                    sub_param=sub_param,
+                    bone_config=bytes(config),
                     anim_index_ref=action_name_to_index.get(arm.get(prefix + "_anim_ref", ""), 0) if arm.get(prefix + "_anim_ref", "") else 0,
                 )
                 h.part_anim_data.append(pad)

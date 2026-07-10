@@ -341,6 +341,29 @@ def _set_target_bones(obj, prefix, names):
     obj[prefix + "_bones"] = ', '.join(names[:_MAX_TARGET_BONES])
 
 
+def _get_selectors(obj, prefix, n):
+    """Read the parallel targeted-texture selector list, padded/truncated to n.
+
+    Selectors are per-part texture parameters (bone_config bytes 8-15); a
+    missing entry defaults to 0. Only meaningful for `targeted_texture`.
+    """
+    raw = obj.get(prefix + "_selectors", "")
+    vals = []
+    if isinstance(raw, str) and raw.strip():
+        for tok in raw.split(','):
+            tok = tok.strip()
+            try:
+                vals.append(int(tok))
+            except ValueError:
+                vals.append(0)
+    return (vals + [0] * n)[:n]
+
+
+def _set_selectors(obj, prefix, vals):
+    """Write the selector list back as a comma-joined int string (capped at 8)."""
+    obj[prefix + "_selectors"] = ', '.join(str(int(v)) for v in vals[:_MAX_TARGET_BONES])
+
+
 class DAT_OT_SubAnimBoneAdd(bpy.types.Operator):
     """Add a target bone to this sub-animation."""
     bl_idname = "dat.sub_anim_bone_add"
@@ -377,8 +400,11 @@ class DAT_OT_SubAnimBoneRemove(bpy.types.Operator):
         obj = context.active_object
         names = _get_target_bones(obj, self.prefix)
         if 0 <= self.index < len(names):
+            sels = _get_selectors(obj, self.prefix, len(names))
             names.pop(self.index)
+            sels.pop(self.index)
             _set_target_bones(obj, self.prefix, names)
+            _set_selectors(obj, self.prefix, sels)
         return {'FINISHED'}
 
 
@@ -409,6 +435,38 @@ class DAT_OT_SubAnimBoneSet(bpy.types.Operator):
         if 0 <= self.index < len(names):
             names[self.index] = self.bone
             _set_target_bones(obj, self.prefix, names)
+        return {'FINISHED'}
+
+
+class DAT_OT_SubAnimSelectorSet(bpy.types.Operator):
+    """Set the per-part texture selector for a targeted-texture entry."""
+    bl_idname = "dat.sub_anim_selector_set"
+    bl_label = "Set Texture Selector"
+    bl_options = {'UNDO', 'INTERNAL'}
+
+    prefix: StringProperty()
+    index: IntProperty()
+    # 0xFF is the joint sentinel, so a texture selector must stay in 0-254.
+    selector: IntProperty(name="Selector", min=0, max=254)
+
+    def invoke(self, context, event):
+        obj = context.active_object
+        n = len(_get_target_bones(obj, self.prefix))
+        sels = _get_selectors(obj, self.prefix, n)
+        if 0 <= self.index < len(sels):
+            self.selector = sels[self.index]
+        return context.window_manager.invoke_props_dialog(self)
+
+    def draw(self, context):
+        self.layout.prop(self, "selector")
+
+    def execute(self, context):
+        obj = context.active_object
+        n = len(_get_target_bones(obj, self.prefix))
+        sels = _get_selectors(obj, self.prefix, n)
+        if 0 <= self.index < len(sels):
+            sels[self.index] = self.selector
+            _set_selectors(obj, self.prefix, sels)
         return {'FINISHED'}
 
 
@@ -452,15 +510,18 @@ _SUB_ANIM_TRIGGER_ITEMS = [
     ("blink", "Blink"), ("extra", "Extra"), ("unused", "Unused"),
 ]
 # Sub-animation (PartAnimData) type. Values mirror _SUB_TYPE_MAP on the export
-# side (exporter/phases/describe/helpers/scene.py): none=0, simple=1, targeted=2.
-# Labels reflect what the engine actually does with each (see file_formats.md
-# § Sub-Animation System): has_data==1 fires a whole-model texture/material
-# animation; has_data==2 plays a joint animation on the listed bones only.
-# `targeted` is XD-only (Colosseum has no per-part bone config).
+# side (exporter/phases/describe/helpers/scene.py). Labels reflect what the
+# engine does with each (see file_formats.md § Sub-Animation System):
+#   none              has_data==0 — block off
+#   whole_texture     has_data==1 — whole-model texture/material animation
+#   targeted_texture  has_data==2, selectors != 0xFF — per-part texture on listed bones
+#   targeted_joint    has_data==2, selectors == 0xFF — joint animation on listed bones
+# Both targeted kinds are XD-only (Colosseum has no per-part bone config).
 _SUB_ANIM_TYPE_ITEMS = [
     ("none", "Off"),
-    ("simple", "Whole-Model Texture"),
-    ("targeted", "Targeted Joints"),
+    ("whole_texture", "Whole-Model Texture"),
+    ("targeted_texture", "Targeted Texture"),
+    ("targeted_joint", "Targeted Joints"),
 ]
 
 # Property key suffixes for body map bones.
@@ -601,27 +662,34 @@ class DAT_PT_PKXPanel(bpy.types.Panel):
                         trigger.replace('_', ' ').title(),
                     )
                     sub_box.label(text="Trigger: %s" % trigger_label, icon='TIME')
-                    # `targeted` is XD-only; Colosseum has no per-part bone config.
+                    # Both targeted kinds are XD-only; Colosseum has no per-part
+                    # bone config, so only None / Whole-Model Texture apply.
                     if obj.get("dat_pkx_format") == "COLOSSEUM":
                         _type_items = [it for it in _SUB_ANIM_TYPE_ITEMS
-                                       if it[0] != "targeted"]
+                                       if it[0] in ("none", "whole_texture")]
                     else:
                         _type_items = _SUB_ANIM_TYPE_ITEMS
                     _draw_enum_dropdown(sub_box, obj, prefix + "_type",
                                         _type_items, label="Type:")
-                    # The referenced clip is a texture animation for Whole-Model
-                    # Texture, or a joint animation for Targeted Joints.
                     cur_type = obj.get(prefix + "_type")
+                    is_targeted = cur_type in ("targeted_texture", "targeted_joint")
+                    # The referenced clip is a texture animation for the texture
+                    # types, or a joint animation for Targeted Joints.
                     ref_key = prefix + "_anim_ref"
-                    if cur_type in ("simple", "targeted") and ref_key in obj:
+                    if cur_type in ("whole_texture", "targeted_texture", "targeted_joint") \
+                            and ref_key in obj:
                         sub_box.prop_search(obj, '["%s"]' % ref_key, bpy.data, "actions",
                                             text="Animation")
-                    # Target Joints restrict the overlay to specific bones
-                    # (bone_config); the other types don't use a bone list.
-                    if cur_type == "targeted":
+                    # Targeted types restrict the overlay to specific bones/parts
+                    # (bone_config); the whole-model types don't use a part list.
+                    # Targeted Texture additionally carries a per-part selector.
+                    if is_targeted:
+                        show_selector = (cur_type == "targeted_texture")
                         names = _get_target_bones(obj, prefix)
+                        selectors = _get_selectors(obj, prefix, len(names))
                         col = sub_box.column(align=True)
-                        col.label(text="Target Bones (%d/%d):" % (len(names), _MAX_TARGET_BONES))
+                        noun = "Parts" if show_selector else "Bones"
+                        col.label(text="Target %s (%d/%d):" % (noun, len(names), _MAX_TARGET_BONES))
                         for bi, bn in enumerate(names):
                             row = col.row(align=True)
                             op = row.operator("dat.sub_anim_bone_set",
@@ -629,12 +697,18 @@ class DAT_PT_PKXPanel(bpy.types.Panel):
                                               icon='BONE_DATA')
                             op.prefix = prefix
                             op.index = bi
+                            if show_selector:
+                                sel = row.operator("dat.sub_anim_selector_set",
+                                                   text="tex %d" % selectors[bi])
+                                sel.prefix = prefix
+                                sel.index = bi
                             rm = row.operator("dat.sub_anim_bone_remove", text="", icon='X')
                             rm.prefix = prefix
                             rm.index = bi
                         if len(names) < _MAX_TARGET_BONES:
                             add = col.operator("dat.sub_anim_bone_add",
-                                               text="Add Bone", icon='ADD')
+                                               text="Add %s" % ("Part" if show_selector else "Bone"),
+                                               icon='ADD')
                             add.prefix = prefix
 
         # === Animation Slots ===
@@ -743,6 +817,7 @@ def _prop_row(layout, label, value):
 
 classes = (ImportHSD, ExportHSD, DAT_OT_SetEnumProp,
            DAT_OT_SubAnimBoneAdd, DAT_OT_SubAnimBoneRemove, DAT_OT_SubAnimBoneSet,
+           DAT_OT_SubAnimSelectorSet,
            DAT_PT_PKXPanel)
 
 

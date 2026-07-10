@@ -459,7 +459,6 @@ def _apply_shiny(armature, shiny_params, logger):
 
 _ANIM_TYPE_NAMES = {2: "loop", 3: "hit_reaction", 4: "action", 5: "compound"}
 _SUB_ANIM_TRIGGERS = {0: "sleep_on", 1: "sleep_off", 2: "extra", 3: "unused"}
-_SUB_ANIM_TYPES = {0: "none", 1: "simple", 2: "targeted"}
 
 # Body map descriptive names (index → property suffix). Single source of
 # truth is shared.helpers.pkx_header.BODY_MAP_KEYS — keep this module's
@@ -559,17 +558,27 @@ def _derive_sub_anim_props(h, name_resolver, bone_resolver):
     if h.is_xd:
         for i, pad in enumerate(h.part_anim_data):
             prefix = "dat_pkx_sub_anim_%d" % i
-            props[prefix + "_type"] = _SUB_ANIM_TYPES.get(pad.has_data, "unknown")
             props[prefix + "_trigger"] = _SUB_ANIM_TRIGGERS.get(i, "unknown")
             props[prefix + "_anim_ref"] = name_resolver(pad.anim_index_ref) if pad.is_active else ""
-            if pad.is_targeted:
-                names = [bone_resolver(idx) for idx in pad.active_bone_indices()]
+            if pad.has_data == 1:
+                props[prefix + "_type"] = "whole_texture"
+            elif pad.has_data == 2:
+                # Split into joint vs per-part texture by the selector array.
+                entries = pad.active_entries()
+                names = [bone_resolver(a) for a, _ in entries]
                 props[prefix + "_bones"] = ', '.join(names) if names else ""
+                if pad.is_joint_target():
+                    props[prefix + "_type"] = "targeted_joint"
+                else:
+                    props[prefix + "_type"] = "targeted_texture"
+                    props[prefix + "_selectors"] = ', '.join(str(b) for _, b in entries)
+            else:
+                props[prefix + "_type"] = "none"
     else:
         for i in range(3):
             prefix = "dat_pkx_sub_anim_%d" % i
             ref = h.colo_part_anim_refs[i]
-            props[prefix + "_type"] = "simple" if ref >= 0 else "none"
+            props[prefix + "_type"] = "whole_texture" if ref >= 0 else "none"
             props[prefix + "_trigger"] = _SUB_ANIM_TRIGGERS.get(i, "unknown")
             props[prefix + "_anim_ref"] = name_resolver(ref) if ref >= 0 else ""
     return props
