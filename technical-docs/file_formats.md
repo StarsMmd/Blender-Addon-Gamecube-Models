@@ -718,10 +718,12 @@ Which block fires is decided by its slot index, so the trigger is positional and
 
 | Block | Trigger | Example |
 |-------|---------|---------|
-| 0 | Sleep On | Eyelids close when put to sleep |
-| 1 | Sleep Off | Eyelids open when waking up |
-| 2 | Extra | Blinking, breathing, wing flapping (idle tick) |
-| 3 | (Unused) | Typically inactive |
+| 0 | Sleep On | Eyelids close when put to sleep (`Sleep()`) |
+| 1 | Sleep Off | Eyelids open when waking up (`WakeUp()`) |
+| 2 | Blink | Blinking / breathing / idle flourish, re-fired by `_eyeAnimEnded` |
+| 3 | Talk | Speak overlay, fired by `Talk()` and looped by `_mouthAnimEnded` — populated on talking NPCs, empty on battle Pokémon |
+
+The block → trigger mapping is set once in the shared `ModelSequence` (`LoadData` stores the four blocks into fields `0x84`/`0x88`/`0x8c`/`0x90`), so it is identical for every model type — trainers use the same four triggers, not a separate set. In the game corpus, Pokémon populate Sleep/Blink; trainer/people models leave Sleep and Wake empty and use only Blink (cape/cloth). The Talk block is unused across the battle-model corpus (battle actors don't speak).
 
 #### Sub-Animation Types (`has_data`, byte 0)
 

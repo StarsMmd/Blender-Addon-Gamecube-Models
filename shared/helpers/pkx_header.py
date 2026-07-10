@@ -605,16 +605,17 @@ def active_part_anim_refs(header):
 
     Abstracts over the two layouts: XD stores these as PartAnimData blocks,
     Colosseum as three plain int refs (colo_part_anim_refs). Both share the
-    positional trigger meaning (0 = sleep-on, 1 = sleep-off, 2 = extra). Only
-    refs pointing at a real animation (index > 0) are returned — index 0 is
-    the idle/default and carries no sub-animation.
+    positional trigger meaning (0 = sleep-on, 1 = sleep-off, 2 = blink); XD adds
+    a fourth block (3 = talk/speak) that Colosseum lacks. Only refs pointing at
+    a real animation (index > 0) are returned — index 0 is the idle/default and
+    carries no sub-animation.
 
     In: header (PKXHeader).
-    Out: list[tuple[int, int]] — (trigger slot 0..2, referenced DAT anim index).
+    Out: list[tuple[int, int]] — (trigger slot 0..3, referenced DAT anim index).
     """
     refs = []
     if header.is_xd:
-        for i, pad in enumerate(header.part_anim_data[:3]):
+        for i, pad in enumerate(header.part_anim_data[:4]):
             if pad.has_data > 0 and pad.anim_index_ref > 0:
                 refs.append((i, pad.anim_index_ref))
     else:

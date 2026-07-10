@@ -507,7 +507,7 @@ _ANIM_TYPE_ITEMS = [
 ]
 _SUB_ANIM_TRIGGER_ITEMS = [
     ("sleep_on", "Sleep"), ("sleep_off", "Wake Up"),
-    ("blink", "Blink"), ("extra", "Extra"), ("unused", "Unused"),
+    ("blink", "Blink"), ("talk", "Talk"),
 ]
 # Sub-animation (PartAnimData) type. Values mirror _SUB_TYPE_MAP on the export
 # side (exporter/phases/describe/helpers/scene.py). Labels reflect what the
@@ -654,7 +654,7 @@ class DAT_PT_PKXPanel(bpy.types.Panel):
                     prefix = "dat_pkx_sub_anim_%d" % i
                     sub_box = box.box()
                     # The trigger is fixed by the block's position (block 0 fires
-                    # on sleep, 1 on wake, 2 on the idle "extra" tick, 3 unused).
+                    # on sleep, 1 on wake, 2 on blink/idle, 3 on talk/speak).
                     # It is not stored or exported, so show it read-only.
                     trigger = obj.get(prefix + "_trigger", "unknown")
                     trigger_label = next(

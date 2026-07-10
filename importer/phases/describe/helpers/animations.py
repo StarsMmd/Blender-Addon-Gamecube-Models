@@ -147,7 +147,8 @@ def _build_anim_name_map(pkx_header, colo_xd_kind=None):
 
     # Add sub-animation references. XD keeps these in PartAnimData blocks,
     # Colosseum in colo_part_anim_refs; active_part_anim_refs abstracts both.
-    sub_triggers = {0: 'Sub SleepOnPose', 1: 'Sub SleepOffPose', 2: 'Sub Extra'}
+    sub_triggers = {0: 'Sub SleepOnPose', 1: 'Sub SleepOffPose',
+                    2: 'Sub Blink', 3: 'Sub Talk'}
     for i, idx in active_part_anim_refs(pkx_header):
         if idx not in index_to_slots:
             index_to_slots[idx] = []

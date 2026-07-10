@@ -458,7 +458,10 @@ def _apply_shiny(armature, shiny_params, logger):
 
 
 _ANIM_TYPE_NAMES = {2: "loop", 3: "hit_reaction", 4: "action", 5: "compound"}
-_SUB_ANIM_TRIGGERS = {0: "sleep_on", 1: "sleep_off", 2: "extra", 3: "unused"}
+# Block → trigger, fixed by the shared ModelSequence dispatch (see
+# file_formats.md § Sub-Animation System): 0 Sleep(), 1 WakeUp(),
+# 2 blink (_eyeAnimEnded), 3 talk/speak (Talk / _mouthAnimEnded).
+_SUB_ANIM_TRIGGERS = {0: "sleep_on", 1: "sleep_off", 2: "blink", 3: "talk"}
 
 # Body map descriptive names (index → property suffix). Single source of
 # truth is shared.helpers.pkx_header.BODY_MAP_KEYS — keep this module's

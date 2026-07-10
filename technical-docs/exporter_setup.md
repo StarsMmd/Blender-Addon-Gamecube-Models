@@ -335,10 +335,10 @@ The **Sub-Animations** section of the PKX Metadata panel holds four *overlay* an
 |-------|---------|------------|
 | 0 | Sleep | The Pokémon is put to sleep |
 | 1 | Wake Up | The Pokémon wakes |
-| 2 | Extra | Idle tick — this is the blink / breathe / idle-flourish slot |
-| 3 | Unused | Normally left off |
+| 2 | Blink | Idle tick — the blink / breathe / idle-flourish slot |
+| 3 | Talk | The model speaks (talking NPCs). Empty on battle Pokémon |
 
-The trigger is shown read-only because it is decided by the block's position, not stored in the file — block 2 is always the idle "extra" overlay, and so on.
+The trigger is shown read-only because it is decided by the block's position, not stored in the file — block 2 is always the blink/idle overlay, and so on. The mapping is the same for every model type. Trainer/people models leave **Sleep** and **Wake** empty and use only **Blink** (for cloth/cape), so on a trainer you'll usually touch just block 2.
 
 For each block, set the **Type** (the last two are XD only):
 
