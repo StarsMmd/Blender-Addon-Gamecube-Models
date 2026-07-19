@@ -4,6 +4,7 @@ Checks that the output path is valid and the Blender scene is suitable
 for export. Raises ValueError if any check fails, cancelling the export.
 """
 import os
+import re
 
 try:
     from ....shared.helpers.logger import StubLogger
@@ -19,6 +20,7 @@ except (ImportError, SystemError):
 
 MAX_VERTEX_WEIGHTS = 4
 MAX_TEXTURE_DIM = 512
+MAX_TEXTURES_PER_MATERIAL = 8  # GX_MAX_TEXMAP: hardware texgen/texmap units
 
 
 def pre_process(context, filepath, options=None, logger=StubLogger()):
@@ -42,10 +44,13 @@ def pre_process(context, filepath, options=None, logger=StubLogger()):
     _validate_scene(context, logger)
     _validate_baked_transforms(context, logger)
     _validate_root_bone_orientation(context, logger)
+    _validate_origin_bone_not_animated(context, logger)
     _validate_vertex_weight_count(context, logger)
     _validate_mesh_owner_disjoint_from_deformers(context, logger)
     _validate_texture_sizes(context, logger)
+    _validate_material_texture_count(context, logger)
     _validate_pkx_metadata(context, ext, fsys_inner_kind, logger)
+    _validate_animation_timing(context, ext, fsys_inner_kind, logger)
 
     logger.info("=== Export Pre-Process complete ===")
 
@@ -413,6 +418,134 @@ def _check_root_bone_orientation(specs):
     )
 
 
+# ---------------------------------------------------------------------------
+# Root joint animation
+# ---------------------------------------------------------------------------
+#
+# The root (origin) joint must stay static — the game does not treat it as
+# a normal animatable joint. Depending on a per-model flag the engine
+# either strips the root joint's animation outright when an animation is
+# selected, or it writes the root joint transform itself every frame as
+# the model's world placement (discarding whatever the animation set), or
+# — in the "use root joint animation" mode — lets the root animation drive
+# the model's world position so the whole model slides off the spot the
+# game placed it. In every case author-supplied animation on the root bone
+# does not play as authored. The sanctioned rig keeps the root a static
+# wrapper and animates from its children, so this guard rejects any action
+# that animates the root bone. Disassembly evidence in
+# technical-docs/implementation_notes.md § Root joint animation.
+
+# Pose-bone transform channels; the array index is a separate FCurve
+# attribute, so the data path ends at the channel name.
+_POSE_BONE_CHANNEL_RE = re.compile(
+    r'pose\.bones\["(.+?)"\]\.'
+    r'(location|rotation_euler|rotation_quaternion|rotation_axis_angle|scale)$'
+)
+
+
+def _action_animates_bone(action, bone_name):
+    """True if `action` has a transform FCurve with 2+ keyframes on the
+    named pose bone — genuine motion, not a single static pose key."""
+    for fc in getattr(action, 'fcurves', ()) or ():
+        m = _POSE_BONE_CHANNEL_RE.match(getattr(fc, 'data_path', '') or '')
+        if m is None or m.group(1) != bone_name:
+            continue
+        if len(getattr(fc, 'keyframe_points', ())) >= 2:
+            return True
+    return False
+
+
+def _validate_origin_bone_not_animated(context, logger):
+    """Reject scenes whose root (origin) bone carries animation.
+
+    See `_check_origin_bone_not_animated` for the in-game failure mode.
+    Scans every action for transform keyframes on each armature's
+    parent-less root bone; in the single-armature Pokémon/character case
+    every pose action is exported, so a match here would ship a broken
+    animation. The fix is the same canonical-parent move the
+    root-orientation guard points at.
+    """
+    try:
+        import bpy
+    except ImportError:
+        bpy = None
+    scene = getattr(context, 'scene', None)
+    objects = list(scene.objects) if scene is not None else (
+        list(bpy.data.objects) if bpy is not None else []
+    )
+    armatures = [o for o in objects if getattr(o, 'type', None) == 'ARMATURE']
+    actions = list(bpy.data.actions) if bpy is not None else []
+
+    specs = []
+    for arm in armatures:
+        bones = getattr(arm.data, 'bones', None)
+        if not bones:
+            continue
+        root = next((b for b in bones if b.parent is None), None)
+        if root is None:
+            continue
+        offending = [a.name for a in actions
+                     if _action_animates_bone(a, root.name)]
+        specs.append((arm.name, root.name, offending))
+
+    _check_origin_bone_not_animated(specs)
+    logger.info("  Origin bone animation OK (root JOBJ stays static)")
+
+
+def _check_origin_bone_not_animated(specs):
+    """Pure helper for `_validate_origin_bone_not_animated`.
+
+    `specs` is a list of `(armature_name, root_bone_name,
+    offending_action_names)`. Raises ValueError naming each rig and the
+    actions that animate its root/origin bone; a no-op when every rig's
+    offending list is empty.
+
+    Why this breaks in-game: the engine does not treat the root JOBJ as a
+    normal animatable joint. A per-model flag can make it strip the root
+    joint's animation when an animation is selected; otherwise the game
+    writes the root joint transform itself each frame as the model's world
+    placement (discarding the animation), and in the "use root joint
+    animation" mode the root animation instead drives the model's world
+    position — sliding the whole model off the spot the game placed it.
+    Game-native models keep the root a static wrapper and animate from its
+    children.
+    """
+    bad = [(name, root, acts) for name, root, acts in specs if acts]
+    if not bad:
+        return
+
+    lines = []
+    for name, root, acts in bad:
+        sample = ", ".join(acts[:3]) + ("…" if len(acts) > 3 else "")
+        lines.append("  - %s: root bone '%s' animated by %s"
+                     % (name, root, sample))
+
+    raise ValueError(
+        "The root (origin) bone must stay static, but %d armature(s) "
+        "animate it:\n%s\n"
+        "\n"
+        "The game does not treat the root joint as a normal animatable "
+        "joint: depending on the model's flags it strips the root joint's "
+        "animation outright, or it overwrites the root joint every frame "
+        "with the model's world placement, or it lets the root animation "
+        "drive the whole model's position so the model slides off where "
+        "the game placed it. Either way the animation does not play as "
+        "authored and the model looks broken in-game. Game-native models "
+        "keep the root bone a static wrapper and animate from its "
+        "children.\n"
+        "\n"
+        "Fix: add a new axis-aligned 'Origin' bone at the rig origin and "
+        "parent the current (animated) root bone to it. The Origin bone "
+        "becomes the static model root; the formerly-root bone becomes a "
+        "normal child whose animation exports normally.\n"
+        "\n"
+        "See technical-docs/exporter_setup.md > Troubleshooting > 'Root "
+        "motion is ignored or the model is mispositioned in-game (animated "
+        "origin bone)'."
+        % (len(bad), "\n".join(lines))
+    )
+
+
 def _validate_vertex_weight_count(context, logger):
     """Reject any vertex with more than 4 non-zero bone weights.
 
@@ -627,5 +760,194 @@ def _check_texture_sizes(images):
             f"scripts/prepare_for_dat_export.py (.dat output) first to "
             f"downscale. Sample offenders: {sample}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Textures per material
+# ---------------------------------------------------------------------------
+#
+# GX exposes only 8 texture units (GX_MAX_TEXMAP). The render-time material
+# setup asserts when a material activates a 9th texgen, which halts the
+# console — so this is a hard hardware cap, not a fidelity concern. Arbitrary
+# GLB/FBX rips can stack many image nodes on one material and trip it. The
+# count is a proxy: image-texture nodes with an assigned image, per material.
+
+def _count_material_image_textures(mat):
+    """Number of image-texture nodes with an assigned image on a material."""
+    if not getattr(mat, 'use_nodes', False):
+        return 0
+    node_tree = getattr(mat, 'node_tree', None)
+    if node_tree is None:
+        return 0
+    return sum(1 for node in node_tree.nodes
+               if getattr(node, 'bl_idname', None) == 'ShaderNodeTexImage'
+               and getattr(node, 'image', None))
+
+
+def _validate_material_texture_count(context, logger):
+    """Reject materials that bind more than 8 image textures.
+
+    See `_check_material_texture_count` for the failure mode. Scans every
+    mesh's material slots (mirroring `_validate_texture_sizes`).
+    """
+    try:
+        import bpy
+    except ImportError:
+        bpy = None
+    scene = getattr(context, 'scene', None)
+    objects = list(scene.objects) if scene is not None else (
+        list(bpy.data.objects) if bpy is not None else []
+    )
+
+    seen = set()
+    specs = []
+    for obj in objects:
+        if getattr(obj, 'type', None) != 'MESH':
+            continue
+        for slot in getattr(obj, 'material_slots', []):
+            mat = getattr(slot, 'material', None)
+            if mat is None or id(mat) in seen:
+                continue
+            seen.add(id(mat))
+            specs.append((mat.name, _count_material_image_textures(mat)))
+
+    _check_material_texture_count(specs)
+    logger.info("  Material texture count OK (<= %d per material)",
+                MAX_TEXTURES_PER_MATERIAL)
+
+
+def _check_material_texture_count(specs):
+    """Pure helper for `_validate_material_texture_count`.
+
+    `specs` is a list of `(material_name, image_texture_count)`. Raises
+    ValueError naming the offenders if any material exceeds the GX texmap
+    cap; a no-op otherwise.
+
+    Why this breaks in-game: GX has 8 texture units per material. The
+    engine's material setup asserts (and halts the console) when a material
+    binds a 9th texture — a hard crash, not a silent misrender.
+    """
+    bad = [(name, count) for name, count in specs
+           if count > MAX_TEXTURES_PER_MATERIAL]
+    if not bad:
+        return
+
+    sample = "; ".join("%s (%d)" % (name, count) for name, count in bad[:5])
+    raise ValueError(
+        "%d material(s) bind more than %d image textures [%s]. The GameCube "
+        "GX hardware has only %d texture units per material and the game "
+        "asserts and freezes when a material activates a 9th. Reduce the "
+        "image textures on each listed material — bake or merge texture "
+        "layers, or split the mesh so each material stays within the limit."
+        % (len(bad), MAX_TEXTURES_PER_MATERIAL, sample, MAX_TEXTURES_PER_MATERIAL)
+    )
+
+
+# ---------------------------------------------------------------------------
+# Animation timing (PKX)
+# ---------------------------------------------------------------------------
+#
+# The battle state machine reads each PKX anim slot's primary timing to pace
+# state transitions. A slot that references a real action but stores
+# timing_1 = 0 triggers a divide-by-zero modulo that advances through entry
+# states without pausing, reliably crashing on send-out. Unassigned / padding
+# slots are exempt — the game never reads their timing. Only relevant when
+# emitting a PKX (a raw .dat carries no animation header).
+
+def _collect_zero_timing_slots(arm):
+    """Labels of *assigned* PKX anim slots whose `timing_1` is zero.
+
+    A slot is assigned when one of its sub-anim refs names a real action
+    (a non-empty string), matching describe's `has_anim` test. Duck-typed
+    on ``arm.get`` (a plain dict works) so it is unit-testable without bpy.
+    """
+    offending = []
+    anim_count = int(arm.get("dat_pkx_anim_count", 17))
+    for i in range(anim_count):
+        prefix = "dat_pkx_anim_%02d" % i
+        sub_count = int(arm.get(prefix + "_sub_count", 1))
+        assigned_name = None
+        for s in range(min(sub_count, 3)):
+            name = arm.get(prefix + "_sub_%d_anim" % s, "")
+            if isinstance(name, str) and name:
+                assigned_name = name
+                break
+        if assigned_name is None:
+            continue  # unassigned / padding slot — the game skips its timing
+        timing_1 = arm.get(prefix + "_timing_1", 0.0)
+        try:
+            is_zero = abs(float(timing_1)) < 1e-9
+        except (TypeError, ValueError):
+            is_zero = True
+        if is_zero:
+            offending.append("slot %02d (%s)" % (i, assigned_name))
+    return offending
+
+
+def _validate_animation_timing(context, ext, fsys_inner_kind, logger):
+    """Reject PKX exports whose assigned anim slots have `timing_1` == 0.
+
+    See `_check_animation_timing`. PKX-scoped (mirrors
+    `_validate_pkx_metadata`): a raw .dat has no anim header, so the crash
+    cannot occur there.
+    """
+    needs_pkx = (ext == 'pkx') or (ext == 'fsys' and fsys_inner_kind == MODEL_TYPE_PKX)
+    if not needs_pkx:
+        return
+
+    try:
+        import bpy
+    except ImportError:
+        bpy = None
+    scene = getattr(context, 'scene', None)
+    objects = list(scene.objects) if scene is not None else (
+        list(bpy.data.objects) if bpy is not None else []
+    )
+    armatures = [o for o in objects if getattr(o, 'type', None) == 'ARMATURE'
+                 and o.get('dat_pkx_format') in ('XD', 'COLOSSEUM')]
+
+    specs = [(arm.name, _collect_zero_timing_slots(arm)) for arm in armatures]
+    _check_animation_timing(specs)
+    logger.info("  Animation timing OK (assigned slots carry non-zero timing)")
+
+
+def _check_animation_timing(specs):
+    """Pure helper for `_validate_animation_timing`.
+
+    `specs` is a list of `(armature_name, offending_slot_labels)`. Raises
+    ValueError naming each rig and its zero-timing assigned slots; a no-op
+    when every list is empty.
+
+    Why this breaks in-game: the battle state machine divides by a slot's
+    primary timing to pace its state transitions, so an assigned slot with
+    timing_1 = 0 is a divide-by-zero that reliably crashes on send-out.
+    """
+    bad = [(name, slots) for name, slots in specs if slots]
+    if not bad:
+        return
+
+    lines = []
+    for name, slots in bad:
+        sample = ", ".join(slots[:4]) + ("…" if len(slots) > 4 else "")
+        lines.append("  - %s: %s" % (name, sample))
+
+    raise ValueError(
+        "%d armature(s) have assigned animation slots with a zero primary "
+        "timing (timing_1 = 0):\n%s\n"
+        "\n"
+        "A PKX animation slot that references a real action but stores a "
+        "zero primary timing triggers a divide-by-zero in the battle state "
+        "machine and reliably crashes the game on send-out. Every assigned "
+        "slot needs a non-zero timing_1. (Empty / padding slots are fine.)\n"
+        "\n"
+        "Fix: run scripts/prepare_for_pkx_export.py — its derive_timing step "
+        "fills per-slot timings from the action durations — or set the "
+        "'dat_pkx_anim_NN_timing_1' custom property on the armature to a "
+        "non-zero value for each listed slot.\n"
+        "\n"
+        "See technical-docs/exporter_setup.md > Troubleshooting > 'Game "
+        "crashes on send-out (zero animation timing)'."
+        % (len(bad), "\n".join(lines))
+    )
 
 

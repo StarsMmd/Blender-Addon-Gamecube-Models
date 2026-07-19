@@ -239,6 +239,7 @@ Every Blender Python API call used by this addon, with the Blender version range
 | | | **F-Curves & Keyframes** | | |
 | 2.80 | current | `action.fcurves.new(data_path, index=n)` | `animations.py`, `material_animations.py`, `cameras.py` | |
 | 2.80 | current | `action.fcurves.find(data_path, index=n)` | `cameras.py` (export) | Read-back camera FCurves |
+| 2.80 | current | `action.fcurves` iterate + `fc.data_path` / `len(fc.keyframe_points)` (read) | `exporter/describe/helpers/animations_decode.py`, `exporter/pre_process/pre_process.py` | Origin-bone-animated guard: reject any action with a ≥2-keyframe transform curve on the parent-less root bone |
 | 2.80 | current | `curve.keyframe_points.insert(frame, value)` | `animations.py`, `material_animations.py` | |
 | 2.80 | current | `keyframe.interpolation = '...'` | `animations.py` | BEZIER, LINEAR, CONSTANT |
 | 2.80 | current | `keyframe.handle_left = (x, y)` | `animations.py` | Bezier handles (HSD Hermite tangents) |
@@ -338,7 +339,7 @@ Every Blender Python API call used by this addon, with the Blender version range
 | | | | | |
 | | | **Exporter — Describe Materials (Phase 1, deep decoder)** | | |
 | 2.80 | current | `material.use_nodes` | `exporter/describe/helpers/materials_decode.py` | Check for node-based material |
-| 2.80 | current | `material.node_tree.nodes` | `exporter/describe/helpers/materials_decode.py` | Access shader nodes |
+| 2.80 | current | `material.node_tree.nodes` | `exporter/describe/helpers/materials_decode.py`, `exporter/pre_process/pre_process.py` | Access shader nodes; pre_process counts `ShaderNodeTexImage` nodes (texture-size + ≤8-per-material guards) |
 | 2.80 | current | `material.node_tree.links` | `exporter/describe/helpers/materials_decode.py` | Access node links |
 | 2.80 | current | `node.bl_idname` | `exporter/describe/helpers/materials_decode.py` | Identify node type |
 | 2.80 | current | `node.inputs[name].default_value` | `exporter/describe/helpers/materials_decode.py` | Read Principled BSDF inputs |

@@ -74,12 +74,15 @@ What the exporter can and cannot read from your Blender scene.
 | Blender feature | Export support | Notes |
 |---|---|---|
 | Bone actions (loc/rot/scale) | ✅ Exported | Euler and quaternion rotation supported |
+| Root / origin bone action | ❌ Rejected | The top (parent-less) bone must stay static — animate its children instead. See [Troubleshooting](#root-motion-is-ignored-or-the-model-is-mispositioned-in-game-animated-origin-bone) |
 | Material color/alpha actions | ✅ Exported | Animated material properties |
 | Texture UV scroll/scale | ✅ Exported | Animated texture offset and scale |
 | NLA strips | ✅ Read | Actions referenced by NLA are exported |
 | Shape key actions | ❌ Not yet | |
 | Camera animations | ✅ Exported | Position, target, FOV, roll, near/far |
 | Drivers | ❌ Ignored | Bake to keyframes first |
+
+> ⚠️ **The root (origin) bone must not be animated — the exporter rejects it.** A pre-export check refuses any scene whose top parent-less bone carries animation keyframes. The game manages that joint itself — it uses the root joint to *place the model in the world* — so animation on it is either silently discarded or slides the whole model off its position in-game, even though it plays correctly in Blender. Keep the root bone a **static wrapper** and animate its children instead. **Fix:** add a static axis-aligned `Origin` bone at the rig origin and parent the animated bone under it. See [Troubleshooting → animated origin bone](#root-motion-is-ignored-or-the-model-is-mispositioned-in-game-animated-origin-bone).
 
 ### Materials
 
@@ -89,6 +92,7 @@ What the exporter can and cannot read from your Blender scene.
 | Principled BSDF specular tint | ✅ Exported | Reverse-mapped to absolute specular color |
 | Principled BSDF alpha | ❌ Ignored | See [Material translucency (unsupported)](#material-translucency-unsupported) below |
 | Image textures | ✅ Exported | All GX formats; auto-selected or set via `dat_gx_format` |
+| Textures per material | ⚠️ Max 8 | GX has 8 texture units — a material binding more than 8 image textures is **rejected** at export (the game freezes when a material activates a 9th). Split the mesh or merge texture layers |
 | Texture alpha channel | ⚠️ Partial | Image is encoded faithfully (including alpha), but materials are not flagged as alpha-blended — see note below |
 | `dat_ambient_emission` node | ✅ Exported | Per-material ambient color |
 | Shiny filter nodes | ⏭️ Skipped | See [Shiny Filter](#shiny-filter) in notes |
@@ -477,6 +481,40 @@ The root bone is canonical when it points **straight up (+Z) with Roll = 0**. Fi
 - **The root bone is already animated.** Don't re-orient it in place — that rotates its children on every posed frame. Instead add a new axis-aligned `Origin` bone at the rig origin and **parent the current root to it**. The old root keeps its orientation (now cancelled through normal skinning) and the new `Origin` bone becomes the identity model root.
 
 See [implementation_notes.md → Root joint orientation](implementation_notes.md#root-joint-orientation-must-be-identity-manual-fix) for the underlying rationale.
+
+### Root motion is ignored or the model is mispositioned in-game (animated origin bone)
+
+**Symptom.** The exporter rejects the scene with a *"root (origin) bone must stay static"* error. Or (if the check is bypassed) in-game the model's root/whole-body motion is missing, or the model drifts / teleports away from where it should stand — even though the animation plays correctly in Blender.
+
+**Cause.** The **root (origin) bone must not be animated.** The game does not treat the top joint like a normal animatable bone — it manages that joint's transform itself:
+
+- For most models it **overwrites the root joint every frame** with the model's world placement (battle slot, follow position), so any animation you put on the root is simply discarded.
+- For some models a header flag makes the game **strip the root joint's animation outright** the moment an animation is selected.
+- In the one mode where the root animation *is* honored, it drives the **whole model's world position** — so animating the root slides the entire model off its intended spot.
+
+Either way, animation on the origin bone never plays the way you authored it. Game-native models keep the root bone a **static wrapper** and animate from its children.
+
+**Fix — move the animation off the root by inserting a static parent** (the same move as the [non-identity root bone](#model-renders-rotated-in-game-non-identity-root-bone) fix):
+
+1. In Edit mode, add a new bone at the rig origin, pointing straight up (+Z) with **Roll = 0**. Name it `Origin`.
+2. Parent your current (animated) root bone to the new `Origin` bone (select the old root, then the `Origin`, `Ctrl+P → Keep Offset`).
+
+The `Origin` bone becomes the static model root; your formerly-root bone is now a normal child whose animation exports and plays normally. Nothing about the pose or the skinning changes — the old root keeps its orientation and its keyframes.
+
+See [implementation_notes.md → Root joint animation](implementation_notes.md#root-joint-animation-must-be-static-guardrail) for the disassembly evidence.
+
+### Game crashes on send-out (zero animation timing)
+
+**Symptom.** The exporter rejects the scene with a *"assigned animation slots with a zero primary timing"* error. Or (if bypassed) the game **crashes the moment the Pokémon is sent out** in battle, even though everything looks fine in Blender and the model loads in the overworld.
+
+**Cause.** Each PKX animation slot carries timing values the battle state machine uses to pace state transitions. A slot that references a **real animation** but stores **`timing_1 = 0`** causes a divide-by-zero in that loop, reliably crashing on send-out. (Empty / padding slots are fine — the game never reads their timing.) This only affects **PKX** output; a raw `.dat` has no animation header.
+
+**Fix.**
+
+- **Run [`scripts/prepare_for_pkx_export.py`](#3-preparation-script).** Its `derive_timing` step fills each assigned slot's timings from the bound action's duration. This is the normal path and fixes it automatically.
+- **Or set the timing by hand.** On the armature, set the `dat_pkx_anim_NN_timing_1` custom property (where `NN` is the slot index named in the error) to a non-zero value.
+
+See [implementation_notes.md → Animation timing crash](implementation_notes.md#animation-timing-crash) for the underlying rationale.
 
 ### Limbs (knees / elbows) bend the wrong way in-game
 
