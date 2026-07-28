@@ -62,12 +62,14 @@ def plan_actions(ir_anim_sets, ir_bones):
         here — the bake reads rest data from the shared BRBakeSkeleton).
     Out: list[BRAction], one per input anim set, in the same order.
     """
-    return [_plan_single_action(anim_set) for anim_set in ir_anim_sets]
+    lane_widths = particle_emit_lane_widths(ir_anim_sets)
+    return [_plan_single_action(anim_set, lane_widths) for anim_set in ir_anim_sets]
 
 
-def _plan_single_action(anim_set):
+def _plan_single_action(anim_set, lane_widths):
     """Convert one IRBoneAnimationSet into a BRAction with bone + material tracks."""
-    bone_tracks = [_plan_bone_track(track) for track in anim_set.tracks]
+    bone_tracks = [_plan_bone_track(track, lane_widths)
+                   for track in anim_set.tracks]
     material_tracks = [
         BRMaterialTrack(
             material_mesh_name=mt.material_mesh_name,
@@ -89,7 +91,7 @@ def _plan_single_action(anim_set):
     )
 
 
-def _plan_bone_track(ir_track):
+def _plan_bone_track(ir_track, lane_widths=None):
     """Convert one IRBoneTrack into a BRBoneTrack (keyframes + rest constants)."""
     return BRBoneTrack(
         bone_name=ir_track.bone_name,
@@ -102,7 +104,51 @@ def _plan_bone_track(ir_track):
         rest_scale=ir_track.rest_scale,
         end_frame=ir_track.end_frame,
         spline_path=ir_track.spline_path,
+        particle_emits=_plan_particle_emits(ir_track.particle_emits),
+        particle_emit_lanes=(lane_widths or {}).get(ir_track.bone_name, 0),
     )
+
+
+def _plan_particle_emits(ir_events):
+    """Assign each spawn event a lane so no two share a frame.
+
+    A bone can fire several emitters on the same frame, and one fcurve holds
+    one key per frame — so the events spread across lanes of an array-valued
+    pose-bone property, lane 0 first.
+
+    In: ir_events (list[IRParticleEmitEvent]).
+    Out: list[tuple[float, int, int]] — (frame, emitter index, lane), frame-ordered.
+    """
+    lanes = {}
+    out = []
+    for event in sorted(ir_events, key=lambda e: e.frame):
+        lane = lanes.get(event.frame, 0)
+        lanes[event.frame] = lane + 1
+        out.append((event.frame, event.emitter_ref, lane))
+    return out
+
+
+def particle_emit_lane_widths(ir_anim_sets):
+    """Width each bone's emit property needs, across every clip of the model.
+
+    The property lives on the pose bone, so one width has to fit the busiest
+    clip: a bone firing two emitters at once in any clip needs two lanes in
+    all of them.
+
+    In: ir_anim_sets (list[IRBoneAnimationSet]).
+    Out: dict[str, int] — bone name → lane count; bones that never fire are
+         absent.
+    """
+    widths = {}
+    for anim_set in ir_anim_sets:
+        for track in anim_set.tracks:
+            per_frame = {}
+            for event in track.particle_emits:
+                per_frame[event.frame] = per_frame.get(event.frame, 0) + 1
+            if per_frame:
+                widths[track.bone_name] = max(widths.get(track.bone_name, 0),
+                                              max(per_frame.values()))
+    return widths
 
 
 # ---------------------------------------------------------------------------

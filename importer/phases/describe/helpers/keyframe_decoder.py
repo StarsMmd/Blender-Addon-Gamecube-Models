@@ -114,7 +114,7 @@ def decode_fobjdesc(fobj, bias=0, scale=1, logger=None, options=None):
 
     # Build IRKeyframes with slope data preserved for round-trip fidelity.
     # The slope data from the HSD stream captures the original tangent values.
-    # The build phase (Phase 5) may use Blender's AUTO_CLAMPED handles instead
+    # The build phase (Phase 6) may use Blender's AUTO_CLAMPED handles instead
     # of these slopes for visual fidelity, but the slopes are preserved in the
     # IR so that the compose phase can re-encode them accurately.
     keyframes = []
@@ -130,6 +130,73 @@ def decode_fobjdesc(fobj, bias=0, scale=1, logger=None, options=None):
         ))
 
     return keyframes
+
+
+def decode_particle_fobj(fobj):
+    """Decode a particle-spawn track's keyframes as raw packed integers.
+
+    Particle tracks reuse the compressed keyframe stream layout, but each
+    value is a bit-packed integer the runtime reads verbatim — decoding it
+    through the float path would garble the bit pattern. Walks the same
+    opcode/node-count/wait structure as decode_fobjdesc and returns the
+    values untouched.
+
+    In: fobj (Frame node, parsed; needs raw_ad/start_frame/frac_value).
+    Out: list[(frame: int, raw_value: int)] in stream order.
+    """
+    ad = fobj.raw_ad
+    if not ad:
+        return []
+
+    value_size = _FRAC_TYPE_INFO.get(
+        fobj.frac_value & HSD_A_FRAC_TYPE_MASK, ('float', 4, False))[1]
+    slope_size = _FRAC_TYPE_INFO.get(
+        fobj.frac_slope & HSD_A_FRAC_TYPE_MASK, ('float', 4, False))[1]
+
+    current_frame = int(0 - fobj.start_frame // 1)
+    cur_pos = 0
+    events = []
+
+    while cur_pos < len(ad):
+        opcode = ad[cur_pos] & HSD_A_OP_MASK
+        node_count = (ad[cur_pos] & HSD_A_PACK0_MASK) >> HSD_A_PACK0_SHIFT
+        shift = 0
+        while ad[cur_pos] & HSD_A_PACK_EXT:
+            cur_pos += 1
+            node_count += (ad[cur_pos] & HSD_A_PACK1_MASK) << (HSD_A_PACK1_BIT * shift + 3)
+            shift += 1
+        cur_pos += 1
+        node_count += 1
+
+        for _ in range(node_count):
+            if cur_pos >= len(ad):
+                break
+            if opcode == HSD_A_OP_NONE:
+                continue
+            if opcode != HSD_A_OP_SLP:
+                # Keyframe values use native byte order (see read_native usage
+                # in the float path) — read the same bytes as a raw integer.
+                raw = int.from_bytes(ad[cur_pos:cur_pos + value_size], 'little')
+                cur_pos += value_size
+            if opcode in (HSD_A_OP_SPL, HSD_A_OP_SLP):
+                cur_pos += slope_size
+            if opcode == HSD_A_OP_SLP:
+                continue
+
+            events.append((current_frame, raw))
+
+            shift = 0
+            wait = 0
+            while cur_pos < len(ad):
+                wait += (ad[cur_pos] & HSD_A_WAIT_MASK) << (HSD_A_WAIT_BIT * shift)
+                shift += 1
+                if not ad[cur_pos] & HSD_A_WAIT_EXT:
+                    break
+                cur_pos += 1
+            cur_pos += 1
+            current_frame += wait
+
+    return events
 
 
 def _read_node_values(opcode, value_type, frac_value, slope_type, frac_slope, ad, cur_pos):

@@ -1,4 +1,4 @@
-"""Phase 5 build: BR scene → Blender scene via bpy.
+"""Phase 6 build: BR scene → Blender scene via bpy.
 
 Pure executor. All decisions (inherit_scale, shader graphs, animation
 basis formula, coord conversions, FOV→lens, ...) are baked into BR by
@@ -11,6 +11,7 @@ from .helpers.constraints import build_constraints
 from .helpers.lights import build_lights
 from .helpers.cameras import build_cameras
 from .helpers.particles import build_particles
+from .helpers.linking import make_collection
 
 try:
     from ....shared.helpers.logger import StubLogger
@@ -32,15 +33,23 @@ def build_blender_scene(br_scene, context, options, logger=StubLogger()):
         list of dicts, one per model, with keys ``armature``, ``actions``,
         ``mat_slot_indices``.
     """
-    logger.info("=== Phase 5: Build Blender Scene ===")
+    logger.info("=== Phase 6: Build Blender Scene ===")
 
     build_results = []
+    scene_collection = _scene_collection(br_scene, options, logger)
 
     for model_idx, br_model in enumerate(br_scene.models):
         logger.info("Building model: %s (%d bones, %d meshes)",
                     br_model.name, len(br_model.armature.bones), len(br_model.meshes))
 
-        armature = build_skeleton(br_model.armature, context, logger=logger)
+        # Everything else this model builds follows its armature's collection.
+        model_collection = scene_collection
+        if br_model.collection_name:
+            model_collection = make_collection(br_model.collection_name,
+                                               scene_collection)
+
+        armature = build_skeleton(br_model.armature, context, logger=logger,
+                                  collection=model_collection)
         material_lookup = build_meshes(br_model, armature, context, logger=logger)
         reset_pose(armature)
 
@@ -64,14 +73,31 @@ def build_blender_scene(br_scene, context, options, logger=StubLogger()):
         })
 
     if br_scene.lights and options.get("import_lights", False):
-        build_lights(br_scene.lights, logger)
+        build_lights(br_scene.lights, logger, scene_collection)
     if br_scene.cameras and options.get("import_cameras", False):
-        build_cameras(br_scene.cameras, logger)
+        build_cameras(br_scene.cameras, logger, scene_collection)
 
     _store_fog(getattr(br_scene, 'fogs', None), context, logger)
 
-    logger.info("=== Phase 5 complete ===")
+    logger.info("=== Phase 6 complete ===")
     return build_results
+
+
+def _scene_collection(br_scene, options, logger):
+    """Create the collection this import files everything into.
+
+    Returns None when the file builds no objects at all, so a skipped import
+    (say a camera file with camera import switched off) leaves nothing behind.
+    """
+    builds_something = bool(br_scene.models) or (
+        (br_scene.lights and options.get("import_lights", False))
+        or (br_scene.cameras and options.get("import_cameras", False))
+    )
+    if not builds_something:
+        return None
+    collection = make_collection(br_scene.collection_name or "Imported")
+    logger.info("  Filing the import into collection '%s'", collection.name)
+    return collection
 
 
 def _store_fog(br_fogs, context, logger):

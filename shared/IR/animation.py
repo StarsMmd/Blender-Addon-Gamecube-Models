@@ -65,6 +65,9 @@ class IRBoneTrack:
     end_frame: float = 0  # animation duration from the source Animation object
     # Path animation — bone follows a spline curve (mutually exclusive with SRT location)
     spline_path: IRSplinePath | None = None
+    # Animation-driven particle spawns fired from this bone (list[IRParticleEmitEvent]).
+    # The bone owning the track is the attach point for the spawned emitter.
+    particle_emits: list = field(default_factory=list)
 
 
 @dataclass

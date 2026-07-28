@@ -111,7 +111,7 @@ if not hasattr(bpy.types.Object, 'dat_pkx_shiny_route_r'):
 # ---------------------------------------------------------------------------
 
 def load_model(filepath):
-    """Run import phases 1-3 on a model file. Returns (dat_bytes, sections)."""
+    """Run import phases 1-3 on a model file. Returns (dat_bytes, sections, metadata)."""
     with open(filepath, 'rb') as f:
         raw_bytes = f.read()
     filename = os.path.basename(filepath)
@@ -120,7 +120,18 @@ def load_model(filepath):
 
     section_map = route_sections(dat_bytes)
     sections = parse_sections(dat_bytes, section_map, {})
-    return dat_bytes, sections
+    return dat_bytes, sections, metadata
+
+
+def _particle_options(metadata, options):
+    """Add the particle REF map to describe options when GPT1 data exists.
+
+    Lets the describe leg resolve particle-spawn animation tracks the same
+    way the real importer does."""
+    if getattr(metadata, 'gpt1_data', None):
+        from importer.phases.describe.helpers.particles import particle_ref_map
+        options['particle_ref_map'] = particle_ref_map(metadata.gpt1_data)
+    return options
 
 
 def describe_ir(sections, options=None, logger=None):
@@ -133,7 +144,7 @@ def describe_ir(sections, options=None, logger=None):
 
 
 def plan_to_br(ir_scene, options=None, logger=None):
-    """Run import phase 5a (plan). Returns BRScene."""
+    """Run import phase 5 (plan). Returns BRScene."""
     if options is None:
         options = {"filepath": "test_model"}
     if logger is None:
@@ -142,7 +153,7 @@ def plan_to_br(ir_scene, options=None, logger=None):
 
 
 def build_in_blender(br_scene, options=None):
-    """Run import phase 5b (build_blender). Returns build_results."""
+    """Run import phase 6 (build_blender). Returns build_results."""
     if options is None:
         options = {"filepath": "test_model"}
     # Enable all optional features for round-trip testing. Without
@@ -209,7 +220,7 @@ def clear_blender_scene():
 
 def compute_nbn_score(filepath):
     """Parse a file, serialize via DATBuilder, reparse, compare node fields."""
-    dat_bytes, sections = load_model(filepath)
+    dat_bytes, sections, _ = load_model(filepath)
 
     # Serialize
     root_nodes = [s.root_node for s in sections]
@@ -222,7 +233,7 @@ def compute_nbn_score(filepath):
     rebuilt_bytes = out_buf.getvalue()
 
     # Reparse both (DATBuilder mutates nodes, so reparse originals too)
-    dat_bytes2, sections_orig = load_model(filepath)
+    dat_bytes2, sections_orig, _ = load_model(filepath)
     buf2 = io.BytesIO(rebuilt_bytes)
     parser2 = DATParser(buf2, {"section_map": None})
     parser2.parseSections()
@@ -248,7 +259,7 @@ def compute_nbn_score(filepath):
 
 def compute_bnb_score(filepath):
     """Parse a file, write back, compare bytes with fuzzy word matching."""
-    dat_bytes, sections = load_model(filepath)
+    dat_bytes, sections, _ = load_model(filepath)
 
     root_nodes = [s.root_node for s in sections]
     section_names = [s.section_name for s in sections]
@@ -273,10 +284,11 @@ def compute_bnb_score(filepath):
 
 def compute_nin_score(filepath, logger=None):
     """Parse a file, describe to IR, compose back to nodes, compare."""
-    _, sections = load_model(filepath)
+    _, sections, metadata = load_model(filepath)
 
     # Describe (phase 4)
-    ir_scene = describe_ir(sections, options={}, logger=logger)
+    ir_scene = describe_ir(sections, options=_particle_options(metadata, {}),
+                           logger=logger)
 
     # Compose (phase 2 export)
     composed_nodes, _ = compose_scene(ir_scene, {'strip_names': True})
@@ -325,11 +337,11 @@ def compute_ibi_score(filepath, logger=None):
     then the scores are averaged across categories that have data. This
     prevents large vertex arrays from drowning out other features.
     """
-    _, sections = load_model(filepath)
-    options = {"filepath": filepath}
+    _, sections, metadata = load_model(filepath)
+    options = _particle_options(metadata, {"filepath": filepath})
     ir_original = describe_ir(sections, options=options, logger=logger)
 
-    # Plan IR → BR (importer phase 5a), then BR → IR (exporter phase 2).
+    # Plan IR → BR (importer phase 5), then BR → IR (exporter phase 2).
     # Disable mesh merging so the round-tripped mesh count matches the
     # original — the merge is an intentional PObject-ceiling optimisation,
     # not a fidelity loss, and counting the merged-away meshes as misses
@@ -369,7 +381,7 @@ def compute_bbb_score(filepath, logger=None):
     """
     clear_blender_scene()
 
-    _, sections = load_model(filepath)
+    _, sections, _ = load_model(filepath)
     options = {"filepath": filepath}
     ir_original = describe_ir(sections, options=options, logger=logger)
     br_original = plan_to_br(ir_original, options={"filepath": filepath}, logger=logger)

@@ -1,10 +1,10 @@
 # Intermediate Representation (IR) Specification
 
-The IR is the output of Phase 4 (Scene Description) and the input to Phase 5a (Plan). It is a pure-Python dataclass hierarchy with no dependencies on `bpy` or the Node system.
+The IR is the output of Phase 4 (Scene Description) and the input to Phase 5 (Plan). It is a pure-Python dataclass hierarchy with no dependencies on `bpy` or the Node system.
 
 The downstream Blender-specialised counterpart produced by the Plan phase is the **BR** (Blender Representation). See [br_specification.md](br_specification.md) for that spec.
 
-> **Note:** Shiny variant data bypasses the IR entirely. Raw shiny parameters are extracted in Phase 1 (extract) and passed directly to Phase 6 (post_process), which applies them to Blender materials after the main build is complete.
+> **Note:** Shiny variant data bypasses the IR entirely. Raw shiny parameters are extracted in Phase 1 (extract) and passed directly to Phase 7 (post_process), which applies them to Blender materials after the main build is complete.
 
 **Design principles:**
 - All types are `@dataclass` from the standard library
@@ -13,7 +13,7 @@ The downstream Blender-specialised counterpart produced by the Plan phase is the
 - Materials store abstract rendering parameters, not target-specific shader graphs (target-specific shader-graph shape lives in BR)
 - Animation keyframes are fully decoded (frame/value/interpolation/handles) — not compressed bytes, not target-baked values
 - Image pixels are raw u8 bytes — float conversion happens in the build phase
-- Platform-agnostic: no source-format quirks (GameCube) or target-format quirks (Blender) — Phase 4 strips the former, Phase 5a translates the latter
+- Platform-agnostic: no source-format quirks (GameCube) or target-format quirks (Blender) — Phase 4 strips the former, Phase 5 translates the latter
 
 ---
 
@@ -23,18 +23,18 @@ The IR uses standard, widely-adopted conventions so that any build phase can con
 
 | Property | Convention | Notes |
 |---|---|---|
-| **Coordinate system** | Y-up, right-handed | GameCube uses Y-up natively; the π/2 X-rotation for Blender's Z-up is applied in Phase 5a (Plan) at the armature level via `BRArmature.matrix_basis` |
+| **Coordinate system** | Y-up, right-handed | GameCube uses Y-up natively; the π/2 X-rotation for Blender's Z-up is applied in Phase 5 (Plan) at the armature level via `BRArmature.matrix_basis` |
 | **Rotation** | Euler XYZ, radians | Stored as `(rx, ry, rz)` tuples |
 | **Matrices** | 4×4, row-major | Stored as `list[list[float]]` (4 rows of 4 floats) |
 | **UV origin** | Bottom-left (OpenGL convention) | Phase 4 flips V from GameCube's top-left origin: `v = 1 - scale_v - v` |
 | **UV animation** | Bottom-left, V-flipped in Phase 4 | Animated `translation_v` keyframes are corrected using the static or animated `scale_v` value at each keyframe's frame |
-| **Color space** | sRGB [0, 1] | Diffuse/ambient/specular/vertex colors are normalized from u8 [0, 255] to float [0, 1] but remain in sRGB space. Linearization for Blender happens in Phase 5a (Plan) when constructing BR material/light colors |
+| **Color space** | sRGB [0, 1] | Diffuse/ambient/specular/vertex colors are normalized from u8 [0, 255] to float [0, 1] but remain in sRGB space. Linearization for Blender happens in Phase 5 (Plan) when constructing BR material/light colors |
 | **Vertex colors** | sRGB float [0, 1] | Source u8 [0, 255] values are normalized to [0, 1] in Phase 4. Not linearized — the build phase stores them as FLOAT_COLOR so Blender passes them through as-is |
 | **Image pixels** | Raw u8 RGBA, row-major, bottom-to-top | No gamma or color space conversion — stored as decoded from the source format |
 | **Bone transforms** | Local-space SRT | `position`, `rotation`, `scale` are relative to parent bone |
 | **Bone matrices** | World-space | `world_matrix`, `normalized_world_matrix` etc. are absolute transforms |
 | **Mesh vertices** | World-space positions | All vertices are in world space regardless of skin type. Phase 4 transforms RIGID/SINGLE_BONE vertices from bone-local to world space (`parent_world @ vertex`), and ENVELOPE vertices via deformation (`bone_world @ IBM @ vertex`). The compose phase reverses these transforms per skin type |
-| **Animation values** | Raw per-channel SRT | Keyframe values are raw rotation/translation/scale from the source. Phase 5b's `bake_frame` composes each bone's GX world per frame from these + the `BRBakeSkeleton` rest data, reproducing HSD's aligned scale inheritance under Blender's `inherit_scale='NONE'` |
+| **Animation values** | Raw per-channel SRT | Keyframe values are raw rotation/translation/scale from the source. Phase 6's `bake_frame` composes each bone's GX world per frame from these + the `BRBakeSkeleton` rest data, reproducing HSD's aligned scale inheritance under Blender's `inherit_scale='NONE'` |
 | **Angles** | Radians | All rotation values throughout the IR |
 | **Units** | Meters | All position values are in meters (Blender units). GameCube positions are converted using `GC_TO_METERS = 0.10` on import (Phase 4) and `METERS_TO_GC = 10.0` on export (compose phase). The scale constant is defined in `shared/helpers/scale.py` |
 
@@ -59,6 +59,8 @@ shared/IR/
   lights.py               # IRLight
   camera.py               # IRCamera, IRCameraKeyframes
   fog.py                  # IRFog (stub)
+  collision.py            # IRCollisionScene, IRCollisionEntry, IRCollisionMesh,
+                          # IRCollisionFace — a separate root, not part of IRScene
 ```
 
 ---
@@ -236,7 +238,7 @@ class FragmentBlending:
 
 **File:** `shared/IR/animation.py`
 
-All keyframes are fully decoded into explicit frame/value pairs with interpolation and bezier handles. Keyframe values are raw per-channel SRT — Phase 5a builds the model-wide `BRBakeSkeleton` (rest data + parent-first order), and Phase 5b's `bake_frame` composes each bone's GX world per frame and inverts Blender's `inherit_scale='NONE'` forward map to a shear-free pose basis. See [br_specification.md](br_specification.md) § BRBakeSkeleton and [implementation_notes.md](implementation_notes.md) § Scale inheritance.
+All keyframes are fully decoded into explicit frame/value pairs with interpolation and bezier handles. Keyframe values are raw per-channel SRT — Phase 5 builds the model-wide `BRBakeSkeleton` (rest data + parent-first order), and Phase 6's `bake_frame` composes each bone's GX world per frame and inverts Blender's `inherit_scale='NONE'` forward map to a shear-free pose basis. See [br_specification.md](br_specification.md) § BRBakeSkeleton and [implementation_notes.md](implementation_notes.md) § Scale inheritance.
 
 HSD's aligned scale inheritance is reproduced by that per-frame GX composition (`Rot · diag(accumulated_scale)`), not pre-baked into any single rest matrix — so it stays correct even when an ancestor's scale is animated.
 
@@ -436,33 +438,123 @@ class IRFog:
 
 No fog data found in tested models. Stub retained for future use.
 
-## Particles (GPT1)
+## Particles
+
+Fully **semantic and platform-agnostic** — no source-format opcodes, header
+words, or GX register state. The describe phase summarizes GPT1 bytecode into
+this vocabulary (lossily); compose synthesizes fresh bytecode from it. The IR
+may carry core particle features a given target cannot fully represent
+(e.g. trail rendering, velocity-stretched billboards) — targets approximate
+or ignore what they can't express.
 
 ```python
 @dataclass
 class IRParticleSystem:
-    generators: list[IRParticleGenerator]
+    emitters: list[IRParticleEmitter]
     textures: list[IRParticleTexture]
-    ref_ids: list[int]               # Generator ID lookup
 
 @dataclass
-class IRParticleGenerator:
-    index: int
-    gen_type: int
-    lifetime: int                    # Frame duration
+class IRParticleEmitter:
+    name: str
+    emit_duration: float                 # frames the emitter keeps spawning
     max_particles: int
-    flags: int
-    params: tuple[float, ...]        # 12-float generator header params
-    instructions: list[ParticleInstruction]   # Decoded bytecode
+    particle_lifetime: IRRandomScalar    # frames, base ± spread
+    looping: bool                        # per-particle animation cycles until death
+    emission: IRParticleEmission         # rate (particles/frame) + bursts
+    birth: IRParticleBirth               # position/velocity/size/color randomness
+    color_over_life: list[IRColorStop]   # sRGB gradient, age normalized [0,1]
+    size_over_life: list[IRScalarKey]    # absolute size keys, age normalized
+    rotation: IRParticleRotation         # initial angle / rate / accel (radians)
+    forces: IRParticleForces             # gravity vector (m/frame^2), drag
+    texture: IRParticleTextureAnim       # flip-book frames + sampling state
+    render: IRParticleRender             # blend / billboard / depth / trail
+    sub_emitters: list[IRSubEmitter]     # (age, emitter_ref, count, inherit_velocity)
 
 @dataclass
 class IRParticleTexture:
-    format: int                      # GX format ID
     width: int
     height: int
     pixels: bytes                    # Decoded RGBA u8, bottom-to-top
+
+@dataclass
+class IRParticleEmitEvent:           # on IRBoneTrack.particle_emits
+    frame: float                     # clip-local frame
+    emitter_ref: int                 # index into IRParticleSystem.emitters
 ```
 
-- `instructions` hold decoded opcodes (not raw bytecode bytes) so the compose phase re-emits bytecode from semantic args via `shared.helpers.gpt1_commands.assemble()`.
-- No raw-bytecode fallback field exists — every opcode must map to a `ParticleInstruction` the assembler knows. Unsupported opcodes cause the describe phase to raise `ValueError`.
-- Phase 5b currently only stamps counts onto the armature (`BRParticleSummary` → `dat_particle_gen_count` / `dat_particle_tex_count` custom props); full generator-mesh + GeometryNodes instantiation is blocked on the generator→bone binding research noted in `build_blender/helpers/particles.py`. See [exporter_setup.md](exporter_setup.md#particles-gpt1) for the planned scene layout and opcode coverage.
+- Randomness is uniform `base ± spread` (`IRRandomScalar` / `IRRandomVec3`);
+  positions/velocities are meters (Y-up, per frame); colors sRGB [0,1];
+  over-life keys/stops use normalized age [0,1].
+- The GPT1 leg is deliberately lossy: opcodes with no generic equivalent
+  (joint forces, GX register color ops, native callbacks, palette swaps) are
+  dropped with a debug log; the source's dual-clock ramp timing is flattened
+  to hold+target keys. Compose synthesizes a fresh instruction stream from
+  the curves — never byte-reproduction.
+- Generator→bone binding is animation data, not emitter state:
+  `IRParticleEmitEvent`s live on the owning bone's `IRBoneTrack` (the bone
+  that fires the event is the attach point; the spawned emitter follows it).
+- Phase 5/6 build the emitters as real Blender objects (`BRParticleSystem` →
+  one geometry-node-driven mesh per emitter, ColorRamp/Float-Curve over-life
+  gradients) and the emit events as CONSTANT keys on each firing pose bone's
+  `particle_emit` property. The export read-back (Blender → BR) is the
+  remaining leg. See [exporter_setup.md](exporter_setup.md#particles-gpt1).
+
+---
+
+## Map Collision
+
+Collision (`.ccd`) has its own IR root. It is **not** reachable from `IRScene`
+— the whole path (extract → parse → describe → plan → build) runs beside the
+model pipeline and shares only the container extraction step.
+
+```python
+class IRCollisionScene:
+    name: str
+    entries: list[IRCollisionEntry]
+
+class IRCollisionEntry:
+    index: int                       # addressed from outside the file, so it is data
+    meshes: list[IRCollisionMesh]    # in file slot order, absent subsystems omitted
+    position/rotation/scale: tuple[float, float, float]
+    is_dynamic: bool                 # entry flag bit 0
+    npc_shares_hit: bool             # see below
+
+class IRCollisionMesh:
+    subsystem: CollisionSubsystem    # WALK / WALL / ZONE_TRIGGER / BUTTON_TRIGGER
+                                     # / NPC_WALL / SUN
+    vertices: list[tuple[float, float, float]]   # Y-up world space, meters, welded
+    faces: list[IRCollisionFace]
+
+class IRCollisionFace:
+    indices: tuple[int, int, int]
+    edge_mask: int = 0b111           # WALL / NPC_WALL / ZONE_TRIGGER
+    region_id: int = 0               # ZONE_TRIGGER / BUTTON_TRIGGER — the
+                                     # InteractionPoints key
+    layer_a: int = 0xF               # WALK — 0xF matches any layer
+    layer_b: int = 0xF
+    surface_a: int = 0               # WALK — surface/effect nibbles
+    surface_b: int = 0
+```
+
+`CollisionSubsystem` (named for behaviour, not for the engine's own `walk /
+hit / thru / check / hit_npc / sun` slot names) and the format's layout
+constants live in `shared/Constants/collision.py`, which both the binary layer
+(`shared/Collision/`) and this IR import — neither depends on the other.
+
+Positions are scaled by `GC_TO_METERS` in describe, like every other IR
+position, so the overlay lines up with an imported room model.
+
+What the IR drops, because it is recomputable: **poly normals** (winding gives
+`normalize(cross(v1 - v0, v2 - v0))` back exactly) and the **XZ lookup grid**
+(derived from the triangle bounds). What it normalises: the three independent
+corners each poly stores on disk are **welded** into an indexed mesh; a poly
+whose welded corners repeat an earlier face's keeps private vertices, since
+Blender can only hold one face per vertex set.
+
+**NPC walls are stored as a difference.** `npc_shares_hit` set means the NPC
+wall mesh is every player wall *plus* whatever the `NPC_WALL` mesh holds —
+usually nothing, so no `NPC_WALL` mesh is emitted at all. Cleared, any
+`NPC_WALL` mesh stands alone. Reconstruction is exact; only poly *order* can
+differ, and only where the original interleaved its extra NPC walls with the
+shared ones. See [collision_format.md](collision_format.md) § Blender import
+mapping.

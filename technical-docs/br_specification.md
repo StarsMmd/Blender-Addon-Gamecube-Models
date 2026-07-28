@@ -2,7 +2,7 @@
 
 The BR is a pure-Python dataclass hierarchy with every field pre-decided for Blender consumption — enum strings match Blender's own, matrices are in Blender's target space, shader graphs are fully specified node-by-node. It serves both pipeline directions:
 
-- **Import side** — output of Phase 5a (`importer/phases/plan/`) and input to Phase 5b (`importer/phases/build_blender/`). Plan converts IR → BR; build mechanically walks the BR with no shader / geometry / bake decisions of its own.
+- **Import side** — output of Phase 5 (`importer/phases/plan/`) and input to Phase 6 (`importer/phases/build_blender/`). Plan converts IR → BR; build mechanically walks the BR with no shader / geometry / bake decisions of its own.
 - **Export side** — output of Phase 1 (`exporter/phases/describe/`) and input to Phase 2 (`exporter/phases/plan/`). Describe snapshots Blender into BR; the export `plan` converts BR → IR for the rest of the export pipeline. Every domain flows through real BR types: shader graphs are serialised faithfully into BRNodeGraph (describe) and decoded into IRMaterial via a `_GraphView` index (plan); animations are unbaked + sparsified inside describe (bpy / mathutils heavy lifting) and packaged into BRAction / BRBoneTrack / BRMaterialTrack, with plan reconstructing the IR rest_local_matrix from BR rest SRT.
 
 **Design principles:**
@@ -19,19 +19,31 @@ The BR is a pure-Python dataclass hierarchy with every field pre-decided for Ble
 
 ```
 BRScene
+├── collection_name: str               # collection this import is filed into
 ├── models: list[BRModel]
 ├── lights: list[BRLight]
 └── cameras: list[BRCamera]
 
+BRCollisionScene                      # separate root — collision never joins BRScene
+├── name: str
+├── root_name: str                    # parent Empty (transform only)
+├── collection_name: str              # hiding this hides the whole overlay
+├── subcollections: list[str]         # one per collision type in use
+├── root_matrix: list[list[float]]    # Y-up → Z-up
+├── objects: list[BRCollisionObject]
+├── markers: list[BRCollisionMarker]  # entries with no meshes
+└── materials: list[BRCollisionMaterial]
+
 BRModel
 ├── name: str
 ├── armature: BRArmature
+├── collection_name: str | None       # sub-collection, only when >1 skeleton
 ├── meshes: list[BRMesh]
 ├── mesh_instances: list[BRMeshInstance]
 ├── actions: list[BRAction]
 ├── materials: list[BRMaterial]       # deduped; BRMesh.material_index points here
 ├── constraints: BRConstraints        # pass-through wrapper around IR constraints
-└── particles: BRParticleSummary | None
+└── particles: BRParticleSystem | None
 ```
 
 ---
@@ -124,6 +136,8 @@ Instances model `JOBJ_INSTANCE` bones: Plan expands one source bone with `instan
 | `rest_rotation` / `rest_position` / `rest_scale` | tuples of 3 floats | Constants used when a channel has no keyframes (build fills with these). |
 | `end_frame` | `float` | |
 | `spline_path` | `object` | IRSplinePath pass-through for FOLLOW_PATH-animated bones (baked via a constraint, not the pose bake). |
+| `particle_emits` | `list[tuple[float, int, int]]` | Particle spawn events fired from this bone: `(frame, emitter index, lane)`, frame-ordered. Build writes them as CONSTANT-interpolation keys on the pose bone's array-valued `particle_emit` property, one fcurve per lane. Each key is one spawn — the curve is an event list, not a sampled signal. |
+| `particle_emit_lanes` | `int` | Width of that property. A bone can fire several emitters on the same frame and one fcurve holds one key per frame, so simultaneous spawns land in separate lanes; the pose bone is shared by every action, so this is the widest lane count any of the model's clips needs. `0` = the bone never fires. |
 
 ### BRBakeSkeleton / BRBakeBone
 
@@ -296,14 +310,90 @@ Pass-through wrapper — the IR constraint dataclasses already mirror Blender's 
 
 Helpers: `is_empty` (bool) and `total` (int) are computed from field lengths.
 
-## BRParticleSummary
+## BRParticleSystem
+
+`shared/BR/particles.py`
+
+One emitter per `IRParticleEmitter`. Build creates an Empty (`root_name`) parented to the armature, one single-vertex mesh object per emitter parented to that Empty, and one `GeometryNodeTree` per emitter carrying the parameters as interface inputs.
 
 | Field | Type | Notes |
 |---|---|---|
-| `generator_count` | `int` | |
-| `texture_count` | `int` | |
+| `root_name` | `str` | `Particles_{model}` — the Empty every emitter parents to. |
+| `emitters` | `list[BRParticleEmitter]` | Index order is the emitter index that `particle_emit` fcurves carry. |
+| `images` | `list[BRImage]` | One per `IRParticleTexture`, deduped by `cache_key`. All are created even if no emitter currently samples them. |
+| `attaches` | `list[BRParticleAttach]` | One bone-parented Empty (`name`, `bone_name`) per bone that fires anything. Emitters *spawn at* these rather than being parented to a bone: the game makes one generator instance per firing event, so one emitter can be alive on several bones at once, and particles already born must keep their own world path instead of riding along with the bone. |
 
-Build writes these to `armature["dat_particle_gen_count"]` / `["dat_particle_tex_count"]`. Full particle instantiation awaits the generator→bone binding mechanism research (see `importer/phases/build_blender/helpers/particles.py` header note).
+### BRParticleEmitter
+
+| Field | Type | Notes |
+|---|---|---|
+| `name` | `str` | Object name, `Particles_{model}_G{NN}`. |
+| `node_group` | `BRParticleNodeGroup \| None` | Geometry-node group driving the emitter. |
+| `material` | `BRMaterial \| None` | `DATPlugin_ParticleMat_{model}_G{NN}` — Emission mixed against Transparent by texture alpha (particles are unlit in the source engine), tinted by the per-particle `particle_color` instancer attribute. |
+| `custom_props` | `dict[str, object]` | Flat arrays for list-valued content Blender has no slot for: `dat_particle_emitter_index`, `dat_particle_flipbook_frames`/`_ages`, `dat_particle_burst_frames`/`_counts`, `dat_particle_sub_ages`/`_refs`/`_counts`/`_inherit`. Empty lists are omitted — Blender rejects empty-sequence custom props. |
+| `attach_name` | `str \| None` | The `BRParticleAttach` this emitter spawns at. `None` = the system root (emitters no clip fires — sub-emitters, mostly). |
+| `emit_driver` | `BRParticleEmitDriver \| None` | `bone_name` + `lane_count` + `emitter_index`. Build drives the group's `Emit` input from that bone's `particle_emit` lanes, so a clip previews the emitters it actually fires instead of all of them at once. Reads the fcurves; never a second copy of them. |
+
+### BRParticleNodeGroup
+
+| Field | Type | Notes |
+|---|---|---|
+| `name` | `str` | `DATPlugin_Particles_{model}_G{NN}`. |
+| `inputs` / `outputs` | `list[BRInterfaceSocket]` | Interface sockets; the geometry socket leads the input list. |
+| `nodes` / `links` | `list[BRNode]` / `list[BRLink]` | Same types as shader graphs. Group input/output links address sockets by **name** (Blender assigns their identifiers at interface-creation time); every other socket uses the identifier convention. |
+| `color_ramps` | `dict[str, BRColorRamp]` | Node name → payload. `ColorOverLife` (`ShaderNodeValToRGB`). |
+| `float_curves` | `dict[str, BRFloatCurve]` | Node name → payload. `SizeOverLife` (`ShaderNodeFloatCurve`). |
+
+`BRInterfaceSocket` = `name`, `socket_type` (Blender socket bl_idname), `value` (both the interface default and the modifier value — the group is per-emitter), `subtype`, `min_value`, `max_value`, `description`.
+
+`BRColorRamp` = `stops: list[BRColorRampStop]` (`position` in [0, 1], linear RGBA) + `interpolation` / `color_mode`. Positions are strictly increasing and capped at Blender's 32-element ceiling.
+
+`BRFloatCurve` = `points: list[BRCurvePoint]` (at least two, x strictly increasing) + `use_clip` / `clip_min_y` / `clip_max_y`. The clip box is widened to the curve's own range — Blender clamps curve values to it, and particle sizes routinely exceed the 0-1 default.
+
+**Plan owns:** GC→metre sizes, Y-up→Z-up vectors (spreads permute without sign), sRGB→linear ramp stops, ramp/curve position layout (coincident ages nudged apart; a saturated run keeps the last value), render enums → menu ints, and the material graph.
+
+Which emitter fires from which bone is animation data, not a property of these objects — see `BRBoneTrack.particle_emits`.
+
+---
+
+## BRCollisionScene
+
+**File:** `shared/BR/collision.py`
+
+The collision overlay's build plan. A standalone root: `plan_collision`
+(`importer/phases/plan/plan_collision.py`) produces it from an
+`IRCollisionScene`, and `build_collision`
+(`importer/phases/build_blender/build_collision.py`) consumes it. It is not
+reachable from `BRScene` and shares no types with it.
+
+```python
+class BRCollisionObject:
+    name: str                                   # Col_{scene}_{entry:02d}_{type}[_r{region}]
+    collection_name: str                        # the per-type sub-collection
+    vertices: list[tuple[float, float, float]]  # still Y-up; the root Empty rotates
+    faces: list[tuple[int, int, int]]
+    face_attributes: dict[str, list[int]]       # attribute name → one INT per face
+    custom_props: dict[str, object]             # dat_col_* keys, written verbatim
+    material_index: int | None                  # index into BRCollisionScene.materials
+    matrix_basis: list[list[float]] | None      # the entry transform, None when identity
+
+class BRCollisionMarker:                        # an entry that carries no meshes
+    name: str
+    custom_props: dict[str, object]
+    matrix_basis: list[list[float]] | None
+
+class BRCollisionMaterial:
+    name: str                                   # DATPlugin_Collision_{TYPE}
+    color: tuple[float, float, float, float]    # linear RGB + per-type alpha
+    blend_method: str = 'BLEND'
+    surface_render_method: str = 'BLENDED'      # EEVEE Next
+```
+
+Both metadata dicts are deliberately open: plan owns the property keys and
+attribute names, so build is a literal `for key, value in ...: obj[key] = value`
+loop with no naming knowledge of its own. Object names are display labels —
+`dat_col_entry` is the authoritative grouping key, since Blender may suffix a
+duplicate name.
 
 ---
 

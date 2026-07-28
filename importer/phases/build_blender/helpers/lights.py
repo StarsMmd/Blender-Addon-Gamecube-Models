@@ -10,24 +10,26 @@ to anchor and are simply not built — they're inert.
 import bpy
 
 from .cameras import _insert_keyframes
+from .linking import link_into
 
 
-def build_lights(br_lights, logger):
+def build_lights(br_lights, logger, collection=None):
     """Create Blender lights for every BRLight in the list.
 
-    In: br_lights (list[BRLight]); logger (Logger).
-    Out: None. Lights + target empties are linked into the scene.
+    In: br_lights (list[BRLight]); logger (Logger); collection (Collection|None,
+        defaults to the scene root).
+    Out: None. Lights + target empties are linked into that collection.
     """
     for br_light in br_lights:
-        _build_light(br_light, logger)
+        _build_light(br_light, logger, collection)
     if br_lights:
         logger.info("  Built %d light(s)", len(br_lights))
 
 
-def _build_light(br_light, logger):
+def _build_light(br_light, logger, collection=None):
     """Build one Light data block + Object from a BRLight.
 
-    In: br_light (BRLight); logger (Logger).
+    In: br_light (BRLight); logger (Logger); collection (Collection|None).
     Out: None. Ambient lights get dat_light_type='AMBIENT' custom prop;
          non-ambient with a target_location get a TRACK_TO-ed empty;
          animation clips build as fcurves.
@@ -48,14 +50,14 @@ def _build_light(br_light, logger):
         target = bpy.data.objects.new(br_light.name + '_target', None)
         target.empty_display_type = 'PLAIN_AXES'
         target.location = br_light.target_location
-        bpy.context.scene.collection.objects.link(target)
+        link_into(target, collection)
 
         constraint = lamp.constraints.new(type='TRACK_TO')
         constraint.target = target
         constraint.track_axis = 'TRACK_NEGATIVE_Z'
         constraint.up_axis = 'UP_Y'
 
-    bpy.context.scene.collection.objects.link(lamp)
+    link_into(lamp, collection)
 
     for anim in getattr(br_light, 'animations', None) or []:
         _build_light_animation(anim, lamp, target, light_data, logger)

@@ -39,6 +39,7 @@
                 <li><a href="#importing-model">Importing a model</a></li>
                 <li><a href="#viewing-animations">Viewing animations</a></li>
                 <li><a href="#viewing-shiny">Viewing shiny variants (Pokémon)</a></li>
+                <li><a href="#collision">Importing collision (maps)</a></li>
                 <li><a href="#troubleshooting">Troubleshooting</a></li>
             </ol>
         </nav>
@@ -485,7 +486,132 @@
             for the full walkthrough.
         </div>
 
-        <h2 id="troubleshooting">7. Troubleshooting</h2>
+        <h2 id="collision">7. Importing collision (maps)</h2>
+
+        <p>Map archives carry a <strong>collision database</strong> (<code>.ccd</code>) alongside
+        the room model. It's the invisible geometry the game actually tests against: the floors
+        you walk on, the walls that stop you, and the trigger regions that fire doors, warps and
+        text when you step on them or press A. The addon imports it as a colour-coded, translucent
+        overlay sitting exactly on top of the room.</p>
+
+        <h3>Step 1 — Import the file</h3>
+
+        <p>There's nothing extra to do. Import a map's <code>.fsys</code> the same way as any other
+        model and the collision comes in with it. You can also import a standalone <code>.ccd</code>
+        on its own — it's in the file dialog's filter alongside <code>.dat</code> and
+        <code>.pkx</code>.</p>
+
+        <p>If you'd rather not have it, untick <strong>Import Collision</strong> in the import
+        options sidebar before clicking Import.</p>
+
+        <figure class="screenshot">
+            <img src="images/importer/collision/collision-overlay.png" alt="A town map in Blender with every collision type shown as a translucent coloured overlay">
+            <figcaption>A map with all of its collision shown at once — red walls around every
+            building, green walkable ground, and trigger regions at the doors.</figcaption>
+        </figure>
+
+        <h3>The six collision types</h3>
+
+        <p>Each type gets its own colour and its own level of transparency, so the ones you're most
+        likely to be looking for read strongest:</p>
+
+        <table>
+            <thead><tr><th>Type</th><th>Colour</th><th>Opacity</th><th>What it does</th></tr></thead>
+            <tbody>
+                <tr><td>Walk</td>
+                    <td><span class="swatch" style="background:#26cc40"></span>Green</td>
+                    <td>30%</td>
+                    <td>The ground. Gives the game the floor height under the player, plus which
+                    floor layer it belongs to on multi-level maps like bridges.</td></tr>
+                <tr><td>Wall</td>
+                    <td><span class="swatch" style="background:#e61a1a"></span>Red</td>
+                    <td>50%</td>
+                    <td>Blocks the player. Doors are their own separate pieces so the game can
+                    switch them off when they open.</td></tr>
+                <tr><td>NPC Wall</td>
+                    <td><span class="swatch" style="background:#ff800d"></span>Orange</td>
+                    <td>50%</td>
+                    <td>Blocks NPCs. Usually identical to the player walls, so only the
+                    <em>extra</em> walls NPCs are blocked by get their own objects — see the note
+                    below.</td></tr>
+                <tr><td>Zone Trigger</td>
+                    <td><span class="swatch" style="background:#2666ff"></span>Blue</td>
+                    <td>70%</td>
+                    <td>Fires when you walk through it: warps, door approaches, area events.</td></tr>
+                <tr><td>Button Trigger</td>
+                    <td><span class="swatch" style="background:#ffe61a"></span>Yellow</td>
+                    <td>70%</td>
+                    <td>Fires when you press A facing it: signs, PCs, examinable objects.</td></tr>
+                <tr><td>Sun</td>
+                    <td><span class="swatch" style="background:#ffffff"></span>White</td>
+                    <td>30%</td>
+                    <td>Blocks the sun for lens-flare tests. Geometry only, no gameplay
+                    behaviour.</td></tr>
+            </tbody>
+        </table>
+
+        <div class="callout">
+            <strong>Why some maps have no orange.</strong> In most maps NPCs are blocked by exactly
+            the same walls as the player, so drawing both would just double everything up. When
+            that's the case the addon skips the NPC copy entirely and ticks <strong>Also Blocks
+            NPCs</strong> on the red wall instead. Orange only appears where NPCs are blocked by
+            something the player isn't.
+        </div>
+
+        <h3>Step 2 — Show and hide it</h3>
+
+        <p>The overlay is dense, and you'll usually want to look at one type at a time. Everything
+        lands in a collection named after the file — <code>Collision_M1_out</code> — with a child
+        collection per type inside it. Find it in the Outliner on the right.</p>
+
+        <p>Click the <strong>eye icon</strong> next to the top collection to hide the whole overlay
+        at once, or next to a single type to hide just that one.</p>
+
+        <figure class="screenshot">
+            <img src="images/importer/collision/collision-collections.png" alt="Blender's Outliner showing the collision collection with a child collection per collision type">
+            <figcaption>One collection per collision type, each with its own visibility toggle.
+            The number next to each is how many pieces it holds.</figcaption>
+        </figure>
+
+        <p>Hiding everything except <strong>Walk</strong> and <strong>Zone Trigger</strong> shows
+        where you're allowed to stand and what happens when you get there — the blue patches are
+        the door approaches:</p>
+
+        <figure class="screenshot">
+            <img src="images/importer/collision/walk-and-zone-triggers.png" alt="The same map with only walkable ground and zone triggers visible">
+            <figcaption>Walkable ground and zone triggers only.</figcaption>
+        </figure>
+
+        <p>And the walls on their own show the shape of the map as the player experiences it:</p>
+
+        <figure class="screenshot">
+            <img src="images/importer/collision/walls-only.png" alt="The same map with only wall collision visible">
+            <figcaption>Walls only. Note that they extend well above head height and past what you
+            can see — they only need to stop you, not look right.</figcaption>
+        </figure>
+
+        <h3>Step 3 — Inspect a piece</h3>
+
+        <p>Select any collision mesh and open the <strong>Object Properties</strong> tab (the orange
+        square, same place as the Shiny Variant panel). A <strong>Collision</strong> panel shows what
+        that piece is:</p>
+
+        <ul>
+            <li><strong>Index</strong> — which entry it belongs to. An entry is the unit the game
+            switches on and off, which is why each door panel is its own.</li>
+            <li><strong>Type</strong> — the six buttons from the table above.</li>
+            <li><strong>Region ID</strong> — on triggers only. This is the number the map's scripts
+            look up to decide what actually happens when you cross it.</li>
+            <li><strong>Also Blocks NPCs</strong> — on walls only.</li>
+        </ul>
+
+        <div class="callout">
+            <strong>Collision is import-only for now.</strong> You can view and inspect it, but the
+            exporter doesn't write <code>.ccd</code> files back yet, so edits to the overlay won't
+            make it into the game.
+        </div>
+
+        <h2 id="troubleshooting">8. Troubleshooting</h2>
 
         <p class="stub-note">Stub — common import problems and fixes coming soon.</p>
 

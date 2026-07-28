@@ -38,13 +38,16 @@ class ContainerMetadata:
     shiny_params: ShinyParams | None = None
     pkx_header: PKXHeader | None = None
     gpt1_data: bytes = b''
+    # Map collision database. Carried on its own entry with no DAT payload —
+    # collision takes a separate path through the pipeline.
+    ccd_data: bytes = b''
 
 
 def extract_dat(raw_bytes, filename, options=None):
     """Extract DAT bytes from raw file contents, dispatching by container type.
 
     In: raw_bytes (bytes, complete file contents); filename (str, used to detect container by extension); options (dict|None, importer options — `include_shiny` extracts PKX shiny params).
-    Out: list[tuple[bytes, ContainerMetadata]], one entry per model (>=1 for .fsys, exactly 1 for .dat/.pkx, >=0 for .wzx).
+    Out: list[tuple[bytes, ContainerMetadata]], one entry per model (>=1 for .fsys, exactly 1 for .dat/.pkx/.ccd, >=0 for .wzx). Collision entries carry empty DAT bytes and populate `ccd_data`.
     """
     if options is None:
         options = {}
@@ -55,6 +58,8 @@ def extract_dat(raw_bytes, filename, options=None):
         return _extract_fsys(raw_bytes, filename, options)
     elif ext == 'pkx':
         return _extract_pkx(raw_bytes, filename, options)
+    elif ext == 'ccd':
+        return [(b'', ContainerMetadata(filename=filename, ccd_data=raw_bytes))]
     elif ext == 'wzx' or is_wzx(raw_bytes):
         return _extract_wzx(raw_bytes, filename, options)
     else:
@@ -173,7 +178,7 @@ def _extract_fsys(raw_bytes, archive_filename, options):
     """Extract all model entries from an FSYS archive (decompressing LZSS if needed).
 
     In: raw_bytes (bytes, complete .fsys file); archive_filename (str, fallback base name); options (dict, importer options).
-    Out: list[tuple[bytes, ContainerMetadata]], one per model-bearing FSYS entry.
+    Out: list[tuple[bytes, ContainerMetadata]], one per model- or collision-bearing FSYS entry.
     """
     entries = parse_fsys(raw_bytes, archive_filename)
     results = []
@@ -182,6 +187,9 @@ def _extract_fsys(raw_bytes, archive_filename, options):
             results.extend(_extract_pkx(file_data, entry_filename, options))
         elif file_ext == 'wzx':
             results.extend(_extract_wzx(file_data, entry_filename, options))
+        elif file_ext == 'ccd':
+            results.append((b'', ContainerMetadata(filename=entry_filename,
+                                                   ccd_data=file_data)))
         else:
             results.append((file_data, ContainerMetadata(filename=entry_filename)))
     return results

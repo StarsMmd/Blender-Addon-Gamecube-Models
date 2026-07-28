@@ -293,16 +293,16 @@ def test_format_instructions():
 # ---------------------------------------------------------------------------
 
 def test_describe_particles_integration():
-    """Verify describe_particles converts GPT1 to IRParticleSystem."""
+    """Verify describe_particles summarizes GPT1 into a semantic IRParticleSystem."""
     from importer.phases.describe.helpers.particles import describe_particles
 
-    cmd = b'\xA0\x00\x3C\x3F\x80\x00\x00\xFF'  # SCALE 60 1.0, EXIT
+    # SCALE time=0 target=1.5 (birth size), LIFETIME 30, EXIT
+    cmd = b'\xA0\x00\x3F\xC0\x00\x00\x1E\xFF'
     gens = [_build_generator(cmd_bytes=cmd) for _ in range(3)]
     data = _build_gpt1(generators=gens, ref_ids=[1, 2, 3])
 
     result = describe_particles(data)
     assert result is not None
-    assert len(result.generators) == 3
-    assert result.ref_ids == [1, 2, 3]
-    assert len(result.generators[0].instructions) > 0
-    assert result.generators[0].instructions[0].mnemonic == "SCALE"
+    assert len(result.emitters) == 3
+    assert result.emitters[0].birth.size.base == 1.5
+    assert result.emitters[0].particle_lifetime.base == 30

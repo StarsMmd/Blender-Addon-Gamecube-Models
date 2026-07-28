@@ -32,10 +32,11 @@ _ENTRY_FILENAME_PTR = 0x24     # uint32 — short entry name
 # Compression flag (bit 31)
 _FLAG_COMPRESSED = 0x80000000
 
-# File type IDs that contain model data (Colosseum/XD)
+# File type IDs the import pipeline can consume (Colosseum/XD)
 _MODEL_FILE_TYPES = {
     0x02: 'dat',   # mdat — model data, treat as dat
     0x04: 'dat',   # dat
+    0x06: 'ccd',   # ccd — map collision database, its own import path
     0x18: 'cam',   # cam — camera scene data (standard DAT format)
     0x1E: 'pkx',   # pkx — Pokemon model, needs header stripping
     0x20: 'wzx',   # wzx — move/effect animation container
@@ -55,7 +56,7 @@ def parse_fsys(raw_bytes, archive_filename):
     """Parse an FSYS archive and extract model-relevant file entries.
 
     In: raw_bytes (bytes, complete FSYS archive); archive_filename (str, fallback base name).
-    Out: list[tuple[bytes, str, str]] of (file_data, ext in {'dat','pkx','wzx','cam'}, entry_filename); raises ValueError on bad magic.
+    Out: list[tuple[bytes, str, str]] of (file_data, ext in {'dat','ccd','pkx','wzx','cam'}, entry_filename); raises ValueError on bad magic.
     """
     if not is_fsys(raw_bytes):
         raise ValueError("Not an FSYS archive: magic bytes not found")

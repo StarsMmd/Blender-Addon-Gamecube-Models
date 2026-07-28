@@ -19,6 +19,7 @@ try:
         HSD_A_J_ROTX, HSD_A_J_ROTY, HSD_A_J_ROTZ,
         HSD_A_J_TRAX, HSD_A_J_TRAY, HSD_A_J_TRAZ,
         HSD_A_J_SCAX, HSD_A_J_SCAY, HSD_A_J_SCAZ,
+        HSD_A_J_PTCL, HSD_A_OP_KEY,
         AOBJ_ANIM_LOOP,
     )
     from .....shared.IR.enums import Interpolation
@@ -36,6 +37,7 @@ except (ImportError, SystemError):
         HSD_A_J_ROTX, HSD_A_J_ROTY, HSD_A_J_ROTZ,
         HSD_A_J_TRAX, HSD_A_J_TRAY, HSD_A_J_TRAZ,
         HSD_A_J_SCAX, HSD_A_J_SCAY, HSD_A_J_SCAZ,
+        HSD_A_J_PTCL, HSD_A_OP_KEY,
         AOBJ_ANIM_LOOP,
     )
     from shared.IR.enums import Interpolation
@@ -262,12 +264,54 @@ def _build_animation(track, loop):
         if frame is not None:
             frames.append(frame)
 
+    # Particle-spawn track goes last in the chain (the position game-native
+    # chains use whenever it coexists with SRT channels).
+    if getattr(track, 'particle_emits', None):
+        frames.append(_encode_particle_channel(track.particle_emits))
+
     # Link frames into list
     for i in range(len(frames) - 1):
         frames[i].next = frames[i + 1]
 
     anim.frame = frames[0] if frames else None
     return anim
+
+
+def _encode_particle_channel(events):
+    """Encode particle emit events into a type-PTCL Frame node.
+
+    Each keyframe value is the raw packed integer (generator_id << 6); the
+    low 6 flag bits are dead at runtime and written as zero. Generator ids
+    are written as the local emitter indices — compose_particles emits an
+    identity REF table, so local index == global id in the exported file.
+
+    In: events (list[IRParticleEmitEvent]).
+    Out: Frame node (type HSD_A_J_PTCL) with raw_ad bytes.
+    """
+    ordered = sorted(events, key=lambda e: e.frame)
+
+    frame = Frame(address=None, blender_obj=None)
+    frame.next = None
+    frame.start_frame = float(-int(round(ordered[0].frame)))
+    frame.type = HSD_A_J_PTCL
+    frame.frac_value = HSD_A_FRAC_FLOAT  # 4-byte values, raw bit pattern
+    frame.frac_slope = HSD_A_FRAC_FLOAT
+    frame.ad = 0
+
+    raw = bytearray()
+    _encode_opcode(raw, HSD_A_OP_KEY, len(ordered))
+    for i, event in enumerate(ordered):
+        value = (int(event.emitter_ref) << 6) & 0xFFFFFFFF
+        raw.extend(value.to_bytes(4, 'little'))  # native order, like read_native
+        if i + 1 < len(ordered):
+            wait = int(round(ordered[i + 1].frame)) - int(round(event.frame))
+        else:
+            wait = 0
+        _encode_wait(raw, wait)
+
+    frame.raw_ad = bytes(raw)
+    frame.data_length = len(frame.raw_ad)
+    return frame
 
 
 def _encode_channel(keyframes, channel_type):

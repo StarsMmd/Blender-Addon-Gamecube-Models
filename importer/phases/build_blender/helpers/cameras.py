@@ -5,6 +5,8 @@ shaping are all done in the Plan phase.
 import bpy
 from mathutils import Vector
 
+from .linking import link_into
+
 try:
     from .....shared.helpers.logger import StubLogger
 except (ImportError, SystemError):
@@ -31,19 +33,20 @@ def _scene_model_size():
     return (Vector(max_co) - Vector(min_co)).length
 
 
-def build_cameras(br_cameras, logger):
+def build_cameras(br_cameras, logger, collection=None):
     """Create Blender cameras for every BRCamera in the list.
 
-    In: br_cameras (list[BRCamera]); logger (Logger).
-    Out: None. Cameras + TRACK_TO target empties are linked into the scene.
+    In: br_cameras (list[BRCamera]); logger (Logger); collection
+        (Collection|None, defaults to the scene root).
+    Out: None. Cameras + TRACK_TO target empties go into that collection.
     """
     for br_cam in br_cameras:
-        _build_camera(br_cam, logger)
+        _build_camera(br_cam, logger, collection)
     if br_cameras:
         logger.info("  Built %d camera(s)", len(br_cameras))
 
 
-def _build_camera(br_cam, logger=StubLogger()):
+def _build_camera(br_cam, logger=StubLogger(), collection=None):
     """Build one camera object + data block from a BRCamera spec.
 
     In: br_cam (BRCamera); logger (Logger).
@@ -76,14 +79,14 @@ def _build_camera(br_cam, logger=StubLogger()):
         target_obj.empty_display_type = 'PLAIN_AXES'
         target_obj.empty_display_size = max(0.1, min(3.0, _scene_model_size() * 0.03))
         target_obj.location = br_cam.target_location
-        bpy.context.scene.collection.objects.link(target_obj)
+        link_into(target_obj, collection)
 
         constraint = cam_obj.constraints.new(type='TRACK_TO')
         constraint.target = target_obj
         constraint.track_axis = 'TRACK_NEGATIVE_Z'
         constraint.up_axis = 'UP_Y'
 
-    bpy.context.scene.collection.objects.link(cam_obj)
+    link_into(cam_obj, collection)
 
     for anim in br_cam.animations:
         _build_camera_animation(anim, cam_obj, target_obj, cam_data, logger)

@@ -348,6 +348,39 @@ class TestCheckMeshOwnerDisjoint:
         with pytest.raises(ValueError, match="disjoint"):
             _check_mesh_owner_disjoint({arm: [mesh]})
 
+    def test_parent_bone_honoured_when_object_parented(self):
+        # The importer links a mesh to its owner bone while leaving it
+        # object-parented to the armature. Describe honours parent_bone
+        # regardless of parent_type, so this check must too — resolving the
+        # owner by NCA here would blame a mesh the export writes correctly.
+        arm = self._build_arm(['root', 'head', 'head_mesh'])
+        vg = [_MockVG(0, 'head')]
+        verts = [_MockVertexDisjoint(0, [_MockVGroupRef(0, 1.0)])]
+        mesh = _MockMeshDisjoint('Eye', vg, verts,
+                                 parent_type='OBJECT', parent_bone='head_mesh')
+        _check_mesh_owner_disjoint({arm: [mesh]})
+
+    def test_object_parented_parent_bone_to_deformer_rejected(self):
+        # Same link, but pointing at a bone that is itself weighted — still a
+        # genuine violation.
+        arm = self._build_arm(['root', 'head'])
+        vg = [_MockVG(0, 'head')]
+        verts = [_MockVertexDisjoint(0, [_MockVGroupRef(0, 1.0)])]
+        mesh = _MockMeshDisjoint('Eye', vg, verts,
+                                 parent_type='OBJECT', parent_bone='head')
+        with pytest.raises(ValueError, match="disjoint"):
+            _check_mesh_owner_disjoint({arm: [mesh]})
+
+    def test_unknown_parent_bone_falls_back_to_nca(self):
+        # A parent_bone naming no real bone is ignored, exactly as describe
+        # ignores it — the owner comes from the weighted bones instead.
+        arm = self._build_arm(['root', 'head'])
+        vg = [_MockVG(0, 'head')]
+        verts = [_MockVertexDisjoint(0, [_MockVGroupRef(0, 1.0)])]
+        mesh = _MockMeshDisjoint('Eye', vg, verts, parent_bone='not_a_bone')
+        with pytest.raises(ValueError, match=r"Eye.*head"):
+            _check_mesh_owner_disjoint({arm: [mesh]})
+
     def test_unweighted_mesh_passes(self):
         # No weights → owner defaults to root which isn't a deformer.
         arm = self._build_arm(['root', 'head'])

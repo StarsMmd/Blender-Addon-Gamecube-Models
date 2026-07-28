@@ -6,19 +6,23 @@ offset, display type) is already baked into the BR by the Plan phase.
 import bpy
 from mathutils import Matrix, Vector
 
+from .linking import link_beside, link_into
+
 try:
     from .....shared.helpers.logger import StubLogger
 except (ImportError, SystemError):
     from shared.helpers.logger import StubLogger
 
 
-def build_skeleton(br_armature, context, logger=StubLogger()):
+def build_skeleton(br_armature, context, logger=StubLogger(), collection=None):
     """Create a Blender armature + bones from a BRArmature.
 
     Args:
         br_armature: BRArmature spec from the Plan phase.
         context: Blender context.
         logger: Logger instance.
+        collection: Collection to link the armature into. Everything built
+            afterwards follows the armature, so this places the whole model.
 
     Returns:
         The armature object.
@@ -29,7 +33,7 @@ def build_skeleton(br_armature, context, logger=StubLogger()):
     if br_armature.matrix_basis is not None:
         armature.matrix_basis = Matrix(br_armature.matrix_basis)
 
-    bpy.context.scene.collection.objects.link(armature)
+    link_into(armature, collection)
     armature_data.display_type = br_armature.display_type
 
     # Enter edit mode on this armature alone (multi-armature edit mode would
@@ -95,7 +99,7 @@ def _build_bone_splines(br_armature, armature, logger):
         curve_data.dimensions = '3D'
         _add_spline_points(curve_data, spline)
         curve_obj = bpy.data.objects.new(curve_data.name, curve_data)
-        bpy.context.scene.collection.objects.link(curve_obj)
+        link_beside(curve_obj, armature)
         curve_obj.parent = armature
         curve_obj.parent_type = 'BONE'
         curve_obj.parent_bone = br_bone.name

@@ -20,4 +20,9 @@ from .constraints import (
 from .lights import IRLight, IRLightKeyframes
 from .camera import IRCamera, IRCameraKeyframes
 from .fog import IRFog
-from .particles import IRParticleSystem, IRParticleGenerator, IRParticleTexture
+from .particles import (
+    IRRandomScalar, IRRandomVec3, IRColorStop, IRScalarKey,
+    IRParticleEmission, IRParticleBirth, IRParticleRotation, IRParticleForces,
+    IRParticleTextureAnim, IRParticleRender, IRSubEmitter,
+    IRParticleEmitter, IRParticleTexture, IRParticleEmitEvent, IRParticleSystem,
+)

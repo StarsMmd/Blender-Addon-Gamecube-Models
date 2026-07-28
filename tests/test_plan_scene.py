@@ -1,5 +1,5 @@
 """Unit tests for Plan-phase scene helpers (lights, cameras, constraints
-pass-through, particle summary).
+pass-through).
 """
 import math
 from types import SimpleNamespace
@@ -8,11 +8,11 @@ from shared.IR.enums import CameraProjection, Interpolation
 from shared.IR.animation import IRKeyframe
 from shared.BR.lights import BRLight
 from shared.BR.cameras import BRCamera, BRCameraAnimation
-from shared.BR.constraints import BRConstraints, BRParticleSummary
+from shared.BR.constraints import BRConstraints
 from importer.phases.plan.helpers.scene import (
     plan_light, plan_lights,
     plan_camera, plan_cameras,
-    plan_constraints, plan_particle_summary,
+    plan_constraints,
     _fov_to_lens, _gc_to_blender,
 )
 
@@ -209,22 +209,6 @@ class TestPlanConstraints:
         assert len(br.copy_location) == 1
         assert len(br.track_to) == 2
         assert len(br.limit_rotation) == 1
-
-
-class TestPlanParticleSummary:
-
-    def test_none_ir_returns_none(self):
-        assert plan_particle_summary(None) is None
-
-    def test_counts_from_ir_lists(self):
-        ir_particles = SimpleNamespace(
-            generators=[0, 1, 2],
-            textures=['t1', 't2'],
-        )
-        br = plan_particle_summary(ir_particles)
-        assert isinstance(br, BRParticleSummary)
-        assert br.generator_count == 3
-        assert br.texture_count == 2
 
 
 class TestGcToBlender:

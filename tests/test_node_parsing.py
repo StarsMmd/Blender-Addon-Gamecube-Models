@@ -286,6 +286,29 @@ class TestPObjectNode:
 
         assert isinstance(pobj.property, Joint)
 
+    def test_pobject_shapeanim_property_is_blocked(self):
+        """POBJ_SHAPEANIM + non-null property_ptr → property blocked to None, no crash.
+
+        Shape sets (morph targets) are not implemented end-to-end, so the
+        parser must skip the ShapeSet rather than dereference it (its dynamic
+        vertex_set/normal_set array bounds cannot be resolved at read time).
+        The base mesh still parses as static geometry.
+        """
+        vertex_offset = POBJECT_SIZE
+        data = (
+            build_pobject(
+                flags=POBJ_SHAPEANIM,
+                vertex_list_ptr=vertex_offset,
+                # Non-null property pointer whose target is intentionally NOT a
+                # valid ShapeSet — the parser must not attempt to read it.
+                property_ptr=vertex_offset,
+            )
+            + build_vertex_list_terminator()
+        )
+        pobj = _parse(PObject, 0, data)
+
+        assert pobj.property is None
+
 
 # ---------------------------------------------------------------------------
 # AnimationJoint — 20 bytes: child(4) next(4) animation(4) render_animation(4) flags(4)

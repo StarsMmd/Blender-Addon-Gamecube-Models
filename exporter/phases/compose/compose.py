@@ -27,8 +27,8 @@ from .helpers.cameras import compose_camera
 from .helpers.fog import compose_fog
 from .helpers.constraints import compose_constraints
 from .helpers.scale import scale_scene_to_gc_units
-# compose_particles exists but is NOT wired into the export pipeline — see
-# the README "Particles (GPT1)" section for why export is disabled.
+# compose_particles is invoked by the exporter directly (not here): the GPT1
+# payload sits beside the DAT in the PKX container, outside the section tree.
 
 
 def compose_scene(ir_scene, options=None, logger=StubLogger()):

@@ -10,6 +10,8 @@ import math
 import bpy
 from mathutils import Matrix, Vector
 
+from .linking import link_beside
+
 try:
     from .....shared.helpers.logger import StubLogger
     from ...plan.helpers.animations import bake_frame, compute_bake_plan
@@ -63,6 +65,7 @@ def build_bone_animations(br_actions, armature, options, bake_skeleton,
 
         _bake_action(br_action.bone_tracks, action, max_frame, bake_skeleton,
                      logger, armature)
+        _build_particle_emits(br_action.bone_tracks, action, armature)
 
         mat_fcurve_count = _build_material_tracks(
             br_action, action, material_lookup, mat_slot_indices, max_frame,
@@ -77,6 +80,73 @@ def build_bone_animations(br_actions, armature, options, bake_skeleton,
         bpy.ops.object.mode_set(mode='OBJECT')
 
     return actions, mat_slot_indices
+
+
+# Pose-bone custom property carrying particle spawn events. It is an array:
+# each element is one lane, and a lane's keyframe means "fire the emitter with
+# this index on this frame". Lanes exist because a bone can fire several
+# emitters on the same frame, and one fcurve holds one key per frame.
+_EMIT_PROP = 'particle_emit'
+# Widest emitter index the property accepts — the UI range would otherwise
+# clamp keyframed values to 0-1.
+_EMIT_PROP_MAX = 4095
+
+
+def _build_particle_emits(bone_tracks, action, armature):
+    """Write each bone's particle spawn events as constant-interpolation keys.
+
+    Spawns are events, not a sampled signal: every keyframe means "fire this
+    emitter on this frame", so the curve holds its value between keys and two
+    spawns of the same emitter are two keys with equal values. The bone that
+    owns the curve is the attach point the spawned particles follow.
+
+    In: bone_tracks (list[BRBoneTrack]); action (bpy.types.Action, fcurves
+        mutated on the active slot); armature (bpy.types.Object).
+    Out: int — number of emit fcurves created.
+    """
+    created = 0
+    for track in bone_tracks:
+        if not track.particle_emits:
+            continue
+
+        pose_bone = armature.pose.bones.get(track.bone_name)
+        if pose_bone is None:
+            raise ValueError(
+                "particle emits reference missing pose bone %r (have: %s)"
+                % (track.bone_name, [b.name for b in armature.pose.bones]))
+
+        needed = max(lane for _, _, lane in track.particle_emits) + 1
+        _ensure_emit_property(pose_bone, max(track.particle_emit_lanes, needed))
+
+        curves = {}
+        for frame, emitter_index, lane in track.particle_emits:
+            if lane not in curves:
+                curves[lane] = action.fcurves.new(
+                    'pose.bones["%s"]["%s"]' % (track.bone_name, _EMIT_PROP),
+                    index=lane)
+                created += 1
+            point = curves[lane].keyframe_points.insert(frame, float(emitter_index))
+            point.interpolation = 'CONSTANT'
+        for curve in curves.values():
+            curve.update()
+
+    return created
+
+
+def _ensure_emit_property(pose_bone, lanes):
+    """Create (or widen) the pose bone's emit property so fcurves can drive it.
+
+    In: pose_bone (bpy.types.PoseBone, mutated); lanes (int, >= 1).
+    Out: None.
+    """
+    existing = pose_bone.get(_EMIT_PROP)
+    if existing is not None and len(existing) >= lanes:
+        return
+
+    pose_bone[_EMIT_PROP] = [0] * lanes
+    pose_bone.id_properties_ui(_EMIT_PROP).update(
+        min=0, max=_EMIT_PROP_MAX, soft_min=0, soft_max=_EMIT_PROP_MAX,
+        description="Particle emitters fired from this bone, one per lane")
 
 
 def reset_pose(armature):
@@ -472,7 +542,7 @@ def _apply_path_constraint(track, action, armature, logger):
     curve_obj.parent = armature
     if path.world_matrix:
         curve_obj.matrix_local = Matrix(path.world_matrix)
-    bpy.context.scene.collection.objects.link(curve_obj)
+    link_beside(curve_obj, armature)
     bpy.context.view_layer.update()
 
     if spline_type == 0:

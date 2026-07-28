@@ -41,7 +41,6 @@ def pre_process(context, filepath, options=None, logger=StubLogger()):
     logger.info("=== Export Pre-Process: Validation ===")
 
     ext, fsys_inner_kind = _validate_output_path(filepath, logger)
-    _validate_scene(context, logger)
     _validate_baked_transforms(context, logger)
     _validate_root_bone_orientation(context, logger)
     _validate_origin_bone_not_animated(context, logger)
@@ -179,26 +178,6 @@ def _validate_pkx_metadata(context, ext, fsys_inner_kind, logger):
             "this .blend to populate the metadata. Armatures inspected: " + names
         )
     logger.info("  PKX metadata OK")
-
-
-def _validate_scene(context, logger):
-    """Check the Blender scene is suitable for export.
-
-    Validates that the selected armature meets the requirements for
-    DAT model export.
-
-    Args:
-        context: Blender context.
-        logger: Logger instance.
-
-    Raises:
-        ValueError: If the scene is not suitable for export.
-    """
-    # TODO: Implement scene validation
-    # - Check that an armature is selected
-    # - Check that meshes are parented to the armature
-    # - Check for unsupported configurations
-    logger.info("  Scene validation OK (stub)")
 
 
 def _validate_baked_transforms(context, logger):
@@ -641,49 +620,12 @@ def _check_mesh_owner_disjoint(meshes_by_armature):
         parent_of = {b.name: (b.parent.name if b.parent else None)
                      for b in arm_data.bones}
 
-        def ancestors(name):
-            chain = []
-            while name is not None:
-                chain.append(name)
-                name = parent_of.get(name)
-            return chain
-
-        deformers = set()
-        mesh_weighted = {}
-        for m in meshes:
-            data = getattr(m, 'data', None)
-            if data is None:
-                continue
-            idx_to_name = {vg.index: vg.name for vg in m.vertex_groups}
-            weighted = set()
-            for v in data.vertices:
-                for g in v.groups:
-                    if g.weight > 0.0:
-                        nm = idx_to_name.get(g.group)
-                        if nm in bone_names:
-                            weighted.add(nm)
-            mesh_weighted[m] = weighted
-            deformers |= weighted
+        mesh_weighted = {m: _weighted_bones(m, bone_names) for m in meshes}
+        deformers = set().union(*mesh_weighted.values()) if mesh_weighted else set()
 
         for m in meshes:
-            if getattr(m, 'parent_type', None) == 'BONE' \
-                    and getattr(m, 'parent_bone', None) in bone_names:
-                owner = m.parent_bone
-            else:
-                weighted = mesh_weighted.get(m, set())
-                if not weighted:
-                    owner = root_name
-                else:
-                    chains = [set(ancestors(n)) for n in weighted]
-                    common = set.intersection(*chains)
-                    if not common:
-                        owner = root_name
-                    else:
-                        owner = root_name
-                        for n in ancestors(next(iter(weighted))):
-                            if n in common:
-                                owner = n
-                                break
+            owner = _mesh_owner_bone(m, mesh_weighted[m], bone_names,
+                                     root_name, parent_of)
             if owner in deformers:
                 offenders.append((m.name, owner))
                 if len(offenders) >= 10:
@@ -704,6 +646,61 @@ def _check_mesh_owner_disjoint(meshes_by_armature):
             f"non-deformer owner bone for each affected mesh. Sample "
             f"offenders (mesh→owner): {sample}"
         )
+
+
+def _weighted_bones(mesh, bone_names):
+    """Bones this mesh actually weights vertices to.
+
+    In: mesh (bpy.types.Object, type='MESH'); bone_names (set[str]).
+    Out: set[str] — vertex groups naming a real bone with any non-zero weight.
+    """
+    data = getattr(mesh, 'data', None)
+    if data is None:
+        return set()
+    group_names = {vg.index: vg.name for vg in mesh.vertex_groups}
+    return {name for v in data.vertices for g in v.groups
+            if g.weight > 0.0
+            for name in (group_names.get(g.group),) if name in bone_names}
+
+
+def _mesh_owner_bone(mesh, weighted, bone_names, root_name, parent_of):
+    """Resolve the joint this mesh will be owned by once exported.
+
+    Mirrors the describe phase's own rule (`_determine_parent_bone_name`): an
+    explicit ``parent_bone`` naming a real bone wins outright, whatever
+    ``parent_type`` says — the importer bone-links meshes while leaving them
+    object-parented to the armature, so requiring `parent_type == 'BONE'` here
+    would resolve a different owner than the export actually writes. Only a
+    mesh with no such link falls back to the nearest common ancestor of its
+    weighted bones (the root when they share none).
+
+    In: mesh (bpy.types.Object); weighted (set[str], bones the mesh weights to);
+        bone_names (set[str]); root_name (str); parent_of (dict[str, str|None]).
+    Out: str — owner bone name.
+    """
+    if getattr(mesh, 'parent_bone', None) in bone_names:
+        return mesh.parent_bone
+    if not weighted:
+        return root_name
+
+    common = set.intersection(*[set(_ancestors(n, parent_of)) for n in weighted])
+    for name in _ancestors(next(iter(weighted)), parent_of):
+        if name in common:
+            return name
+    return root_name
+
+
+def _ancestors(name, parent_of):
+    """Bone name plus every ancestor, nearest first.
+
+    In: name (str); parent_of (dict[str, str|None]).
+    Out: list[str].
+    """
+    chain = []
+    while name is not None:
+        chain.append(name)
+        name = parent_of.get(name)
+    return chain
 
 
 def _validate_texture_sizes(context, logger):

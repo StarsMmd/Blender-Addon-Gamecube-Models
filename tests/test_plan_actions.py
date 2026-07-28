@@ -15,6 +15,7 @@ import math
 from shared.IR.skeleton import IRBone
 from shared.IR.enums import ScaleInheritance, Interpolation
 from shared.IR.animation import IRBoneAnimationSet, IRBoneTrack, IRKeyframe
+from shared.IR.particles import IRParticleEmitEvent
 from shared.BR.actions import BRAction, BRBoneTrack, BRMaterialTrack, BRBakeSkeleton
 from shared.helpers.math_shim import Matrix, compile_srt_matrix, matrix_to_list
 from importer.phases.plan.helpers.animations import (
@@ -151,6 +152,63 @@ class TestPlanActions:
         br_actions = plan_actions([anim_set], [])
         assert isinstance(br_actions[0].material_tracks[0], BRMaterialTrack)
         assert br_actions[0].material_tracks[0].material_mesh_name == 'mesh_0_Root'
+
+
+class TestPlanParticleEmits:
+    """Spawn events become (frame, emitter, lane) triples on the BR track.
+
+    Lanes exist because one fcurve holds one key per frame, and a bone can
+    fire several emitters on the same frame.
+    """
+
+    def _track(self, events, bone_name="Fire"):
+        track = _make_ir_track(bone_index=0, bone_name=bone_name)
+        track.particle_emits = [IRParticleEmitEvent(frame=f, emitter_ref=e)
+                                for f, e in events]
+        return track
+
+    def _plan(self, clips):
+        """clips: list of lists of (frame, emitter) — one list per anim set."""
+        anim_sets = [IRBoneAnimationSet(name="clip%d" % i, tracks=[self._track(events)])
+                     for i, events in enumerate(clips)]
+        return plan_actions(anim_sets, [])
+
+    def test_no_events_leaves_track_empty(self):
+        actions = self._plan([[]])
+        assert actions[0].bone_tracks[0].particle_emits == []
+        assert actions[0].bone_tracks[0].particle_emit_lanes == 0
+
+    def test_distinct_frames_all_use_lane_zero(self):
+        track = self._plan([[(0.0, 3), (12.0, 5)]])[0].bone_tracks[0]
+        assert track.particle_emits == [(0.0, 3, 0), (12.0, 5, 0)]
+        assert track.particle_emit_lanes == 1
+
+    def test_simultaneous_events_get_separate_lanes(self):
+        track = self._plan([[(4.0, 1), (4.0, 2), (4.0, 3)]])[0].bone_tracks[0]
+        assert track.particle_emits == [(4.0, 1, 0), (4.0, 2, 1), (4.0, 3, 2)]
+        assert track.particle_emit_lanes == 3
+
+    def test_events_sorted_by_frame(self):
+        track = self._plan([[(9.0, 1), (2.0, 2)]])[0].bone_tracks[0]
+        assert [frame for frame, _, _ in track.particle_emits] == [2.0, 9.0]
+
+    def test_lane_width_is_the_busiest_clip(self):
+        actions = self._plan([[(0.0, 1), (0.0, 2)], [(0.0, 3)]])
+        # The property lives on the pose bone, so both clips see the same width.
+        assert actions[0].bone_tracks[0].particle_emit_lanes == 2
+        assert actions[1].bone_tracks[0].particle_emit_lanes == 2
+        assert actions[1].bone_tracks[0].particle_emits == [(0.0, 3, 0)]
+
+    def test_lane_width_is_per_bone(self):
+        busy = self._track([(0.0, 1), (0.0, 2)], bone_name="Busy")
+        quiet = self._track([(0.0, 3)], bone_name="Quiet")
+        actions = plan_actions([IRBoneAnimationSet(name="A", tracks=[busy, quiet])], [])
+        widths = {t.bone_name: t.particle_emit_lanes for t in actions[0].bone_tracks}
+        assert widths == {"Busy": 2, "Quiet": 1}
+
+    def test_repeated_emitter_at_one_frame_still_splits_lanes(self):
+        track = self._plan([[(0.0, 7), (0.0, 7)]])[0].bone_tracks[0]
+        assert track.particle_emits == [(0.0, 7, 0), (0.0, 7, 1)]
 
 
 class TestBuildBakeSkeleton:

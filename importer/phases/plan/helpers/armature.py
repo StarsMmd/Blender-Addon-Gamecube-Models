@@ -17,7 +17,7 @@ except (ImportError, SystemError):
     )
 
 # GameCube Y-up → Blender Z-up: π/2 around X.
-_Y_UP_TO_Z_UP = [
+Y_UP_TO_Z_UP = [
     [1.0, 0.0, 0.0, 0.0],
     [0.0, math.cos(math.pi / 2), -math.sin(math.pi / 2), 0.0],
     [0.0, math.sin(math.pi / 2), math.cos(math.pi / 2), 0.0],
@@ -58,14 +58,23 @@ def choose_tail_offset(ir_bone, ik_hack):
     return (0.0, 0.01, 0.0)
 
 
+def derive_scene_name(options):
+    """The imported file's base name — used for the scene's collection.
+
+    In: options (dict|None, reads 'filepath').
+    Out: str, e.g. 'M1_out'; 'model' when there is no filepath.
+    """
+    filepath = options.get("filepath", "") if options else ""
+    return os.path.basename(filepath).split('.')[0] if filepath else "model"
+
+
 def derive_armature_name(ir_model, options, model_index):
     """Replicate build_skeleton's naming scheme.
 
     In: ir_model (IRModel); options (dict|None, reads 'filepath'); model_index (int).
     Out: str, '{file_base}_{model_name}_skeleton_{index}' or '{file_base}_skeleton_{index}'.
     """
-    filepath = options.get("filepath", "") if options else ""
-    base_name = os.path.basename(filepath).split('.')[0] if filepath else "model"
+    base_name = derive_scene_name(options)
     model_name = ir_model.name or ""
     if model_name and model_name != base_name:
         return f"{base_name}_{model_name}_skeleton_{model_index}"
@@ -126,6 +135,6 @@ def plan_armature(ir_model, options=None, model_index=0):
         name=derive_armature_name(ir_model, options, model_index),
         bones=br_bones,
         display_type='STICK' if ik_hack else 'OCTAHEDRAL',
-        matrix_basis=_Y_UP_TO_Z_UP,
+        matrix_basis=Y_UP_TO_Z_UP,
         bake_skeleton=bake_skeleton,
     )

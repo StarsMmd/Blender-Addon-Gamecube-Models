@@ -32,16 +32,3 @@ class BRConstraints:
         return (len(self.ik) + len(self.copy_location) + len(self.track_to)
                 + len(self.copy_rotation) + len(self.limit_rotation)
                 + len(self.limit_location))
-
-
-@dataclass
-class BRParticleSummary:
-    """Pass-through summary of particle data counts.
-
-    Build currently only writes these counts as armature custom props —
-    full particle instantiation awaits the generator→bone binding
-    mechanism (see ``importer/phases/build_blender/helpers/particles.py``
-    header note).
-    """
-    generator_count: int = 0
-    texture_count: int = 0

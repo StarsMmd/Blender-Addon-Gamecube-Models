@@ -65,13 +65,13 @@ Phase 1 (Extract)        PKX header bytes → raw shiny params dict (routing int
                          Default parameter detection (unchanged routing + neutral brightness)
                          Returns None if defaults detected, skipping all downstream shiny logic
 
-Phase 6 (Post-Process)   Raw params dict → Blender shader node group + armature properties + UI panel
+Phase 7 (Post-Process)   Raw params dict → Blender shader node group + armature properties + UI panel
                          Converts routing ints to node group connections
                          Sets up armature properties from brightness/routing values
                          Inserts shiny filter nodes into each material
 ```
 
-Raw shiny params bypass the IR entirely — they go from Phase 1 (Extract) directly to Phase 6 (Post-Process), since the shiny filter is a Blender-only display feature that does not belong in the platform-agnostic intermediate representation.
+Raw shiny params bypass the IR entirely — they go from Phase 1 (Extract) directly to Phase 7 (Post-Process), since the shiny filter is a Blender-only display feature that does not belong in the platform-agnostic intermediate representation.
 
 **Note:** The legacy import path disables shiny entirely (`include_shiny=False`).
 
@@ -148,7 +148,7 @@ The `dat_pkx_shiny` toggle uses a driver on the MixRGB factor input, with an upd
 | File | Role |
 |---|---|
 | `importer/phases/extract/extract.py` | `_extract_shiny_params()`, `_is_noop_shiny()` |
-| `importer/phases/post_process/post_process.py` | `_apply_shiny()` — orchestrates shiny setup in Phase 6 |
+| `importer/phases/post_process/post_process.py` | `_apply_shiny()` — orchestrates shiny setup in Phase 7 |
 | `importer/phases/post_process/shiny_filter.py` | Node group building, property setup, material insertion |
 | `BlenderPlugin.py` | Property registration, UI panel, update callbacks |
 | `scripts/add_shiny_filter.py` | Standalone script for manual shiny filter application (imports from `shiny_filter.py`) |

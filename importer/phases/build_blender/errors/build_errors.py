@@ -1,4 +1,4 @@
-"""Errors raised during Phase 5A — Blender Build."""
+"""Errors raised during Phase 6 — Blender Build."""
 
 
 class ModelBuildError(Exception):

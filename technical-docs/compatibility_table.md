@@ -12,7 +12,7 @@ This table tracks every feature in the HAL DAT `.dat` model format and its suppo
 
 ## Geometry
 
-| Feature | DAT Parse (Phase 3) | IR Type (Phase 4) | Import (Phase 5) | Export | Notes |
+| Feature | DAT Parse (Phase 3) | IR Type (Phase 4) | Import (Phases 5-6) | Export | Notes |
 |---------|---------------------|--------------------|--------------------|--------|-------|
 | Skeleton / Bone hierarchy | ✅ | `IRBone` | ✅ | ✅ | Arbitrary armatures supported |
 | Bone transforms (SRT) | ✅ | `IRBone` matrices | ✅ | ✅ | Armature object scale applied. Game invariant: the root JOBJ rotation must be identity (the renderer applies the root joint's own rotation as the model's base orientation without cancelling it, so any roll/rotation on the root bone turns the whole model in-game). The prep scripts do NOT auto-correct this — before exporting an arbitrary rig, manually edit the root bone in Edit Mode so it points straight up with `roll = 0` (Z-up, rest matrix = +90° about X after the Z-up→Y-up coord rotation). The exporter's `pre_process._validate_root_bone_orientation` rejects scenes whose root won't round-trip to an identity root JOBJ. Importer-built rigs are already canonical. |
@@ -24,13 +24,13 @@ This table tracks every feature in the HAL DAT `.dat` model format and its suppo
 | Custom normals | ✅ | `IRMesh.normals` | ✅ | ⚠️ | Normalized in describe phase |
 | Bone weights / envelopes | ✅ | `IRBoneWeights` | ✅ | ✅ | Weights remapped when mesh is split. Game invariant: a mesh's owner joint (`JOBJ_ENVELOPE_MODEL`) must be disjoint from every envelope-weight deformer (`JOBJ_SKELETON` + IBM). Both prep scripts (`prepare_for_pkx_export.py`, `prepare_for_dat_export.py`) enforce this via `reparent_meshes_to_holder_bones` — for every mesh whose owner would otherwise be one of its own weighted bones, a coincident no-weight holder bone is inserted (parented to root, not to the deformer, so Blender's viewport doesn't double-evaluate the deformer's pose) and the mesh is bone-parented to it. Exporter's `pre_process` rejects any scene that still violates the invariant. |
 | Single-bone skinning | ✅ | `IRBoneWeights` | ✅ | ✅ | Eyes, hair strands, and similar detached meshes: subject to the same owner-vs-deformer disjointness requirement (see row above). |
-| Shape keys / morph targets | ⚠️ | `IRShapeKey` | ❌ | ❌ | Dataclass exists but never populated |
+| Shape keys / morph targets | ⚠️ Skipped | `IRShapeKey` | ❌ | ❌ | Parse deliberately **blocked**: `PObject` drops a `POBJ_SHAPEANIM` property to `None` with a warning instead of reading the `ShapeSet` (the reader can't resolve its dynamic `vertex_set`/`normal_set` bounds, and there's no describe/IR/build path). `IRShapeKey` exists but is never populated. No XD/Colosseum model uses shape keys (corpus scan: only 3 non-XD test assets). |
 | Bone instances (JOBJ_INSTANCE) | ✅ | `IRBone.instance_child` | ✅ | ❌ | |
 | Spline curves | ✅ | via path animation | ⚠️ Path only | ❌ | |
 
 ## Materials
 
-| Feature | DAT Parse (Phase 3) | IR Type (Phase 4) | Import (Phase 5) | Export | Notes |
+| Feature | DAT Parse (Phase 3) | IR Type (Phase 4) | Import (Phases 5-6) | Export | Notes |
 |---------|---------------------|--------------------|--------------------|--------|-------|
 | Diffuse/alpha render modes | ✅ | `IRMaterial` (`color_source`, `alpha_source`, `lighting`, `is_translucent`) | ✅ | ✅ | Decomposed from render_mode bits |
 | Material colors (diffuse) | ✅ | `IRMaterial.diffuse_color` | ✅ | ✅ | sRGB↔linear handled per color space strategy |
@@ -49,7 +49,7 @@ This table tracks every feature in the HAL DAT `.dat` model format and its suppo
 
 ## Animations
 
-| Feature | DAT Parse (Phase 3) | IR Type (Phase 4) | Import (Phase 5) | Export | Notes |
+| Feature | DAT Parse (Phase 3) | IR Type (Phase 4) | Import (Phases 5-6) | Export | Notes |
 |---------|---------------------|--------------------|--------------------|--------|-------|
 | Bone animation (SRT keyframes) | ✅ | `IRBoneAnimationSet` | ✅ | ✅ | Euler and quaternion rotation supported |
 | Path animation (spline-based) | ✅ | `IRBoneTrack` | ✅ | ❌ | |
@@ -67,7 +67,7 @@ This table tracks every feature in the HAL DAT `.dat` model format and its suppo
 
 ## Constraints
 
-| Feature | DAT Parse (Phase 3) | IR Type (Phase 4) | Import (Phase 5) | Export | Notes |
+| Feature | DAT Parse (Phase 3) | IR Type (Phase 4) | Import (Phases 5-6) | Export | Notes |
 |---------|---------------------|--------------------|--------------------|--------|-------|
 | IK constraints | ✅ | `IRIKConstraint` | ✅ | ✅ | |
 | Copy Location | ✅ | `IRCopyLocationConstraint` | ✅ | ✅ | Weighted multi-source |
@@ -78,7 +78,7 @@ This table tracks every feature in the HAL DAT `.dat` model format and its suppo
 
 ## Scene Objects
 
-| Feature | DAT Parse (Phase 3) | IR Type (Phase 4) | Import (Phase 5) | Export | Notes |
+| Feature | DAT Parse (Phase 3) | IR Type (Phase 4) | Import (Phases 5-6) | Export | Notes |
 |---------|---------------------|--------------------|--------------------|--------|-------|
 | Lights (AMBIENT) | ✅ | `IRLight` (type=AMBIENT) | ✅ (no-op POINT, energy=0) | ✅ | Sorted first (LightSet[0]) on export |
 | Lights (SUN) | ✅ | `IRLight` | ✅ | ✅ | |
@@ -87,6 +87,24 @@ This table tracks every feature in the HAL DAT `.dat` model format and its suppo
 | Cameras (static) | ✅ | `IRCamera` | ✅ | ✅ | Position, FOV, clip, TRACK_TO target |
 | Fog | ✅ Parsed | `IRFog` (stub) | ❌ | ❌ | No fog data found in tested models |
 | Particles (GPT1) | ✅ | `IRParticleSystem` | ⚠️ Stub | ❌ Disabled | 15 models ship GPT1 data; parser, disassembler, IR, assembler, opcode specs all done and unit-tested. `build_particles` is a stub that only records generator/texture counts — the generator→bone binding mechanism has not been found (not in `JOBJ_PTCL`, `_particleJObjCallback`, PKX body map, WZX move files, common.rel indexes, or the nearby DOL data tables). `compose_particles` / `describe_particles` helpers remain available. |
+
+## Map Collision (.ccd)
+
+Its own pipeline — parse → describe → plan → build over the collision format's
+own structures, IR and BR. Nothing is shared with the model path beyond
+container extraction. Spec: [collision_format.md](collision_format.md).
+
+| Feature | CCD Parse | IR Type | Import (Phases 5-6) | Export | Notes |
+|---------|-----------|---------|--------------------|--------|-------|
+| Entries + transform + dynamic flag | ✅ | `IRCollisionEntry` | ✅ | ❌ | Entry index survives as `dat_col_entry`; every shipped entry is identity/static |
+| Walk (ground height + layers) | ✅ | `IRCollisionMesh` | ✅ | ❌ | Layer + surface nibbles land as per-face INT attributes |
+| Wall / NPC Wall | ✅ | `IRCollisionMesh` | ✅ | ❌ | NPC walls stored as the difference from player walls |
+| Zone Trigger (walk-through) | ✅ | `IRCollisionMesh` | ✅ | ❌ | One object per region ID; edge mask per face |
+| Button Trigger (A-button) | ✅ | `IRCollisionMesh` | ✅ | ❌ | One object per region ID |
+| Sun polys (lens-flare occluders) | ✅ | `IRCollisionMesh` | ✅ | ❌ | Geometry only, no metadata |
+| Poly normals | ✅ | — | — | ❌ | Derived from winding; dropped by the IR |
+| XZ lookup grid | ✅ | — | — | ❌ | Derived from triangle bounds; dropped by the IR |
+| Edge-mask authoring rule | — | `IRCollisionFace.edge_mask` | ✅ Preserved | ❌ | Generation rule for *new* faces is only 56% reproducible — see § Open questions in the format doc |
 
 ## Keyframe Encoding
 
@@ -107,4 +125,5 @@ This table tracks every feature in the HAL DAT `.dat` model format and its suppo
 | `.dat` / `.fdat` / `.rdat` | Extension | ✅ Pass-through | Raw DAT bytes |
 | `.pkx` (Colosseum) | Extension | ✅ Strip 0x40 header | |
 | `.pkx` (XD) | Extension | ✅ Strip 0xE60+ header | With optional GPT1 chunk |
-| `.fsys` archive | Extension or `FSYS` magic | ✅ Multi-model extraction | LZSS decompression, filters to dat/mdat/pkx entries |
+| `.fsys` archive | Extension or `FSYS` magic | ✅ Multi-model extraction | LZSS decompression, filters to dat/mdat/pkx/ccd entries |
+| `.ccd` collision | Extension or FSYS type `0x06` | ✅ Carried on its own entry | No DAT payload — takes the separate collision path |

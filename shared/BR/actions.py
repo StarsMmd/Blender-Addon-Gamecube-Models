@@ -63,6 +63,14 @@ class BRBoneTrack:
     end_frame: float
     # Pass-through until later stages migrate these:
     spline_path: object = None  # IRSplinePath
+    # Particle spawn events fired from this bone: [(frame, emitter_index, lane)].
+    # Build renders these as constant-interpolation keys on the pose bone's
+    # array-valued ``particle_emit`` property, one fcurve per lane — lanes keep
+    # spawns that share a frame on separate curves.
+    particle_emits: list = field(default_factory=list)
+    # Width of that property. The pose bone is shared by every action, so this
+    # is the widest lane count any of the model's clips needs (0 = never fires).
+    particle_emit_lanes: int = 0
 
 
 @dataclass

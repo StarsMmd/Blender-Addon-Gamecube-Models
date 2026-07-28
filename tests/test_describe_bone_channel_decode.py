@@ -36,7 +36,7 @@ def test_routes_rotation_channels_to_xyz():
     ]))
     with patch('importer.phases.describe.helpers.animations.decode_fobjdesc',
                side_effect=lambda f, **kw: list(f._kfs)):
-        rot, loc, scl, spline = _decode_bone_channels(aobj)
+        rot, loc, scl, spline, _emits = _decode_bone_channels(aobj)
     assert rot[0][0].value == 0.1
     assert rot[1][0].value == 0.2
     assert rot[2][0].value == 0.3
@@ -53,7 +53,7 @@ def test_routes_scale_channels_to_xyz():
     ]))
     with patch('importer.phases.describe.helpers.animations.decode_fobjdesc',
                side_effect=lambda f, **kw: list(f._kfs)):
-        rot, loc, scl, spline = _decode_bone_channels(aobj)
+        rot, loc, scl, spline, _emits = _decode_bone_channels(aobj)
     assert scl[0][0].value == 1.0
     assert scl[1][0].value == 2.0
     assert scl[2][0].value == 3.0
@@ -68,7 +68,7 @@ def test_translation_keyframes_scaled_to_meters():
     ]))
     with patch('importer.phases.describe.helpers.animations.decode_fobjdesc',
                side_effect=lambda f, **kw: list(f._kfs)):
-        _, loc, _, _ = _decode_bone_channels(aobj)
+        _, loc, _, _, _ = _decode_bone_channels(aobj)
     assert abs(loc[0][0].value - 100.0 * GC_TO_METERS) < 1e-9
     assert abs(loc[1][0].value - 200.0 * GC_TO_METERS) < 1e-9
     assert abs(loc[2][0].value - 300.0 * GC_TO_METERS) < 1e-9
@@ -84,7 +84,7 @@ def test_translation_handles_and_slopes_scaled():
     aobj = SimpleNamespace(frame=_fobj_chain([(HSD_A_J_TRAX, [kf])]))
     with patch('importer.phases.describe.helpers.animations.decode_fobjdesc',
                side_effect=lambda f, **kw: list(f._kfs)):
-        _, loc, _, _ = _decode_bone_channels(aobj)
+        _, loc, _, _, _ = _decode_bone_channels(aobj)
     out = loc[0][0]
     assert abs(out.value - 10.0 * GC_TO_METERS) < 1e-9
     assert abs(out.handle_left[1] - 5.0 * GC_TO_METERS) < 1e-9
@@ -95,7 +95,7 @@ def test_translation_handles_and_slopes_scaled():
 
 def test_empty_fobj_chain_returns_empty_channels():
     aobj = SimpleNamespace(frame=None)
-    rot, loc, scl, spline = _decode_bone_channels(aobj)
+    rot, loc, scl, spline, _emits = _decode_bone_channels(aobj)
     assert rot == [[], [], []]
     assert loc == [[], [], []]
     assert scl == [[], [], []]
@@ -109,5 +109,5 @@ def test_path_channel_skipped_without_bone_context():
         frame=_fobj_chain([(HSD_A_J_PATH, [_kf(0.0)])]),
         joint=None,
     )
-    rot, loc, scl, spline = _decode_bone_channels(aobj)
+    rot, loc, scl, spline, _emits = _decode_bone_channels(aobj)
     assert spline is None

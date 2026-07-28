@@ -6,7 +6,7 @@ Original implementation provided by Made.
 
 📖 **[Read the full usage documentation](https://starsmmd.github.io/Blender-Addon-Gamecube-Models/)** — installation, importer/exporter walkthroughs, and the FSYS tool.
 
-**Supported file extensions:** `.dat`, `.fdat`, `.rdat`, `.pkx`, `.fsys`, `.wzx`, `.cam`
+**Supported file extensions:** `.dat`, `.fdat`, `.rdat`, `.pkx`, `.fsys`, `.wzx`, `.cam`, `.ccd`
 
 **Target Blender version:** 4.5.7 LTS
 
@@ -18,7 +18,7 @@ This addon uses Blender's extensions system. Compress the contents of this repos
 
 ## Importing
 
-Open a model via **File > Import > Gamecube model (.dat)**. The importer reads `.dat`, `.fdat`, `.rdat`, `.pkx`, `.fsys`, `.wzx`, and `.cam` files, and brings in the skeleton, meshes, materials, textures, animations, lights, cameras, and (for `.pkx` Pokémon) the shiny variant toggle.
+Open a model via **File > Import > Gamecube model (.dat)**. The importer reads `.dat`, `.fdat`, `.rdat`, `.pkx`, `.fsys`, `.wzx`, `.cam`, and `.ccd` files, and brings in the skeleton, meshes, materials, textures, animations, lights, cameras, and (for `.pkx` Pokémon) the shiny variant toggle. Map collision (`.ccd`) imports as a translucent, colour-coded overlay — on its own, or alongside the room model when you open a map `.fsys`.
 
 See the [Importer guide](docs/importer.html) for the full walkthrough — from extracting model files out of a ROM through to playing animations and toggling shiny variants in Blender.
 
@@ -112,9 +112,9 @@ importer/
     route/                 # Phase 2: section name -> node type mapping
     parse/                 # Phase 3: binary -> node trees (DATParser)
     describe/              # Phase 4: node trees -> IR (platform-agnostic)
-    plan/                  # Phase 5a: IR -> BR (Blender-specialised, pure)
-    build_blender/         # Phase 5b: BR -> Blender objects (bpy executor only)
-    post_process/          # Phase 6: reset poses, select animations, apply shiny
+    plan/                  # Phase 5: IR -> BR (Blender-specialised, pure)
+    build_blender/         # Phase 6: BR -> Blender objects (bpy executor only)
+    post_process/          # Phase 7: reset poses, select animations, apply shiny
 
 shared/
   IR/                      # Intermediate Representation dataclasses
@@ -153,7 +153,7 @@ python3 CommandLineInterface.py model.dat
 python3 CommandLineInterface.py model.dat -v
 ```
 
-The CLI entry point is `CommandLineInterface.py` (invoked via `__main__.py`). Without `bpy` installed, the pipeline runs phases 1-5a (parse, describe, and plan) and outputs the BR without creating Blender objects.
+The CLI entry point is `CommandLineInterface.py` (invoked via `__main__.py`). Without `bpy` installed, the pipeline runs phases 1-5 (parse, describe, and plan) and outputs the BR without creating Blender objects.
 
 ### Running Tests
 
@@ -191,7 +191,7 @@ Detailed documentation lives in the `technical-docs/` folder:
 - [**Exporter Setup**](technical-docs/exporter_setup.md) — supported features and usage guide for the exporter (WIP)
 - [**File Formats**](technical-docs/file_formats.md) — binary format specs for DAT, GX textures, WZX, PKX, and GPT1
 - [**IR Specification**](technical-docs/ir_specification.md) — the Intermediate Representation dataclass hierarchy (output of Phase 4)
-- [**BR Specification**](technical-docs/br_specification.md) — the Blender Representation dataclass hierarchy (output of Phase 5a, Plan)
+- [**BR Specification**](technical-docs/br_specification.md) — the Blender Representation dataclass hierarchy (output of Phase 5, Plan)
 - [**Implementation Notes**](technical-docs/implementation_notes.md) — architectural decisions, runtime invariants, and policies
 - [**Round-Trip Test Progress**](technical-docs/round_trip_test_progress.md) — NBN/NIN/IBI/BNB test results per model
 - [**Scripts**](technical-docs/scripts.md) — standalone Blender scripts and how to run them

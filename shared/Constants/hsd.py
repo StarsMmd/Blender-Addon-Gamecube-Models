@@ -197,6 +197,10 @@ HSD_A_J_SETFLOAT6 =				  (HSD_A_J_SETFLOAT0+6)
 HSD_A_J_SETFLOAT7 =				  (HSD_A_J_SETFLOAT0+7)
 HSD_A_J_SETFLOAT8 =				  (HSD_A_J_SETFLOAT0+8)
 HSD_A_J_SETFLOAT9 =				  (HSD_A_J_SETFLOAT0+9)
+# GS/XD engine extension: particle generator spawn track. The keyframe value
+# holds a packed integer ((generator_id << 6) | flags6), not a float channel --
+# the runtime reads the raw 32-bit pattern and dispatches a spawn callback.
+HSD_A_J_PTCL =					  (40)
 
 AOBJ_NO_ANIM =					  (1<<30)
 AOBJ_ANIM_LOOP =				  (1<<29)

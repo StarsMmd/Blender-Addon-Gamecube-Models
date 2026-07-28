@@ -5,7 +5,7 @@ Every Blender Python API call used by this addon, with the Blender version range
 **Addon declared minimum:** `4.5.0` (in `blender_manifest.toml` and `bl_info`)
 **Effective minimum (ignoring version guards):** 4.5.0
 
-> **Note:** File references use refactored paths (`BlenderPlugin.py`, `importer/phases/build_blender/helpers/`, `importer/phases/post_process/`) and legacy paths (`legacy/` files like `ModelSet.py`, `MaterialObject.py`). Legacy files are only active when "Use Legacy Importer" is checked. Phase 5b (build_blender) and Phase 6 (post_process) only run when a Blender context is available (i.e., `context` is not `None`). The `shiny_filter.py` helper lives in `importer/phases/post_process/` (Phase 6), not in `build_blender/helpers/`.
+> **Note:** File references use refactored paths (`BlenderPlugin.py`, `importer/phases/build_blender/helpers/`, `importer/phases/post_process/`) and legacy paths (`legacy/` files like `ModelSet.py`, `MaterialObject.py`). Legacy files are only active when "Use Legacy Importer" is checked. Phase 6 (build_blender) and Phase 7 (post_process) only run when a Blender context is available (i.e., `context` is not `None`). The `shiny_filter.py` helper lives in `importer/phases/post_process/` (Phase 7), not in `build_blender/helpers/`.
 
 > **Plan phase note:** `importer/phases/plan/` has **zero** bpy calls — it is pure IR→BR conversion. Every bpy API row in this table belongs to `build_blender/` (or `post_process/`, or `BlenderPlugin.py`). If you add a new bpy call in a plan helper, that's a bug — surface the decision as a BR field and call bpy from the build layer.
 
@@ -19,7 +19,7 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.80 | current | `bpy.types.TOPBAR_MT_file_import.remove()` | `BlenderPlugin.py` | |
 | 2.80 | current | `bpy.types.TOPBAR_MT_file_export.remove()` | `BlenderPlugin.py` | |
 | 2.80 | current | `bpy.types.Operator` (subclass) | `BlenderPlugin.py` | ImportHSD, ExportHSD, DAT_OT_SetEnumProp, DAT_OT_SubAnimBone{Add,Remove,Set}, DAT_OT_SubAnimSelectorSet |
-| 2.80 | current | `bpy.types.Panel` (subclass) | `BlenderPlugin.py` | DAT_PT_PKXPanel |
+| 2.80 | current | `bpy.types.Panel` (subclass) | `BlenderPlugin.py` | DAT_PT_PKXPanel, DAT_PT_CollisionPanel |
 | 2.80 | current | `bpy.types.OperatorFileListElement` | `BlenderPlugin.py` | |
 | | | | | |
 | | | **Properties (bpy.props)** | | |
@@ -36,6 +36,8 @@ Every Blender Python API call used by this addon, with the Blender version range
 | | | **Custom Properties** | | |
 | 2.80 | current | `object["key"] = value` | `shiny_filter.py`, `post_process.py`, `cameras.py` | `dat_pkx_has_shiny`, `dat_pkx_shiny_*_group`, `dat_pkx_*` metadata, `dat_camera_aspect` |
 | 2.80 | current | `object.get("key", default)` | `shiny_filter.py`, `BlenderPlugin.py`, `exporter/describe/helpers/scene.py`, `exporter/describe/helpers/cameras.py` | Panel poll, group name lookup, PKX metadata extraction, camera aspect readback |
+| 2.80 | current | `pose_bone["particle_emit"] = [int, ...]` | `animations.py` (importer build_blender) | Array-valued: one lane per simultaneous spawn, animated by CONSTANT fcurves per array index |
+| 3.0 | current | `pose_bone.id_properties_ui(key).update(min=, max=, soft_min=, soft_max=, description=)` | `animations.py` (importer build_blender) | Widens the emit property's range — the default UI range would clamp keyframed emitter indices to 0-1 |
 | | | | | |
 | | | **IO Helpers (bpy_extras)** | | |
 | 2.80 | current | `bpy_extras.io_utils.ImportHelper` | `BlenderPlugin.py` | |
@@ -47,8 +49,13 @@ Every Blender Python API call used by this addon, with the Blender version range
 | | | | | |
 | | | **Context & Scene** | | |
 | 2.80 | current | `bpy.context.scene.collection.objects.link(obj)` | `meshes.py`, `skeleton.py`, `lights.py`, `cameras.py` | |
+| 2.80 | current | `bpy.data.collections.new(name)` | `linking.py` | One collection per import; a child per skeleton (multi-skeleton scenes) or per collision type |
+| 2.80 | current | `collection.children.link(collection)` | `linking.py` | Nest those children under the import's own collection |
+| 2.80 | current | `collection.objects.link(obj)` | `linking.py` | Everything the import builds is filed here rather than the scene root — object parenting carries the transform, but only collections hide their contents |
+| 2.80 | current | `object.users_collection` | `linking.py` | Anything parented to an armature follows that armature's collection |
+| 2.80 | current | `view_layer.layer_collection.children[name].hide_viewport` | — | Not set by the addon; this is the outliner eye the collections exist to make work |
 | 2.80 | current | `bpy.context.view_layer.objects.active = obj` | `skeleton.py`, `exporter/describe/helpers/armature.py` | |
-| 2.80 | current | `bpy.context.view_layer.update()` | `skeleton.py`, `animations.py` | Force dependency graph update |
+| 2.80 | current | `bpy.context.view_layer.update()` | `skeleton.py`, `animations.py`, `build_collision.py` | Force dependency graph update |
 | 2.80 | current | `bpy.context.scene.frame_set(n)` | `post_process.py`, `exporter/describe/helpers/scene.py` | Reset timeline / sample animations at frame |
 | 2.80 | current | `bpy.context.scene.frame_current` | `exporter/describe/helpers/scene.py` | Save/restore frame while sampling |
 | 2.80 | current | `bpy.context.scene.frame_start / frame_end = n` | `post_process.py` | Set playback range from active action's frame_range |
@@ -86,11 +93,12 @@ Every Blender Python API call used by this addon, with the Blender version range
 | | | | | |
 | | | **Object Data Creation** | | |
 | 2.80 | current | `bpy.data.armatures.new(name)` | `skeleton.py` | |
-| 2.80 | current | `bpy.data.objects.new(name, object_data)` | `skeleton.py`, `meshes.py`, `lights.py`, `cameras.py`, `animations.py`, `prepare_for_pkx_export.py`, `prepare_pbr_for_pkx_export.py` | Last: SUN + target empty for the default light rig |
+| 2.80 | current | `bpy.data.objects.new(name, object_data)` | `skeleton.py`, `meshes.py`, `lights.py`, `cameras.py`, `animations.py`, `build_collision.py`, `prepare_for_pkx_export.py`, `prepare_pbr_for_pkx_export.py` | Last: SUN + target empty for the default light rig |
 | 2.80 | current | `bpy.data.objects` (iteration) | `cameras.py`, `BlenderPlugin.py`, `exporter/*.py` | Find objects by type |
 | 2.80 | current | `bpy.data.curves.new(name, type)` | `animations.py` | Spline path curves |
-| 2.80 | current | `bpy.data.meshes.new(name)` | `meshes.py` | |
-| 2.80 | current | `bpy.data.materials.new(name)` | `materials.py`, `meshes.py` | |
+| 2.80 | current | `bpy.data.meshes.new(name)` | `meshes.py`, `build_collision.py` | |
+| 2.80 | current | `bpy.data.materials.new(name)` | `materials.py`, `meshes.py`, `build_collision.py` | |
+| 2.80 | current | `bpy.data.materials.get(name)` | `build_collision.py` | Re-use the shared collision material across imports instead of minting `.001` copies |
 | 2.80 | current | `bpy.data.lights.new(name, type)` | `lights.py` | |
 | 2.80 | current | `bpy.data.cameras.new(name)` | `cameras.py` | Camera import/export |
 | 2.80 | current | `bpy.data.images.new(name, w, h, alpha=True)` | `materials.py` | |
@@ -100,11 +108,12 @@ Every Blender Python API call used by this addon, with the Blender version range
 | | | | | |
 | | | **Object Properties** | | |
 | 2.80 | current | `object.location = Vector(...)` | `meshes.py`, `cameras.py`, `lights.py`, `prepare_for_pkx_export.py`, `prepare_pbr_for_pkx_export.py` | |
-| 2.80 | current | `object.empty_display_type = '...'` | `cameras.py`, `lights.py`, `prepare_for_pkx_export.py`, `prepare_pbr_for_pkx_export.py` | Display type for target empties |
+| 2.80 | current | `object.empty_display_type = '...'` | `cameras.py`, `lights.py`, `build_collision.py`, `prepare_for_pkx_export.py`, `prepare_pbr_for_pkx_export.py` | Display type for target empties |
 | 2.80 | current | `object.empty_display_size = n` | `cameras.py` | Scale target empty to model size |
 | 2.80 | current | `object.constraints.new(type=...)` | `cameras.py`, `lights.py`, `prepare_for_pkx_export.py`, `prepare_pbr_for_pkx_export.py` | TRACK_TO for camera look-at + default light rig |
 | 2.80 | current | `object.matrix_local = Matrix(...)` | `meshes.py` | |
-| 2.80 | current | `object.parent = obj` | `meshes.py` | |
+| 2.80 | current | `object.parent = obj` | `meshes.py`, `build_collision.py` | |
+| 2.80 | current | `object.matrix_basis = Matrix(...)` | `skeleton.py`, `build_collision.py` | Y-up→Z-up on the armature / collision root; entry transform on a collision object |
 | 2.80 | current | `object.select_set(True)` | `skeleton.py` | |
 | 2.80 | current | `object.hide_render = True` | `meshes.py` | |
 | 2.80 | current | `object.hide_set(True)` | `meshes.py` | |
@@ -146,16 +155,19 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.80 | current | `constraint.min_x` etc | `export/constraints.py` | Limit constraint axis values |
 | | | | | |
 | | | **Mesh Data** | | |
-| 2.80 | current | `mesh.from_pydata(verts, edges, faces)` | `meshes.py` | |
-| 2.80 | current | `mesh.update(calc_edges=True)` | `meshes.py` | |
-| 2.65 | current | `mesh.validate(verbose, clean_customdata)` | `meshes.py` | |
-| 2.80 | current | `mesh.materials.append(mat)` | `meshes.py` | |
+| 2.80 | current | `mesh.from_pydata(verts, edges, faces)` | `meshes.py`, `build_collision.py` | |
+| 2.80 | current | `mesh.update(calc_edges=True)` | `meshes.py`, `build_collision.py` | |
+| 2.65 | current | `mesh.validate(verbose, clean_customdata)` | `meshes.py`, `build_collision.py` | `build_collision.py` treats a True return as fatal — a dropped face would strand its per-face metadata |
+| 2.80 | current | `mesh.materials.append(mat)` | `meshes.py`, `build_collision.py` | |
 | 2.74 | current | `mesh.normals_split_custom_set(normals)` | `meshes.py` | |
 | 2.80 | current | `polygon.use_smooth = True` | `meshes.py` (importer build_blender) | Required for custom split normals to take effect; Blender 4.1+ polygons default to flat and silently ignore per-loop normals |
 | 2.80 | current | `mesh.uv_layers.new(name)` | `meshes.py` | |
 | 2.80 | current | `polygon.loop_indices` | `bake_chico_shader_to_principled.py`, `prepare_for_pkx_export.py` | Group loops per face to collapse stacked UV tiles by an integer offset |
 | 2.80 | current | `uv_layer.data.foreach_get/set("uv", seq)` | `bake_chico_shader_to_principled.py`, `prepare_for_pkx_export.py` | Snapshot/restore UVs around the tile-collapse bake |
 | 3.2 | current | `mesh.color_attributes.new(name, type, domain)` | `meshes.py` | FLOAT_COLOR + CORNER; avoids sRGB auto-linearization |
+| 3.0 | current | `mesh.attributes.new(name, type, domain)` | `build_collision.py` | INT + FACE, one per collision metadata channel (edge mask, layers, surfaces) |
+| 3.0 | current | `mesh.attributes[name]` | `BlenderPlugin.py` | Panel checks which collision metadata channels a mesh carries |
+| 2.80 | current | `attribute.data.foreach_set('value', seq)` | `build_collision.py` | Bulk-write per-face integer metadata |
 | | | | | |
 | | | **Vertex Groups** | | |
 | 2.80 | current | `object.vertex_groups.new(name)` | `meshes.py` | |
@@ -163,27 +175,45 @@ Every Blender Python API call used by this addon, with the Blender version range
 | | | | | |
 | | | **Modifiers** | | |
 | 2.80 | current | `object.modifiers.new(name, 'ARMATURE')` | `meshes.py` | |
-| 2.92 | current | `object.modifiers.new(name, 'NODES')` | `particles.py` (importer build_blender) | Attach GeometryNodes tree to per-generator mesh |
+| 2.92 | current | `object.modifiers.new(name, 'NODES')` | `particles.py` (importer build_blender) | Attach the emitter's GeometryNodes tree to its mesh |
 | 2.92 | current | `modifier.node_group = tree` | `particles.py` (importer build_blender) | Assign GeometryNodeTree to NODES modifier |
+| 2.92 | current | `modifier[socket_identifier] = value` | `particles.py` (importer build_blender) | Emitter parameter values, addressed by interface-socket identifier |
+| 2.92 | current | `modifier.driver_add('["<socket_identifier>"]')` | `particles.py` (importer build_blender) | Gates `Emit` on the firing bone's spawn keys |
+| 2.80 | current | `driver.variables.new()` + `var.targets[0].id` / `.data_path` | `particles.py` (importer build_blender) | One variable per `particle_emit` lane; expression compares each against the emitter index |
 | | | | | |
 | | | **Geometry Nodes** | | |
-| 2.92 | current | `bpy.data.node_groups.new(name, 'GeometryNodeTree')` | `particles.py` (importer build_blender) | Per-generator tree |
-| 2.92 | current | `nodes.new('GeometryNodePoints')` | `particles.py` (importer build_blender) | Initial particle spawn |
-| 3.6 | current | `nodes.new('GeometryNodeSimulationInput')` | `particles.py` (importer build_blender) | Sim zone input |
-| 3.6 | current | `nodes.new('GeometryNodeSimulationOutput')` | `particles.py` (importer build_blender) | Sim zone output |
-| 3.6 | current | `sim_in.pair_with_output(sim_out)` | `particles.py` (importer build_blender) | Pair sim zone endpoints |
-| 3.6 | current | `sim_out.state_items.new(socket_type, name)` | `particles.py` (importer build_blender) | Declare persistent state |
-| 3.0 | current | `nodes.new('GeometryNodeInputSceneTime')` | `particles.py` (importer build_blender) | Drive Age increment |
-| 2.92 | current | `nodes.new('GeometryNodeMeshGrid')` | `particles.py` (importer build_blender) | Billboard quad |
-| 2.92 | current | `nodes.new('GeometryNodeInstanceOnPoints')` | `particles.py` (importer build_blender) | Instance quads on particles |
-| 2.92 | current | `nodes.new('GeometryNodeSetMaterial')` | `particles.py` (importer build_blender) | Assign particle material |
-| 2.80 | current | `nodes.new('NodeFrame')` | `particle_opcodes.py` | One frame per bytecode instruction |
-| 2.80 | current | `frame.use_custom_color = True`, `frame.color = (r,g,b)` | `particle_opcodes.py` | Visual grouping by opcode |
+| 2.92 | current | `bpy.data.node_groups.new(name, 'GeometryNodeTree')` | `particles.py` (importer build_blender) | One tree per emitter |
+| 4.0 | current | `tree.interface.new_socket(name, in_out, socket_type)` | `particles.py` (importer build_blender) | Emitter parameters as group inputs (`NodeSocketFloat` / `Int` / `Bool` / `Vector` / `Color` / `Geometry`) |
+| 4.0 | current | `socket.subtype` / `.min_value` / `.max_value` / `.default_value` / `.description` | `particles.py` (importer build_blender) | Limits set before the default — Blender clamps the default into range |
+| 4.0 | current | `tree.interface.items_tree` | `particles.py` (importer build_blender) | Socket name → identifier, for writing modifier values and driving `Emit` |
+| 2.80 | current | `nodes.new('NodeGroupInput')` / `nodes.new('NodeGroupOutput')` | `particles.py` (importer build_blender) | |
+| 3.6 | current | `nodes.new('GeometryNodeSimulationInput')` / `('GeometryNodeSimulationOutput')` | `particles.py` (importer build_blender) | Particle state carried between frames |
+| 3.6 | current | `sim_input.pair_with_output(sim_output)` | `particles.py` (importer build_blender) | Must precede linking — the zone's `Item_0` sockets only exist once paired |
+| 3.1 | current | `nodes.new('GeometryNodePoints')` | `particles.py` (importer build_blender) | This frame's newly spawned particles |
+| 2.92 | current | `nodes.new('GeometryNodeObjectInfo')` + `transform_space='RELATIVE'` | `particles.py` (importer build_blender) | Spawn position of the attach Empty, in the emitter's own space |
+| 3.0 | current | `nodes.new('GeometryNodeInputSceneTime')` | `particles.py` (importer build_blender) | Per-frame seed for the birth randomisation |
+| 2.92 | current | `nodes.new('FunctionNodeRandomValue')` + `data_type='FLOAT_VECTOR'` | `particles.py` (importer build_blender) | Birth position / velocity spread. Typed socket variants: vector uses `Min`/`Max` → `Value` |
+| 3.0 | current | `nodes.new('GeometryNodeStoreNamedAttribute')` / `('GeometryNodeInputNamedAttribute')` | `particles.py` (importer build_blender) | `velocity` / `age` per point, `particle_color` for the shader |
+| 2.92 | current | `nodes.new('GeometryNodeSetPosition')` | `particles.py` (importer build_blender) | Velocity integration |
+| 2.92 | current | `nodes.new('GeometryNodeDeleteGeometry')` + `domain='POINT'` | `particles.py` (importer build_blender) | Retires particles past their lifetime |
+| 2.92 | current | `nodes.new('GeometryNodeJoinGeometry')` | `particles.py` (importer build_blender) | Spawned points into the simulation state; the two crossed quads |
+| 2.92 | current | `nodes.new('GeometryNodeMeshGrid')` / `('GeometryNodeTransform')` | `particles.py` (importer build_blender) | The crossed billboard pair |
+| 2.92 | current | `nodes.new('GeometryNodeInstanceOnPoints')` | `particles.py` (importer build_blender) | One quad pair per particle, scaled by the size curve |
+| 2.92 | current | `nodes.new('GeometryNodeSetMaterial')` | `particles.py` (importer build_blender) | Emitter material; the Material input is an ID pointer, assigned by build |
+| 2.80 | current | `nodes.new('ShaderNodeValToRGB')` | `particles.py` (importer build_blender) | `ColorOverLife` ramp (valid inside a geometry tree) |
+| 2.92 | current | `nodes.new('ShaderNodeFloatCurve')` | `particles.py` (importer build_blender) | `SizeOverLife` curve |
+| 2.80 | current | `node.color_ramp.elements.new(position)` / `.remove(element)` | `particles.py` (importer build_blender) | Rebuilt from one survivor — the collection re-sorts on every position write |
+| 2.80 | current | `element.position` / `element.color` | `particles.py` (importer build_blender) | Linear RGBA stops |
+| 2.80 | current | `node.color_ramp.interpolation` / `.color_mode` | `particles.py` (importer build_blender) | |
+| 2.80 | current | `node.mapping.curves[0].points.new(x, y)` / `.remove(point)` | `particles.py` (importer build_blender) | Size-over-life points |
+| 2.80 | current | `mapping.use_clip` / `.clip_min_y` / `.clip_max_y` / `.update()` | `particles.py` (importer build_blender) | Clip box widened to the curve's range (sizes exceed the 0-1 default) |
 | | | | | |
 | | | **Material & Shader Nodes** | | |
 | 2.80 | current | `material.use_backface_culling = True` | `meshes.py` | From POBJ cull flags; prevents z-fighting on double-sided geometry |
-| 2.80 | current | `material.blend_method` | `materials.py` (importer build_blender) | EEVEE transparency mode — `'HASHED'` / `'BLEND'` / `'OPAQUE'`. Translucent fallback uses HASHED to avoid EEVEE depth-sort artefacts |
-| 2.80 | current | `material.use_nodes = True` | `materials.py` | |
+| 2.80 | current | `material.blend_method` | `materials.py`, `build_collision.py` (importer build_blender) | EEVEE transparency mode — `'HASHED'` / `'BLEND'` / `'OPAQUE'`. Translucent fallback uses HASHED to avoid EEVEE depth-sort artefacts |
+| 2.80 | current | `material.use_nodes = True` | `materials.py`, `build_collision.py` | |
+| 4.2 | current | `material.surface_render_method = 'BLENDED'` | `build_collision.py` | EEVEE Next's replacement for `blend_method`; both are set so the translucent overlay reads under either renderer |
+| 2.80 | current | `material.diffuse_color = (r,g,b,a)` | `build_collision.py` | Viewport solid-mode colour, so collision reads without EEVEE |
 | 2.80 | current | `material.node_tree.nodes` / `.links` | `materials.py`, `shiny_filter.py`, `bake_chico_shader_to_principled.py`, `prepare_for_pkx_export.py` | `bake_chico_shader_to_principled.py` adds a `ShaderNodeBsdfPrincipled` fed by a baked image and disconnects the original group |
 | 2.80 | current | `material.node_tree.update_tag()` | `BlenderPlugin.py` | Force material refresh |
 | 2.80 | current | `nodes.new('ShaderNodeOutputMaterial')` | `materials.py` | |
@@ -275,7 +305,7 @@ Every Blender Python API call used by this addon, with the Blender version range
 | | | | | |
 | | | **Curve (bone splines)** | | |
 | 2.80 | current | `bpy.data.curves.new(name, type='CURVE')` + `curve.splines.new('POLY'/'BEZIER'/'NURBS')` | `build_blender/helpers/skeleton.py` | JOBJ_SPLINE joint curves build as real Curve objects |
-| 2.80 | current | `curve_obj.parent_type = 'BONE'` / `parent_bone` | `build_blender/helpers/skeleton.py`, `export/describe/helpers/armature.py` | Bone-parent the spline curve; parent_bone maps it back on export |
+| 2.80 | current | `curve_obj.parent_type = 'BONE'` / `parent_bone` | `build_blender/helpers/skeleton.py`, `export/describe/helpers/armature.py`, `particles.py` (importer build_blender) | Bone-parent the spline curve; parent_bone maps it back on export. Particle attach Empties use the same path, offset by `-bone.length` on Y because Blender anchors bone-parented children at the tail |
 | | | | | |
 | | | **Image Data** | | |
 | 2.80 | current | `image.pixels = [...]` | `materials.py` | Flat RGBA float list |

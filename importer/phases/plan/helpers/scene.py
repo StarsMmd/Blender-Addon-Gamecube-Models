@@ -1,19 +1,19 @@
-"""Plan helpers for scene-level objects (lights, cameras) and pass-through
-wrappers (constraints, particle summaries)."""
+"""Plan helpers for scene-level objects (lights, cameras) and the
+pass-through constraint wrapper."""
 import math
 
 try:
     from .....shared.BR.lights import BRLight, BRLightAnimation
     from .....shared.BR.cameras import BRCamera, BRCameraAnimation
     from .....shared.BR.fog import BRFog
-    from .....shared.BR.constraints import BRConstraints, BRParticleSummary
+    from .....shared.BR.constraints import BRConstraints
     from .....shared.IR.enums import CameraProjection
     from .....shared.helpers.srgb import srgb_to_linear
 except (ImportError, SystemError):
     from shared.BR.lights import BRLight, BRLightAnimation
     from shared.BR.cameras import BRCamera, BRCameraAnimation
     from shared.BR.fog import BRFog
-    from shared.BR.constraints import BRConstraints, BRParticleSummary
+    from shared.BR.constraints import BRConstraints
     from shared.IR.enums import CameraProjection
     from shared.helpers.srgb import srgb_to_linear
 
@@ -296,27 +296,6 @@ def plan_constraints(ir_ik, ir_copy_loc, ir_track_to, ir_copy_rot,
         copy_rotation=list(ir_copy_rot),
         limit_rotation=list(ir_limit_rot),
         limit_location=list(ir_limit_loc),
-    )
-
-
-# ---------------------------------------------------------------------------
-# Particles summary
-# ---------------------------------------------------------------------------
-
-
-def plan_particle_summary(ir_particles):
-    """Compute the counts that build writes as armature custom props.
-
-    Returns None if there's no particle system; build phase skips entirely.
-
-    In: ir_particles (IRParticleSystem|None).
-    Out: BRParticleSummary|None.
-    """
-    if ir_particles is None:
-        return None
-    return BRParticleSummary(
-        generator_count=len(ir_particles.generators),
-        texture_count=len(ir_particles.textures),
     )
 
 

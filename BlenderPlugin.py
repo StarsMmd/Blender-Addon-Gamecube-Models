@@ -55,11 +55,15 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
                                description='Import light sets from the model file.')
     import_cameras: BoolProperty(default=False, name='Import Cameras',
                                 description='Import cameras from the model file.')
+    import_collision: BoolProperty(default=True, name='Import Collision',
+                                  description='Import the map collision database (.ccd) as a translucent overlay, either standalone or alongside the room model in a map .fsys.')
+    import_particles: BoolProperty(default=True, name='Import Particles',
+                                  description='Import the particle effects (GPT1) a PKX carries as geometry-node emitters, plus the per-clip spawn events on the bones that fire them.')
     use_legacy: BoolProperty(default=False, name='Use Legacy Importer',
                             description='Use the old import pipeline instead of the new Intermediate Representation pipeline.')
 
     filename_ext = ".dat"
-    filter_glob: StringProperty(default="*.fdat;*.dat;*.rdat;*.pkx;*.fsys;*.wzx;*.cam", options={'HIDDEN'})
+    filter_glob: StringProperty(default="*.fdat;*.dat;*.rdat;*.pkx;*.fsys;*.wzx;*.cam;*.ccd", options={'HIDDEN'})
 
     def draw(self, context):
         layout = self.layout
@@ -70,6 +74,8 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
         layout.prop(self, "import_lights")
         layout.prop(self, "import_cameras")
         if self.game == 'COLO_XD':
+            layout.prop(self, "import_collision")
+            layout.prop(self, "import_particles")
             layout.prop(self, "use_legacy")
 
     def execute(self, context):
@@ -110,6 +116,8 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
             "filepath": path,
             "import_lights": self.import_lights,
             "import_cameras": self.import_cameras or filename.lower().endswith('.cam'),
+            "import_collision": self.import_collision,
+            "import_particles": self.import_particles,
             "include_shiny": True,
             "game": self.game,
             "colo_xd_kind": self.colo_xd_kind if self.game == 'COLO_XD' else None,
@@ -141,7 +149,7 @@ class ImportHSD(bpy.types.Operator, ImportHelper):
             section_map = route_sections(dat_bytes, game=self.game)
 
             # Record which armatures exist before the legacy import so we can
-            # diff afterwards to find newly created ones for Phase 6
+            # diff afterwards to find newly created ones for Phase 7
             existing = set(obj.name for obj in bpy.data.objects if obj.type == 'ARMATURE')
 
             for section_name, node_type in section_map.items():
@@ -470,8 +478,9 @@ class DAT_OT_SubAnimSelectorSet(bpy.types.Operator):
         return {'FINISHED'}
 
 
-def _draw_enum_dropdown(layout, obj, prop_key, items, label="", as_int=False):
-    """Draw a row of toggle buttons for a custom property enum.
+def _draw_enum_dropdown(layout, obj, prop_key, items, label="", as_int=False,
+                        columns=0):
+    """Draw toggle buttons for a custom property enum.
 
     Args:
         layout: UILayout to draw into.
@@ -480,13 +489,16 @@ def _draw_enum_dropdown(layout, obj, prop_key, items, label="", as_int=False):
         items: list of (value, display_label) tuples. Values are always strings.
         label: Row label (empty = no label).
         as_int: If True, store the value as int instead of string.
+        columns: Wrap into a grid this many buttons wide. 0 keeps every button
+            on one row — too cramped once the labels are more than a word.
     """
     current = str(obj.get(prop_key, ""))
 
     row = layout.row(align=True)
     if label:
         row.label(text=label)
-    sub = row.row(align=True)
+    sub = (row.grid_flow(row_major=True, columns=columns, align=True)
+           if columns else row.row(align=True))
     for val, lbl in items:
         op = sub.operator("dat.set_enum_prop", text=lbl,
                           depress=(val == current))
@@ -590,17 +602,20 @@ class DAT_PT_PKXPanel(bpy.types.Panel):
         col.prop(obj, "dat_pkx_shiny_brightness_b", text="Blue")
 
         # === Particles (GPT1) ===
-        # Particle visualization is disabled until we identify the
-        # generator→bone binding mechanism — see
-        # importer/phases/build_blender/helpers/particles.py for context.
-        gen_count = obj.get("dat_particle_gen_count", 0)
-        if gen_count:
+        # Emitters are real objects under a Particles_* Empty parented to the
+        # armature; which one fires from which bone is animation data, keyed
+        # on the pose bones' particle_emit property.
+        roots = [child for child in obj.children
+                 if child.type == 'EMPTY' and child.name.startswith("Particles_")]
+        if roots:
             box = layout.box()
             box.label(text="Particles (GPT1)", icon='PARTICLES')
             col = box.column(align=True)
+            for root in roots:
+                _prop_row(col, root.name, "%d emitters" % len(root.children))
             col.scale_y = 0.8
-            col.label(text=f"{gen_count} generators parsed; not visualised.", icon='INFO')
-            col.label(text="Binding to bones isn't stored in the model.")
+            col.label(text="Spawns are keyed on pose bones (particle_emit).",
+                      icon='INFO')
 
         # === Flags ===
         box = layout.box()
@@ -808,6 +823,91 @@ class DAT_PT_PKXPanel(bpy.types.Panel):
                             col.prop_search(obj, '["%s"]' % jkey, obj.data, "bones", text=label)
 
 
+# Canonical source for both the values and their labels, so the panel can
+# never drift from what the pipeline writes.
+from .shared.Constants.collision import (
+    CollisionSubsystem as _CollisionSubsystem,
+    SUBSYSTEM_ORDER as _COLLISION_SUBSYSTEMS,
+    SUBSYSTEM_LABELS as _COLLISION_LABELS,
+    REGION_SUBSYSTEMS as _COLLISION_REGION_SUBSYSTEMS,
+)
+
+_COLLISION_TYPE_ITEMS = [(subsystem.value, _COLLISION_LABELS[subsystem])
+                         for subsystem in _COLLISION_SUBSYSTEMS]
+
+# Only player walls can also block NPCs; only triggers carry a region ID.
+_COLLISION_WALL = _CollisionSubsystem.WALL.value
+_COLLISION_REGION_TYPES = frozenset(subsystem.value for subsystem
+                                    in _COLLISION_REGION_SUBSYSTEMS)
+
+# Per-face metadata attributes, by the subsystem that carries them.
+_COLLISION_FACE_ATTRS = [
+    ("col_edge_mask", "Edge mask"),
+    ("col_layer_a", "Layer A"),
+    ("col_layer_b", "Layer B"),
+    ("col_surface_a", "Surface A"),
+    ("col_surface_b", "Surface B"),
+]
+
+
+class DAT_PT_CollisionPanel(bpy.types.Panel):
+    """Map collision (.ccd) metadata panel."""
+    bl_label = "Collision"
+    bl_idname = "OBJECT_PT_dat_collision"
+    bl_space_type = 'PROPERTIES'
+    bl_region_type = 'WINDOW'
+    bl_context = "object"
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and "dat_col_entry" in obj
+
+    def draw(self, context):
+        obj = context.active_object
+        layout = self.layout
+
+        # === Entry ===
+        # The entry index is what doors and the Collision.setEnabled script call
+        # address, and it is the grouping key when exporting.
+        box = layout.box()
+        box.label(text="Entry", icon='OUTLINER_OB_GROUP_INSTANCE')
+        box.prop(obj, '["dat_col_entry"]', text="Index")
+        if "dat_col_dynamic" in obj:
+            box.prop(obj, '["dat_col_dynamic"]', text="Dynamic Transform")
+
+        if "dat_col_type" not in obj:
+            layout.label(text="Entry marker — carries no collision mesh.",
+                         icon='INFO')
+            return
+
+        # === Type ===
+        # Type-specific fields are gated on the *current* type, not on whether
+        # the property happens to exist — retyping an object leaves the old
+        # type's properties behind, and they would otherwise keep showing.
+        box = layout.box()
+        box.label(text="Type", icon='MOD_PHYSICS')
+        _draw_enum_dropdown(box, obj, "dat_col_type", _COLLISION_TYPE_ITEMS,
+                            columns=2)
+        collision_type = str(obj.get("dat_col_type", ""))
+        if (collision_type in _COLLISION_REGION_TYPES
+                and "dat_col_region" in obj):
+            box.prop(obj, '["dat_col_region"]', text="Region ID")
+        if (collision_type == _COLLISION_WALL
+                and "dat_col_npc_blocks" in obj):
+            box.prop(obj, '["dat_col_npc_blocks"]', text="Also Blocks NPCs")
+
+        # === Faces ===
+        if obj.type == 'MESH':
+            box = layout.box()
+            box.label(text="Faces", icon='FACESEL')
+            _prop_row(box, "Triangles", len(obj.data.polygons))
+            present = [label for key, label in _COLLISION_FACE_ATTRS
+                       if key in obj.data.attributes]
+            if present:
+                _prop_row(box, "Per-face", ", ".join(present))
+
+
 def _prop_row(layout, label, value):
     """Draw a label: value row in the panel."""
     row = layout.row()
@@ -818,7 +918,7 @@ def _prop_row(layout, label, value):
 classes = (ImportHSD, ExportHSD, DAT_OT_SetEnumProp,
            DAT_OT_SubAnimBoneAdd, DAT_OT_SubAnimBoneRemove, DAT_OT_SubAnimBoneSet,
            DAT_OT_SubAnimSelectorSet,
-           DAT_PT_PKXPanel)
+           DAT_PT_PKXPanel, DAT_PT_CollisionPanel)
 
 
 _dat_props = [

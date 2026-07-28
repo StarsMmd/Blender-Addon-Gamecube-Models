@@ -1,7 +1,7 @@
-"""Phase 6 — Post-Processing: bake transforms, reset poses, select first
+"""Phase 7 — Post-Processing: bake transforms, reset poses, select first
 animation, apply shiny filters.
 
-Runs after either the new IR pipeline (Phase 5) or the legacy importer.
+Runs after either the new IR pipeline (Phase 6) or the legacy importer.
 Operates entirely on Blender objects — no dependency on earlier phases.
 
 Bakes the importer's Y-up→Z-up viewing rotation into bone + child-mesh
@@ -43,11 +43,11 @@ def post_process(armature_names, shiny_params=None, options=None, logger=StubLog
         shiny_params: ShinyParams from Phase 1 extract, or None.
         options: dict of importer options (checks include_shiny). None = shiny enabled.
         logger: Logger instance.
-        build_results: list of dicts from Phase 5 with armature/actions/mat_slot_indices.
+        build_results: list of dicts from Phase 6 with armature/actions/mat_slot_indices.
             When provided, uses these directly instead of rediscovering actions by name.
         pkx_header: PKXHeader from Phase 1 extract, or None.
     """
-    logger.info("=== Phase 6: Post-Processing ===")
+    logger.info("=== Phase 7: Post-Processing ===")
     logger.info("  Shiny params: %s", shiny_params is not None)
     logger.info("  PKX header: %s", pkx_header is not None)
     logger.info("  Options: %s", options)
@@ -73,7 +73,7 @@ def post_process(armature_names, shiny_params=None, options=None, logger=StubLog
     bake_imported_transforms(bake_targets, logger=logger)
 
     if build_results:
-        # New pipeline path: use actions directly from Phase 5
+        # New pipeline path: use actions directly from Phase 6
         for result in build_results:
             armature = result['armature']
             actions = result['actions']
@@ -123,7 +123,7 @@ def post_process(armature_names, shiny_params=None, options=None, logger=StubLog
         logger.info("  Scene frame range set to %d-%d from %d action(s)",
                     start, end, len(ranges))
     scene.frame_set(scene.frame_start)
-    logger.info("=== Phase 6 complete ===")
+    logger.info("=== Phase 7 complete ===")
 
 
 def _bone_frame_range(action):

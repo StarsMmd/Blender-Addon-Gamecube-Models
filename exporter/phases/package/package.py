@@ -27,7 +27,7 @@ except (ImportError, SystemError):
 
 
 def package_output(dat_bytes, filepath, options=None, logger=StubLogger(),
-                   shiny_params=None, pkx_header=None):
+                   shiny_params=None, pkx_header=None, gpt1_data=b''):
     """Package DAT bytes into the final output format.
 
     Args:
@@ -39,6 +39,8 @@ def package_output(dat_bytes, filepath, options=None, logger=StubLogger(),
                       Written into the PKX header when outputting .pkx files.
         pkx_header: PKXHeader from the describe phase, or None.
                     Used to generate PKX files from scratch when present.
+        gpt1_data: Composed GPT1 particle payload, or empty bytes.
+                   Embedded beside the DAT when building PKX containers.
 
     Returns:
         bytes — the final output ready to write to disk.
@@ -51,9 +53,11 @@ def package_output(dat_bytes, filepath, options=None, logger=StubLogger(),
     ext = filepath.rsplit('.', 1)[-1].lower() if '.' in filepath else ''
 
     if ext == 'pkx':
-        final_bytes = _package_pkx(dat_bytes, filepath, shiny_params, pkx_header, logger)
+        final_bytes = _package_pkx(dat_bytes, filepath, shiny_params, pkx_header,
+                                   logger, gpt1_data=gpt1_data)
     elif ext == 'fsys':
-        final_bytes = _package_fsys(dat_bytes, filepath, shiny_params, pkx_header, logger)
+        final_bytes = _package_fsys(dat_bytes, filepath, shiny_params, pkx_header,
+                                    logger, gpt1_data=gpt1_data)
     else:
         final_bytes = dat_bytes
 
@@ -75,7 +79,7 @@ def _pad_dat_to_0x20(dat_bytes):
     return dat_bytes
 
 
-def _package_pkx(dat_bytes, filepath, shiny_params, pkx_header, logger):
+def _package_pkx(dat_bytes, filepath, shiny_params, pkx_header, logger, gpt1_data=b''):
     """Build or inject PKX output.
 
     Strategy:
@@ -95,16 +99,21 @@ def _package_pkx(dat_bytes, filepath, shiny_params, pkx_header, logger):
     """
     dat_bytes = _pad_dat_to_0x20(dat_bytes)
     if pkx_header is not None:
-        return _build_pkx_from_header(dat_bytes, pkx_header, shiny_params, logger)
+        return _build_pkx_from_header(dat_bytes, pkx_header, shiny_params, logger,
+                                      gpt1_data=gpt1_data)
     elif os.path.exists(filepath):
+        if gpt1_data:
+            logger.info("  Injecting into existing PKX keeps its embedded GPT1 "
+                        "payload — composed particle data not written")
         return _inject_into_existing(dat_bytes, filepath, shiny_params, logger)
     else:
         logger.info("  No PKX metadata and no existing file — generating default XD header")
         default_header = PKXHeader.default_xd()
-        return _build_pkx_from_header(dat_bytes, default_header, shiny_params, logger)
+        return _build_pkx_from_header(dat_bytes, default_header, shiny_params, logger,
+                                      gpt1_data=gpt1_data)
 
 
-def _build_pkx_from_header(dat_bytes, header, shiny_params, logger):
+def _build_pkx_from_header(dat_bytes, header, shiny_params, logger, gpt1_data=b''):
     """Build a PKX file from scratch using a PKXHeader.
 
     Args:
@@ -137,9 +146,9 @@ def _build_pkx_from_header(dat_bytes, header, shiny_params, logger):
                     shiny_params.route_b, shiny_params.route_a)
 
     if header.is_xd:
-        pkx = PKXContainer.build_xd(dat_bytes, header)
+        pkx = PKXContainer.build_xd(dat_bytes, header, gpt1_data=gpt1_data)
     else:
-        pkx = PKXContainer.build_colosseum(dat_bytes, header)
+        pkx = PKXContainer.build_colosseum(dat_bytes, header, gpt1_data=gpt1_data)
 
     final = pkx.to_bytes()
     logger.info("  Built %s PKX from scratch: %d byte header + %d byte DAT = %d bytes",
@@ -148,7 +157,7 @@ def _build_pkx_from_header(dat_bytes, header, shiny_params, logger):
     return final
 
 
-def _package_fsys(dat_bytes, filepath, shiny_params, pkx_header, logger):
+def _package_fsys(dat_bytes, filepath, shiny_params, pkx_header, logger, gpt1_data=b''):
     """Replace the single model entry inside an existing FSYS archive.
 
     The pre_process phase already validated that the file exists, has the
@@ -165,7 +174,8 @@ def _package_fsys(dat_bytes, filepath, shiny_params, pkx_header, logger):
     target = model_entries[0]
 
     if target.model_kind == MODEL_TYPE_PKX:
-        payload = _package_pkx(dat_bytes, filepath, shiny_params, pkx_header, logger)
+        payload = _package_pkx(dat_bytes, filepath, shiny_params, pkx_header,
+                               logger, gpt1_data=gpt1_data)
         logger.info("  Built PKX payload for FSYS slot '%s': %d bytes",
                     target.filename, len(payload))
     else:

@@ -7,6 +7,8 @@ pre-decided from the Plan phase.
 import bpy
 from mathutils import Matrix, Vector
 
+from .linking import link_beside
+
 try:
     from .....shared.helpers.logger import StubLogger
 except (ImportError, SystemError):
@@ -62,7 +64,7 @@ def build_meshes(br_model, armature, context, logger=StubLogger()):
         for modifier in list(copy.modifiers):
             if modifier.type == 'ARMATURE':
                 copy.modifiers.remove(modifier)
-        bpy.context.scene.collection.objects.link(copy)
+        link_beside(copy, armature)
         instance_count += 1
 
     logger.info("  Created %d mesh objects, %d instances, %d cached images, %d materials",
@@ -83,7 +85,7 @@ def _build_mesh(br_mesh, armature, logger, mesh_idx, material=None):
     mesh_object = bpy.data.objects.new(br_mesh.name, mesh_data)
     mesh_object.location = Vector((0, 0, 0))
 
-    bpy.context.scene.collection.objects.link(mesh_object)
+    link_beside(mesh_object, armature)
 
     mesh_data.from_pydata(br_mesh.vertices, [], br_mesh.faces)
 

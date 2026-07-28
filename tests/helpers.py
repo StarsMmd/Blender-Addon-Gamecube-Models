@@ -1335,3 +1335,95 @@ def build_lzss_compressed(data):
     header = b'LZSS'
     header += struct.pack('>III', len(data), compressed_size, 0)
     return header + bytes(payload)
+
+
+# ---------------------------------------------------------------------------
+# CCD (map collision database) builders
+# ---------------------------------------------------------------------------
+
+CCD_SUBSYSTEM_SLOTS = ('walk', 'wall', 'zone_trigger', 'button_trigger', 'npc_wall', 'sun')
+CCD_GRIDDED_SLOTS = frozenset({'walk', 'wall', 'zone_trigger', 'npc_wall'})
+
+
+def build_ccd_poly(v0, v1, v2, normal=(0.0, 1.0, 0.0), meta0=0, meta1=0, sun=False):
+    """Pack one CCD triangle — 0x34 bytes, or 0x30 for a metadata-less sun poly."""
+    data = struct.pack('>9f', *v0, *v1, *v2) + struct.pack('>3f', *normal)
+    if not sun:
+        data += struct.pack('>HH', meta0, meta1)
+    return data
+
+
+def build_ccd(entries):
+    """Build a synthetic .ccd collision database.
+
+    Each entry is a dict:
+        {
+          'position'/'rotation'/'scale': 3-tuples (optional),
+          'flags': int (optional),
+          'meshes': {slot: [poly, ...]},   # slot from CCD_SUBSYSTEM_SLOTS
+        }
+    where each poly is a dict of build_ccd_poly kwargs.
+
+    Sections are grouped by subsystem in file order and each mesh is emitted
+    as head | polys | cells | index pool, matching the shipped layout. Gridded
+    meshes get a trivial 1x1 grid listing every poly.
+    """
+    entries_offset = 0x10
+    cursor = entries_offset + len(entries) * 0x40
+
+    head_offsets = {}   # (entry index, slot) -> mesh head offset
+    sections = []       # (offset, bytes)
+
+    for slot in CCD_SUBSYSTEM_SLOTS:
+        for index, entry in enumerate(entries):
+            polys = entry.get('meshes', {}).get(slot)
+            if polys is None:
+                continue
+            section = _build_ccd_mesh_section(cursor, slot, polys)
+            head_offsets[(index, slot)] = cursor
+            sections.append((cursor, section))
+            cursor += len(section)
+
+    table = bytearray()
+    for index, entry in enumerate(entries):
+        table += struct.pack('>3f', *entry.get('position', (0.0, 0.0, 0.0)))
+        table += struct.pack('>3f', *entry.get('rotation', (0.0, 0.0, 0.0)))
+        table += struct.pack('>3f', *entry.get('scale', (1.0, 1.0, 1.0)))
+        for slot in CCD_SUBSYSTEM_SLOTS:
+            table += struct.pack('>I', head_offsets.get((index, slot), 0))
+        table += struct.pack('>HH', entry.get('flags', 0), 0)
+
+    data = bytearray(struct.pack('>II', entries_offset, len(entries)))
+    data += b'\x00' * (entries_offset - len(data))
+    data += table
+    for offset, section in sections:
+        assert len(data) == offset, "section offset drift in build_ccd"
+        data += section
+    return bytes(data)
+
+
+def _build_ccd_mesh_section(head_offset, slot, polys):
+    """Pack one mesh: head, polys, and (for gridded slots) cells + index pool."""
+    sun = slot == 'sun'
+    head_size = 0x08 if (sun or slot == 'button_trigger') else 0x24
+    poly_offset = head_offset + head_size
+    poly_blob = b''.join(build_ccd_poly(sun=sun, **poly) for poly in polys)
+
+    if slot not in CCD_GRIDDED_SLOTS:
+        return struct.pack('>II', poly_offset, len(polys)) + poly_blob
+
+    cell_offset = poly_offset + len(poly_blob)
+    pool_offset = cell_offset + 0x08
+    corners = [corner for poly in polys
+               for corner in (poly['v0'], poly['v1'], poly['v2'])]
+    origin_x = min((corner[0] for corner in corners), default=0.0)
+    origin_z = min((corner[2] for corner in corners), default=0.0)
+    cell_x = max((corner[0] for corner in corners), default=1.0) - origin_x or 1.0
+    cell_z = max((corner[2] for corner in corners), default=1.0) - origin_z or 1.0
+
+    head = struct.pack('>IIII', poly_offset, len(polys), cell_offset, pool_offset)
+    head += struct.pack('>HH', 1, 1)
+    head += struct.pack('>ffff', cell_x, cell_z, origin_x, origin_z)
+    cells = struct.pack('>II', 0, len(polys))
+    pool = b''.join(struct.pack('>I', i) for i in range(len(polys)))
+    return head + poly_blob + cells + pool

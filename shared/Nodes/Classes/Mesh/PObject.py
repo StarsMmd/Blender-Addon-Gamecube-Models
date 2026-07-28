@@ -94,8 +94,20 @@ class PObject(Node):
                 parser.logger.debug("PObject 0x%X: property -> Joint (SKIN) at 0x%X", self.address, self.property)
                 self.property = parser.read('Joint', self.property)
             elif property_type == POBJ_SHAPEANIM:
-                parser.logger.debug("PObject 0x%X: property -> ShapeSet (SHAPEANIM) at 0x%X", self.address, self.property)
-                self.property = parser.read('ShapeSet', self.property)
+                # Shape sets (morph targets) are not supported end-to-end yet:
+                # there is no describe -> IR -> build path, and the ShapeSet
+                # parser cannot resolve its dynamic vertex_set/normal_set array
+                # bounds at read time. Skip the property so the base mesh still
+                # imports as static geometry instead of crashing the parser.
+                # TODO: implement shape-key / morph-target support (parse
+                # ShapeSet, populate IRShapeKey, build Blender shape keys, and
+                # export). Tracked in technical-docs/compatibility_table.md
+                # ("Shape keys / morph targets").
+                parser.logger.warning(
+                    "PObject 0x%X: POBJ_SHAPEANIM (shape set / morph target) is "
+                    "not supported yet -- importing base mesh only, skipping "
+                    "shape data at 0x%X", self.address, self.property)
+                self.property = None
             else:
                 parser.logger.debug("PObject 0x%X: property -> EnvelopeList[] (ENVELOPE) at 0x%X", self.address, self.property)
                 self.property = parser.read('(*EnvelopeList)[]', self.property)

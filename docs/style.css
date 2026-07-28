@@ -136,6 +136,17 @@ th, td {
 
 th { background: var(--code-bg); font-weight: 600; }
 
+/* Small colour chip, used in the collision-type table. */
+.swatch {
+    display: inline-block;
+    width: 0.85rem;
+    height: 0.85rem;
+    margin-right: 0.4rem;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+    vertical-align: -1px;
+}
+
 .card-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;

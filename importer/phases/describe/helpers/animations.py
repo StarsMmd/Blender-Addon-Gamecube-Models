@@ -8,17 +8,19 @@ try:
     from .....shared.helpers.logger import StubLogger
     from .....shared.helpers.math_shim import Matrix, compile_srt_matrix, matrix_to_list
     from .....shared.IR.animation import IRBoneAnimationSet, IRBoneTrack, IRSplinePath, IRKeyframe
+    from .....shared.IR.particles import IRParticleEmitEvent
     from .....shared.IR.enums import Interpolation
-    from .keyframe_decoder import decode_fobjdesc
+    from .keyframe_decoder import decode_fobjdesc, decode_particle_fobj
     from .....shared.helpers.scale import GC_TO_METERS
 except (ImportError, SystemError):
     from shared.Constants.hsd import *
     from shared.helpers.logger import StubLogger
     from shared.helpers.math_shim import Matrix, compile_srt_matrix, matrix_to_list
     from shared.IR.animation import IRBoneAnimationSet, IRBoneTrack, IRSplinePath, IRKeyframe
+    from shared.IR.particles import IRParticleEmitEvent
     from shared.IR.enums import Interpolation
     from shared.helpers.scale import GC_TO_METERS
-    from importer.phases.describe.helpers.keyframe_decoder import decode_fobjdesc
+    from importer.phases.describe.helpers.keyframe_decoder import decode_fobjdesc, decode_particle_fobj
 
 
 # HSD channel type → (category, component_index)
@@ -255,18 +257,22 @@ def _decode_bone_channels(aobj, joint=None, bone=None, bones=None,
     """Walk the Fobj chain on `aobj` and decode keyframes per SRT/PATH channel.
 
     In: aobj (Animation node, parsed); joint (Joint|None, only used for PATH); bone (IRBone|None, only used for PATH); bones (list[IRBone]|None); logger (Logger|None); options (dict|None).
-    Out: tuple (rotation, location, scale, spline_path) — rotation/location/scale are each length-3 lists of IRKeyframe lists [X,Y,Z] (location in meters), spline_path is IRSplinePath|None.
+    Out: tuple (rotation, location, scale, spline_path, particle_emits) — rotation/location/scale are each length-3 lists of IRKeyframe lists [X,Y,Z] (location in meters), spline_path is IRSplinePath|None, particle_emits is list[IRParticleEmitEvent].
     """
     rotation = [[], [], []]
     location = [[], [], []]
     scale = [[], [], []]
     spline_path = None
+    particle_emits = []
 
     fobj = aobj.frame
     while fobj:
         if fobj.type == HSD_A_J_PATH:
             if joint is not None and bone is not None and bones is not None:
                 spline_path = _extract_spline_path(aobj, joint, bone, bones, fobj, logger, options)
+
+        elif fobj.type == HSD_A_J_PTCL:
+            particle_emits.extend(_decode_particle_emits(fobj, options, logger))
 
         elif fobj.type in _CHANNEL_MAP:
             category, component = _CHANNEL_MAP[fobj.type]
@@ -299,7 +305,39 @@ def _decode_bone_channels(aobj, joint=None, bone=None, bones=None,
 
         fobj = fobj.next
 
-    return rotation, location, scale, spline_path
+    return rotation, location, scale, spline_path, particle_emits
+
+
+def _decode_particle_emits(fobj, options, logger):
+    """Decode a particle-spawn track into IRParticleEmitEvents.
+
+    Each keyframe value packs (global_generator_id << 6 | flags); the low
+    6 bits are dead (the runtime callback never reads them). Global ids
+    resolve to local emitter indices through the particle system's REF
+    table, supplied as options['particle_ref_map'] by the importer once
+    the GPT1 payload has been described. Without a map (no particle data
+    in the source), events are dropped with a note.
+
+    In: fobj (Frame node, type HSD_A_J_PTCL); options (dict|None); logger (Logger|None).
+    Out: list[IRParticleEmitEvent].
+    """
+    ref_map = (options or {}).get('particle_ref_map')
+    events = []
+    for frame, raw_value in decode_particle_fobj(fobj):
+        global_id = (raw_value >> 6) & 0xFFFFFF
+        if ref_map is None:
+            if logger:
+                logger.debug("  Particle spawn track present but no particle "
+                             "system to resolve against — event dropped")
+            continue
+        local = ref_map.get(global_id)
+        if local is None:
+            if logger:
+                logger.debug("  Particle spawn references unknown generator "
+                             "id %d — event dropped", global_id)
+            continue
+        events.append(IRParticleEmitEvent(frame=float(frame), emitter_ref=local))
+    return events
 
 
 def _assign_bezier_handles(keyframes):
@@ -355,7 +393,7 @@ def _describe_bone_track(aobj, joint, bone, bone_index, bones, logger=None, opti
     In: aobj (Animation node); joint (Joint, parsed); bone (IRBone); bone_index (int, ≥0); bones (list[IRBone]); logger (Logger|None); options (dict|None).
     Out: IRBoneTrack with rotation/location/scale channels, rest_local_matrix (meters), and optional spline_path.
     """
-    rotation, location, scale, spline_path = _decode_bone_channels(
+    rotation, location, scale, spline_path, particle_emits = _decode_bone_channels(
         aobj, joint, bone, bones, logger=logger, options=options,
     )
 
@@ -380,6 +418,7 @@ def _describe_bone_track(aobj, joint, bone, bone_index, bones, logger=None, opti
         rest_scale=rest_scale,
         end_frame=aobj.end_frame,
         spline_path=spline_path,
+        particle_emits=particle_emits,
     )
 
 

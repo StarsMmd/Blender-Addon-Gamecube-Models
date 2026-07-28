@@ -63,7 +63,7 @@ def describe_material(mobj, image_cache=None, logger=None, options=None):
 
     # Material colors — normalized [0-1] sRGB during parsing
     # (Material.loadFromBinary calls transform() which normalizes u8 → float)
-    # Linearization for Blender happens in Phase 5 (build), not here.
+    # Linearization for Blender happens in Phase 5 (plan), not here.
     diffuse_color = tuple(material.diffuse.asRGBAList())
     ambient_color = tuple(material.ambient.asRGBAList())
     specular_color = tuple(material.specular.asRGBAList())

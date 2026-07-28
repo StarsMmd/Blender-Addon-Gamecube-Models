@@ -26,6 +26,7 @@ def _resolve_fsys_inner_ext(filepath):
 from .phases.describe.describe import describe_scene
 from .phases.plan.plan import plan_scene
 from .phases.compose.compose import compose_scene
+from .phases.compose.helpers.particles import compose_particles
 from .phases.serialize.serialize import serialize
 from .phases.package.package import package_output
 
@@ -87,10 +88,17 @@ class Exporter:
         # Phase 4 — Serialize: node trees → DAT bytes
         dat_bytes = serialize(root_nodes, section_names, logger)
 
+        # Phase 3b — Particle payload: IRParticleSystem → GPT1 bytes.
+        # Lives beside the DAT in the PKX container, not inside it, so it
+        # composes independently of the section tree.
+        particles = ir_scene.models[0].particles if ir_scene.models else None
+        gpt1_data = compose_particles(particles, logger) if particles else b''
+
         # Phase 5 — Package: DAT bytes → final output
         final_bytes = package_output(dat_bytes, filepath, options, logger,
                                      shiny_params=shiny_params,
-                                     pkx_header=pkx_header)
+                                     pkx_header=pkx_header,
+                                     gpt1_data=gpt1_data)
 
         # Write to disk
         with open(filepath, 'wb') as f:

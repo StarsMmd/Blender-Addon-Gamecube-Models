@@ -7,12 +7,14 @@ reconstruct the source SRT) is rebuilt from the BR rest SRT triple via
 `compile_srt_matrix` — same formula the importer uses on the way down.
 """
 try:
+    from .....shared.IR.particles import IRParticleEmitEvent
     from .....shared.IR.animation import (
         IRBoneAnimationSet, IRBoneTrack, IRMaterialTrack,
     )
     from .....shared.helpers.math_shim import compile_srt_matrix
     from .....shared.helpers.logger import StubLogger
 except (ImportError, SystemError):
+    from shared.IR.particles import IRParticleEmitEvent
     from shared.IR.animation import (
         IRBoneAnimationSet, IRBoneTrack, IRMaterialTrack,
     )
@@ -58,6 +60,12 @@ def _br_bone_track_to_ir(br_track):
         rest_scale=br_track.rest_scale,
         end_frame=br_track.end_frame,
         spline_path=br_track.spline_path,
+        particle_emits=[
+            # BR carries a third element, the lane that keeps simultaneous
+            # spawns on separate fcurves; the game stream has no such notion.
+            IRParticleEmitEvent(frame=event[0], emitter_ref=event[1])
+            for event in getattr(br_track, 'particle_emits', [])
+        ],
     )
 
 

@@ -54,7 +54,7 @@ def build_material(br_material, image_cache=None):
             _set_input_default(bpy_node, socket_key, value)
 
         if br_node.image_ref is not None:
-            bpy_node.image = _resolve_image(br_node.image_ref, image_cache)
+            bpy_node.image = resolve_image(br_node.image_ref, image_cache)
 
         bpy_nodes[br_node.name] = bpy_node
 
@@ -114,7 +114,7 @@ def _resolve_socket(collection, identifier):
         % (identifier, [s.identifier for s in collection]))
 
 
-def _resolve_image(br_image, image_cache):
+def resolve_image(br_image, image_cache):
     """Get or create a bpy.data.images entry from a BRImage spec.
 
     Dedup by BRImage.cache_key — multiple materials referencing the same

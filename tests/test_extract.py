@@ -243,6 +243,63 @@ def test_fsys_wzx_entry_extracted():
 
 
 # ---------------------------------------------------------------------------
+# Collision (.ccd) entries
+# ---------------------------------------------------------------------------
+
+def test_ccd_standalone_carries_collision_bytes():
+    """A standalone .ccd yields one entry with no DAT payload."""
+    from helpers import build_ccd
+    ccd = build_ccd([{'meshes': {'wall': [{
+        'v0': (0.0, 0.0, 0.0), 'v1': (1.0, 0.0, 0.0), 'v2': (0.0, 0.0, 1.0),
+    }]}}])
+
+    entries = extract_dat(ccd, 'M2_windmill_1F.ccd')
+
+    assert len(entries) == 1
+    assert entries[0][0] == b''
+    assert entries[0][1].ccd_data == ccd
+    assert entries[0][1].filename == 'M2_windmill_1F.ccd'
+
+
+def test_fsys_ccd_entry_extracted_alongside_the_room_model():
+    """A map archive yields both its model entry and its collision entry."""
+    from helpers import build_ccd
+    ccd = build_ccd([{'meshes': {'walk': [{
+        'v0': (0.0, 0.0, 0.0), 'v1': (1.0, 0.0, 0.0), 'v2': (0.0, 0.0, 1.0),
+    }]}}])
+    dat = b'\xCD' * 64
+
+    archive = build_fsys_archive([
+        {'file_type': 0x02, 'data': dat, 'compressed': False, 'filename': 'room'},
+        {'file_type': 0x06, 'data': ccd, 'compressed': False, 'filename': 'room'},
+    ])
+    entries = extract_dat(archive, 'room.fsys')
+
+    assert len(entries) == 2
+    assert entries[0][0] == dat and entries[0][1].ccd_data == b''
+    assert entries[1][0] == b'' and entries[1][1].ccd_data == ccd
+    assert entries[1][1].filename.endswith('.ccd')
+
+
+def test_fsys_ccd_entry_is_decompressed():
+    """A compressed collision entry is LZSS-decompressed like any other."""
+    from helpers import build_ccd
+    ccd = build_ccd([{'meshes': {'button_trigger': [{
+        'v0': (0.0, 0.0, 0.0), 'v1': (1.0, 0.0, 0.0), 'v2': (0.0, 0.0, 1.0),
+        'meta0': 3,
+    }]}}])
+
+    archive = build_fsys_archive([
+        {'file_type': 0x06, 'data': build_lzss_compressed(ccd),
+         'compressed': True, 'filename': 'room'},
+    ])
+    entries = extract_dat(archive, 'room.fsys')
+
+    assert len(entries) == 1
+    assert entries[0][1].ccd_data == ccd
+
+
+# ---------------------------------------------------------------------------
 # Kirby Air Ride "A2" multi-asset container detection
 # ---------------------------------------------------------------------------
 

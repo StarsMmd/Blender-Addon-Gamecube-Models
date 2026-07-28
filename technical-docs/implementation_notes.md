@@ -21,7 +21,8 @@ Per-stage migration summary (all landed on `stars/WIP`):
 - **Meshes** — `BRMesh`, `BRVertexGroup`, `BRMeshInstance`; flattens IR's three SkinType variants; expands `JOBJ_INSTANCE` bones into per-mesh instance entries.
 - **Actions** — `BRAction`, `BRBoneTrack` (keyframes) + `BRArmature.bake_skeleton` (`BRBakeSkeleton`); `bake_frame` is pure (per-frame GX composition + closed-form NONE inversion).
 - **Materials** — `BRMaterial`, `BRNodeGraph`, `BRNode`, `BRLink`, `BRImage`; full TEV / pixel-engine / output-shader wiring as graph data. `BRGraphBuilder` accumulates nodes; build walks the finalised graph.
-- **Lights/cameras/constraints/particles** — `BRLight`, `BRCamera`, `BRCameraAnimation`, `BRConstraints`, `BRParticleSummary`. sRGB→linear, FOV→lens, and coord conversions all Plan-side. Constraints and particle summaries are pass-through wrappers (IR shapes already match Blender's API).
+- **Lights/cameras/constraints** — `BRLight`, `BRCamera`, `BRCameraAnimation`, `BRConstraints`. sRGB→linear, FOV→lens, and coord conversions all Plan-side. Constraints are a pass-through wrapper (IR shapes already match Blender's API).
+- **Particles** — `BRParticleSystem`, `BRParticleEmitter`, `BRParticleNodeGroup`, `BRColorRamp`, `BRFloatCurve`. Plan decides the geometry-node interface layout, GC→metre sizes, Y-up→Z-up vectors, sRGB→linear ramp stops, ramp/curve position layout, and the emitter material graph; build only calls bpy. Spawn events ride on `BRBoneTrack.particle_emits` with a Plan-assigned lane per simultaneous spawn.
 
 What still goes through IR:
 - `post_process/` reads IR indirectly via the armature's custom properties. It's outside the purity contract (it mutates Blender state) and remains on IR.
