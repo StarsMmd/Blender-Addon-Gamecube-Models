@@ -517,8 +517,15 @@ def _plan_spawn(g, shape):
     # The emitter object sits under the armature, whose object matrix already
     # carries the source→Blender conversion — so the simulation works directly
     # in source axes (Y up) and the display transform happens for free. The
-    # source also spawns in the world frame, not the bone frame (its emission
-    # matrix is identity for file data), so only the attach *location* is used.
+    # attachment update feeds the firing bone's world rotation into the
+    # generator's emission matrix every frame, so spawn offsets and velocities
+    # rotate by the attach's orientation (which is that same bone rotation);
+    # forces stay world-frame — the integrator applies gravity unrotated.
+    for tag in ('Pos', 'Vel'):
+        g.add_node('FunctionNodeRotateVector', name='%sRot' % tag,
+                   location=(-400.0, -300.0))
+        g.add_link('%sGC' % tag, 'Vector', '%sRot' % tag, 'Vector')
+        g.add_link('AttachInfo', 'Rotation', '%sRot' % tag, 'Rotation')
 
     # Bytecode birth offsets/velocity (already Blender-space) join afterwards.
     for tag, base, spread in (('BPos', 'Birth Position', 'Birth Position Spread'),
@@ -540,7 +547,7 @@ def _plan_spawn(g, shape):
 
     g.add_node('ShaderNodeVectorMath', name='SpawnPosWorld',
                properties={'operation': 'ADD'}, location=(-300.0, -200.0))
-    g.add_link('PosGC', 'Vector', 'SpawnPosWorld', 'Vector')
+    g.add_link('PosRot', 'Vector', 'SpawnPosWorld', 'Vector')
     g.add_link('AttachInfo', 'Location', 'SpawnPosWorld', 'Vector_001')
     g.add_node('ShaderNodeVectorMath', name='SpawnPosFull',
                properties={'operation': 'ADD'}, location=(-200.0, -200.0))
@@ -553,7 +560,7 @@ def _plan_spawn(g, shape):
 
     g.add_node('ShaderNodeVectorMath', name='SpawnVelFull',
                properties={'operation': 'ADD'}, location=(-300.0, -500.0))
-    g.add_link('VelGC', 'Vector', 'SpawnVelFull', 'Vector')
+    g.add_link('VelRot', 'Vector', 'SpawnVelFull', 'Vector')
     g.add_link('BVelFull', 'Vector', 'SpawnVelFull', 'Vector_001')
 
     g.add_node('GeometryNodeStoreNamedAttribute', name='StoreBirthVelocity',

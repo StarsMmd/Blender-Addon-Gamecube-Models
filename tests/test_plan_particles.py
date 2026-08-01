@@ -233,11 +233,13 @@ class TestNodeGroupContents:
                    and l.to_node == 'AttachInfo' for l in links)
         assert any(l.from_node == 'AttachInfo' and l.from_output == 'Location'
                    and l.to_node == 'SpawnPosWorld' for l in links)
-        # Only the location — the source spawns in the world frame, so the
-        # bone's orientation must not rotate positions or velocities.
+        # The attachment update writes the firing bone's rotation into the
+        # generator's emission matrix, so offsets and velocities rotate with
+        # the attach — that is what mirrors a one-sided spawn box onto each
+        # wing when the same emitter fires from mirrored bones.
         rotated = {l.to_node for l in links
                    if l.from_node == 'AttachInfo' and l.from_output == 'Rotation'}
-        assert rotated == set()
+        assert {'PosRot', 'VelRot'} <= rotated
 
     def test_age_drives_both_over_life_nodes(self):
         links = _plan().emitters[0].node_group.links
