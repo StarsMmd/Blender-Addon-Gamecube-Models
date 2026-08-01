@@ -49,8 +49,10 @@ def build_particles(br_particles, armature, context, logger=StubLogger()):
     # Attach points first — every emitter's modifier references one by name.
     for br_attach in br_particles.attaches:
         _build_attach(br_attach, armature)
+    # Instances of one template share its material (keyed by name).
+    material_cache = {}
     for br_emitter in br_particles.emitters:
-        _build_emitter(br_emitter, root, image_cache, armature)
+        _build_emitter(br_emitter, root, image_cache, armature, material_cache)
 
     logger.info("  Built %d particle emitter(s), %d texture(s), %d attach point(s)",
                 len(br_particles.emitters), len(br_particles.images),
@@ -98,14 +100,17 @@ def _build_root(name, armature):
     return root
 
 
-def _build_emitter(br_emitter, root, image_cache, armature):
+def _build_emitter(br_emitter, root, image_cache, armature, material_cache=None):
     """Create one emitter object: mesh + material + geometry-node modifier.
 
     In: br_emitter (BRParticleEmitter); root (bpy.types.Object, parent Empty);
         image_cache (dict, keyed by BRImage.cache_key); armature
-        (bpy.types.Object, drives the emit gate).
+        (bpy.types.Object, drives the emit gate); material_cache (dict|None,
+        keyed by material name — instances of one template share it).
     Out: bpy.types.Object.
     """
+    if material_cache is None:
+        material_cache = {}
     mesh = bpy.data.meshes.new(br_emitter.name)
     mesh.from_pydata([(0.0, 0.0, 0.0)], [], [])
     mesh.update()
@@ -116,7 +121,10 @@ def _build_emitter(br_emitter, root, image_cache, armature):
 
     material = None
     if br_emitter.material is not None:
-        material = build_material(br_emitter.material, image_cache)
+        material = material_cache.get(br_emitter.material.name)
+        if material is None:
+            material = build_material(br_emitter.material, image_cache)
+            material_cache[br_emitter.material.name] = material
         mesh.materials.append(material)
 
     if br_emitter.node_group is not None:

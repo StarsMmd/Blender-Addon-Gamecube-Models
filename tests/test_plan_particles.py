@@ -324,14 +324,20 @@ class TestAttachPoints:
         assert br.emitters[0].attach_name == 'Particles_pika_Attach_Head'
         assert br.emitters[1].attach_name == 'Particles_pika_Attach_Tail'
 
-    def test_bone_fired_from_several_bones_takes_the_busiest(self):
-        br = self._system_with_clips([[('Head', 0)],
-                                      [('Tail', 0), ('Tail', 0)]])
-        assert br.emitters[0].attach_name == 'Particles_pika_Attach_Tail'
-
-    def test_ties_break_by_name_so_the_choice_is_stable(self):
+    def test_emitter_fired_from_several_bones_gets_one_instance_each(self):
+        # The source spawns a generator instance per firing event, so an
+        # emitter fired from two bones burns in both places at once.
         br = self._system_with_clips([[('Wing_L', 0), ('Wing_R', 0)]])
-        assert br.emitters[0].attach_name == 'Particles_pika_Attach_Wing_L'
+        instances = [e for e in br.emitters
+                     if e.custom_props['dat_particle_emitter_index'] == 0]
+        assert [e.attach_name for e in instances] == [
+            'Particles_pika_Attach_Wing_L', 'Particles_pika_Attach_Wing_R']
+        assert [e.name for e in instances] == [
+            'Particles_pika_G00_Wing_L', 'Particles_pika_G00_Wing_R']
+        assert [e.emit_driver.bone_name for e in instances] == ['Wing_L', 'Wing_R']
+        # One template = one material; objects and groups stay unique.
+        assert instances[0].material.name == instances[1].material.name
+        assert instances[0].node_group.name != instances[1].node_group.name
 
     def test_attach_reaches_the_group_interface(self):
         br = self._system_with_clips([[('Head', 0)]])

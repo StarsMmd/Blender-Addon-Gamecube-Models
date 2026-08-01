@@ -77,14 +77,21 @@ def plan_particles(ir_particles, model_name, bone_animations=(),
                                     for b in bones})]
     attach_by_bone = {a.bone_name: a.name for a in attaches}
 
-    emitters = [
-        _plan_emitter(em, i, model_name, images,
-                      _firing_bone(i, firing_bones), attach_by_bone, lane_widths)
-        for i, em in enumerate(ir_particles.emitters)
-    ]
+    # One preview object per (emitter, firing bone): the source creates a
+    # generator instance per firing event, so an emitter fired from two
+    # bones burns in both places at once.
+    emitters = []
+    for i, em in enumerate(ir_particles.emitters):
+        bones = sorted(firing_bones.get(i) or ())
+        for bone_name in (bones or [None]):
+            emitters.append(_plan_emitter(
+                em, i, model_name, images, bone_name, attach_by_bone,
+                lane_widths, multi_bone=len(bones) > 1))
 
-    logger.debug("    Planned %d particle emitter(s), %d texture(s), %d attach point(s)",
-                 len(emitters), len(images), len(attaches))
+    logger.debug("    Planned %d emitter instance(s) from %d template(s), "
+                 "%d texture(s), %d attach point(s)",
+                 len(emitters), len(ir_particles.emitters), len(images),
+                 len(attaches))
 
     return BRParticleSystem(
         root_name="Particles_%s" % model_name,
@@ -109,39 +116,28 @@ def _firing_bones(bone_animations):
     return counts
 
 
-def _firing_bone(index, firing_bones):
-    """Pick the bone an emitter previews from.
-
-    An emitter fired from several bones has no single spawn site — the game
-    makes one generator instance per firing event. The preview shows the
-    busiest of them (ties broken by name so the choice is stable); the
-    authoritative binding stays on the bones' emit fcurves either way.
-
-    In: index (int, emitter slot); firing_bones (dict[int, dict[str, int]]).
-    Out: str|None — bone name, None when no clip fires this emitter.
-    """
-    per_bone = firing_bones.get(index)
-    if not per_bone:
-        return None
-    return min(per_bone, key=lambda name: (-per_bone[name], name))
-
-
 # ---------------------------------------------------------------------------
 # Emitter
 # ---------------------------------------------------------------------------
 
 
 def _plan_emitter(em, index, model_name, images, bone_name, attach_by_bone,
-                  lane_widths):
-    """Convert one IRParticleEmitter into a BRParticleEmitter.
+                  lane_widths, multi_bone=False):
+    """Convert one IRParticleEmitter into a BRParticleEmitter instance.
 
     In: em (IRParticleEmitter); index (int, emitter slot — the value emit
         fcurves carry); model_name (str); images (list[BRImage], system-wide);
-        bone_name (str|None, the bone whose clips fire this emitter);
-        attach_by_bone (dict[str, str]); lane_widths (dict[str, int]).
+        bone_name (str|None, the bone this instance fires from);
+        attach_by_bone (dict[str, str]); lane_widths (dict[str, int]);
+        multi_bone (bool — several instances share this template, so names
+        carry the bone to stay unique).
     Out: BRParticleEmitter.
     """
-    suffix = em.name or ("G%02d" % index)
+    template = em.name or ("G%02d" % index)
+    # The material describes the template, not the instance — instances share
+    # it (build dedups by name); objects and node groups need unique names.
+    suffix = ("%s_%s" % (template, bone_name)) if (multi_bone and bone_name) \
+        else template
     attach_name = attach_by_bone.get(bone_name) if bone_name else None
     emit_driver = (BRParticleEmitDriver(bone_name=bone_name,
                                         lane_count=max(1, lane_widths.get(bone_name, 1)),
@@ -162,7 +158,7 @@ def _plan_emitter(em, index, model_name, images, bone_name, attach_by_bone,
         name="Particles_%s_%s" % (model_name, suffix),
         node_group=group,
         material=_plan_emitter_material(em, "DATPlugin_ParticleMat_%s_%s"
-                                        % (model_name, suffix), images),
+                                        % (model_name, template), images),
         custom_props=_plan_custom_props(em, index),
         attach_name=attach_name,
         emit_driver=emit_driver,
@@ -1058,8 +1054,10 @@ def _plan_cross_quad(g):
     In: g (BRGraphBuilder, mutated).
     Out: str — name of the node whose Geometry output is the crossed pair.
     """
+    # The source draws billboards corner-to-corner at ±scale along the
+    # camera diagonals — two units per side — so the unit here is 2.
     g.add_node('GeometryNodeMeshGrid', name='Quad',
-               input_defaults={'Size X': 1.0, 'Size Y': 1.0,
+               input_defaults={'Size X': 2.0, 'Size Y': 2.0,
                                'Vertices X': 2, 'Vertices Y': 2},
                location=(800.0, 400.0))
     # The grid's UVs exist only as a socket until stored; without a real UV
