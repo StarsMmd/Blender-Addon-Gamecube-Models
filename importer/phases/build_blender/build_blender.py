@@ -78,9 +78,28 @@ def build_blender_scene(br_scene, context, options, logger=StubLogger()):
         build_cameras(br_scene.cameras, logger, scene_collection)
 
     _store_fog(getattr(br_scene, 'fogs', None), context, logger)
+    _set_display_transform(context, logger)
 
     logger.info("=== Phase 6 complete ===")
     return build_results
+
+
+def _set_display_transform(context, logger):
+    """Show imported colours as authored: switch the view transform off AgX.
+
+    The source hardware has no tonemapping — its colour values are
+    display-referred, and the import pipeline treats them as sRGB
+    throughout. Blender's default AgX transform remaps them (additive
+    particle sprites in particular collapse into faint desaturated red),
+    so the game-accurate display is the Standard transform.
+    """
+    if context is None or context.scene is None:
+        return
+    view = context.scene.view_settings
+    if view.view_transform != 'Standard':
+        view.view_transform = 'Standard'
+        logger.info("  View transform set to Standard (source colours are "
+                    "display-referred; AgX would remap them)")
 
 
 def _scene_collection(br_scene, options, logger):

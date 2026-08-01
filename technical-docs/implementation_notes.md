@@ -509,16 +509,34 @@ Producers and consumers:
 
 15 battle models in Colosseum / XD ship with embedded GPT1 particle data — the flame-, gas- and mist-themed Pokémon (Moltres, Articuno, Charmander/Charmeleon/Charizard, Gastly, Magmar, Magcargo, Torkoal, Koffing, Weezing, Vaporeon, plus the three shiny variants `rare_fire`, `rare_freezer`, `rare_lizardon`).
 
-The GPT1 parser, disassembler, IR types, and compose-side assembler are all in place and unit-tested, but no Blender objects are created from the data and the exporter does not write the GPT1 region. The blocker is the **generator → bone binding**: we have not been able to locate the table or code path that pairs each generator in a model's GPT1 with the body-map slot it renders from. Investigation has ruled out:
+The pipeline is complete through the import Blender leg: bytecode ⇄ semantic IR (93/93 corpus generators byte-exact through disassemble→assemble), generator→bone binding via type-40 animation tracks, and a geometry-nodes preview simulation. The remaining leg is the export describe read-back.
 
-- The HSD `JOBJ_PTCL` flag (unset on all 15 models).
-- `_particleJObjCallback`.
-- The PKX header body map (a bone lookup table, not a binding).
-- WZX move files (carry move/attack effects only).
-- The `common.rel` index table.
-- The DOL data section around `PKXPokemonModels`.
+### Generator header semantics (from the XD spawn-path disassembly)
 
-Visualising generators at the armature origin without a correct bone attachment is misleading in practice (every flame floats in the wrong place), so the import stub logs generator/texture counts on the armature but creates nothing in the scene. Re-exported `.pkx` files drop the GPT1 region — the original file should be retained if effects need to be preserved.
+`generateParticle` dispatches on `gen_type & 0xF` through a 9-entry jump table; `psCreateGeneratorID` maps the descriptor fields onto the runtime generator, and `psExecGenerator` drives the cadence. The corpus uses shape modes {0, 3, 5, 8} exclusively (modes 0/3/4/6/7 share one handler with internal branches; 1, 2 have their own; none appear in game files).
+
+| field | meaning |
+|---|---|
+| `gen_type` low 4 bits | emission shape mode; high bits select the renderer variant (strip/trail — not decoded, carried verbatim) |
+| `lifetime` (file 0x04) | generator lifetime in frames, counted down per frame; emission stops at zero |
+| `max_particles` (file 0x06) | live-particle pool cap, enforced per spawn |
+| `flags` bits 10-11 | blend mode: 0 alpha, 1 additive, 2 subtract, 3 multiply (`_psDispParticlesSub` selects the GX blend equation from the particle's flag word) |
+| `params[0]` / `[1]` | initial per-particle gravity / friction (the GRAVITY / FRICTION opcodes overwrite them) |
+| `params[2..4]` | authored velocity vector; only its **magnitude** is the emission speed (the orientation matrix comes from runtime APIs that file data leaves at identity) |
+| `params[5]` | disc/sphere radius; negative = rim/shell emission at the exact radius |
+| `params[6]` | disc cone angle (elevation from +Z scaled by each particle's radius fraction); negative = deterministic **sweep**: one frame's N spawns advance evenly along the arc with a shared random phase |
+| `params[7]` | spawn rate: the accumulator gains `|p7|` per frame when negative, `p7 × rand01` when positive (mean p7/2); a particle spawns per accumulator unit |
+| `params[8]` | initial particle scale (dead when the bytecode re-rolls scale at birth) |
+| `params[9..10]` | disc: azimuth arc `[p9, p10]`, both-zero = full circle (creation substitutes 2π); box: X/Y extents; sphere: p9 = radial speed (p10 authored as a copy, unread) |
+| `params[11]` | box: Z extent; sphere: polar cap angle (0 = full sphere) |
+
+Shape mode semantics: **0/3 = disc/cone** (mode 3 = uniform-by-area radius via `sqrt(rand)`, speed scaled by the radius fraction), **5 = box** (extents from the origin; a negative extent snaps that axis to its face — the sub-mode table `_2087` handles multi-face combinations by weight), **8 = sphere** (direction up to the polar cap, radial motion). Additive blending is additionally enabled per texture at `LIFETIME_TEX` when the texture object carries the intensity-format marker — which is why intensity sheets (I4/I8) render additively with header blend bits of zero, and why the compose side re-encodes grayscale sheets as I8 rather than RGB5A3.
+
+Round-trip status: describe→compose header reconstruction is byte-exact for 57/93 corpus generators; the remainder differ only in authored-but-dead slots (initial scale under a birth re-roll, the sphere p10 copy where authors diverged, box p5 leftovers, and one denormal-garbage p11 batch). `describe(compose(describe(x)))` is field-identical to `describe(x)` on all 93.
+
+### Preview simulation
+
+Each emitter's GeometryNodeTree runs the spawn cadence inside a simulation zone with two float state items (spawn accumulator, generator age) beside the particle geometry. Spawns take position/velocity from the decoded emission shape in **source axes** at the attach Empty's location only — the emitter object inherits the armature's axis-conversion rotation, so the simulation works Y-up like the source and converting again (or rotating by the bone's orientation, which the source's identity emission matrix never does) would be wrong. The per-frame integrator (tail of `psInterpretParticle0`) is `vel.y -= gravity` (enable: flags bit 0x1), `vel *= friction` (bit 0x2), `pos += vel` — gravity *subtracts*, so a negative stored value is upward buoyancy; describe negates it into a semantic acceleration and compose negates back. Particles then integrate under that gravity and drag with per-particle lifetimes. Rendering instances camera-facing crossed quads (a Camera object input feeds the instance rotation, composed with the per-particle roll integrated from the rotation channels) scaled by the `SizeOverLife` curve and tinted through a `particle_color` attribute; the material builds one of four blend variants (alpha mix, additive Transparent+Emission, multiplicative tinted-Transparent, subtract approximated by inverted multiply). Billboard UVs: a Grid node's UV Map output exists only as a socket — it must be stored as a FLOAT2 corner attribute (named `UVMap`) before instancing, or the realized quads carry no UV layer and the sprite texture samples a single undefined texel (textured particles go near-invisible while untextured ones render fine). Display note: the import sets the scene view transform to Standard — the source hardware has no tonemapping, so its colours are display-referred, and Blender's default AgX remaps them (additive sprites collapse into faint desaturated red; the whole model desaturates). Field-context gotcha: a Random Value node with an unlinked ID input becomes an implicit per-element field — frame-level draws (rate jitter, sweep phase) must pin ID to a constant integer or the spawn count stops being a single value and the Points count link goes invalid.
 
 ## Convention: code comments vs. documentation
 

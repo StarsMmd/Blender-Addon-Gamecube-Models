@@ -1,8 +1,7 @@
 """IR particles → BR particles conversion.
 
 Pure — no bpy. Owns every Blender-side decision about how a semantic
-emitter is represented: GC→meter scaling, Y-up→Z-up axis flips, sRGB→linear
-colours, the node-group interface (which parameter becomes which socket
+emitter is represented: sRGB→linear colours, the node-group interface (which parameter becomes which socket
 type), ColorRamp / Float-Curve layout, the emitter material graph, and the
 flat custom-prop arrays that carry list-valued content Blender has no
 native slot for.
@@ -21,7 +20,6 @@ try:
     )
     from .....shared.BR.materials import BRImage, BRMaterial
     from .....shared.helpers.logger import StubLogger
-    from .....shared.helpers.scale import GC_TO_METERS
     from .....shared.helpers.srgb import srgb_to_linear
     from .animations import particle_emit_lane_widths
     from .materials import BRGraphBuilder
@@ -33,7 +31,6 @@ except (ImportError, SystemError):
     )
     from shared.BR.materials import BRImage, BRMaterial
     from shared.helpers.logger import StubLogger
-    from shared.helpers.scale import GC_TO_METERS
     from shared.helpers.srgb import srgb_to_linear
     from importer.phases.plan.helpers.animations import particle_emit_lane_widths
     from importer.phases.plan.helpers.materials import BRGraphBuilder
@@ -150,7 +147,7 @@ def _plan_emitter(em, index, model_name, images, bone_name, attach_by_bone,
                                         lane_count=max(1, lane_widths.get(bone_name, 1)),
                                         emitter_index=index)
                    if bone_name else None)
-    graph, zones = _plan_simulation_graph()
+    graph, zones = _plan_simulation_graph(em)
     group = BRParticleNodeGroup(
         name="DATPlugin_Particles_%s_%s" % (model_name, suffix),
         inputs=_plan_interface_inputs(em, attach_name, emit_driver is None),
@@ -175,9 +172,10 @@ def _plan_emitter(em, index, model_name, images, bone_name, attach_by_bone,
 def _plan_interface_inputs(em, attach_name=None, always_emit=True):
     """Lay out the emitter's scalar parameters as node-group interface sockets.
 
-    Vectors arrive Y-up in metres (positions/velocities) or GC units (sizes);
-    both are converted here. Enum-valued render state becomes a bounded int
-    socket so it shows as a plain numeric field on the modifier.
+    Lengths arrive in metres already — describe scales the source units on
+    the way into the IR — so only the Y-up→Z-up flip happens here.
+    Enum-valued render state becomes a bounded int socket so it shows as a
+    plain numeric field on the modifier.
 
     In: em (IRParticleEmitter); attach_name (str|None, object the preview
         spawns at — the Empty on the bone that fires this emitter);
@@ -202,23 +200,25 @@ def _plan_interface_inputs(em, attach_name=None, always_emit=True):
 
         _float('Emit Duration', em.emit_duration, min_value=0.0,
                description='Frames the emitter keeps spawning'),
-        _int('Max Particles', em.max_particles, min_value=0),
+        _int('Max Particles', em.max_particles, min_value=0,
+             description='Cap on simultaneously live particles'),
         _float('Emission Rate', em.emission.rate, min_value=0.0,
-               description='Particles spawned per frame'),
+               description='Mean particles spawned per frame'),
+        _bool('Rate Jitter', em.emission.rate_jitter,
+              description='Each frame spawns rate x uniform[0, 2] instead of '
+                          'exactly the rate'),
         _float('Lifetime', life.base, min_value=0.0,
                description='Particle life in frames'),
         _float('Lifetime Spread', life.spread, min_value=0.0),
         _bool('Looping', em.looping,
               description='Per-particle animation repeats until death'),
 
-        _vector('Birth Position', _gc_to_blender(birth.position.base), 'TRANSLATION'),
-        _vector('Birth Position Spread', _spread_to_blender(birth.position.spread),
-                'TRANSLATION'),
-        _vector('Birth Velocity', _gc_to_blender(birth.velocity.base), 'VELOCITY'),
-        _vector('Birth Velocity Spread', _spread_to_blender(birth.velocity.spread),
-                'VELOCITY'),
-        _float('Birth Size', birth.size.base * GC_TO_METERS, subtype='DISTANCE'),
-        _float('Birth Size Spread', birth.size.spread * GC_TO_METERS,
+        _vector('Birth Position', birth.position.base, 'TRANSLATION'),
+        _vector('Birth Position Spread', birth.position.spread, 'TRANSLATION'),
+        _vector('Birth Velocity', birth.velocity.base, 'VELOCITY'),
+        _vector('Birth Velocity Spread', birth.velocity.spread, 'VELOCITY'),
+        _float('Birth Size', birth.size.base, subtype='DISTANCE'),
+        _float('Birth Size Spread', birth.size.spread,
                subtype='DISTANCE', min_value=0.0),
         _color('Color Spread', tuple(birth.color_spread),
                description='Per-channel +/- randomisation of the birth colour'),
@@ -230,7 +230,10 @@ def _plan_interface_inputs(em, attach_name=None, always_emit=True):
         _float('Rotation Rate Spread', rot.rate.spread, subtype='ANGLE', min_value=0.0),
         _float('Rotation Accel', rot.accel, subtype='ANGLE'),
 
-        _vector('Gravity', _gc_to_blender(forces.gravity), 'ACCELERATION'),
+        _vector('Gravity', forces.gravity, 'ACCELERATION',
+                description='Acceleration in the emitter frame (Y up, like '
+                            'the source); the armature object matrix turns '
+                            'it upright on screen'),
         _float('Drag', forces.drag, subtype='FACTOR', min_value=0.0, max_value=1.0),
 
         _int('Blend Mode', _enum_index(_BLEND_MODES, render.blend_mode),
@@ -242,6 +245,55 @@ def _plan_interface_inputs(em, attach_name=None, always_emit=True):
         _bool('Textured', render.textured),
         _bool('Depth Test', render.depth_test),
         _float('Trail Length', render.trail_length, subtype='DISTANCE', min_value=0.0),
+
+        BRInterfaceSocket('Camera', 'NodeSocketObject',
+                          description='Billboards face this camera. Assigned '
+                                      'to the scene camera on import.'),
+    ] + _shape_inputs(em.emission.shape)
+
+
+def _shape_inputs(shape):
+    """Interface sockets for the emitter's emission shape.
+
+    Only the active kind's parameters appear — each emitter's node group is
+    generated for its own shape, so unused knobs would only mislead.
+
+    In: shape (IREmissionShape).
+    Out: list[BRInterfaceSocket].
+    """
+    common = [_vector('Shape Velocity', shape.velocity, 'VELOCITY',
+                      description='Authored emitter-frame velocity; its '
+                                  'magnitude is the emission speed')]
+    if shape.kind == 'BOX':
+        return common + [
+            _vector('Box Extents', shape.box_extents, 'TRANSLATION',
+                    description='Spawn volume from the emitter origin; a '
+                                'negative extent emits on that face only'),
+        ]
+    if shape.kind == 'SPHERE':
+        return common + [
+            _float('Radius', shape.radius, subtype='DISTANCE', min_value=0.0),
+            _bool('Ring', shape.ring,
+                  description='Emit on the shell instead of the volume'),
+            _float('Polar Max', shape.polar_max, subtype='ANGLE', min_value=0.0,
+                   description='Cap angle from the axis; 0 = full sphere'),
+            _float('Radial Speed', shape.radial_speed, subtype='DISTANCE',
+                   description='Metres per frame along the spawn direction'),
+        ]
+    return common + [
+        _float('Radius', shape.radius, subtype='DISTANCE', min_value=0.0),
+        _bool('Ring', shape.ring,
+              description='Emit on the rim instead of the filled disc'),
+        _bool('Uniform Area', shape.uniform_area,
+              description='Uniform-by-area radius sampling; speed also '
+                          'scales with the radius fraction'),
+        _float('Cone Angle', shape.cone_angle, subtype='ANGLE', min_value=0.0,
+               description='Velocity tilt from the axis at the rim'),
+        _float('Arc Start', shape.arc_start, subtype='ANGLE'),
+        _float('Arc End', shape.arc_end, subtype='ANGLE',
+               description='Azimuth range; both zero = the full circle'),
+        _bool('Sweep', shape.sweep,
+              description="Space one frame's spawns evenly along the arc"),
     ]
 
 
@@ -289,6 +341,14 @@ _AGE_ATTR = 'age'
 # Attribute node, since the quads are instances of one mesh.
 _COLOR_ATTR = 'particle_color'
 
+# Per-point attributes the simulation stores at spawn and reads per frame.
+_LIFE_ATTR = 'life'
+_ROLL0_ATTR = 'roll0'
+_ROLL_RATE_ATTR = 'roll_rate'
+
+_PI = math.pi
+_TWO_PI = 2.0 * math.pi
+
 _INPUT = 'Group Input'
 _OUTPUT = 'Group Output'
 _SIM_IN = 'SimulationInput'
@@ -296,231 +356,704 @@ _SIM_OUT = 'SimulationOutput'
 _MATERIAL_NODE = 'ParticleMaterial'
 
 
-def _plan_simulation_graph():
+def _plan_simulation_graph(em):
     """Build the emitter's whole geometry-node graph.
 
-    Three stages, chained: spawn this frame's points at the attach object,
-    run them through a simulation zone that integrates velocity and ages
-    them out, then instance a textured cross-quad per surviving particle,
-    scaled by the size curve and tinted by the colour ramp.
+    Everything runs inside one simulation zone so the spawn cadence and the
+    generator's own age persist as zone state alongside the particles:
+    an accumulator gains the emission rate each frame and spawns the whole
+    part it crosses, gated by the emit signal, the emit duration, and the
+    live-particle cap. Newborns take their position and velocity from the
+    emission shape, then integrate under gravity and drag until their own
+    lifetime retires them. Surviving particles render as camera-facing
+    quads scaled by the size curve and tinted by the colour ramp — the
+    same editable nodes the export leg reads back.
 
-    Both over-life nodes are the *same* editable nodes the export leg reads
-    back — the preview samples them rather than keeping its own copy.
-
-    In: ().
-    Out: (BRNodeGraph, list[tuple[str, str]]) — graph plus the simulation
-         zone's (input node, output node) pair.
+    In: em (IRParticleEmitter — selects the shape sub-graph and blend).
+    Out: (BRNodeGraph, list) — graph plus the simulation-zone spec
+         [(input node, output node, [(state type, state name), ...])].
     """
     g = BRGraphBuilder()
-    g.add_node('NodeGroupInput', name=_INPUT, location=(-1400.0, 0.0))
+    g.add_node('NodeGroupInput', name=_INPUT, location=(-2200.0, 0.0))
+    g.add_node('GeometryNodeInputSceneTime', name='SceneTime', location=(-2200.0, -600.0))
+    g.add_node('GeometryNodeObjectInfo', name='AttachInfo',
+               properties={'transform_space': 'RELATIVE'}, location=(-2200.0, 300.0))
+    g.add_link(_INPUT, 'Attach', 'AttachInfo', 'Object')
+    g.add_node('GeometryNodeObjectInfo', name='CameraInfo',
+               properties={'transform_space': 'RELATIVE'}, location=(-2200.0, 500.0))
+    g.add_link(_INPUT, 'Camera', 'CameraInfo', 'Object')
 
-    # Shared by both stages: a zero-frame lifetime would divide by zero when
-    # normalising age and retire every particle on the frame it was born.
-    g.add_node('ShaderNodeMath', name='SafeLifetime',
-               properties={'operation': 'MAXIMUM'},
-               input_defaults={'Value_001': 1.0}, location=(-1150.0, -450.0))
-    g.add_link(_INPUT, 'Lifetime', 'SafeLifetime', 'Value')
+    g.add_node('GeometryNodeSimulationInput', name=_SIM_IN, location=(-1800.0, 0.0))
+    g.add_node('GeometryNodeSimulationOutput', name=_SIM_OUT, location=(600.0, 0.0))
 
-    spawned = _plan_spawn_stage(g)
-    simulated = _plan_simulation_stage(g, spawned)
-    rendered = _plan_render_stage(g, simulated)
+    _plan_cadence(g)
+    spawned = _plan_spawn(g, em.emission.shape)
+    _plan_motion(g, spawned)
 
-    g.add_node('NodeGroupOutput', name=_OUTPUT, location=(1400.0, 0.0))
+    rendered = _plan_render_stage(g)
+    g.add_node('NodeGroupOutput', name=_OUTPUT, location=(1600.0, 0.0))
     g.add_link(rendered, 'Geometry', _OUTPUT, 'Geometry')
 
-    return g.finalize(), [(_SIM_IN, _SIM_OUT)]
+    zones = [(_SIM_IN, _SIM_OUT, [('FLOAT', 'Acc'), ('FLOAT', 'Age')])]
+    return g.finalize(), zones
 
 
-def _plan_spawn_stage(g):
-    """Emit this frame's new particles at the attach object.
+def _math(g, name, op, location=(0.0, 0.0), defaults=None):
+    """Add a Math node; returns its name."""
+    return g.add_node('ShaderNodeMath', name=name, properties={'operation': op},
+                      input_defaults=defaults or {}, location=location)
 
-    Positions and velocities are drawn per point inside the emitter's own
-    space: the attach object's *relative* transform places the spawn, so
-    particles born there keep their own world path afterwards instead of
-    riding along with the bone.
+
+def _plan_cadence(g):
+    """Spawn-count state machine: accumulator, generator age, and gates.
+
+    The accumulator gains the (optionally jittered) rate each frame and
+    spawns the integer part it crosses. It resets while the emitter is
+    gated off — matching the source, where an inactive generator is dead
+    rather than paused. The generator's age gates emission after Emit
+    Duration unless the emitter loops; the live-point count enforces Max
+    Particles.
 
     In: g (BRGraphBuilder, mutated).
-    Out: str — name of the node whose Geometry output is the new points.
+    Out: None — terminal nodes are 'SpawnCount', 'AccNext', 'AgeNext'.
     """
-    g.add_node('GeometryNodeInputSceneTime', name='SceneTime', location=(-1400.0, -700.0))
-    g.add_node('GeometryNodeObjectInfo', name='AttachInfo',
-               properties={'transform_space': 'RELATIVE'}, location=(-1150.0, 260.0))
-    g.add_link(_INPUT, 'Attach', 'AttachInfo', 'Object')
+    y = -650.0
+    # A Random Value node's unlinked ID falls back to an implicit per-element
+    # field, which would turn the whole cadence chain into a field and break
+    # the single-value spawn count — pin frame-level draws to a constant ID.
+    g.add_node('FunctionNodeInputInt', name='SharedID',
+               properties={'integer': 0}, location=(-1900.0, y))
+    g.add_node('FunctionNodeRandomValue', name='RateJitterRand',
+               properties={'data_type': 'FLOAT'},
+               input_defaults={'Min_001': 0.0, 'Max_001': 2.0}, location=(-1750.0, y))
+    g.add_link('SceneTime', 'Frame', 'RateJitterRand', 'Seed')
+    g.add_link('SharedID', 'Integer', 'RateJitterRand', 'ID')
 
-    # Uniform in [-spread, +spread] around the authored base value.
-    for row, (label, source) in enumerate((('Pos', 'Birth Position'),
-                                           ('Vel', 'Birth Velocity'))):
-        spread = '%s Spread' % source
-        height = -120.0 - row * 300.0
-        g.add_node('ShaderNodeVectorMath', name='%sSpreadNeg' % label,
+    # rate_eff = Rate x (1 + Jitter x (jrand - 1)) — jitter draws in [0, 2].
+    _math(g, 'JitterDelta', 'SUBTRACT', (-1600.0, y), {'Value_001': 1.0})
+    g.add_link('RateJitterRand', 'Value_001', 'JitterDelta', 'Value')
+    _math(g, 'JitterScale', 'MULTIPLY', (-1450.0, y))
+    g.add_link(_INPUT, 'Rate Jitter', 'JitterScale', 'Value')
+    g.add_link('JitterDelta', 'Value', 'JitterScale', 'Value_001')
+    _math(g, 'JitterFactor', 'ADD', (-1300.0, y), {'Value': 1.0})
+    g.add_link('JitterScale', 'Value', 'JitterFactor', 'Value_001')
+    _math(g, 'RateEff', 'MULTIPLY', (-1150.0, y))
+    g.add_link(_INPUT, 'Emission Rate', 'RateEff', 'Value')
+    g.add_link('JitterFactor', 'Value', 'RateEff', 'Value_001')
+
+    # Gates: emitting, within duration (or looping), and under the cap.
+    y = -900.0
+    _math(g, 'EmitOn', 'GREATER_THAN', (-1750.0, y), {'Value_001': 0.0})
+    g.add_link(_INPUT, 'Emit', 'EmitOn', 'Value')
+    _math(g, 'AgeOK', 'LESS_THAN', (-1750.0, y - 150.0))
+    g.add_link(_SIM_IN, 'Age', 'AgeOK', 'Value')
+    g.add_link(_INPUT, 'Emit Duration', 'AgeOK', 'Value_001')
+    # looping OR within-duration = L + A - L x A
+    _math(g, 'LoopAgeSum', 'ADD', (-1600.0, y - 150.0))
+    g.add_link(_INPUT, 'Looping', 'LoopAgeSum', 'Value')
+    g.add_link('AgeOK', 'Value', 'LoopAgeSum', 'Value_001')
+    _math(g, 'LoopAgeProd', 'MULTIPLY', (-1600.0, y - 300.0))
+    g.add_link(_INPUT, 'Looping', 'LoopAgeProd', 'Value')
+    g.add_link('AgeOK', 'Value', 'LoopAgeProd', 'Value_001')
+    _math(g, 'LoopOrAge', 'SUBTRACT', (-1450.0, y - 150.0))
+    g.add_link('LoopAgeSum', 'Value', 'LoopOrAge', 'Value')
+    g.add_link('LoopAgeProd', 'Value', 'LoopOrAge', 'Value_001')
+
+    g.add_node('GeometryNodeAttributeDomainSize', name='LiveCount',
+               properties={'component': 'POINTCLOUD'}, location=(-1750.0, y - 450.0))
+    g.add_link(_SIM_IN, 'Item_0', 'LiveCount', 'Geometry')
+    _math(g, 'CountOK', 'LESS_THAN', (-1600.0, y - 450.0))
+    g.add_link('LiveCount', 'Point Count', 'CountOK', 'Value')
+    g.add_link(_INPUT, 'Max Particles', 'CountOK', 'Value_001')
+
+    _math(g, 'Gate1', 'MULTIPLY', (-1450.0, y - 350.0))
+    g.add_link('EmitOn', 'Value', 'Gate1', 'Value')
+    g.add_link('LoopOrAge', 'Value', 'Gate1', 'Value_001')
+    _math(g, 'SpawnGate', 'MULTIPLY', (-1300.0, y - 350.0))
+    g.add_link('Gate1', 'Value', 'SpawnGate', 'Value')
+    g.add_link('CountOK', 'Value', 'SpawnGate', 'Value_001')
+
+    # Accumulator: gains the rate while active, drops the spawned whole part,
+    # resets to zero while gated off.
+    _math(g, 'AccPlus', 'ADD', (-1150.0, y - 200.0))
+    g.add_link(_SIM_IN, 'Acc', 'AccPlus', 'Value')
+    g.add_link('RateEff', 'Value', 'AccPlus', 'Value_001')
+    _math(g, 'AccGated', 'MULTIPLY', (-1000.0, y - 200.0))
+    g.add_link('AccPlus', 'Value', 'AccGated', 'Value')
+    g.add_link('SpawnGate', 'Value', 'AccGated', 'Value_001')
+    _math(g, 'SpawnCount', 'FLOOR', (-850.0, y - 200.0))
+    g.add_link('AccGated', 'Value', 'SpawnCount', 'Value')
+    # The Points count socket is a strict integer — convert explicitly.
+    g.add_node('FunctionNodeFloatToInt', name='SpawnCountInt',
+               properties={'rounding_mode': 'FLOOR'}, location=(-700.0, y - 100.0))
+    g.add_link('AccGated', 'Value', 'SpawnCountInt', 'Float')
+    _math(g, 'AccNext', 'SUBTRACT', (-700.0, y - 200.0))
+    g.add_link('AccGated', 'Value', 'AccNext', 'Value')
+    g.add_link('SpawnCount', 'Value', 'AccNext', 'Value_001')
+    g.add_link('AccNext', 'Value', _SIM_OUT, 'Acc')
+
+    # Generator age: counts frames while the emit signal holds, resets off it.
+    _math(g, 'AgeNext0', 'ADD', (-1150.0, y - 550.0), {'Value_001': 1.0})
+    g.add_link(_SIM_IN, 'Age', 'AgeNext0', 'Value')
+    _math(g, 'AgeNext', 'MULTIPLY', (-1000.0, y - 550.0))
+    g.add_link('AgeNext0', 'Value', 'AgeNext', 'Value')
+    g.add_link('EmitOn', 'Value', 'AgeNext', 'Value_001')
+    g.add_link('AgeNext', 'Value', _SIM_OUT, 'Age')
+
+
+def _plan_spawn(g, shape):
+    """This frame's newborn points, positioned and armed by the shape.
+
+    In: g (BRGraphBuilder, mutated); shape (IREmissionShape).
+    Out: str — node whose Geometry output holds the new points.
+    """
+    g.add_node('GeometryNodePoints', name='SpawnPoints', location=(-550.0, 350.0))
+    g.add_link('SpawnCountInt', 'Integer', 'SpawnPoints', 'Count')
+    g.add_node('GeometryNodeInputIndex', name='PIndex', location=(-2200.0, -300.0))
+
+    if shape.kind == 'BOX':
+        _plan_shape_box(g)
+    elif shape.kind == 'SPHERE':
+        _plan_shape_sphere(g)
+    else:
+        _plan_shape_disc(g)
+
+    # The emitter object sits under the armature, whose object matrix already
+    # carries the source→Blender conversion — so the simulation works directly
+    # in source axes (Y up) and the display transform happens for free. The
+    # source also spawns in the world frame, not the bone frame (its emission
+    # matrix is identity for file data), so only the attach *location* is used.
+
+    # Bytecode birth offsets/velocity (already Blender-space) join afterwards.
+    for tag, base, spread in (('BPos', 'Birth Position', 'Birth Position Spread'),
+                              ('BVel', 'Birth Velocity', 'Birth Velocity Spread')):
+        g.add_node('ShaderNodeVectorMath', name='%sSpreadNeg' % tag,
                    properties={'operation': 'SCALE'},
-                   input_defaults={'Scale': -1.0}, location=(-1150.0, height))
-        g.add_link(_INPUT, spread, '%sSpreadNeg' % label, 'Vector')
+                   input_defaults={'Scale': -1.0}, location=(-1750.0, -1900.0))
+        g.add_link(_INPUT, spread, '%sSpreadNeg' % tag, 'Vector')
+        g.add_node('FunctionNodeRandomValue', name='%sRand' % tag,
+                   properties={'data_type': 'FLOAT_VECTOR'}, location=(-1600.0, -1900.0))
+        g.add_link('%sSpreadNeg' % tag, 'Vector', '%sRand' % tag, 'Min')
+        g.add_link(_INPUT, spread, '%sRand' % tag, 'Max')
+        g.add_link('SceneTime', 'Frame', '%sRand' % tag, 'Seed')
+        g.add_link('PIndex', 'Index', '%sRand' % tag, 'ID')
+        g.add_node('ShaderNodeVectorMath', name='%sFull' % tag,
+                   properties={'operation': 'ADD'}, location=(-1450.0, -1900.0))
+        g.add_link(_INPUT, base, '%sFull' % tag, 'Vector')
+        g.add_link('%sRand' % tag, 'Value', '%sFull' % tag, 'Vector_001')
 
-        g.add_node('FunctionNodeRandomValue', name='%sRandom' % label,
-                   properties={'data_type': 'FLOAT_VECTOR'},
-                   location=(-900.0, height))
-        g.add_link('%sSpreadNeg' % label, 'Vector', '%sRandom' % label, 'Min')
-        g.add_link(_INPUT, spread, '%sRandom' % label, 'Max')
-        g.add_link('SceneTime', 'Frame', '%sRandom' % label, 'Seed')
+    g.add_node('ShaderNodeVectorMath', name='SpawnPosWorld',
+               properties={'operation': 'ADD'}, location=(-300.0, -200.0))
+    g.add_link('PosGC', 'Vector', 'SpawnPosWorld', 'Vector')
+    g.add_link('AttachInfo', 'Location', 'SpawnPosWorld', 'Vector_001')
+    g.add_node('ShaderNodeVectorMath', name='SpawnPosFull',
+               properties={'operation': 'ADD'}, location=(-200.0, -200.0))
+    g.add_link('SpawnPosWorld', 'Vector', 'SpawnPosFull', 'Vector')
+    g.add_link('BPosFull', 'Vector', 'SpawnPosFull', 'Vector_001')
 
-        g.add_node('ShaderNodeVectorMath', name='%sBirth' % label,
-                   properties={'operation': 'ADD'}, location=(-650.0, height))
-        g.add_link(_INPUT, source, '%sBirth' % label, 'Vector')
-        g.add_link('%sRandom' % label, 'Value', '%sBirth' % label, 'Vector_001')
+    g.add_node('GeometryNodeSetPosition', name='PlaceSpawn', location=(-350.0, 350.0))
+    g.add_link('SpawnPoints', 'Geometry', 'PlaceSpawn', 'Geometry')
+    g.add_link('SpawnPosFull', 'Vector', 'PlaceSpawn', 'Position')
 
-    g.add_node('ShaderNodeVectorMath', name='SpawnPosition',
-               properties={'operation': 'ADD'}, location=(-400.0, 200.0))
-    g.add_link('AttachInfo', 'Location', 'SpawnPosition', 'Vector')
-    g.add_link('PosBirth', 'Vector', 'SpawnPosition', 'Vector_001')
-
-    # The Count socket is an integer, so a rate below one particle per frame
-    # would truncate to no emission at all; round up instead so slow emitters
-    # still show something.
-    g.add_node('ShaderNodeMath', name='SpawnCount',
-               properties={'operation': 'CEIL'}, location=(-650.0, 380.0))
-    g.add_link(_INPUT, 'Emission Rate', 'SpawnCount', 'Value')
-
-    # Emit is 0 while the clip isn't firing this emitter, which stops spawning
-    # without disturbing the particles already alive.
-    g.add_node('ShaderNodeMath', name='GatedCount',
-               properties={'operation': 'MULTIPLY'}, location=(-400.0, 380.0))
-    g.add_link('SpawnCount', 'Value', 'GatedCount', 'Value')
-    g.add_link(_INPUT, 'Emit', 'GatedCount', 'Value_001')
-
-    g.add_node('GeometryNodePoints', name='SpawnPoints', location=(-150.0, 300.0))
-    g.add_link('GatedCount', 'Value', 'SpawnPoints', 'Count')
-    g.add_link('SpawnPosition', 'Vector', 'SpawnPoints', 'Position')
+    g.add_node('ShaderNodeVectorMath', name='SpawnVelFull',
+               properties={'operation': 'ADD'}, location=(-300.0, -500.0))
+    g.add_link('VelGC', 'Vector', 'SpawnVelFull', 'Vector')
+    g.add_link('BVelFull', 'Vector', 'SpawnVelFull', 'Vector_001')
 
     g.add_node('GeometryNodeStoreNamedAttribute', name='StoreBirthVelocity',
                properties={'data_type': 'FLOAT_VECTOR', 'domain': 'POINT'},
-               input_defaults={'Name': _VELOCITY_ATTR}, location=(100.0, 300.0))
-    g.add_link('SpawnPoints', 'Geometry', 'StoreBirthVelocity', 'Geometry')
-    g.add_link('VelBirth', 'Vector', 'StoreBirthVelocity', 'Value')
+               input_defaults={'Name': _VELOCITY_ATTR}, location=(-200.0, 350.0))
+    g.add_link('PlaceSpawn', 'Geometry', 'StoreBirthVelocity', 'Geometry')
+    g.add_link('SpawnVelFull', 'Vector', 'StoreBirthVelocity', 'Value')
 
     g.add_node('GeometryNodeStoreNamedAttribute', name='StoreBirthAge',
                properties={'data_type': 'FLOAT', 'domain': 'POINT'},
-               input_defaults={'Name': _AGE_ATTR, 'Value': 0.0},
-               location=(350.0, 300.0))
+               input_defaults={'Name': _AGE_ATTR, 'Value': 0.0}, location=(-100.0, 350.0))
     g.add_link('StoreBirthVelocity', 'Geometry', 'StoreBirthAge', 'Geometry')
-    return 'StoreBirthAge'
+
+    # Per-particle lifetime, floored at one frame so age normalisation holds.
+    _math(g, 'LifeMin', 'SUBTRACT', (-1750.0, -2200.0))
+    g.add_link(_INPUT, 'Lifetime', 'LifeMin', 'Value')
+    g.add_link(_INPUT, 'Lifetime Spread', 'LifeMin', 'Value_001')
+    _math(g, 'LifeMax', 'ADD', (-1750.0, -2350.0))
+    g.add_link(_INPUT, 'Lifetime', 'LifeMax', 'Value')
+    g.add_link(_INPUT, 'Lifetime Spread', 'LifeMax', 'Value_001')
+    g.add_node('FunctionNodeRandomValue', name='LifeRand',
+               properties={'data_type': 'FLOAT'}, location=(-1600.0, -2250.0))
+    g.add_link('LifeMin', 'Value', 'LifeRand', 'Min_001')
+    g.add_link('LifeMax', 'Value', 'LifeRand', 'Max_001')
+    g.add_link('SceneTime', 'Frame', 'LifeRand', 'Seed')
+    g.add_link('PIndex', 'Index', 'LifeRand', 'ID')
+    _math(g, 'LifeSafe', 'MAXIMUM', (-1450.0, -2250.0), {'Value_001': 1.0})
+    g.add_link('LifeRand', 'Value_001', 'LifeSafe', 'Value')
+    g.add_node('GeometryNodeStoreNamedAttribute', name='StoreLife',
+               properties={'data_type': 'FLOAT', 'domain': 'POINT'},
+               input_defaults={'Name': _LIFE_ATTR}, location=(0.0, 350.0))
+    g.add_link('StoreBirthAge', 'Geometry', 'StoreLife', 'Geometry')
+    g.add_link('LifeSafe', 'Value', 'StoreLife', 'Value')
+
+    # Billboard roll seeds: starting angle and per-frame rate, per particle.
+    for tag, base, spread in (('Roll0', 'Rotation', 'Rotation Spread'),
+                              ('RollRate', 'Rotation Rate', 'Rotation Rate Spread')):
+        _math(g, '%sMin' % tag, 'SUBTRACT', (-1750.0, -2500.0))
+        g.add_link(_INPUT, base, '%sMin' % tag, 'Value')
+        g.add_link(_INPUT, spread, '%sMin' % tag, 'Value_001')
+        _math(g, '%sMax' % tag, 'ADD', (-1750.0, -2650.0))
+        g.add_link(_INPUT, base, '%sMax' % tag, 'Value')
+        g.add_link(_INPUT, spread, '%sMax' % tag, 'Value_001')
+        g.add_node('FunctionNodeRandomValue', name='%sRand' % tag,
+                   properties={'data_type': 'FLOAT'}, location=(-1600.0, -2550.0))
+        g.add_link('%sMin' % tag, 'Value', '%sRand' % tag, 'Min_001')
+        g.add_link('%sMax' % tag, 'Value', '%sRand' % tag, 'Max_001')
+        g.add_link('SceneTime', 'Frame', '%sRand' % tag, 'Seed')
+        g.add_link('PIndex', 'Index', '%sRand' % tag, 'ID')
+
+    g.add_node('GeometryNodeStoreNamedAttribute', name='StoreRoll0',
+               properties={'data_type': 'FLOAT', 'domain': 'POINT'},
+               input_defaults={'Name': _ROLL0_ATTR}, location=(100.0, 350.0))
+    g.add_link('StoreLife', 'Geometry', 'StoreRoll0', 'Geometry')
+    g.add_link('Roll0Rand', 'Value_001', 'StoreRoll0', 'Value')
+    g.add_node('GeometryNodeStoreNamedAttribute', name='StoreRollRate',
+               properties={'data_type': 'FLOAT', 'domain': 'POINT'},
+               input_defaults={'Name': _ROLL_RATE_ATTR}, location=(200.0, 350.0))
+    g.add_link('StoreRoll0', 'Geometry', 'StoreRollRate', 'Geometry')
+    g.add_link('RollRateRand', 'Value_001', 'StoreRollRate', 'Value')
+    return 'StoreRollRate'
 
 
-def _plan_simulation_stage(g, spawned):
-    """Carry particles across frames: integrate, age, and retire them.
+def _plan_shape_disc(g):
+    """DISC/cone spawn: polar position on the arc, velocity up the cone.
 
-    In: g (BRGraphBuilder, mutated); spawned (str, node emitting this frame's
-        new points).
-    Out: str — name of the node whose Geometry output is the live particles.
+    Radius fraction u picks both the radius and (scaled by the cone angle)
+    the velocity's tilt from the axis, so rim particles fly widest — the
+    source's cone profile. ``sweep`` distributes one frame's batch evenly
+    along the arc with a shared random phase.
+
+    In: g (BRGraphBuilder, mutated).
+    Out: None — terminal nodes are 'PosGC' and 'VelGC'.
     """
-    g.add_node('GeometryNodeSimulationInput', name=_SIM_IN, location=(600.0, 0.0))
-    g.add_node('GeometryNodeSimulationOutput', name=_SIM_OUT, location=(1150.0, 0.0))
+    X = -1750.0
+    g.add_node('FunctionNodeRandomValue', name='URand',
+               properties={'data_type': 'FLOAT'},
+               input_defaults={'Min_001': 0.0, 'Max_001': 1.0}, location=(X, -1200.0))
+    g.add_link('SceneTime', 'Frame', 'URand', 'Seed')
+    g.add_link('PIndex', 'Index', 'URand', 'ID')
+    # ring: u = 1; else the draw
+    _math(g, 'UInv', 'SUBTRACT', (X + 150, -1200.0), {'Value': 1.0})
+    g.add_link('URand', 'Value_001', 'UInv', 'Value_001')
+    _math(g, 'URingMul', 'MULTIPLY', (X + 300, -1200.0))
+    g.add_link(_INPUT, 'Ring', 'URingMul', 'Value')
+    g.add_link('UInv', 'Value', 'URingMul', 'Value_001')
+    _math(g, 'UPick', 'ADD', (X + 450, -1200.0))
+    g.add_link('URand', 'Value_001', 'UPick', 'Value')
+    g.add_link('URingMul', 'Value', 'UPick', 'Value_001')
+    # uniform-area: u = sqrt(u)
+    _math(g, 'USqrt', 'SQRT', (X + 600, -1250.0))
+    g.add_link('UPick', 'Value', 'USqrt', 'Value')
+    _math(g, 'UDelta', 'SUBTRACT', (X + 750, -1250.0))
+    g.add_link('USqrt', 'Value', 'UDelta', 'Value')
+    g.add_link('UPick', 'Value', 'UDelta', 'Value_001')
+    _math(g, 'UAMul', 'MULTIPLY', (X + 900, -1250.0))
+    g.add_link(_INPUT, 'Uniform Area', 'UAMul', 'Value')
+    g.add_link('UDelta', 'Value', 'UAMul', 'Value_001')
+    _math(g, 'USel', 'ADD', (X + 1050, -1200.0))
+    g.add_link('UPick', 'Value', 'USel', 'Value')
+    g.add_link('UAMul', 'Value', 'USel', 'Value_001')
+    _math(g, 'RadiusEff', 'MULTIPLY', (X + 1200, -1200.0))
+    g.add_link('USel', 'Value', 'RadiusEff', 'Value')
+    g.add_link(_INPUT, 'Radius', 'RadiusEff', 'Value_001')
 
-    g.add_node('GeometryNodeJoinGeometry', name='AddSpawned', location=(750.0, 0.0))
+    # Arc span; a zero span means the full circle.
+    _math(g, 'Span', 'SUBTRACT', (X, -1500.0))
+    g.add_link(_INPUT, 'Arc End', 'Span', 'Value')
+    g.add_link(_INPUT, 'Arc Start', 'Span', 'Value_001')
+    _math(g, 'SpanAbs', 'ABSOLUTE', (X + 150, -1500.0))
+    g.add_link('Span', 'Value', 'SpanAbs', 'Value')
+    _math(g, 'SpanIsZero', 'LESS_THAN', (X + 300, -1500.0), {'Value_001': 1e-9})
+    g.add_link('SpanAbs', 'Value', 'SpanIsZero', 'Value')
+    _math(g, 'SpanFix', 'MULTIPLY', (X + 450, -1500.0), {'Value_001': _TWO_PI})
+    g.add_link('SpanIsZero', 'Value', 'SpanFix', 'Value')
+    _math(g, 'SpanEff', 'ADD', (X + 600, -1500.0))
+    g.add_link('Span', 'Value', 'SpanEff', 'Value')
+    g.add_link('SpanFix', 'Value', 'SpanEff', 'Value_001')
+
+    # Sweep azimuth: batch spread evenly with a shared random phase.
+    _math(g, 'NSafe', 'MAXIMUM', (X, -1650.0), {'Value_001': 1.0})
+    g.add_link('SpawnCount', 'Value', 'NSafe', 'Value')
+    g.add_node('FunctionNodeRandomValue', name='PhaseRand',
+               properties={'data_type': 'FLOAT'},
+               input_defaults={'Min_001': 0.0, 'Max_001': 1.0}, location=(X + 150, -1650.0))
+    g.add_link('SceneTime', 'Frame', 'PhaseRand', 'Seed')
+    g.add_link('SharedID', 'Integer', 'PhaseRand', 'ID')
+    _math(g, 'IdxPlus', 'ADD', (X + 300, -1650.0))
+    g.add_link('PIndex', 'Index', 'IdxPlus', 'Value')
+    g.add_link('PhaseRand', 'Value_001', 'IdxPlus', 'Value_001')
+    _math(g, 'Step', 'DIVIDE', (X + 300, -1800.0))
+    g.add_link('SpanEff', 'Value', 'Step', 'Value')
+    g.add_link('NSafe', 'Value', 'Step', 'Value_001')
+    _math(g, 'SweepOff', 'MULTIPLY', (X + 450, -1650.0))
+    g.add_link('IdxPlus', 'Value', 'SweepOff', 'Value')
+    g.add_link('Step', 'Value', 'SweepOff', 'Value_001')
+    _math(g, 'SweepAz', 'ADD', (X + 600, -1650.0))
+    g.add_link(_INPUT, 'Arc Start', 'SweepAz', 'Value')
+    g.add_link('SweepOff', 'Value', 'SweepAz', 'Value_001')
+
+    # Random azimuth in the arc.
+    g.add_node('FunctionNodeRandomValue', name='AzRand',
+               properties={'data_type': 'FLOAT'},
+               input_defaults={'Min_001': 0.0, 'Max_001': 1.0}, location=(X + 150, -1950.0))
+    g.add_link('SceneTime', 'Frame', 'AzRand', 'Seed')
+    g.add_link('PIndex', 'Index', 'AzRand', 'ID')
+    _math(g, 'RandAzMul', 'MULTIPLY', (X + 300, -1950.0))
+    g.add_link('AzRand', 'Value_001', 'RandAzMul', 'Value')
+    g.add_link('SpanEff', 'Value', 'RandAzMul', 'Value_001')
+    _math(g, 'RandAz', 'ADD', (X + 450, -1950.0))
+    g.add_link(_INPUT, 'Arc Start', 'RandAz', 'Value')
+    g.add_link('RandAzMul', 'Value', 'RandAz', 'Value_001')
+
+    # Pick sweep or random.
+    _math(g, 'AzDelta', 'SUBTRACT', (X + 750, -1800.0))
+    g.add_link('SweepAz', 'Value', 'AzDelta', 'Value')
+    g.add_link('RandAz', 'Value', 'AzDelta', 'Value_001')
+    _math(g, 'AzSweepMul', 'MULTIPLY', (X + 900, -1800.0))
+    g.add_link(_INPUT, 'Sweep', 'AzSweepMul', 'Value')
+    g.add_link('AzDelta', 'Value', 'AzSweepMul', 'Value_001')
+    _math(g, 'Azim', 'ADD', (X + 1050, -1800.0))
+    g.add_link('RandAz', 'Value', 'Azim', 'Value')
+    g.add_link('AzSweepMul', 'Value', 'Azim', 'Value_001')
+
+    _math(g, 'CosAz', 'COSINE', (X + 1200, -1750.0))
+    g.add_link('Azim', 'Value', 'CosAz', 'Value')
+    _math(g, 'SinAz', 'SINE', (X + 1200, -1900.0))
+    g.add_link('Azim', 'Value', 'SinAz', 'Value')
+
+    _math(g, 'PosX', 'MULTIPLY', (X + 1350, -1750.0))
+    g.add_link('RadiusEff', 'Value', 'PosX', 'Value')
+    g.add_link('CosAz', 'Value', 'PosX', 'Value_001')
+    _math(g, 'PosY', 'MULTIPLY', (X + 1350, -1900.0))
+    g.add_link('RadiusEff', 'Value', 'PosY', 'Value')
+    g.add_link('SinAz', 'Value', 'PosY', 'Value_001')
+    g.add_node('ShaderNodeCombineXYZ', name='PosGC', location=(X + 1500, -1800.0))
+    g.add_link('PosX', 'Value', 'PosGC', 'X')
+    g.add_link('PosY', 'Value', 'PosGC', 'Y')
+
+    # Velocity: tilt from the axis grows with the radius fraction.
+    _math(g, 'Elev', 'MULTIPLY', (X + 1200, -2050.0))
+    g.add_link('USel', 'Value', 'Elev', 'Value')
+    g.add_link(_INPUT, 'Cone Angle', 'Elev', 'Value_001')
+    _math(g, 'SinE', 'SINE', (X + 1350, -2050.0))
+    g.add_link('Elev', 'Value', 'SinE', 'Value')
+    _math(g, 'CosE', 'COSINE', (X + 1350, -2200.0))
+    g.add_link('Elev', 'Value', 'CosE', 'Value')
+
+    g.add_node('ShaderNodeVectorMath', name='ShapeSpeed',
+               properties={'operation': 'LENGTH'}, location=(X, -2050.0))
+    g.add_link(_INPUT, 'Shape Velocity', 'ShapeSpeed', 'Vector')
+    # uniform-area discs also scale speed by the radius fraction
+    _math(g, 'SpdUD', 'SUBTRACT', (X + 150, -2100.0), {'Value_001': 1.0})
+    g.add_link('USel', 'Value', 'SpdUD', 'Value')
+    _math(g, 'SpdUAM', 'MULTIPLY', (X + 300, -2100.0))
+    g.add_link(_INPUT, 'Uniform Area', 'SpdUAM', 'Value')
+    g.add_link('SpdUD', 'Value', 'SpdUAM', 'Value_001')
+    _math(g, 'SpdF', 'ADD', (X + 450, -2100.0), {'Value': 1.0})
+    g.add_link('SpdUAM', 'Value', 'SpdF', 'Value_001')
+    _math(g, 'SpeedEff', 'MULTIPLY', (X + 600, -2100.0))
+    g.add_link('ShapeSpeed', 'Value', 'SpeedEff', 'Value')
+    g.add_link('SpdF', 'Value', 'SpeedEff', 'Value_001')
+
+    _math(g, 'VxA', 'MULTIPLY', (X + 1500, -2050.0))
+    g.add_link('SinE', 'Value', 'VxA', 'Value')
+    g.add_link('CosAz', 'Value', 'VxA', 'Value_001')
+    _math(g, 'Vx', 'MULTIPLY', (X + 1650, -2050.0))
+    g.add_link('VxA', 'Value', 'Vx', 'Value')
+    g.add_link('SpeedEff', 'Value', 'Vx', 'Value_001')
+    _math(g, 'VyA', 'MULTIPLY', (X + 1500, -2200.0))
+    g.add_link('SinE', 'Value', 'VyA', 'Value')
+    g.add_link('SinAz', 'Value', 'VyA', 'Value_001')
+    _math(g, 'Vy', 'MULTIPLY', (X + 1650, -2200.0))
+    g.add_link('VyA', 'Value', 'Vy', 'Value')
+    g.add_link('SpeedEff', 'Value', 'Vy', 'Value_001')
+    _math(g, 'Vz', 'MULTIPLY', (X + 1650, -2350.0))
+    g.add_link('CosE', 'Value', 'Vz', 'Value')
+    g.add_link('SpeedEff', 'Value', 'Vz', 'Value_001')
+    g.add_node('ShaderNodeCombineXYZ', name='VelGC', location=(X + 1800, -2200.0))
+    g.add_link('Vx', 'Value', 'VelGC', 'X')
+    g.add_link('Vy', 'Value', 'VelGC', 'Y')
+    g.add_link('Vz', 'Value', 'VelGC', 'Z')
+
+
+def _plan_shape_box(g):
+    """BOX spawn: fill the extents; a negative extent emits on its face.
+
+    In: g (BRGraphBuilder, mutated).
+    Out: None — terminal nodes are 'PosGC' and 'VelGC'.
+    """
+    X = -1750.0
+    g.add_node('FunctionNodeRandomValue', name='BoxRand',
+               properties={'data_type': 'FLOAT_VECTOR'},
+               input_defaults={'Min': (0.0, 0.0, 0.0), 'Max': (1.0, 1.0, 1.0)},
+               location=(X, -1200.0))
+    g.add_link('SceneTime', 'Frame', 'BoxRand', 'Seed')
+    g.add_link('PIndex', 'Index', 'BoxRand', 'ID')
+    g.add_node('ShaderNodeSeparateXYZ', name='BoxRandSep', location=(X + 150, -1200.0))
+    g.add_link('BoxRand', 'Value', 'BoxRandSep', 'Vector')
+    g.add_node('ShaderNodeSeparateXYZ', name='ExtSep', location=(X, -1400.0))
+    g.add_link(_INPUT, 'Box Extents', 'ExtSep', 'Vector')
+
+    for axis in ('X', 'Y', 'Z'):
+        _math(g, 'Face%s' % axis, 'LESS_THAN', (X + 300, -1200.0), {'Value_001': 0.0})
+        g.add_link('ExtSep', axis, 'Face%s' % axis, 'Value')
+        _math(g, 'U%sInv' % axis, 'SUBTRACT', (X + 450, -1200.0), {'Value': 1.0})
+        g.add_link('BoxRandSep', axis, 'U%sInv' % axis, 'Value_001')
+        _math(g, 'U%sFace' % axis, 'MULTIPLY', (X + 600, -1200.0))
+        g.add_link('Face%s' % axis, 'Value', 'U%sFace' % axis, 'Value')
+        g.add_link('U%sInv' % axis, 'Value', 'U%sFace' % axis, 'Value_001')
+        _math(g, 'U%sSel' % axis, 'ADD', (X + 750, -1200.0))
+        g.add_link('BoxRandSep', axis, 'U%sSel' % axis, 'Value')
+        g.add_link('U%sFace' % axis, 'Value', 'U%sSel' % axis, 'Value_001')
+        _math(g, 'P%s' % axis, 'MULTIPLY', (X + 900, -1200.0))
+        g.add_link('U%sSel' % axis, 'Value', 'P%s' % axis, 'Value')
+        g.add_link('ExtSep', axis, 'P%s' % axis, 'Value_001')
+
+    g.add_node('ShaderNodeCombineXYZ', name='PosGC', location=(X + 1050, -1300.0))
+    for axis in ('X', 'Y', 'Z'):
+        g.add_link('P%s' % axis, 'Value', 'PosGC', axis)
+
+    g.add_node('ShaderNodeVectorMath', name='ShapeSpeed',
+               properties={'operation': 'LENGTH'}, location=(X, -1700.0))
+    g.add_link(_INPUT, 'Shape Velocity', 'ShapeSpeed', 'Vector')
+    _math(g, 'SignZ', 'SIGN', (X + 150, -1700.0))
+    g.add_link('ExtSep', 'Z', 'SignZ', 'Value')
+    _math(g, 'VzBox', 'MULTIPLY', (X + 300, -1700.0))
+    g.add_link('ShapeSpeed', 'Value', 'VzBox', 'Value')
+    g.add_link('SignZ', 'Value', 'VzBox', 'Value_001')
+    g.add_node('ShaderNodeCombineXYZ', name='VelGC', location=(X + 450, -1700.0))
+    g.add_link('VzBox', 'Value', 'VelGC', 'Z')
+
+
+def _plan_shape_sphere(g):
+    """SPHERE spawn: random direction up to the polar cap, radial motion.
+
+    In: g (BRGraphBuilder, mutated).
+    Out: None — terminal nodes are 'PosGC' and 'VelGC'.
+    """
+    X = -1750.0
+    _math(g, 'PolZero', 'LESS_THAN', (X, -1200.0), {'Value_001': 1e-9})
+    g.add_link(_INPUT, 'Polar Max', 'PolZero', 'Value')
+    _math(g, 'PolFix', 'MULTIPLY', (X + 150, -1200.0), {'Value_001': _PI})
+    g.add_link('PolZero', 'Value', 'PolFix', 'Value')
+    _math(g, 'PolarEff', 'ADD', (X + 300, -1200.0))
+    g.add_link(_INPUT, 'Polar Max', 'PolarEff', 'Value')
+    g.add_link('PolFix', 'Value', 'PolarEff', 'Value_001')
+
+    g.add_node('FunctionNodeRandomValue', name='ERand',
+               properties={'data_type': 'FLOAT'},
+               input_defaults={'Min_001': 0.0, 'Max_001': 1.0}, location=(X, -1400.0))
+    g.add_link('SceneTime', 'Frame', 'ERand', 'Seed')
+    g.add_link('PIndex', 'Index', 'ERand', 'ID')
+    _math(g, 'Elev', 'MULTIPLY', (X + 450, -1400.0))
+    g.add_link('ERand', 'Value_001', 'Elev', 'Value')
+    g.add_link('PolarEff', 'Value', 'Elev', 'Value_001')
+    g.add_node('FunctionNodeRandomValue', name='ARand',
+               properties={'data_type': 'FLOAT'},
+               input_defaults={'Min_001': 0.0, 'Max_001': _TWO_PI},
+               location=(X, -1600.0))
+    g.add_link('SceneTime', 'Frame', 'ARand', 'Seed')
+    g.add_link('PIndex', 'Index', 'ARand', 'ID')
+
+    _math(g, 'SinE', 'SINE', (X + 600, -1400.0))
+    g.add_link('Elev', 'Value', 'SinE', 'Value')
+    _math(g, 'CosE', 'COSINE', (X + 600, -1550.0))
+    g.add_link('Elev', 'Value', 'CosE', 'Value')
+    _math(g, 'CosA', 'COSINE', (X + 600, -1700.0))
+    g.add_link('ARand', 'Value_001', 'CosA', 'Value')
+    _math(g, 'SinA', 'SINE', (X + 600, -1850.0))
+    g.add_link('ARand', 'Value_001', 'SinA', 'Value')
+
+    _math(g, 'Dx', 'MULTIPLY', (X + 750, -1450.0))
+    g.add_link('SinE', 'Value', 'Dx', 'Value')
+    g.add_link('CosA', 'Value', 'Dx', 'Value_001')
+    _math(g, 'Dy', 'MULTIPLY', (X + 750, -1600.0))
+    g.add_link('SinE', 'Value', 'Dy', 'Value')
+    g.add_link('SinA', 'Value', 'Dy', 'Value_001')
+    g.add_node('ShaderNodeCombineXYZ', name='DirGC', location=(X + 900, -1500.0))
+    g.add_link('Dx', 'Value', 'DirGC', 'X')
+    g.add_link('Dy', 'Value', 'DirGC', 'Y')
+    g.add_link('CosE', 'Value', 'DirGC', 'Z')
+
+    g.add_node('FunctionNodeRandomValue', name='RRand',
+               properties={'data_type': 'FLOAT'},
+               input_defaults={'Min_001': 0.0, 'Max_001': 1.0}, location=(X, -2000.0))
+    g.add_link('SceneTime', 'Frame', 'RRand', 'Seed')
+    g.add_link('PIndex', 'Index', 'RRand', 'ID')
+    _math(g, 'RInv', 'SUBTRACT', (X + 150, -2000.0), {'Value': 1.0})
+    g.add_link('RRand', 'Value_001', 'RInv', 'Value_001')
+    _math(g, 'RRingMul', 'MULTIPLY', (X + 300, -2000.0))
+    g.add_link(_INPUT, 'Ring', 'RRingMul', 'Value')
+    g.add_link('RInv', 'Value', 'RRingMul', 'Value_001')
+    _math(g, 'RPick', 'ADD', (X + 450, -2000.0))
+    g.add_link('RRand', 'Value_001', 'RPick', 'Value')
+    g.add_link('RRingMul', 'Value', 'RPick', 'Value_001')
+    _math(g, 'REff', 'MULTIPLY', (X + 600, -2000.0))
+    g.add_link('RPick', 'Value', 'REff', 'Value')
+    g.add_link(_INPUT, 'Radius', 'REff', 'Value_001')
+
+    g.add_node('ShaderNodeVectorMath', name='PosGC',
+               properties={'operation': 'SCALE'}, location=(X + 1050, -1500.0))
+    g.add_link('DirGC', 'Vector', 'PosGC', 'Vector')
+    g.add_link('REff', 'Value', 'PosGC', 'Scale')
+    g.add_node('ShaderNodeVectorMath', name='VelGC',
+               properties={'operation': 'SCALE'}, location=(X + 1050, -1700.0))
+    g.add_link('DirGC', 'Vector', 'VelGC', 'Vector')
+    g.add_link(_INPUT, 'Radial Speed', 'VelGC', 'Scale')
+
+
+def _plan_motion(g, spawned):
+    """Integrate the population: join newborns, apply forces, retire the old.
+
+    In: g (BRGraphBuilder, mutated); spawned (str, node emitting this
+        frame's placed newborns).
+    Out: None — the surviving points feed the simulation output.
+    """
+    g.add_node('GeometryNodeJoinGeometry', name='AddSpawned', location=(-450.0, 0.0))
     g.add_link(_SIM_IN, 'Item_0', 'AddSpawned', 'Geometry')
     g.add_link(spawned, 'Geometry', 'AddSpawned', 'Geometry')
 
     g.add_node('GeometryNodeInputNamedAttribute', name='ReadVelocity',
                properties={'data_type': 'FLOAT_VECTOR'},
-               input_defaults={'Name': _VELOCITY_ATTR}, location=(600.0, -300.0))
+               input_defaults={'Name': _VELOCITY_ATTR}, location=(-450.0, -300.0))
     g.add_node('GeometryNodeInputNamedAttribute', name='ReadAge',
                properties={'data_type': 'FLOAT'},
-               input_defaults={'Name': _AGE_ATTR}, location=(600.0, -450.0))
+               input_defaults={'Name': _AGE_ATTR}, location=(-450.0, -450.0))
+    g.add_node('GeometryNodeInputNamedAttribute', name='ReadLife',
+               properties={'data_type': 'FLOAT'},
+               input_defaults={'Name': _LIFE_ATTR}, location=(-450.0, -600.0))
 
-    # velocity = velocity * (1 - drag) + gravity
-    g.add_node('ShaderNodeMath', name='DragFactor',
-               properties={'operation': 'SUBTRACT'},
-               input_defaults={'Value': 1.0}, location=(750.0, -300.0))
+    # velocity' = velocity x (1 - drag) + gravity
+    _math(g, 'DragFactor', 'SUBTRACT', (-300.0, -300.0), {'Value': 1.0})
     g.add_link(_INPUT, 'Drag', 'DragFactor', 'Value_001')
-
     g.add_node('ShaderNodeVectorMath', name='Damped',
-               properties={'operation': 'SCALE'}, location=(850.0, -300.0))
+               properties={'operation': 'SCALE'}, location=(-200.0, -300.0))
     g.add_link('ReadVelocity', 'Attribute', 'Damped', 'Vector')
     g.add_link('DragFactor', 'Value', 'Damped', 'Scale')
-
     g.add_node('ShaderNodeVectorMath', name='NextVelocity',
-               properties={'operation': 'ADD'}, location=(950.0, -300.0))
+               properties={'operation': 'ADD'}, location=(-100.0, -300.0))
     g.add_link('Damped', 'Vector', 'NextVelocity', 'Vector')
     g.add_link(_INPUT, 'Gravity', 'NextVelocity', 'Vector_001')
 
     g.add_node('GeometryNodeStoreNamedAttribute', name='StoreVelocity',
                properties={'data_type': 'FLOAT_VECTOR', 'domain': 'POINT'},
-               input_defaults={'Name': _VELOCITY_ATTR}, location=(850.0, 0.0))
+               input_defaults={'Name': _VELOCITY_ATTR}, location=(-300.0, 0.0))
     g.add_link('AddSpawned', 'Geometry', 'StoreVelocity', 'Geometry')
     g.add_link('NextVelocity', 'Vector', 'StoreVelocity', 'Value')
 
-    g.add_node('GeometryNodeSetPosition', name='Advance', location=(950.0, 0.0))
+    g.add_node('GeometryNodeSetPosition', name='Advance', location=(-200.0, 0.0))
     g.add_link('StoreVelocity', 'Geometry', 'Advance', 'Geometry')
     g.add_link('NextVelocity', 'Vector', 'Advance', 'Offset')
 
-    # Velocities are per frame, so a particle's age advances by one per step.
-    g.add_node('ShaderNodeMath', name='NextAge', properties={'operation': 'ADD'},
-               input_defaults={'Value_001': 1.0}, location=(750.0, -450.0))
+    _math(g, 'NextAge', 'ADD', (-300.0, -450.0), {'Value_001': 1.0})
     g.add_link('ReadAge', 'Attribute', 'NextAge', 'Value')
-
     g.add_node('GeometryNodeStoreNamedAttribute', name='StoreAge',
                properties={'data_type': 'FLOAT', 'domain': 'POINT'},
-               input_defaults={'Name': _AGE_ATTR}, location=(1000.0, 0.0))
+               input_defaults={'Name': _AGE_ATTR}, location=(-100.0, 0.0))
     g.add_link('Advance', 'Geometry', 'StoreAge', 'Geometry')
     g.add_link('NextAge', 'Value', 'StoreAge', 'Value')
 
-    g.add_node('ShaderNodeMath', name='Expired',
-               properties={'operation': 'GREATER_THAN'}, location=(950.0, -600.0))
+    _math(g, 'Expired', 'GREATER_THAN', (-100.0, -450.0))
     g.add_link('ReadAge', 'Attribute', 'Expired', 'Value')
-    g.add_link('SafeLifetime', 'Value', 'Expired', 'Value_001')
-
+    g.add_link('ReadLife', 'Attribute', 'Expired', 'Value_001')
     g.add_node('GeometryNodeDeleteGeometry', name='Retire',
-               properties={'domain': 'POINT', 'mode': 'ALL'}, location=(1075.0, 0.0))
+               properties={'domain': 'POINT', 'mode': 'ALL'}, location=(0.0, 0.0))
     g.add_link('StoreAge', 'Geometry', 'Retire', 'Geometry')
     g.add_link('Expired', 'Value', 'Retire', 'Selection')
 
     g.add_link('Retire', 'Geometry', _SIM_OUT, 'Item_0')
-    return _SIM_OUT
 
 
-def _plan_render_stage(g, simulated):
-    """Turn surviving particles into shaded, sized, tinted quads.
+def _plan_render_stage(g):
+    """Surviving particles → camera-facing, rolled, tinted, sized quads.
 
-    Each particle instances a pair of crossed quads: the source engine draws
-    camera-facing billboards, which geometry nodes cannot reproduce without a
-    camera to aim at, and a cross reads correctly from any viewing angle.
-
-    In: g (BRGraphBuilder, mutated); simulated (str, node emitting live
-        particles).
-    Out: str — name of the node whose Geometry output is the final geometry.
+    In: g (BRGraphBuilder, mutated).
+    Out: str — node whose Geometry output is the final geometry.
     """
-    g.add_node('ShaderNodeMath', name='NormalizedAge',
-               properties={'operation': 'DIVIDE'}, location=(1150.0, -450.0))
-    g.add_link('ReadAge', 'Attribute', 'NormalizedAge', 'Value')
-    g.add_link('SafeLifetime', 'Value', 'NormalizedAge', 'Value_001')
+    g.add_node('GeometryNodeInputNamedAttribute', name='RReadAge',
+               properties={'data_type': 'FLOAT'},
+               input_defaults={'Name': _AGE_ATTR}, location=(700.0, -300.0))
+    g.add_node('GeometryNodeInputNamedAttribute', name='RReadLife',
+               properties={'data_type': 'FLOAT'},
+               input_defaults={'Name': _LIFE_ATTR}, location=(700.0, -450.0))
+    _math(g, 'NormalizedAge', 'DIVIDE', (850.0, -350.0))
+    g.add_link('RReadAge', 'Attribute', 'NormalizedAge', 'Value')
+    g.add_link('RReadLife', 'Attribute', 'NormalizedAge', 'Value_001')
 
-    g.add_node('ShaderNodeValToRGB', name=_RAMP_NODE, location=(1150.0, -700.0))
+    g.add_node('ShaderNodeValToRGB', name=_RAMP_NODE, location=(850.0, -600.0))
     g.add_link('NormalizedAge', 'Value', _RAMP_NODE, 'Fac')
-
-    g.add_node('ShaderNodeFloatCurve', name=_CURVE_NODE, location=(1150.0, -1000.0))
+    g.add_node('ShaderNodeFloatCurve', name=_CURVE_NODE, location=(850.0, -900.0))
     g.add_link('NormalizedAge', 'Value', _CURVE_NODE, 'Value')
 
     g.add_node('GeometryNodeStoreNamedAttribute', name='StoreColor',
                properties={'data_type': 'FLOAT_COLOR', 'domain': 'POINT'},
-               input_defaults={'Name': _COLOR_ATTR}, location=(1250.0, 0.0))
-    g.add_link(simulated, 'Item_0', 'StoreColor', 'Geometry')
+               input_defaults={'Name': _COLOR_ATTR}, location=(900.0, 0.0))
+    g.add_link(_SIM_OUT, 'Item_0', 'StoreColor', 'Geometry')
     g.add_link(_RAMP_NODE, 'Color', 'StoreColor', 'Value')
+
+    # Billboard roll: angle = roll0 + rate x age + accel x age^2 / 2.
+    g.add_node('GeometryNodeInputNamedAttribute', name='ReadRoll0',
+               properties={'data_type': 'FLOAT'},
+               input_defaults={'Name': _ROLL0_ATTR}, location=(700.0, -1200.0))
+    g.add_node('GeometryNodeInputNamedAttribute', name='ReadRollRate',
+               properties={'data_type': 'FLOAT'},
+               input_defaults={'Name': _ROLL_RATE_ATTR}, location=(700.0, -1350.0))
+    _math(g, 'RollLin', 'MULTIPLY', (850.0, -1300.0))
+    g.add_link('ReadRollRate', 'Attribute', 'RollLin', 'Value')
+    g.add_link('RReadAge', 'Attribute', 'RollLin', 'Value_001')
+    _math(g, 'AgeSq', 'MULTIPLY', (850.0, -1450.0))
+    g.add_link('RReadAge', 'Attribute', 'AgeSq', 'Value')
+    g.add_link('RReadAge', 'Attribute', 'AgeSq', 'Value_001')
+    _math(g, 'AccelTermA', 'MULTIPLY', (1000.0, -1450.0))
+    g.add_link('AgeSq', 'Value', 'AccelTermA', 'Value')
+    g.add_link(_INPUT, 'Rotation Accel', 'AccelTermA', 'Value_001')
+    _math(g, 'AccelTerm', 'MULTIPLY', (1150.0, -1450.0), {'Value_001': 0.5})
+    g.add_link('AccelTermA', 'Value', 'AccelTerm', 'Value')
+    _math(g, 'RollSum1', 'ADD', (1000.0, -1300.0))
+    g.add_link('ReadRoll0', 'Attribute', 'RollSum1', 'Value')
+    g.add_link('RollLin', 'Value', 'RollSum1', 'Value_001')
+    _math(g, 'RollTotal', 'ADD', (1150.0, -1300.0))
+    g.add_link('RollSum1', 'Value', 'RollTotal', 'Value')
+    g.add_link('AccelTerm', 'Value', 'RollTotal', 'Value_001')
+
+    g.add_node('ShaderNodeCombineXYZ', name='RollEuler', location=(1250.0, -1300.0))
+    g.add_link('RollTotal', 'Value', 'RollEuler', 'Z')
+    g.add_node('FunctionNodeEulerToRotation', name='RollRot', location=(1350.0, -1300.0))
+    g.add_link('RollEuler', 'Vector', 'RollRot', 'Euler')
+    # Camera orientation first, then the roll about the camera's own axis.
+    g.add_node('FunctionNodeRotateRotation', name='FaceCamera',
+               properties={'rotation_space': 'LOCAL'}, location=(1450.0, -1200.0))
+    g.add_link('CameraInfo', 'Rotation', 'FaceCamera', 'Rotation')
+    g.add_link('RollRot', 'Rotation', 'FaceCamera', 'Rotate By')
 
     quad = _plan_cross_quad(g)
 
-    g.add_node('GeometryNodeInstanceOnPoints', name='Billboards',
-               location=(1300.0, 0.0))
+    g.add_node('GeometryNodeInstanceOnPoints', name='Billboards', location=(1100.0, 0.0))
     g.add_link('StoreColor', 'Geometry', 'Billboards', 'Points')
     g.add_link(quad, 'Geometry', 'Billboards', 'Instance')
+    g.add_link('FaceCamera', 'Rotation', 'Billboards', 'Rotation')
     g.add_link(_CURVE_NODE, 'Value', 'Billboards', 'Scale')
 
-    g.add_node('GeometryNodeSetMaterial', name=_MATERIAL_NODE, location=(1350.0, 0.0))
-    g.add_link('Billboards', 'Instances', _MATERIAL_NODE, 'Geometry')
+    # Realize before shading: the per-particle colour rides the instance
+    # domain, and a shader reads it reliably only as a real point attribute.
+    g.add_node('GeometryNodeRealizeInstances', name='Realize', location=(1250.0, 0.0))
+    g.add_link('Billboards', 'Instances', 'Realize', 'Geometry')
+    g.add_node('GeometryNodeSetMaterial', name=_MATERIAL_NODE, location=(1400.0, 0.0))
+    g.add_link('Realize', 'Geometry', _MATERIAL_NODE, 'Geometry')
     return _MATERIAL_NODE
 
 
 def _plan_cross_quad(g):
-    """Two unit quads at right angles, standing upright.
+    """Two unit quads at right angles — reads from any camera fallback angle.
+
+    With a camera bound the pair tracks the view (one face-on, one edge-on);
+    with none, the cross still reads in a still render.
 
     In: g (BRGraphBuilder, mutated).
     Out: str — name of the node whose Geometry output is the crossed pair.
@@ -528,15 +1061,20 @@ def _plan_cross_quad(g):
     g.add_node('GeometryNodeMeshGrid', name='Quad',
                input_defaults={'Size X': 1.0, 'Size Y': 1.0,
                                'Vertices X': 2, 'Vertices Y': 2},
-               location=(1000.0, 400.0))
-
-    for name, rotation in (('QuadFront', (math.pi / 2.0, 0.0, 0.0)),
-                           ('QuadSide', (math.pi / 2.0, 0.0, math.pi / 2.0))):
+               location=(800.0, 400.0))
+    # The grid's UVs exist only as a socket until stored; without a real UV
+    # layer the sprite never maps and every fragment samples one corner texel.
+    g.add_node('GeometryNodeStoreNamedAttribute', name='QuadUV',
+               properties={'data_type': 'FLOAT2', 'domain': 'CORNER'},
+               input_defaults={'Name': 'UVMap'}, location=(875.0, 400.0))
+    g.add_link('Quad', 'Mesh', 'QuadUV', 'Geometry')
+    g.add_link('Quad', 'UV Map', 'QuadUV', 'Value')
+    for name, rotation in (('QuadFront', (0.0, 0.0, 0.0)),
+                           ('QuadSide', (0.0, math.pi / 2.0, 0.0))):
         g.add_node('GeometryNodeTransform', name=name,
-                   input_defaults={'Rotation': rotation}, location=(1150.0, 400.0))
-        g.add_link('Quad', 'Mesh', name, 'Geometry')
-
-    g.add_node('GeometryNodeJoinGeometry', name='CrossQuad', location=(1250.0, 400.0))
+                   input_defaults={'Rotation': rotation}, location=(950.0, 400.0))
+        g.add_link('QuadUV', 'Geometry', name, 'Geometry')
+    g.add_node('GeometryNodeJoinGeometry', name='CrossQuad', location=(1050.0, 400.0))
     g.add_link('QuadFront', 'Geometry', 'CrossQuad', 'Geometry')
     g.add_link('QuadSide', 'Geometry', 'CrossQuad', 'Geometry')
     return 'CrossQuad'
@@ -568,21 +1106,22 @@ def _plan_color_ramp(em):
 def _plan_size_curve(em):
     """Lay out ``size_over_life`` as a Float Curve.
 
-    Sizes are absolute quad scales in GC units; they become world units
-    here. The clip box is widened to the curve's own range — Blender clamps
-    curve values to it, and particle sizes routinely exceed the 0-1 default.
-    A constant size (empty IR list) becomes a flat two-point curve.
+    Sizes are absolute quad widths, already in metres like every other IR
+    length, so they carry straight over into Blender units. The clip box is
+    widened to the curve's own range — Blender clamps curve values to it, and
+    a particle can outgrow the default 0-1. A constant size (empty IR list)
+    becomes a flat two-point curve.
 
     In: em (IRParticleEmitter).
     Out: BRFloatCurve.
     """
-    points = [BRCurvePoint(x=position, y=key.value * GC_TO_METERS)
+    points = [BRCurvePoint(x=position, y=key.value)
               for position, key in _lay_out(_downsample(em.size_over_life,
                                                         _MAX_RAMP_STOPS))]
     if len(points) < 2:
         # A curve needs two points to span the age axis: either the size
         # never changes (no IR keys) or every key collapsed onto one age.
-        size = points[0].y if points else em.birth.size.base * GC_TO_METERS
+        size = points[0].y if points else em.birth.size.base
         points = [BRCurvePoint(x=0.0, y=size), BRCurvePoint(x=1.0, y=size)]
 
     values = [p.y for p in points]
@@ -603,33 +1142,33 @@ _INTERPOLATION = {'NEAREST': 'Closest', 'LINEAR': 'Linear'}
 
 
 def _plan_emitter_material(em, name, images):
-    """Build the emitter's material: flat-shaded quad, alpha-blended.
+    """Build the emitter's material for its blend mode.
 
-    Particles are unlit in the source engine, so the graph is an Emission
-    shader mixed against a Transparent BSDF by the texture's alpha. The
-    per-particle colour tint lives on the group's ColorRamp, not here.
+    Particles are unlit in the source engine, so all four variants build on
+    colour = texture x per-particle tint and alpha = texAlpha x tintAlpha:
+
+    - ``ALPHA``: Emission mixed against Transparent by alpha.
+    - ``ADD``: Transparent (the background passes whole) plus Emission
+      scaled by alpha — the standard additive recipe.
+    - ``MULTIPLY``: a tinted Transparent BSDF alone; a transparent
+      surface's colour multiplies whatever is behind it.
+    - ``SUBTRACT``: approximated as multiplication by the inverted colour
+      (darkening), the closest a surface shader gets to GX subtract.
 
     In: em (IRParticleEmitter); name (str, material name);
         images (list[BRImage], system-wide, indexed by flip-book frame).
     Out: BRMaterial.
     """
     g = BRGraphBuilder()
-    emission = g.add_node('ShaderNodeEmission', name='ParticleEmission',
-                          input_defaults={0: (1.0, 1.0, 1.0, 1.0), 1: 1.0},
-                          location=(0.0, 0.0))
     output = g.add_node('ShaderNodeOutputMaterial', name='Output',
-                        location=(400.0, 0.0))
+                        location=(500.0, 0.0))
 
-    # Each particle's own colour arrives as an instancer attribute — the
-    # emitter's ColorRamp writes it per point, and every quad is an instance.
+    # Each particle's own colour rides the realized geometry as a point
+    # attribute — the emitter's ColorRamp writes it per particle.
     tint = g.add_node('ShaderNodeAttribute', name='ParticleColor',
-                      properties={'attribute_type': 'INSTANCER',
+                      properties={'attribute_type': 'GEOMETRY',
                                   'attribute_name': _COLOR_ATTR},
                       location=(-400.0, -300.0))
-    transparent = g.add_node('ShaderNodeBsdfTransparent', name='ParticleTransparent',
-                             location=(0.0, 180.0))
-    mix = g.add_node('ShaderNodeMixShader', name='ParticleAlphaMix',
-                     location=(200.0, 0.0))
 
     image = _first_frame_image(em, images)
     if image is None:
@@ -655,11 +1194,14 @@ def _plan_emitter_material(em, name, images):
 
         color_ref, alpha_ref = (tinted, 0), (faded, 0)
 
-    g.add_link(color_ref[0], color_ref[1], emission, 0)
-    g.add_link(alpha_ref[0], alpha_ref[1], mix, 0)
-    g.add_link(transparent, 0, mix, 1)
-    g.add_link(emission, 0, mix, 2)
-    g.add_link(mix, 0, output, 0)
+    blend = em.render.blend_mode
+    if blend == 'ADD':
+        _plan_additive_shader(g, color_ref, alpha_ref, output)
+    elif blend in ('MULTIPLY', 'SUBTRACT'):
+        _plan_filter_shader(g, color_ref, alpha_ref, output,
+                            invert=(blend == 'SUBTRACT'))
+    else:
+        _plan_alpha_shader(g, color_ref, alpha_ref, output)
 
     return BRMaterial(
         name=name,
@@ -667,6 +1209,61 @@ def _plan_emitter_material(em, name, images):
         blend_method='BLEND',
         dedup_key=('particle', name),
     )
+
+
+def _plan_alpha_shader(g, color_ref, alpha_ref, output):
+    """Standard alpha blending: Emission over Transparent by alpha."""
+    emission = g.add_node('ShaderNodeEmission', name='ParticleEmission',
+                          location=(0.0, 0.0))
+    transparent = g.add_node('ShaderNodeBsdfTransparent', name='ParticleTransparent',
+                             location=(0.0, 180.0))
+    mix = g.add_node('ShaderNodeMixShader', name='ParticleAlphaMix',
+                     location=(250.0, 0.0))
+    g.add_link(color_ref[0], color_ref[1], emission, 0)
+    g.add_link(alpha_ref[0], alpha_ref[1], mix, 0)
+    g.add_link(transparent, 0, mix, 1)
+    g.add_link(emission, 0, mix, 2)
+    g.add_link(mix, 0, output, 0)
+
+
+def _plan_additive_shader(g, color_ref, alpha_ref, output):
+    """Additive: the background passes whole, the particle adds on top."""
+    emission = g.add_node('ShaderNodeEmission', name='ParticleEmission',
+                          location=(0.0, 0.0))
+    transparent = g.add_node('ShaderNodeBsdfTransparent', name='ParticleTransparent',
+                             location=(0.0, 180.0))
+    add = g.add_node('ShaderNodeAddShader', name='ParticleAdd',
+                     location=(250.0, 0.0))
+    # Emission strength carries the alpha so the sprite fades additively.
+    g.add_link(color_ref[0], color_ref[1], emission, 0)
+    g.add_link(alpha_ref[0], alpha_ref[1], emission, 1)
+    g.add_link(transparent, 0, add, 0)
+    g.add_link(emission, 0, add, 1)
+    g.add_link(add, 0, output, 0)
+
+
+def _plan_filter_shader(g, color_ref, alpha_ref, output, invert):
+    """Multiplicative (or subtract-approximating) filter over the background.
+
+    A Transparent BSDF's colour multiplies what lies behind it. Alpha
+    lerps the filter toward white (no effect) so faded particles vanish.
+    """
+    tinted = g.add_node('ShaderNodeMixRGB', name='ParticleFilterColor',
+                        properties={'blend_type': 'MIX'},
+                        input_defaults={1: (1.0, 1.0, 1.0, 1.0)},
+                        location=(-20.0, 60.0))
+    g.add_link(alpha_ref[0], alpha_ref[1], tinted, 0)
+    if invert:
+        inverted = g.add_node('ShaderNodeInvert', name='ParticleInvert',
+                              input_defaults={0: 1.0}, location=(-180.0, 60.0))
+        g.add_link(color_ref[0], color_ref[1], inverted, 1)
+        g.add_link(inverted, 0, tinted, 2)
+    else:
+        g.add_link(color_ref[0], color_ref[1], tinted, 2)
+    transparent = g.add_node('ShaderNodeBsdfTransparent', name='ParticleTransparent',
+                             location=(150.0, 60.0))
+    g.add_link(tinted, 0, transparent, 0)
+    g.add_link(transparent, 0, output, 0)
 
 
 def _first_frame_image(em, images):
@@ -754,29 +1351,6 @@ def _color(name, rgba, description=''):
 # ---------------------------------------------------------------------------
 # Value helpers
 # ---------------------------------------------------------------------------
-
-
-def _gc_to_blender(xyz):
-    """GC Y-up → Blender Z-up: (x, y, z) → (x, -z, y).
-
-    In: xyz (tuple[float, float, float]).
-    Out: tuple[float, float, float].
-    """
-    x, y, z = xyz
-    return (x, -z, y)
-
-
-def _spread_to_blender(xyz):
-    """Axis-permute a per-axis magnitude the same way positions flip.
-
-    A spread has no direction, so the sign the position flip introduces is
-    dropped: (sx, sy, sz) → (|sx|, |sz|, |sy|).
-
-    In: xyz (tuple[float, float, float]).
-    Out: tuple[float, float, float].
-    """
-    x, y, z = xyz
-    return (abs(x), abs(z), abs(y))
 
 
 def _linearize_rgba(rgba):

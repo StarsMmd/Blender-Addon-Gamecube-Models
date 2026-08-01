@@ -1,7 +1,7 @@
 """Unit tests for the Plan phase's IR particles → BR particles helper.
 
 Covers the decisions the plan leg owns: node-group interface layout,
-Y-up→Z-up flips, GC→metre size scaling, sRGB→linear ramp stops, ramp/curve
+Y-up→Z-up flips, sRGB→linear ramp stops, ramp/curve
 position layout (coincident ages, the 32-element ceiling, saturation), the
 emitter material graph, and the flat custom-prop arrays.
 """
@@ -17,11 +17,9 @@ from shared.IR.particles import (
 )
 from shared.BR.materials import BRImage, BRMaterial
 from shared.BR.particles import BRParticleSystem, BRParticleEmitter
-from shared.helpers.scale import GC_TO_METERS
 from shared.helpers.srgb import srgb_to_linear
 from importer.phases.plan.helpers.particles import (
     plan_particles, _lay_out, _downsample, _extension_for,
-    _gc_to_blender, _spread_to_blender,
 )
 
 
@@ -134,33 +132,33 @@ class TestInterfaceInputs:
         assert sockets['Looping'].socket_type == 'NodeSocketBool'
         assert sockets['Looping'].value is True
 
-    def test_birth_vectors_flipped_to_z_up(self):
+    def test_birth_vectors_stay_in_the_emitter_frame(self):
+        # The emitter object inherits the armature's source→Blender rotation,
+        # so the simulation runs in source axes (Y up) — converting here too
+        # would rotate everything twice.
         birth = IRParticleBirth(
             position=IRRandomVec3(base=(1.0, 2.0, 3.0), spread=(0.5, 0.25, 0.125)),
             velocity=IRRandomVec3(base=(0.0, 4.0, 0.0)),
         )
         sockets = _inputs(_plan(_system([_emitter(birth=birth)])).emitters[0])
-        assert sockets['Birth Position'].value == (1.0, -3.0, 2.0)
-        assert sockets['Birth Velocity'].value == (0.0, 0.0, 4.0)
+        assert sockets['Birth Position'].value == (1.0, 2.0, 3.0)
+        assert sockets['Birth Position Spread'].value == (0.5, 0.25, 0.125)
+        assert sockets['Birth Velocity'].value == (0.0, 4.0, 0.0)
 
-    def test_spreads_permute_without_sign(self):
-        birth = IRParticleBirth(
-            position=IRRandomVec3(spread=(0.5, 0.25, 0.125)))
-        sockets = _inputs(_plan(_system([_emitter(birth=birth)])).emitters[0])
-        assert sockets['Birth Position Spread'].value == (0.5, 0.125, 0.25)
-
-    def test_gravity_flipped_to_z_up(self):
-        forces = IRParticleForces(gravity=(0.0, -0.98, 0.0), drag=0.25)
+    def test_gravity_stays_in_the_emitter_frame(self):
+        forces = IRParticleForces(gravity=(0.0, 0.98, 0.0), drag=0.25)
         sockets = _inputs(_plan(_system([_emitter(forces=forces)])).emitters[0])
-        assert sockets['Gravity'].value == (0.0, 0.0, -0.98)
+        assert sockets['Gravity'].value == (0.0, 0.98, 0.0)
         assert sockets['Drag'].value == 0.25
         assert sockets['Drag'].subtype == 'FACTOR'
 
-    def test_sizes_scaled_to_world_units(self):
-        birth = IRParticleBirth(size=IRRandomScalar(base=2.0, spread=0.5))
+    def test_sizes_carry_over_in_world_units(self):
+        # IR lengths are already metres — describe scaled them — so plan must
+        # not scale again or particles come out ten times too big.
+        birth = IRParticleBirth(size=IRRandomScalar(base=0.2, spread=0.05))
         sockets = _inputs(_plan(_system([_emitter(birth=birth)])).emitters[0])
-        assert sockets['Birth Size'].value == pytest.approx(2.0 * GC_TO_METERS)
-        assert sockets['Birth Size Spread'].value == pytest.approx(0.5 * GC_TO_METERS)
+        assert sockets['Birth Size'].value == pytest.approx(0.2)
+        assert sockets['Birth Size Spread'].value == pytest.approx(0.05)
 
     def test_rotation_channels(self):
         rotation = IRParticleRotation(
@@ -213,10 +211,12 @@ class TestNodeGroupContents:
         assert set(group.color_ramps) == {'ColorOverLife'}
         assert set(group.float_curves) == {'SizeOverLife'}
 
-    def test_simulation_zone_declared_for_pairing(self):
+    def test_simulation_zone_declares_cadence_state(self):
         group = _plan().emitters[0].node_group
         names = {n.name: n.node_type for n in group.nodes}
-        assert group.simulation_zones == [('SimulationInput', 'SimulationOutput')]
+        assert group.simulation_zones == [
+            ('SimulationInput', 'SimulationOutput',
+             [('FLOAT', 'Acc'), ('FLOAT', 'Age')])]
         assert names['SimulationInput'] == 'GeometryNodeSimulationInput'
         assert names['SimulationOutput'] == 'GeometryNodeSimulationOutput'
 
@@ -225,14 +225,19 @@ class TestNodeGroupContents:
         into_join = {(l.from_node, l.to_input) for l in links
                      if l.to_node == 'AddSpawned'}
         assert ('SimulationInput', 'Geometry') in into_join
-        assert ('StoreBirthAge', 'Geometry') in into_join
+        assert ('StoreRollRate', 'Geometry') in into_join
 
     def test_particles_spawn_at_the_attach_object(self):
         links = _plan().emitters[0].node_group.links
         assert any(l.from_node == 'Group Input' and l.from_output == 'Attach'
                    and l.to_node == 'AttachInfo' for l in links)
         assert any(l.from_node == 'AttachInfo' and l.from_output == 'Location'
-                   and l.to_node == 'SpawnPosition' for l in links)
+                   and l.to_node == 'SpawnPosWorld' for l in links)
+        # Only the location — the source spawns in the world frame, so the
+        # bone's orientation must not rotate positions or velocities.
+        rotated = {l.to_node for l in links
+                   if l.from_node == 'AttachInfo' and l.from_output == 'Rotation'}
+        assert rotated == set()
 
     def test_age_drives_both_over_life_nodes(self):
         links = _plan().emitters[0].node_group.links
@@ -262,9 +267,12 @@ class TestNodeGroupContents:
 
     def test_lifetime_floored_before_dividing_by_it(self):
         group = _plan().emitters[0].node_group
-        safe = next(n for n in group.nodes if n.name == 'SafeLifetime')
+        safe = next(n for n in group.nodes if n.name == 'LifeSafe')
         assert safe.properties['operation'] == 'MAXIMUM'
         assert safe.input_defaults['Value_001'] == 1.0
+        # Per-particle lifetimes divide age for the over-life curves.
+        assert any(l.from_node == 'RReadLife' and l.to_node == 'NormalizedAge'
+                   for l in group.links)
 
     def test_group_output_comes_from_the_shaded_instances(self):
         links = _plan().emitters[0].node_group.links
@@ -387,15 +395,49 @@ class TestEmitGate:
         assert br.emitters[0].emit_driver is None
         assert _inputs(br.emitters[0])['Emit'].value == 1.0
 
-    def test_gate_multiplies_the_spawn_count(self):
+    def test_gate_controls_the_accumulator(self):
+        # The emit signal, the duration window, and the live cap multiply
+        # into one gate that zeroes the accumulator while inactive.
         group = _plan().emitters[0].node_group
-        gate = next(n for n in group.nodes if n.name == 'GatedCount')
-        assert gate.properties['operation'] == 'MULTIPLY'
-        sources = {(l.from_node, l.from_output) for l in group.links
-                   if l.to_node == 'GatedCount'}
-        assert sources == {('SpawnCount', 'Value'), ('Group Input', 'Emit')}
-        assert any(l.from_node == 'GatedCount' and l.to_node == 'SpawnPoints'
-                   and l.to_input == 'Count' for l in group.links)
+        links = group.links
+        assert any(l.from_node == 'EmitOn' and l.to_node == 'Gate1' for l in links)
+        assert any(l.from_node == 'LoopOrAge' and l.to_node == 'Gate1' for l in links)
+        assert any(l.from_node == 'CountOK' and l.to_node == 'SpawnGate' for l in links)
+        assert any(l.from_node == 'SpawnGate' and l.to_node == 'AccGated' for l in links)
+        assert any(l.from_node == 'SpawnCountInt' and l.to_node == 'SpawnPoints'
+                   and l.to_input == 'Count' for l in links)
+
+    def test_accumulator_and_age_round_trip_the_zone_state(self):
+        links = _plan().emitters[0].node_group.links
+        assert any(l.from_node == 'AccNext' and l.to_node == 'SimulationOutput'
+                   and l.to_input == 'Acc' for l in links)
+        assert any(l.from_node == 'AgeNext' and l.to_node == 'SimulationOutput'
+                   and l.to_input == 'Age' for l in links)
+        assert any(l.from_node == 'SimulationInput' and l.from_output == 'Acc'
+                   and l.to_node == 'AccPlus' for l in links)
+
+    def test_live_count_enforces_the_cap(self):
+        group = _plan().emitters[0].node_group
+        count = next(n for n in group.nodes if n.name == 'LiveCount')
+        assert count.node_type == 'GeometryNodeAttributeDomainSize'
+        assert count.properties['component'] == 'POINTCLOUD'
+        links = group.links
+        assert any(l.from_node == 'LiveCount' and l.from_output == 'Point Count'
+                   and l.to_node == 'CountOK' for l in links)
+        assert any(l.from_node == 'Group Input' and l.from_output == 'Max Particles'
+                   and l.to_node == 'CountOK' for l in links)
+
+    def test_billboards_face_the_camera_with_roll(self):
+        group = _plan().emitters[0].node_group
+        links = group.links
+        assert any(l.from_node == 'Group Input' and l.from_output == 'Camera'
+                   and l.to_node == 'CameraInfo' for l in links)
+        assert any(l.from_node == 'CameraInfo' and l.from_output == 'Rotation'
+                   and l.to_node == 'FaceCamera' for l in links)
+        assert any(l.from_node == 'RollRot' and l.to_node == 'FaceCamera'
+                   and l.to_input == 'Rotate By' for l in links)
+        assert any(l.from_node == 'FaceCamera' and l.to_node == 'Billboards'
+                   and l.to_input == 'Rotation' for l in links)
 
 
 class TestColorRamp:
@@ -453,33 +495,33 @@ class TestSizeCurve:
         return br.emitters[0].node_group.float_curves['SizeOverLife']
 
     def test_constant_size_becomes_flat_curve_at_birth_size(self):
-        curve = self._curve([], birth=IRParticleBirth(size=IRRandomScalar(base=3.0)))
+        curve = self._curve([], birth=IRParticleBirth(size=IRRandomScalar(base=0.3)))
         assert [(p.x, p.y) for p in curve.points] == [
-            (0.0, pytest.approx(3.0 * GC_TO_METERS)),
-            (1.0, pytest.approx(3.0 * GC_TO_METERS)),
+            (0.0, pytest.approx(0.3)),
+            (1.0, pytest.approx(0.3)),
         ]
 
-    def test_values_scaled_to_world_units(self):
-        curve = self._curve([IRScalarKey(age=0.0, value=1.0),
-                             IRScalarKey(age=1.0, value=4.0)])
-        assert curve.points[0].y == pytest.approx(1.0 * GC_TO_METERS)
-        assert curve.points[1].y == pytest.approx(4.0 * GC_TO_METERS)
+    def test_values_carry_over_in_world_units(self):
+        curve = self._curve([IRScalarKey(age=0.0, value=0.1),
+                             IRScalarKey(age=1.0, value=0.4)])
+        assert curve.points[0].y == pytest.approx(0.1)
+        assert curve.points[1].y == pytest.approx(0.4)
 
     def test_clip_box_widened_to_curve_range(self):
         curve = self._curve([IRScalarKey(age=0.0, value=0.0),
-                             IRScalarKey(age=1.0, value=50.0)])
-        assert curve.clip_max_y == pytest.approx(50.0 * GC_TO_METERS)
+                             IRScalarKey(age=1.0, value=5.0)])
+        assert curve.clip_max_y == pytest.approx(5.0)
         assert curve.clip_min_y == 0.0
 
     def test_clip_box_keeps_unit_default_for_small_curves(self):
-        curve = self._curve([IRScalarKey(age=0.0, value=1.0),
-                             IRScalarKey(age=1.0, value=2.0)])
+        curve = self._curve([IRScalarKey(age=0.0, value=0.1),
+                             IRScalarKey(age=1.0, value=0.2)])
         assert curve.clip_max_y == 1.0
 
     def test_negative_values_widen_the_floor(self):
-        curve = self._curve([IRScalarKey(age=0.0, value=-5.0),
+        curve = self._curve([IRScalarKey(age=0.0, value=-0.5),
                              IRScalarKey(age=1.0, value=1.0)])
-        assert curve.clip_min_y == pytest.approx(-5.0 * GC_TO_METERS)
+        assert curve.clip_min_y == pytest.approx(-0.5)
 
     def test_points_strictly_increasing(self):
         curve = self._curve([IRScalarKey(age=0.25, value=1.0),
@@ -564,7 +606,7 @@ class TestEmitterMaterial:
     def test_particle_colour_reads_the_instancer_attribute(self):
         material = self._material(_emitter())
         attr = next(n for n in material.node_graph.nodes if n.name == 'ParticleColor')
-        assert attr.properties['attribute_type'] == 'INSTANCER'
+        assert attr.properties['attribute_type'] == 'GEOMETRY'
         assert attr.properties['attribute_name'] == 'particle_color'
 
     def test_texture_node_binds_the_first_flipbook_frame(self):
@@ -598,12 +640,6 @@ class TestEmitterMaterial:
 
 
 class TestValueHelpers:
-
-    def test_gc_to_blender(self):
-        assert _gc_to_blender((1.0, 2.0, 3.0)) == (1.0, -3.0, 2.0)
-
-    def test_spread_permutes_and_drops_sign(self):
-        assert _spread_to_blender((1.0, -2.0, 3.0)) == (1.0, 3.0, 2.0)
 
     def test_extension_prefers_mirror_when_either_axis_mirrors(self):
         assert _extension_for(IRParticleTextureAnim(wrap_s='MIRROR')) == 'MIRROR'

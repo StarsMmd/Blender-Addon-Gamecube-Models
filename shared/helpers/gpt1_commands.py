@@ -160,8 +160,13 @@ def disassemble(command_bytes):
             args['factor'], pos = _read_float(data, pos)
 
         elif opcode == 0xAC:
+            # Two floats, not one: the interpreter reads a base and a range,
+            # then scales to base + range * rand01. Reading a single operand
+            # leaves the decoder standing inside the second float, which it
+            # then mis-reads as further instructions.
             mnemonic = "SCALE_RAND"
             args['time'], pos = _read_time(data, pos)
+            args['base'], pos = _read_float(data, pos)
             args['range'], pos = _read_float(data, pos)
 
         elif opcode == 0xAD:
@@ -618,7 +623,9 @@ _FIXED_ENCODERS = {
     'MODIFY_DIR':        (0xA9, lambda a: _pack_float(a.get('value', 0.0))),
     'SPAWN_RAND_REF':    (0xAA, lambda a: _pack_u16(a.get('base', 0)) + _pack_u16(a.get('count', 0))),
     'SCALE_VEL':         (0xAB, lambda a: _pack_float(a.get('factor', 0.0))),
-    'SCALE_RAND':        (0xAC, lambda a: _encode_time(a.get('time', 0)) + _pack_float(a.get('range', 0.0))),
+    'SCALE_RAND':        (0xAC, lambda a: _encode_time(a.get('time', 0))
+                                          + _pack_float(a.get('base', 0.0))
+                                          + _pack_float(a.get('range', 0.0))),
     'PRIMENV_ON':        (0xAD, lambda a: b''),
     'MIRROR_OFF':        (0xAE, lambda a: b''),
     'MIRROR_S':          (0xAF, lambda a: b''),
@@ -665,7 +672,9 @@ _FIXED_ENCODERS = {
     'LOOP_END':          (0xFB, lambda a: b''),
     'SAVE_JUMP':         (0xFC, lambda a: b''),
     'JUMP':              (0xFD, lambda a: b''),
-    'EXIT':              (0xFE, lambda a: b''),
+    # 0xFE and 0xFF both dispatch to the interpreter's exit handler; every
+    # game-authored stream terminates with 0xFF, so emit that.
+    'EXIT':              (0xFF, lambda a: b''),
 }
 
 

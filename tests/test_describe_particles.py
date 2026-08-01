@@ -14,12 +14,13 @@ def _ins(mnemonic, **args):
 
 
 def _gpt1_bytes(instruction_lists, ref_ids=None, n_textures=0,
-                lifetime=120, max_particles=12, params=None):
+                lifetime=120, max_particles=12, params=None, gen_type=0,
+                flags=0):
     """Build a GPT1 blob from per-generator instruction lists."""
     generators = [
         GeneratorDef(
-            gen_type=0, unknown_02=0, lifetime=lifetime,
-            max_particles=max_particles, flags=0,
+            gen_type=gen_type, unknown_02=0, lifetime=lifetime,
+            max_particles=max_particles, flags=flags,
             params=params or (0.0,) * 12,
             command_bytes=assemble(ins_list),
         )
@@ -71,13 +72,15 @@ def test_birth_initializers_map_to_birth_state():
 def test_zero_frame_lifetime_keeps_birth_phase():
     e = _describe_one([
         _ins('LIFETIME_TEX', frames=0, texture=0),
-        _ins('SCALE_RAND', time=0, range=2.0),
+        _ins('SCALE_RAND', time=0, base=1.0, range=2.0),
         _ins('LIFETIME', frames=10),
         _ins('EXIT'),
     ], n_textures=1)
     # SCALE_RAND after a zero-frame frame-select is still a birth initializer.
-    assert e.birth.size.base == pytest.approx(2.0)
-    assert e.birth.size.spread == pytest.approx(1.0)
+    # It draws uniformly over [base, base+range] — 1..3 source units, which is
+    # 0.1..0.3 metres once scaled into IR units.
+    assert e.birth.size.base == pytest.approx(2.0 * GC_TO_METERS)
+    assert e.birth.size.spread == pytest.approx(1.0 * GC_TO_METERS)
     assert e.size_over_life == []
 
 
@@ -127,14 +130,18 @@ def test_new_op_snaps_pending_ramp():
 
 
 def test_size_curve_keys():
+    # params[8] seeds the pre-bytecode scale the first curve key anchors to.
     e = _describe_one([
         _ins('LIFETIME', frames=50),
         _ins('SCALE', time=50, target=3.0),
         _ins('LIFETIME', frames=50),
         _ins('EXIT'),
-    ])
-    keys = [(round(k.age, 2), k.value) for k in e.size_over_life]
-    assert keys == [(0.0, 1.0), (0.5, 1.0), (1.0, 3.0)]
+    ], params=(0.0,) * 8 + (1.0,) + (0.0,) * 3)
+    # Sizes are metres in the IR: 1 and 3 source units become 0.1 and 0.3.
+    keys = [(round(k.age, 2), round(k.value, 4)) for k in e.size_over_life]
+    assert keys == [(0.0, round(1.0 * GC_TO_METERS, 4)),
+                    (0.5, round(1.0 * GC_TO_METERS, 4)),
+                    (1.0, round(3.0 * GC_TO_METERS, 4))]
 
 
 def test_channel_subset_color_op_keeps_other_channels():
@@ -256,7 +263,9 @@ def test_gravity_and_friction():
         _ins('LIFETIME', frames=10),
         _ins('EXIT'),
     ])
-    assert e.forces.gravity == pytest.approx((0.0, -0.2, 0.0))
+    # The integrator subtracts the stored gravity from vel.y, so a negative
+    # stored value is upward acceleration.
+    assert e.forces.gravity == pytest.approx((0.0, 0.2, 0.0))
     assert e.forces.drag == pytest.approx(0.1)
 
 
@@ -310,24 +319,101 @@ def test_unresolvable_spawn_target_dropped():
 # ---------------------------------------------------------------------------
 
 def test_emission_rate_from_header():
+    # params[7] drives the spawn accumulator: positive means p7 x rand per
+    # frame (mean p7/2, jittered); negative means exactly |p7| per frame.
+    params = (0.0,) * 7 + (3.0,) + (0.0,) * 4
     e = _describe_one([_ins('LIFETIME', frames=10), _ins('EXIT')],
-                      lifetime=60, max_particles=30)
+                      lifetime=60, max_particles=30, params=params)
     assert e.emit_duration == 60
     assert e.max_particles == 30
-    assert e.emission.rate == pytest.approx(0.5)
+    assert e.emission.rate == pytest.approx(1.5)
+    assert e.emission.rate_jitter is True
 
 
-def test_params_velocity_mode_heuristic():
-    params = (-2.0, 0, 0, 0, 0, 0, 0, 3.0, 4.0, 5.0, 0, 0)
+def test_emission_rate_negative_is_exact():
+    params = (0.0,) * 7 + (-2.0,) + (0.0,) * 4
     e = _describe_one([_ins('LIFETIME', frames=10), _ins('EXIT')], params=params)
-    assert e.forces.gravity == pytest.approx((0.0, -0.2, 0.0))
-    assert e.birth.velocity.spread == pytest.approx((0.3, 0.5, 0.4))
+    assert e.emission.rate == pytest.approx(2.0)
+    assert e.emission.rate_jitter is False
 
 
-def test_params_position_mode_heuristic():
-    params = (0.0, 0, 0, 0, 0, 0, 0, 0, 0, 3.0, 4.0, 5.0)
+def test_header_gravity_and_friction_defaults():
+    # params[0] seeds per-particle gravity, params[1] the friction factor;
+    # each is live only when its enable flag bit is set, and the integrator
+    # subtracts gravity from vel.y (negative stored = upward).
+    params = (-2.0, 0.95) + (0.0,) * 10
+    e = _describe_one([_ins('LIFETIME', frames=10), _ins('EXIT')],
+                      params=params, flags=0x3)
+    assert e.forces.gravity == pytest.approx((0.0, 0.2, 0.0))
+    assert e.forces.drag == pytest.approx(0.05)
+
+
+def test_header_forces_ignored_without_enable_flags():
+    params = (-2.0, 0.95) + (0.0,) * 10
+    e = _describe_one([_ins('LIFETIME', frames=10), _ins('EXIT')],
+                      params=params, flags=0x0)
+    assert e.forces.gravity == (0.0, 0.0, 0.0)
+    assert e.forces.drag == 0.0
+
+
+def test_bytecode_gravity_overrides_header():
+    params = (-2.0,) + (0.0,) * 11
+    e = _describe_one([_ins('GRAVITY', value=-5.0),
+                       _ins('LIFETIME', frames=10), _ins('EXIT')],
+                      params=params, flags=0x1)
+    assert e.forces.gravity == pytest.approx((0.0, 0.5, 0.0))
+
+
+def test_disc_shape_from_header():
+    # gen_type 0 with radius, cone angle, and an explicit arc.
+    params = (0, 0, 0.0, 2.0, 0.0, 3.0, 0.35, 0, 0, 0.5, 1.5, 0)
+    e = _describe_one([_ins('LIFETIME', frames=10), _ins('EXIT')],
+                      params=params, gen_type=0)
+    s = e.emission.shape
+    assert s.kind == 'DISC'
+    assert s.radius == pytest.approx(0.3)
+    assert not s.ring and not s.uniform_area and not s.sweep
+    assert s.cone_angle == pytest.approx(0.35)
+    assert (s.arc_start, s.arc_end) == (0.5, 1.5)
+    assert s.velocity == pytest.approx((0.0, 0.2, 0.0))
+
+
+def test_disc_ring_sweep_and_uniform_area():
+    params = (0, 0, 0, 0, 0, -3.0, -0.35, 0, 0, 0, 0, 0)
+    e = _describe_one([_ins('LIFETIME', frames=10), _ins('EXIT')],
+                      params=params, gen_type=3)
+    s = e.emission.shape
+    assert s.kind == 'DISC' and s.uniform_area
+    assert s.ring and s.radius == pytest.approx(0.3)
+    assert s.sweep and s.cone_angle == pytest.approx(0.35)
+    # both-zero arc = full circle, kept verbatim
+    assert (s.arc_start, s.arc_end) == (0.0, 0.0)
+
+
+def test_box_shape_from_header():
+    params = (0, 0, 0, 0, 0, 0, 0, 0, 0, 25.0, -10.0, 0.1)
+    e = _describe_one([_ins('LIFETIME', frames=10), _ins('EXIT')],
+                      params=params, gen_type=5)
+    s = e.emission.shape
+    assert s.kind == 'BOX'
+    assert s.box_extents == pytest.approx((2.5, -1.0, 0.01))
+
+
+def test_sphere_shape_from_header():
+    params = (0, 0, 0, 0, 0, -3.0, 0, 0, 0, 3.0, 3.0, 1.2)
+    e = _describe_one([_ins('LIFETIME', frames=10), _ins('EXIT')],
+                      params=params, gen_type=8)
+    s = e.emission.shape
+    assert s.kind == 'SPHERE'
+    assert s.ring and s.radius == pytest.approx(0.3)
+    assert s.radial_speed == pytest.approx(0.3)
+    assert s.polar_max == pytest.approx(1.2)
+
+
+def test_initial_scale_from_header():
+    params = (0.0,) * 8 + (2.0,) + (0.0,) * 3
     e = _describe_one([_ins('LIFETIME', frames=10), _ins('EXIT')], params=params)
-    assert e.birth.position.spread == pytest.approx((0.3, 0.4, 0.5))
+    assert e.birth.size.base == pytest.approx(0.2)
 
 
 def test_dropped_opcodes_do_not_crash():

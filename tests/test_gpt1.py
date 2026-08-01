@@ -2,6 +2,8 @@
 import struct
 import pytest
 
+from shared.helpers.scale import GC_TO_METERS
+
 from shared.helpers.gpt1 import (
     GPT1File, PTLSection, GeneratorDef, TXGSection, TextureContainer,
     GPT1_SIGNATURE, _HEADER_SIZE, _GEN_HEADER_SIZE,
@@ -304,5 +306,6 @@ def test_describe_particles_integration():
     result = describe_particles(data)
     assert result is not None
     assert len(result.emitters) == 3
-    assert result.emitters[0].birth.size.base == 1.5
+    # IR sizes are metres; 1.5 source units scale to 0.15.
+    assert result.emitters[0].birth.size.base == pytest.approx(1.5 * GC_TO_METERS)
     assert result.emitters[0].particle_lifetime.base == 30

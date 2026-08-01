@@ -67,9 +67,12 @@ def test_birth_and_render_ops_emitted():
     mnemonics = _mnemonics(compose_particles(ir))
     for expected in ('TEX_OFF', 'DIRVEC_ON', 'NO_ZCOMP', 'SET_TRAIL',
                      'TEXINTERP_NEAR', 'MIRROR_ST', 'RAND_KILL_TIMER',
-                     'SET_POS', 'RAND_OFFSET', 'SET_VEL', 'SCALE',
-                     'RAND_ROTATE', 'ROTATE_RAND', 'GRAVITY', 'FRICTION'):
+                     'SET_POS', 'RAND_OFFSET', 'SET_VEL',
+                     'RAND_ROTATE', 'ROTATE_RAND'):
         assert expected in mnemonics, expected
+    # Base size, gravity, and friction ride the header params now, not ops.
+    for header_carried in ('SCALE', 'GRAVITY', 'FRICTION'):
+        assert header_carried not in mnemonics, header_carried
     assert mnemonics[-1] == 'EXIT'
 
 
@@ -173,7 +176,9 @@ def test_semantic_roundtrip_full_feature_emitter():
     assert e2.birth.position.base == pytest.approx(e1.birth.position.base, abs=1e-6)
     assert e2.birth.position.spread == pytest.approx(e1.birth.position.spread, abs=1e-6)
     assert e2.birth.velocity.base == pytest.approx(e1.birth.velocity.base, abs=1e-6)
-    assert e2.birth.velocity.spread == pytest.approx(e1.birth.velocity.spread, abs=1e-6)
+    # Per-particle velocity spread has no GPT1 encoding (randomness comes
+    # from the emission shape), so it drops to zero on the way through.
+    assert e2.birth.velocity.spread == (0.0, 0.0, 0.0)
     assert e2.birth.size.base == pytest.approx(e1.birth.size.base)
     assert e2.birth.size.spread == pytest.approx(e1.birth.size.spread)
 

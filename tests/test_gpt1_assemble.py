@@ -155,11 +155,14 @@ def test_rotate_rand():
 
 
 def test_scale_rand():
-    payload = bytes([0x03]) + struct.pack('>f', 2.0)
-    raw = bytes([0xAC]) + payload + bytes([0xFE])
+    # Two floats: the interpreter scales to base + range * rand01. Reading a
+    # single operand desynchronises the rest of the stream.
+    payload = bytes([0x03]) + struct.pack('>f', 1.0) + struct.pack('>f', 2.0)
+    raw = bytes([0xAC]) + payload + bytes([0xFF])
     reasm, ins = _rt(raw)
     assert ins[0].mnemonic == 'SCALE_RAND'
-    assert ins[0].args == {'time': 3, 'range': 2.0}
+    assert ins[0].args == {'time': 3, 'base': 1.0, 'range': 2.0}
+    assert ins[1].mnemonic == 'EXIT'
 
 
 def test_modify_dir():
@@ -170,12 +173,13 @@ def test_modify_dir():
     assert ins[0].args == {'value': pytest.approx(0.75)}
 
 
-def test_exit_is_canonicalized_to_fe():
-    # Both 0xFE and 0xFF decode to EXIT; assembler emits 0xFE.
+def test_exit_is_canonicalized_to_ff():
+    # Both 0xFE and 0xFF dispatch to the interpreter's exit handler; every
+    # game-authored stream terminates with 0xFF, so the assembler emits that.
     for term in (0xFE, 0xFF):
         reasm, ins = _rt(bytes([0xA1, term]))
         assert ins[-1].mnemonic == 'EXIT'
-        assert reasm[-1] == 0xFE
+        assert reasm[-1] == 0xFF
 
 
 def test_assemble_raises_on_unknown_mnemonic():
@@ -209,3 +213,39 @@ def test_real_models_semantic_roundtrip():
             for a, b in zip(ins1, ins2):
                 assert a.mnemonic == b.mnemonic, f'{name} gen {i}'
                 assert a.args == b.args, f'{name} gen {i}'
+
+
+def _stream(*instructions):
+    """Assemble a synthetic stream, then hand back its bytes."""
+    return bytes(assemble([ParticleInstruction(offset=0, opcode=0, mnemonic=m, args=a)
+                           for m, a in instructions]))
+
+
+def test_operand_widths_keep_the_stream_in_sync():
+    """A mis-sized operand desynchronises everything after it.
+
+    This is the failure the corpus showed before SCALE_RAND's second float was
+    recovered: the decoder stopped inside a float and read its bytes as
+    further instructions, inventing 8000-frame lifetimes and out-of-range
+    texture indices. Assembling a known stream and disassembling it back is
+    the cheap standing check that every operand width still lines up.
+    """
+    known = [
+        ('SCALE_RAND', {'time': 0, 'base': 2.0, 'range': 1.0}),
+        ('SCALE', {'time': 40, 'target': 0.5}),
+        ('LIFETIME', {'frames': 30}),
+        ('SET_PRIMCOL', {'time': 3, 'r': 255, 'g': 255, 'b': 10, 'a': 255}),
+        ('LIFETIME', {'frames': 5}),
+        ('EXIT', {}),
+    ]
+    decoded = disassemble(_stream(*known))
+    assert [(i.mnemonic, i.args) for i in decoded] == known
+
+
+def test_scale_rand_second_float_is_not_read_as_opcodes():
+    """The exact regression: 0x3F800000 (1.0) must stay an operand."""
+    raw = (bytes([0xAC, 0x00]) + struct.pack('>f', 2.0) + struct.pack('>f', 1.0)
+           + bytes([0xFF]))
+    decoded = disassemble(raw)
+    assert [i.mnemonic for i in decoded] == ['SCALE_RAND', 'EXIT']
+    assert decoded[0].args['range'] == 1.0

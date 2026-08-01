@@ -15,6 +15,8 @@ targets approximate or ignore what they can't express.
 
 Conventions (matching the rest of the IR — see ir_specification.md):
 - positions/velocities: meters, Y-up right-handed (velocity per frame)
+- sizes: meters — a particle's quad width, on the same scale as the model,
+  so a consumer places and sizes particles in one coordinate system
 - rotation: radians (billboard roll around the view axis)
 - colors: sRGB floats [0, 1]
 - durations (lifetimes, event frames): frames
@@ -64,10 +66,60 @@ class IRScalarKey:
 
 
 @dataclass
+class IREmissionShape:
+    """Where newborn particles appear and which way they fly.
+
+    Defined in the emitter's local frame with +Z the emission axis; the
+    consumer orients that frame however the emitter itself is oriented
+    (for bone-fired emitters, the firing bone).
+
+    kinds and which fields they read:
+    - ``DISC``: particles on a disc in the XY plane. ``radius`` (``ring``
+      = rim only, ``uniform_area`` = uniform-by-area sampling), azimuth in
+      [``arc_start``, ``arc_end``] (both zero = the full circle),
+      ``cone_angle`` tilts the velocity away from +Z proportionally to
+      each particle's radius fraction (rim particles get the full angle —
+      a cone profile). ``sweep`` spaces one frame's spawns evenly along
+      the arc instead of randomly.
+    - ``BOX``: particles fill the box spanned by ``box_extents`` (signed,
+      from the local origin). A negative extent emits on that axis's far
+      face instead of filling the axis — a sheet/shell.
+    - ``SPHERE``: particles on directions up to ``polar_max`` from +Z at
+      the sampled radius, flying radially at ``radial_speed`` (negative =
+      inward; when both ``ring`` and inward, speed scales with the radius
+      fraction).
+
+    ``velocity`` is the authored emitter-frame velocity vector (DISC/BOX
+    fly at its magnitude — DISC along the cone, BOX along ±Z).
+    """
+    kind: str = 'DISC'                 # DISC | BOX | SPHERE
+    radius: float = 0.0                # meters (DISC, SPHERE)
+    ring: bool = False                 # rim/shell emission instead of volume fill
+    uniform_area: bool = False         # sqrt sampling + speed scaled by radius fraction
+    cone_angle: float = 0.0            # radians (DISC)
+    arc_start: float = 0.0             # radians (DISC)
+    arc_end: float = 0.0
+    sweep: bool = False                # evenly space one frame's spawns along the arc
+    box_extents: tuple = (0.0, 0.0, 0.0)   # meters, signed (BOX)
+    polar_max: float = 0.0             # radians (SPHERE); 0 = full sphere
+    radial_speed: float = 0.0          # meters/frame (SPHERE), signed
+    velocity: tuple = (0.0, 0.0, 0.0)  # meters/frame, emitter frame (DISC/BOX speed)
+    type_flags: int = 0                # renderer-variant bits of unknown meaning,
+                                       # carried so the source type reconstructs
+    behaviour_flags: int = 0           # runtime behaviour bits, partially decoded:
+                                       # the blend field is lifted out into
+                                       # IRParticleRender.blend_mode; the rest
+                                       # (motion/orientation variants) are carried
+                                       # until their semantics are recovered
+
+
+@dataclass
 class IRParticleEmission:
     """How many particles appear, and when."""
-    rate: float = 0.0       # particles per frame, continuous emission
+    rate: float = 0.0       # mean particles per frame, continuous emission
+    rate_jitter: bool = False   # each frame draws rate x uniform[0, 2] instead of exactly rate
     bursts: tuple = ()      # ((frame, count), ...) — instantaneous bursts
+    shape: IREmissionShape = field(default_factory=IREmissionShape)
 
 
 @dataclass
@@ -75,7 +127,7 @@ class IRParticleBirth:
     """Initial particle state at spawn."""
     position: IRRandomVec3 = field(default_factory=IRRandomVec3)  # offset from emitter, meters
     velocity: IRRandomVec3 = field(default_factory=IRRandomVec3)  # meters per frame
-    size: IRRandomScalar = field(default_factory=lambda: IRRandomScalar(base=1.0))
+    size: IRRandomScalar = field(default_factory=lambda: IRRandomScalar(base=1.0))  # meters
     color_spread: tuple = (0.0, 0.0, 0.0, 0.0)   # per-channel ± randomization of the birth color
 
 
@@ -107,7 +159,7 @@ class IRParticleTextureAnim:
 @dataclass
 class IRParticleRender:
     """How each particle is drawn."""
-    blend_mode: str = "ALPHA"       # ALPHA | ADD | MULTIPLY
+    blend_mode: str = "ALPHA"       # ALPHA | ADD | SUBTRACT | MULTIPLY
     billboard: str = "CAMERA"       # CAMERA | VELOCITY_STRETCH | NONE
     textured: bool = True           # False = untextured solid-color quads
     depth_test: bool = True

@@ -124,6 +124,7 @@ def _build_emitter(br_emitter, root, image_cache, armature):
         modifier = emitter.modifiers.new(name="Particles", type='NODES')
         modifier.node_group = node_group
         _apply_modifier_inputs(modifier, node_group, br_emitter.node_group.inputs)
+        _bind_camera(modifier, node_group)
         if br_emitter.emit_driver is not None:
             _build_emit_driver(modifier, node_group, br_emitter.emit_driver, armature)
 
@@ -166,9 +167,14 @@ def _build_node_group(spec, material=None):
             _set_input_default(node, socket_key, value)
         nodes[br_node.name] = node
 
-    # Zone sockets only exist once the pair is joined, so this precedes links.
-    for input_name, output_name in spec.simulation_zones:
-        _node(nodes, input_name).pair_with_output(_node(nodes, output_name))
+    # Zone sockets only exist once the pair is joined, so this precedes
+    # links; extra state items (floats carried between frames) follow the
+    # implicit geometry slot and are addressed by name.
+    for input_name, output_name, state_items in spec.simulation_zones:
+        sim_output = _node(nodes, output_name)
+        _node(nodes, input_name).pair_with_output(sim_output)
+        for socket_type, item_name in state_items:
+            sim_output.state_items.new(socket_type, item_name)
 
     for node_name, ramp in spec.color_ramps.items():
         _apply_color_ramp(_node(nodes, node_name), ramp)
@@ -258,6 +264,22 @@ def _apply_modifier_inputs(modifier, tree, specs):
                 "no interface input %r on %s (have: %s)"
                 % (spec.name, tree.name, sorted(identifiers)))
         modifier[identifier] = _bpy_value(spec.value, spec.socket_type)
+
+
+def _bind_camera(modifier, tree):
+    """Point the group's Camera input at the scene camera, if either exists.
+
+    Billboards face this camera. No camera (headless import, empty scene)
+    leaves the input unset — quads keep the identity orientation and the
+    crossed pair still reads.
+
+    In: modifier (bpy.types.NodesModifier); tree (bpy.types.GeometryNodeTree).
+    Out: None.
+    """
+    identifier = _input_identifiers(tree).get('Camera')
+    camera = bpy.context.scene.camera if bpy.context.scene else None
+    if identifier is not None and camera is not None:
+        modifier[identifier] = camera
 
 
 def _build_emit_driver(modifier, tree, spec, armature):

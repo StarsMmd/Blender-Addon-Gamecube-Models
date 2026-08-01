@@ -16,7 +16,7 @@ try:
     from .....shared.helpers.gpt1_commands import disassemble
     from .....shared.IR.particles import (
         IRRandomScalar, IRRandomVec3, IRColorStop, IRScalarKey,
-        IRParticleEmission, IRParticleBirth, IRParticleRotation,
+        IREmissionShape, IRParticleEmission, IRParticleBirth, IRParticleRotation,
         IRParticleForces, IRParticleTextureAnim, IRParticleRender,
         IRSubEmitter, IRParticleEmitter, IRParticleTexture, IRParticleSystem,
     )
@@ -28,7 +28,7 @@ except (ImportError, SystemError):
     from shared.helpers.gpt1_commands import disassemble
     from shared.IR.particles import (
         IRRandomScalar, IRRandomVec3, IRColorStop, IRScalarKey,
-        IRParticleEmission, IRParticleBirth, IRParticleRotation,
+        IREmissionShape, IRParticleEmission, IRParticleBirth, IRParticleRotation,
         IRParticleForces, IRParticleTextureAnim, IRParticleRender,
         IRSubEmitter, IRParticleEmitter, IRParticleTexture, IRParticleSystem,
     )
@@ -72,8 +72,10 @@ def describe_particles(gpt1_data, logger=StubLogger()):
     ref_map = {gid: local for local, gid in enumerate(gpt1.ref_ids)}
 
     # Convert textures with pixel decoding (first — emitters validate
-    # their flip-book frame indices against the texture count)
+    # their flip-book frame indices against the texture count, and the
+    # per-texture GX format feeds the blend-mode rule)
     textures = []
+    texture_formats = []
     for container in gpt1.txg.containers:
         for t_idx in range(container.nb_textures):
             pixels = _decode_particle_texture(
@@ -84,11 +86,12 @@ def describe_particles(gpt1_data, logger=StubLogger()):
                 height=container.height,
                 pixels=pixels,
             ))
+            texture_formats.append(container.format)
 
     emitters = []
     for i, gen in enumerate(gpt1.ptl.generators):
         emitter = _summarize_generator(gen, i, ref_map, n_generators,
-                                       len(textures), logger)
+                                       texture_formats, logger)
         emitters.append(emitter)
 
     logger.info("  Particles: %d emitters, %d textures described",
@@ -120,14 +123,18 @@ def particle_ref_map(gpt1_data):
 # ---------------------------------------------------------------------------
 
 
-def _summarize_generator(gen, index, ref_map, n_generators, n_textures, logger):
+def _summarize_generator(gen, index, ref_map, n_generators, texture_formats,
+                         logger):
     """Summarize one generator's header + bytecode into an IRParticleEmitter.
 
     In: gen (GeneratorDef); index (int); ref_map (dict[int,int], global→local);
-        n_generators (int); n_textures (int); logger (Logger).
+        n_generators (int); texture_formats (list[int], GX format per texture);
+        logger (Logger).
     Out: IRParticleEmitter.
     """
+    n_textures = len(texture_formats)
     executed, looping = _walk_instructions(disassemble(gen.command_bytes))
+    params = tuple(gen.params) + (0.0,) * (12 - len(gen.params))
 
     birth = IRParticleBirth()
     rotation = IRParticleRotation()
@@ -139,7 +146,10 @@ def _summarize_generator(gen, index, ref_map, n_generators, n_textures, logger):
     birth_phase = True
     prim = (1.0, 1.0, 1.0, 1.0)   # particle color starts white opaque
     env = (0.0, 0.0, 0.0, 0.0)
-    size_val = 1.0
+    # A particle's scale before any bytecode runs is params[8], in source
+    # units; the IR carries lengths in metres, so scale it on the way in.
+    size_val = params[8] * GC_TO_METERS
+    birth.size = IRRandomScalar(base=size_val)
     color_stops = []              # (frame, rgba)
     env_stops = []                # (frame, rgba)
     size_keys = []                # (frame, value)
@@ -189,7 +199,7 @@ def _summarize_generator(gen, index, ref_map, n_generators, n_textures, logger):
 
         elif m == 'SCALE':
             tween = int(a.get('time', 0))
-            target = float(a.get('target', 0.0))
+            target = float(a.get('target', 0.0)) * GC_TO_METERS
             if birth_phase and tween == 0:
                 birth.size.base = target
             else:
@@ -197,15 +207,18 @@ def _summarize_generator(gen, index, ref_map, n_generators, n_textures, logger):
             size_val = target
 
         elif m == 'SCALE_RAND':
+            # The interpreter draws base + range * rand01, so the target is
+            # uniform over [base, base + range] — independent of the current
+            # size, unlike SCALE.
             tween = int(a.get('time', 0))
-            rng = float(a.get('range', 0.0))
+            low = float(a.get('base', 0.0)) * GC_TO_METERS
+            rng = float(a.get('range', 0.0)) * GC_TO_METERS
             if birth_phase and tween == 0:
-                # target = size + uniform[0, range] → base+spread form
-                birth.size = IRRandomScalar(base=size_val + rng / 2.0, spread=abs(rng) / 2.0)
+                birth.size = IRRandomScalar(base=low + rng / 2.0, spread=abs(rng) / 2.0)
                 size_val = birth.size.base
             else:
                 # Randomized ramp target approximated by its midpoint.
-                target = size_val + rng / 2.0
+                target = low + rng / 2.0
                 _append_key(size_keys, cursor, tween, target, size_val)
                 size_val = target
 
@@ -219,7 +232,9 @@ def _summarize_generator(gen, index, ref_map, n_generators, n_textures, logger):
             primenv_on = True
 
         elif m == 'GRAVITY':
-            forces.gravity = (0.0, float(a.get('value', 0.0)) * GC_TO_METERS, 0.0)
+            # The integrator runs vel.y -= value each frame, so the semantic
+            # acceleration is the negation of the stored value.
+            forces.gravity = (0.0, -float(a.get('value', 0.0)) * GC_TO_METERS, 0.0)
 
         elif m == 'FRICTION':
             forces.drag = 1.0 - float(a.get('value', 1.0))
@@ -313,7 +328,15 @@ def _summarize_generator(gen, index, ref_map, n_generators, n_textures, logger):
         total = kill_base
     lifetime = IRRandomScalar(base=float(total), spread=kill_spread)
 
-    _apply_params_heuristic(gen.params, birth, forces)
+    # Header fallbacks the bytecode can override: params[0] is the initial
+    # per-particle gravity and params[1] the initial friction factor — the
+    # GRAVITY / FRICTION opcodes overwrite them. The integrator gates each on
+    # a flag bit and runs vel.y -= gravity, so a negative stored value is an
+    # upward semantic acceleration.
+    if forces.gravity == (0.0, 0.0, 0.0) and params[0] != 0.0 and gen.flags & 0x1:
+        forces.gravity = (0.0, -params[0] * GC_TO_METERS, 0.0)
+    if forces.drag == 0.0 and params[1] > 0.0 and gen.flags & 0x2:
+        forces.drag = max(0.0, min(1.0, 1.0 - params[1]))
 
     color_over_life = _finalize_stops(color_stops, total, initial=(1.0, 1.0, 1.0, 1.0))
     if primenv_on and env_stops:
@@ -342,8 +365,25 @@ def _summarize_generator(gen, index, ref_map, n_generators, n_textures, logger):
     ]
 
     emit_duration = float(gen.lifetime) if gen.lifetime else 120.0
+    # params[7] drives the spawn accumulator: negative adds exactly |p7| per
+    # frame, positive adds p7 x rand01 (mean p7/2); a particle spawns each
+    # time the accumulator crosses 1.
+    rate_param = params[7]
     emission = IRParticleEmission(
-        rate=(gen.max_particles / emit_duration) if emit_duration > 0 else 0.0)
+        rate=(-rate_param if rate_param < 0 else rate_param / 2.0),
+        rate_jitter=rate_param >= 0,
+        shape=_describe_emission_shape(gen, params, index, dropped),
+    )
+
+    # Blend: header flag bits 10-11 select alpha/add/subtract/multiply; on
+    # top of that, selecting an intensity-format texture flips the particle
+    # to additive (the runtime enables it per texture, and intensity sheets
+    # are the additive kind).
+    render.blend_mode = _BLEND_BITS[(gen.flags >> 10) & 3]
+    if render.blend_mode == 'ALPHA' and texture.frames:
+        first = texture.frames[0]
+        if first < n_textures and texture_formats[first] in _INTENSITY_FORMATS:
+            render.blend_mode = 'ADD'
 
     if dropped:
         logger.debug("    Emitter %d: dropped opcodes with no generic equivalent: %s",
@@ -489,33 +529,68 @@ def _append_sub(subs, cursor, ref_value, inherit, ref_map, n_generators,
         dropped[mnemonic] = dropped.get(mnemonic, 0) + 1
 
 
-def _apply_params_heuristic(params, birth, forces):
-    """Map the generator-header shape params onto birth spread / gravity.
+# Header blend bits ((flags >> 10) & 3) → semantic blend mode. Bit meaning
+# read from the display path's four blend-equation configurations.
+_BLEND_BITS = ('ALPHA', 'ADD', 'SUBTRACT', 'MULTIPLY')
 
-    Low-confidence heuristic (the reference interpreter never reads these):
-    params[0] doubles as gravity and the emission-mode switch — nonzero means
-    velocity-based emission with spread in params[7..9]; zero means
-    position-volume emission with radii in params[9..11].
+# GX intensity texture formats (I4, I8, IA4, IA8) — selecting one of these
+# as a particle sheet enables additive blending at runtime.
+_INTENSITY_FORMATS = frozenset((0x0, 0x1, 0x2, 0x3))
 
-    In: params (tuple[float] length 12); birth (IRParticleBirth, mutated);
-        forces (IRParticleForces, mutated).
-    Out: None.
+# Emission shape mode (gen_type low 4 bits) → IR shape kind. Modes 1/2 are
+# variants of the disc family whose extra behaviour is not modelled; 4 is
+# the uniform-area disc; 6/7 are cylinder variants — none appear in the
+# surveyed corpus, so they map to their nearest family with a debug note.
+_SHAPE_KINDS = {0: 'DISC', 1: 'DISC', 2: 'DISC', 3: 'DISC', 4: 'DISC',
+                5: 'BOX', 6: 'DISC', 7: 'DISC', 8: 'SPHERE'}
+_EXACT_SHAPE_MODES = frozenset((0, 3, 5, 8))
+
+
+def _describe_emission_shape(gen, params, index, dropped):
+    """Decode the generator header's emission geometry.
+
+    The source spawns particles per shape mode (gen_type low 4 bits) using
+    the params slots: a disc/cone in the XY plane (angle range, radius,
+    elevation), a box volume, or a sphere. Field meanings per shape follow
+    the spawn routine; lengths convert to metres, angles stay radians.
+
+    In: gen (GeneratorDef); params (tuple[float], padded to 12);
+        index (int); dropped (dict, mutated — notes unmodelled modes).
+    Out: IREmissionShape.
     """
-    p = tuple(params) + (0.0,) * (12 - len(params)) if params else (0.0,) * 12
-    if p[0] != 0.0:
-        if forces.gravity == (0.0, 0.0, 0.0):
-            forces.gravity = (0.0, p[0] * GC_TO_METERS, 0.0)
-        spread = (abs(p[7]) * GC_TO_METERS,
-                  abs(p[9]) * GC_TO_METERS,
-                  abs(p[8]) * GC_TO_METERS)
-        birth.velocity.spread = tuple(
-            max(s, n) for s, n in zip(birth.velocity.spread, spread))
-    else:
-        spread = (abs(p[9]) * GC_TO_METERS,
-                  abs(p[10]) * GC_TO_METERS,
-                  abs(p[11]) * GC_TO_METERS)
-        birth.position.spread = tuple(
-            max(s, n) for s, n in zip(birth.position.spread, spread))
+    mode = gen.gen_type & 0xF
+    kind = _SHAPE_KINDS.get(mode, 'DISC')
+    if mode not in _EXACT_SHAPE_MODES:
+        dropped['shape_mode_%d' % mode] = dropped.get('shape_mode_%d' % mode, 0) + 1
+
+    shape = IREmissionShape(
+        kind=kind,
+        type_flags=gen.gen_type >> 4,
+        behaviour_flags=(gen.flags & 0xFFFFFFFF) & ~0xC00,  # blend bits lifted out
+        velocity=(params[2] * GC_TO_METERS, params[3] * GC_TO_METERS,
+                  params[4] * GC_TO_METERS),
+    )
+
+    if kind == 'DISC':
+        shape.radius = abs(params[5]) * GC_TO_METERS
+        shape.ring = params[5] < 0
+        shape.uniform_area = mode in (3, 4)
+        shape.cone_angle = abs(params[6])
+        shape.sweep = params[6] < 0
+        # Verbatim; both-zero means the full circle (the IR keeps the same
+        # convention so the default and an authored 2-pi stay distinct).
+        shape.arc_start, shape.arc_end = params[9], params[10]
+    elif kind == 'BOX':
+        shape.box_extents = (params[9] * GC_TO_METERS,
+                             params[10] * GC_TO_METERS,
+                             params[11] * GC_TO_METERS)
+    else:  # SPHERE
+        shape.radius = abs(params[5]) * GC_TO_METERS
+        shape.ring = params[5] < 0
+        shape.radial_speed = params[9] * GC_TO_METERS
+        shape.polar_max = params[11]
+
+    return shape
 
 
 def _norm(frame, total):
@@ -573,7 +648,11 @@ def _composite_gradients(prim_stops, env_stops):
     for age in ages:
         p = _sample_stops(prim_stops, age)
         e = _sample_stops(env_stops, age)
-        rgba = tuple(min(1.0, pc + ec) for pc, ec in zip(p, e))
+        # The source adds these in clamped u8 registers, so the composite
+        # snaps to the u8 grid — also keeping derived values exactly
+        # representable when they re-encode as colour opcode bytes.
+        rgba = tuple(min(255, int(round(pc * 255)) + int(round(ec * 255))) / 255.0
+                     for pc, ec in zip(p, e))
         out.append(IRColorStop(age=age, rgba=rgba))
     return out
 

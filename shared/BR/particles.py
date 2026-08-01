@@ -82,8 +82,11 @@ class BRParticleNodeGroup:
     where one exists and by socket *name* on the group input/output nodes,
     whose identifiers are assigned by Blender at interface-creation time.
 
-    ``simulation_zones`` names the (input, output) node pairs build must
-    pair before linking — a zone's geometry sockets only exist once paired.
+    ``simulation_zones`` lists ``(input name, output name, state items)``
+    triples build must pair before linking — a zone's sockets only exist
+    once paired. ``state items`` are extra per-frame state slots beyond the
+    implicit geometry: ``[(socket type e.g. 'FLOAT', item name), ...]``;
+    links address them by the item name.
     """
     name: str
     inputs: list[BRInterfaceSocket] = field(default_factory=list)
@@ -92,7 +95,7 @@ class BRParticleNodeGroup:
     links: list[BRLink] = field(default_factory=list)
     color_ramps: dict = field(default_factory=dict)    # node name → BRColorRamp
     float_curves: dict = field(default_factory=dict)   # node name → BRFloatCurve
-    simulation_zones: list = field(default_factory=list)  # [(input name, output name)]
+    simulation_zones: list = field(default_factory=list)  # [(in, out, [(type, name)])]
 
 
 @dataclass

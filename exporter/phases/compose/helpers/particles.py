@@ -7,12 +7,14 @@ re-encoded to a GX format, and the container is emitted through
 `shared.helpers.gpt1.GPT1File.to_bytes`. Synthesis is semantic, not
 byte-reproducing: a fresh instruction stream is generated from the curves.
 """
+import struct
+
 try:
     from .....shared.helpers.gpt1 import (
         GPT1File, PTLSection, TXGSection, GeneratorDef, TextureContainer,
     )
     from .....shared.helpers.gpt1_commands import assemble, ParticleInstruction
-    from .....shared.helpers.scale import METERS_TO_GC
+    from .....shared.helpers.scale import METERS_TO_GC, GC_TO_METERS
     from .....shared.texture_encoder import encode_texture
     from .....shared.helpers.logger import StubLogger
 except (ImportError, SystemError):
@@ -20,7 +22,7 @@ except (ImportError, SystemError):
         GPT1File, PTLSection, TXGSection, GeneratorDef, TextureContainer,
     )
     from shared.helpers.gpt1_commands import assemble, ParticleInstruction
-    from shared.helpers.scale import METERS_TO_GC
+    from shared.helpers.scale import METERS_TO_GC, GC_TO_METERS
     from shared.texture_encoder import encode_texture
     from shared.helpers.logger import StubLogger
 
@@ -51,9 +53,16 @@ def compose_particles(ir_particles, logger=StubLogger()):
     if ir_particles is None or not ir_particles.emitters:
         return b''
 
+    # Textures that will re-encode to an intensity format — selecting one at
+    # runtime implies additive blending, so those emitters need no blend bits.
+    intensity_textures = {
+        i for i, tex in enumerate(ir_particles.textures)
+        if tex.pixels and _pick_particle_format(tex.pixels) == 0x1
+    }
+
     generators = []
     for emitter in ir_particles.emitters:
-        generators.append(_synthesize_generator(emitter, logger))
+        generators.append(_synthesize_generator(emitter, intensity_textures, logger))
 
     ptl = PTLSection(
         version=0x43,
@@ -69,10 +78,10 @@ def compose_particles(ir_particles, logger=StubLogger()):
     # data_offset is stored relative to the TEX region here and rebased to
     # absolute (from GPT1 start) after serialization — see _fix_data_offsets.
     for tex in ir_particles.textures:
-        encoded = _encode_ir_texture(tex)
+        encoded, fmt = _encode_ir_texture(tex)
         containers.append(TextureContainer(
             nb_textures=1,
-            format=_PARTICLE_TEXTURE_FORMAT,
+            format=fmt,
             data_offset=tex_data_cursor,  # relative offset into TEX region
             width=int(tex.width),
             height=int(tex.height),
@@ -105,10 +114,11 @@ def compose_particles(ir_particles, logger=StubLogger()):
 # ---------------------------------------------------------------------------
 
 
-def _synthesize_generator(emitter, logger):
+def _synthesize_generator(emitter, intensity_textures, logger):
     """Compile one IRParticleEmitter into a GeneratorDef with fresh bytecode.
 
-    In: emitter (IRParticleEmitter); logger (Logger).
+    In: emitter (IRParticleEmitter); intensity_textures (set[int], texture
+        indices that re-encode to an intensity format); logger (Logger).
     Out: GeneratorDef.
     """
     ops = []
@@ -120,11 +130,11 @@ def _synthesize_generator(emitter, logger):
     ops.append(_ins('JUMP' if emitter.looping else 'EXIT', {}))
 
     return GeneratorDef(
-        gen_type=_DEFAULT_GEN_TYPE,
+        gen_type=_synthesize_gen_type(emitter.emission.shape),
         unknown_02=0,
         lifetime=max(0, int(round(emitter.emit_duration))),
         max_particles=int(emitter.max_particles),
-        flags=_DEFAULT_GEN_FLAGS,
+        flags=_synthesize_flags(emitter, intensity_textures),
         params=_synthesize_params(emitter),
         command_bytes=assemble(ops),
     )
@@ -133,6 +143,26 @@ def _synthesize_generator(emitter, logger):
 def _ins(mnemonic, args):
     """Build a ParticleInstruction for the assembler (offsets/raw unused)."""
     return ParticleInstruction(offset=0, opcode=0, mnemonic=mnemonic, args=args)
+
+
+def _to_gc(value):
+    """Metres → source units, preferring the f32 that inverts exactly.
+
+    The unit factor is not a binary power, so naive multiply-then-round can
+    land one ULP off the stored value the import scaled from. Testing the
+    rounded candidate and its two f32 neighbours for an exact inverse
+    recovers the original bit pattern whenever one exists.
+
+    In: value (float, metres).
+    Out: float — a value that survives ``struct.pack('>f', ...)``.
+    """
+    base = struct.unpack('>f', struct.pack('>f', value * METERS_TO_GC))[0]
+    bits = struct.unpack('>I', struct.pack('>f', base))[0]
+    for candidate_bits in (bits, bits + 1, bits - 1):
+        candidate = struct.unpack('>f', struct.pack('>I', candidate_bits & 0xFFFFFFFF))[0]
+        if candidate * GC_TO_METERS == value:
+            return candidate
+    return base
 
 
 def _render_state_ops(emitter):
@@ -189,15 +219,13 @@ def _birth_ops(emitter):
     if vel_args:
         ops.append(_ins('SET_VEL', vel_args))
 
-    # SCALE_RAND draws uniformly in [current, current + range] — anchor the
-    # current value at (base - spread) first so the midpoint lands on base.
-    size_low = birth.size.base - birth.size.spread
+    # The header's initial-scale slot carries the base size, so plain sizes
+    # need no opcode; a randomized size re-rolls at birth over
+    # [base - spread, base + spread] — SCALE_RAND's [base, base + range] form.
     if birth.size.spread > 0:
-        if size_low != 1.0:
-            ops.append(_ins('SCALE', {'time': 0, 'target': size_low}))
-        ops.append(_ins('SCALE_RAND', {'time': 0, 'range': birth.size.spread * 2}))
-    elif birth.size.base != 1.0:
-        ops.append(_ins('SCALE', {'time': 0, 'target': birth.size.base}))
+        size_low = _to_gc(birth.size.base - birth.size.spread)
+        ops.append(_ins('SCALE_RAND', {'time': 0, 'base': size_low,
+                                       'range': _to_gc(birth.size.spread * 2)}))
 
     if rotation.initial.base != 0.0 or rotation.initial.spread != 0.0:
         ops.append(_ins('RAND_ROTATE', {
@@ -221,10 +249,9 @@ def _birth_ops(emitter):
             c: int(round(birth.color_spread[i] * 255))
             for i, c in enumerate(('r', 'g', 'b', 'a'))}))
 
-    if forces.gravity[1] != 0.0:
-        ops.append(_ins('GRAVITY', {'value': forces.gravity[1] * METERS_TO_GC}))
-    if forces.drag != 0.0:
-        ops.append(_ins('FRICTION', {'value': 1.0 - forces.drag}))
+    # Gravity and friction ride the header's initial-value slots
+    # (params[0] / params[1]) rather than bytecode ops — matching how the
+    # game archives author them.
 
     return ops
 
@@ -250,8 +277,13 @@ def _timeline_ops(emitter):
     # (frame, ordered op) events. Ramp ops fire at the *previous* key's frame.
     events = []
 
+    # Flat segments need no opcode: a hold is implicit in the stream (the
+    # decoder re-anchors it from the gap before the next ramp), and emitting
+    # one would re-quantize a derived hold value the source never stored.
     stops = emitter.color_over_life
     for prev, stop in zip(stops, stops[1:]):
+        if stop.rgba == prev.rgba:
+            continue
         f_prev, f_cur = to_frame(prev.age), to_frame(stop.age)
         events.append((f_prev, _ins('SET_PRIMCOL', {
             'time': min(_MAX_TIME, max(0, f_cur - f_prev)),
@@ -265,9 +297,12 @@ def _timeline_ops(emitter):
 
     keys = emitter.size_over_life
     for prev, key in zip(keys, keys[1:]):
+        if key.value == prev.value:
+            continue
         f_prev, f_cur = to_frame(prev.age), to_frame(key.age)
         events.append((f_prev, _ins('SCALE', {
-            'time': min(_MAX_TIME, max(0, f_cur - f_prev)), 'target': key.value})))
+            'time': min(_MAX_TIME, max(0, f_cur - f_prev)),
+            'target': _to_gc(key.value)})))
 
     for sub in emitter.sub_emitters:
         if sub.emitter_ref < 0:
@@ -335,29 +370,95 @@ def _axis_args(vec, scale):
             for i, axis in enumerate(('x', 'y', 'z')) if vec[i] != 0.0}
 
 
-def _synthesize_params(emitter):
-    """Fill the header shape params from birth spread / gravity.
+# Semantic blend mode → header flag bits 10-11.
+_BLEND_TO_BITS = {'ALPHA': 0, 'ADD': 1, 'SUBTRACT': 2, 'MULTIPLY': 3}
 
-    Inverse of the import-side heuristic: params[0] selects the emission
-    mode (nonzero = velocity spread in [7..9], zero = position volume in
-    [9..11]) and doubles as generator-level gravity.
+
+
+def _synthesize_gen_type(shape):
+    """Emission shape → gen_type (mode nibble + preserved renderer bits).
+
+    In: shape (IREmissionShape).
+    Out: int.
+    """
+    if shape.kind == 'BOX':
+        mode = 5
+    elif shape.kind == 'SPHERE':
+        mode = 8
+    else:
+        mode = 3 if shape.uniform_area else 0
+    return (shape.type_flags << 4) | mode
+
+
+def _synthesize_flags(emitter, intensity_textures):
+    """Header flags: carried behaviour bits plus the blend field.
+
+    Additive via an intensity texture needs no flag bits — selecting the
+    sheet enables it at runtime whether or not texturing is on — so those
+    emitters keep the bits clear like the originals.
+
+    In: emitter (IRParticleEmitter); intensity_textures (set[int]).
+    Out: int.
+    """
+    blend = emitter.render.blend_mode
+    if (blend == 'ADD' and emitter.texture.frames
+            and emitter.texture.frames[0] in intensity_textures):
+        blend = 'ALPHA'
+    base = emitter.emission.shape.behaviour_flags or _DEFAULT_GEN_FLAGS
+    flags = (base & ~0xC00) | (_BLEND_TO_BITS.get(blend, 0) << 10)
+    # Gravity and friction only run when their enable bits are set.
+    if emitter.forces.gravity[1] != 0.0:
+        flags |= 0x1
+    if emitter.forces.drag > 0.0:
+        flags |= 0x2
+    return flags
+
+
+def _synthesize_params(emitter):
+    """Fill the header params from the emission shape, cadence, and forces.
+
+    Exact inverse of the import-side header decode: the shape's lengths go
+    back to source units, angles stay radians, the spawn-rate accumulator
+    parameter recovers its sign from the jitter flag, and gravity/friction
+    seed the per-particle initial values.
 
     In: emitter (IRParticleEmitter).
     Out: tuple[float] length 12.
     """
     p = [0.0] * 12
-    vel_spread = emitter.birth.velocity.spread
-    pos_spread = emitter.birth.position.spread
-    gravity_y = emitter.forces.gravity[1] * METERS_TO_GC
-    if any(vel_spread):
-        p[0] = gravity_y if gravity_y != 0.0 else -0.001
-        p[7] = vel_spread[0] * METERS_TO_GC
-        p[9] = vel_spread[1] * METERS_TO_GC
-        p[8] = vel_spread[2] * METERS_TO_GC
-    elif any(pos_spread):
-        p[9] = pos_spread[0] * METERS_TO_GC
-        p[10] = pos_spread[1] * METERS_TO_GC
-        p[11] = pos_spread[2] * METERS_TO_GC
+    shape = emitter.emission.shape
+
+    # The runtime subtracts this slot from vel.y each frame, so the stored
+    # value is the negated semantic acceleration. (Guarded so a zero stays
+    # +0.0 — negating it would flip the sign bit in the file.)
+    if emitter.forces.gravity[1] != 0.0:
+        p[0] = -emitter.forces.gravity[1] * METERS_TO_GC
+    if emitter.forces.drag > 0.0:
+        p[1] = 1.0 - emitter.forces.drag
+    p[2] = shape.velocity[0] * METERS_TO_GC
+    p[3] = shape.velocity[1] * METERS_TO_GC
+    p[4] = shape.velocity[2] * METERS_TO_GC
+    rate = emitter.emission.rate
+    p[7] = rate * 2.0 if emitter.emission.rate_jitter else -rate
+    # The initial-scale slot: when the bytecode re-rolls the scale at birth
+    # (a spread exists), authors set this to the roll's base — the low end.
+    p[8] = _to_gc(emitter.birth.size.base - emitter.birth.size.spread)
+
+    if shape.kind == 'BOX':
+        p[9] = shape.box_extents[0] * METERS_TO_GC
+        p[10] = shape.box_extents[1] * METERS_TO_GC
+        p[11] = shape.box_extents[2] * METERS_TO_GC
+    elif shape.kind == 'SPHERE':
+        p[5] = -shape.radius * METERS_TO_GC if shape.ring else shape.radius * METERS_TO_GC
+        p[9] = shape.radial_speed * METERS_TO_GC
+        # The next slot is dead for spheres; archives author it as a copy of
+        # the speed, so the copy keeps re-exports byte-identical.
+        p[10] = p[9]
+        p[11] = shape.polar_max
+    else:  # DISC
+        p[5] = -shape.radius * METERS_TO_GC if shape.ring else shape.radius * METERS_TO_GC
+        p[6] = -shape.cone_angle if shape.sweep else shape.cone_angle
+        p[9], p[10] = shape.arc_start, shape.arc_end
     return tuple(p)
 
 
@@ -377,10 +478,29 @@ def _encode_ir_texture(tex):
     Out: bytes.
     """
     if tex.width <= 0 or tex.height <= 0 or not tex.pixels:
-        return b''
-    result = encode_texture(tex.pixels, tex.width, tex.height,
-                            _PARTICLE_TEXTURE_FORMAT)
-    return bytes(result['image_data'])
+        return b'', _PARTICLE_TEXTURE_FORMAT
+    fmt = _pick_particle_format(tex.pixels)
+    result = encode_texture(tex.pixels, tex.width, tex.height, fmt)
+    return bytes(result['image_data']), fmt
+
+
+def _pick_particle_format(pixels):
+    """Choose the GX format a particle sheet re-encodes to.
+
+    Intensity sheets (r == g == b == a everywhere) go back to I8: it is
+    what the source archives use, and the runtime keys additive blending
+    off the intensity family — an RGB re-encode would silently turn an
+    additive sheet alpha-blended in game.
+
+    In: pixels (bytes, RGBA u8).
+    Out: int — GX format id.
+    """
+    view = memoryview(pixels)
+    for i in range(0, len(view) - 3, 4):
+        r = view[i]
+        if view[i + 1] != r or view[i + 2] != r or view[i + 3] != r:
+            return _PARTICLE_TEXTURE_FORMAT
+    return 0x1  # GX_TF_I8
 
 
 def _fix_data_offsets(blob, gpt1):

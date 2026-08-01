@@ -57,6 +57,7 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.80 | current | `bpy.context.view_layer.objects.active = obj` | `skeleton.py`, `exporter/describe/helpers/armature.py` | |
 | 2.80 | current | `bpy.context.view_layer.update()` | `skeleton.py`, `animations.py`, `build_collision.py` | Force dependency graph update |
 | 2.80 | current | `bpy.context.scene.frame_set(n)` | `post_process.py`, `exporter/describe/helpers/scene.py` | Reset timeline / sample animations at frame |
+| 2.80 | current | `scene.view_settings.view_transform = 'Standard'` | `build_blender.py` | Source colours are display-referred (no tonemapping on the hardware); the default AgX transform remaps them — additive particles collapse into faint desaturated red and the whole model desaturates |
 | 2.80 | current | `bpy.context.scene.frame_current` | `exporter/describe/helpers/scene.py` | Save/restore frame while sampling |
 | 2.80 | current | `bpy.context.scene.frame_start / frame_end = n` | `post_process.py` | Set playback range from active action's frame_range |
 | 2.80 | current | `scene.render.engine = 'CYCLES'` | `bake_chico_shader_to_principled.py`, `prepare_for_pkx_export.py` | Switch to Cycles for baking; saved engine restored afterwards |
@@ -200,6 +201,11 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.92 | current | `nodes.new('GeometryNodeMeshGrid')` / `('GeometryNodeTransform')` | `particles.py` (importer build_blender) | The crossed billboard pair |
 | 2.92 | current | `nodes.new('GeometryNodeInstanceOnPoints')` | `particles.py` (importer build_blender) | One quad pair per particle, scaled by the size curve |
 | 2.92 | current | `nodes.new('GeometryNodeSetMaterial')` | `particles.py` (importer build_blender) | Emitter material; the Material input is an ID pointer, assigned by build |
+| 3.6 | current | `sim_output.state_items.new(type, name)` | `particles.py` (importer build_blender) | Float state beside the zone geometry: spawn accumulator + generator age |
+| 4.1 | current | `nodes.new('FunctionNodeRotateVector')` / `('FunctionNodeEulerToRotation')` / `('FunctionNodeRotateRotation')` | `particles.py` (importer build_blender) | Attach-frame spawn rotation; camera-facing billboard rotation composed with per-particle roll (Rotation sockets) |
+| 3.1 | current | `nodes.new('FunctionNodeFloatToInt')` | `particles.py` (importer build_blender) | Accumulator → strict-int Points count |
+| 3.5 | current | `nodes.new('FunctionNodeInputInt')` | `particles.py` (importer build_blender) | Constant ID pinning frame-level Random Value draws to single values (an unlinked ID is an implicit per-element field) |
+| 2.92 | current | `nodes.new('GeometryNodeInputIndex')` / `('GeometryNodeAttributeDomainSize')` / `('GeometryNodeRealizeInstances')` | `particles.py` (importer build_blender) | Per-spawn index; live-count cap; realize before shading |
 | 2.80 | current | `nodes.new('ShaderNodeValToRGB')` | `particles.py` (importer build_blender) | `ColorOverLife` ramp (valid inside a geometry tree) |
 | 2.92 | current | `nodes.new('ShaderNodeFloatCurve')` | `particles.py` (importer build_blender) | `SizeOverLife` curve |
 | 2.80 | current | `node.color_ramp.elements.new(position)` / `.remove(element)` | `particles.py` (importer build_blender) | Rebuilt from one survivor — the collection re-sorts on every position write |
