@@ -693,3 +693,46 @@ class TestViewportColor:
     def test_constant_colour_defaults_to_white(self):
         material = _plan().emitters[0].material
         assert material.viewport_color == (1.0, 1.0, 1.0, 0.5)
+
+
+class TestWarmStart:
+    """Blender resets simulation zones at the playback start every loop; a
+    continuous emitter (fired at clip frame 0) warm-starts with a full-aged
+    population so looping playback shows what a running effect looks like."""
+
+    def _plan_with_event_frames(self, frames):
+        tracks = [SimpleNamespace(bone_name='Head', particle_emits=[
+            IRParticleEmitEvent(frame=f, emitter_ref=0) for f in frames])]
+        anim = SimpleNamespace(name='clip', tracks=tracks)
+        return plan_particles(_system([_emitter()]), 'pika', [anim])
+
+    def test_frame_zero_emitter_warm_starts(self):
+        br = self._plan_with_event_frames([0.0])
+        sockets = {s.name: s for s in br.emitters[0].node_group.inputs}
+        assert sockets['Warm Start'].value is True
+
+    def test_mid_clip_burst_builds_from_empty(self):
+        br = self._plan_with_event_frames([27.0])
+        sockets = {s.name: s for s in br.emitters[0].node_group.inputs}
+        assert sockets['Warm Start'].value is False
+
+    def test_unfired_emitter_does_not_warm_start(self):
+        br = _plan()
+        sockets = {s.name: s for s in br.emitters[0].node_group.inputs}
+        assert sockets['Warm Start'].value is False
+
+    def test_cold_start_batch_is_steady_state_and_aged(self):
+        group = self._plan_with_event_frames([0.0]).emitters[0].node_group
+        links = group.links
+        # steady-state count = rate x lifetime, capped, gated by cold start
+        assert any(l.from_node == 'SteadyCapped' and l.to_node == 'WarmAdd'
+                   for l in links)
+        assert any(l.from_node == 'ColdStart' and l.to_node == 'WarmAdd'
+                   for l in links)
+        assert any(l.from_node == 'SpawnCountWarm' and l.to_node == 'SpawnCountInt'
+                   for l in links)
+        # the batch starts mid-life and pre-drifts along its velocity
+        assert any(l.from_node == 'BirthAge' and l.to_node == 'StoreBirthAge'
+                   for l in links)
+        assert any(l.from_node == 'WarmDrift' and l.to_node == 'SpawnPosAged'
+                   for l in links)

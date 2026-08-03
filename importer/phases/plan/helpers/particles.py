@@ -82,11 +82,13 @@ def plan_particles(ir_particles, model_name, bone_animations=(),
     # bones burns in both places at once.
     emitters = []
     for i, em in enumerate(ir_particles.emitters):
-        bones = sorted(firing_bones.get(i) or ())
+        per_bone = firing_bones.get(i) or {}
+        bones = sorted(per_bone)
         for bone_name in (bones or [None]):
             emitters.append(_plan_emitter(
                 em, i, model_name, images, bone_name, attach_by_bone,
-                lane_widths, multi_bone=len(bones) > 1))
+                lane_widths, multi_bone=len(bones) > 1,
+                warm_start=per_bone.get(bone_name) == 0.0))
 
     logger.debug("    Planned %d emitter instance(s) from %d template(s), "
                  "%d texture(s), %d attach point(s)",
@@ -102,18 +104,21 @@ def plan_particles(ir_particles, model_name, bone_animations=(),
 
 
 def _firing_bones(bone_animations):
-    """Count, per emitter, how often each bone fires it across every clip.
+    """Per emitter, which bones fire it and the earliest event frame each.
 
     In: bone_animations (iterable[IRBoneAnimationSet]).
-    Out: dict[int, dict[str, int]] — emitter index → {bone name: event count}.
+    Out: dict[int, dict[str, float]] — emitter index → {bone name: earliest
+         firing frame across every clip}.
     """
-    counts = {}
+    earliest = {}
     for anim_set in bone_animations or ():
         for track in anim_set.tracks:
             for event in track.particle_emits:
-                per_bone = counts.setdefault(event.emitter_ref, {})
-                per_bone[track.bone_name] = per_bone.get(track.bone_name, 0) + 1
-    return counts
+                per_bone = earliest.setdefault(event.emitter_ref, {})
+                prev = per_bone.get(track.bone_name)
+                if prev is None or event.frame < prev:
+                    per_bone[track.bone_name] = event.frame
+    return earliest
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +127,7 @@ def _firing_bones(bone_animations):
 
 
 def _plan_emitter(em, index, model_name, images, bone_name, attach_by_bone,
-                  lane_widths, multi_bone=False):
+                  lane_widths, multi_bone=False, warm_start=False):
     """Convert one IRParticleEmitter into a BRParticleEmitter instance.
 
     In: em (IRParticleEmitter); index (int, emitter slot — the value emit
@@ -146,7 +151,8 @@ def _plan_emitter(em, index, model_name, images, bone_name, attach_by_bone,
     graph, zones = _plan_simulation_graph(em)
     group = BRParticleNodeGroup(
         name="DATPlugin_Particles_%s_%s" % (model_name, suffix),
-        inputs=_plan_interface_inputs(em, attach_name, emit_driver is None),
+        inputs=_plan_interface_inputs(em, attach_name, emit_driver is None,
+                                      warm_start),
         outputs=[BRInterfaceSocket(name='Geometry', socket_type='NodeSocketGeometry')],
         nodes=graph.nodes,
         links=graph.links,
@@ -165,7 +171,8 @@ def _plan_emitter(em, index, model_name, images, bone_name, attach_by_bone,
     )
 
 
-def _plan_interface_inputs(em, attach_name=None, always_emit=True):
+def _plan_interface_inputs(em, attach_name=None, always_emit=True,
+                           warm_start=False):
     """Lay out the emitter's scalar parameters as node-group interface sockets.
 
     Lengths arrive in metres already — describe scales the source units on
@@ -193,6 +200,10 @@ def _plan_interface_inputs(em, attach_name=None, always_emit=True):
                description='Whether the emitter is currently spawning. Driven '
                            'by the firing bone\'s particle_emit keys, so a clip '
                            'runs the emitters it actually fires.'),
+        _bool('Warm Start', warm_start,
+              description='Begin the simulation with a full-aged population, '
+                          'the way a continuously running effect looks when a '
+                          'clip loops. Set for emitters fired at clip frame 0.'),
 
         _float('Emit Duration', em.emit_duration, min_value=0.0,
                description='Frames the emitter keeps spawning'),
@@ -479,10 +490,42 @@ def _plan_cadence(g):
     g.add_link('SpawnGate', 'Value', 'AccGated', 'Value_001')
     _math(g, 'SpawnCount', 'FLOOR', (-850.0, y - 200.0))
     g.add_link('AccGated', 'Value', 'SpawnCount', 'Value')
+
+    # Warm start: on the simulation's first active frame (nothing alive yet,
+    # age still zero), a continuous emitter spawns its whole steady-state
+    # population at once — the way an already-running effect looks when a
+    # looping clip restarts — instead of building up from empty.
+    _math(g, 'NoneAlive', 'LESS_THAN', (-1600.0, y - 700.0), {'Value_001': 0.5})
+    g.add_link('LiveCount', 'Point Count', 'NoneAlive', 'Value')
+    _math(g, 'AgeIsZero', 'LESS_THAN', (-1600.0, y - 850.0), {'Value_001': 0.5})
+    g.add_link(_SIM_IN, 'Age', 'AgeIsZero', 'Value')
+    _math(g, 'ColdA', 'MULTIPLY', (-1450.0, y - 750.0))
+    g.add_link('NoneAlive', 'Value', 'ColdA', 'Value')
+    g.add_link('AgeIsZero', 'Value', 'ColdA', 'Value_001')
+    _math(g, 'ColdB', 'MULTIPLY', (-1300.0, y - 750.0))
+    g.add_link('ColdA', 'Value', 'ColdB', 'Value')
+    g.add_link('EmitOn', 'Value', 'ColdB', 'Value_001')
+    _math(g, 'ColdStart', 'MULTIPLY', (-1150.0, y - 750.0))
+    g.add_link('ColdB', 'Value', 'ColdStart', 'Value')
+    g.add_link(_INPUT, 'Warm Start', 'ColdStart', 'Value_001')
+
+    _math(g, 'SteadyCount', 'MULTIPLY', (-1450.0, y - 950.0))
+    g.add_link(_INPUT, 'Emission Rate', 'SteadyCount', 'Value')
+    g.add_link(_INPUT, 'Lifetime', 'SteadyCount', 'Value_001')
+    _math(g, 'SteadyCapped', 'MINIMUM', (-1300.0, y - 950.0))
+    g.add_link('SteadyCount', 'Value', 'SteadyCapped', 'Value')
+    g.add_link(_INPUT, 'Max Particles', 'SteadyCapped', 'Value_001')
+    _math(g, 'WarmAdd', 'MULTIPLY', (-1150.0, y - 950.0))
+    g.add_link('ColdStart', 'Value', 'WarmAdd', 'Value')
+    g.add_link('SteadyCapped', 'Value', 'WarmAdd', 'Value_001')
+    _math(g, 'SpawnCountWarm', 'ADD', (-850.0, y - 100.0))
+    g.add_link('AccGated', 'Value', 'SpawnCountWarm', 'Value')
+    g.add_link('WarmAdd', 'Value', 'SpawnCountWarm', 'Value_001')
+
     # The Points count socket is a strict integer — convert explicitly.
     g.add_node('FunctionNodeFloatToInt', name='SpawnCountInt',
                properties={'rounding_mode': 'FLOOR'}, location=(-700.0, y - 100.0))
-    g.add_link('AccGated', 'Value', 'SpawnCountInt', 'Float')
+    g.add_link('SpawnCountWarm', 'Value', 'SpawnCountInt', 'Float')
     _math(g, 'AccNext', 'SUBTRACT', (-700.0, y - 200.0))
     g.add_link('AccGated', 'Value', 'AccNext', 'Value')
     g.add_link('SpawnCount', 'Value', 'AccNext', 'Value_001')
@@ -553,10 +596,18 @@ def _plan_spawn(g, shape):
                properties={'operation': 'ADD'}, location=(-200.0, -200.0))
     g.add_link('SpawnPosWorld', 'Vector', 'SpawnPosFull', 'Vector')
     g.add_link('BPosFull', 'Vector', 'SpawnPosFull', 'Vector_001')
+    g.add_node('ShaderNodeVectorMath', name='WarmDrift',
+               properties={'operation': 'SCALE'}, location=(-150.0, -350.0))
+    g.add_link('SpawnVelFull', 'Vector', 'WarmDrift', 'Vector')
+    g.add_link('BirthAge', 'Value', 'WarmDrift', 'Scale')
+    g.add_node('ShaderNodeVectorMath', name='SpawnPosAged',
+               properties={'operation': 'ADD'}, location=(-100.0, -200.0))
+    g.add_link('SpawnPosFull', 'Vector', 'SpawnPosAged', 'Vector')
+    g.add_link('WarmDrift', 'Vector', 'SpawnPosAged', 'Vector_001')
 
     g.add_node('GeometryNodeSetPosition', name='PlaceSpawn', location=(-350.0, 350.0))
     g.add_link('SpawnPoints', 'Geometry', 'PlaceSpawn', 'Geometry')
-    g.add_link('SpawnPosFull', 'Vector', 'PlaceSpawn', 'Position')
+    g.add_link('SpawnPosAged', 'Vector', 'PlaceSpawn', 'Position')
 
     g.add_node('ShaderNodeVectorMath', name='SpawnVelFull',
                properties={'operation': 'ADD'}, location=(-300.0, -500.0))
@@ -569,10 +620,27 @@ def _plan_spawn(g, shape):
     g.add_link('PlaceSpawn', 'Geometry', 'StoreBirthVelocity', 'Geometry')
     g.add_link('SpawnVelFull', 'Vector', 'StoreBirthVelocity', 'Value')
 
+    # Warm-started particles begin mid-life: a random age in [0, life), with
+    # their position advanced along their velocity to match — otherwise the
+    # whole batch would sit clumped at the spawn point.
+    g.add_node('FunctionNodeRandomValue', name='AgeSeedRand',
+               properties={'data_type': 'FLOAT'},
+               input_defaults={'Min_001': 0.0, 'Max_001': 1.0},
+               location=(-1600.0, -2100.0))
+    g.add_link('SceneTime', 'Frame', 'AgeSeedRand', 'Seed')
+    g.add_link('PIndex', 'Index', 'AgeSeedRand', 'ID')
+    _math(g, 'AgeSeedLife', 'MULTIPLY', (-1450.0, -2100.0))
+    g.add_link('AgeSeedRand', 'Value_001', 'AgeSeedLife', 'Value')
+    g.add_link('LifeSafe', 'Value', 'AgeSeedLife', 'Value_001')
+    _math(g, 'BirthAge', 'MULTIPLY', (-1300.0, -2100.0))
+    g.add_link('AgeSeedLife', 'Value', 'BirthAge', 'Value')
+    g.add_link('ColdStart', 'Value', 'BirthAge', 'Value_001')
+
     g.add_node('GeometryNodeStoreNamedAttribute', name='StoreBirthAge',
                properties={'data_type': 'FLOAT', 'domain': 'POINT'},
-               input_defaults={'Name': _AGE_ATTR, 'Value': 0.0}, location=(-100.0, 350.0))
+               input_defaults={'Name': _AGE_ATTR}, location=(-100.0, 350.0))
     g.add_link('StoreBirthVelocity', 'Geometry', 'StoreBirthAge', 'Geometry')
+    g.add_link('BirthAge', 'Value', 'StoreBirthAge', 'Value')
 
     # Per-particle lifetime, floored at one frame so age normalisation holds.
     _math(g, 'LifeMin', 'SUBTRACT', (-1750.0, -2200.0))
