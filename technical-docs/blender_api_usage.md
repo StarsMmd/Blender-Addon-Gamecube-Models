@@ -180,7 +180,7 @@ Every Blender Python API call used by this addon, with the Blender version range
 | 2.92 | current | `modifier.node_group = tree` | `particles.py` (importer build_blender) | Assign GeometryNodeTree to NODES modifier |
 | 2.92 | current | `modifier[socket_identifier] = value` | `particles.py` (importer build_blender) | Emitter parameter values, addressed by interface-socket identifier |
 | 2.92 | current | `modifier.driver_add('["<socket_identifier>"]')` | `particles.py` (importer build_blender) | Gates `Emit` on the firing bone's spawn keys |
-| 2.80 | current | `driver.variables.new()` + `var.targets[0].id` / `.data_path` | `particles.py` (importer build_blender) | One variable per `particle_emit` lane; expression compares each against the emitter index |
+| 2.80 | current | `driver.variables.new()` + `var.targets[0].id` / `.data_path` | `particles.py` (importer build_blender) | One variable per `particle_emit` lane; expression compares each against emitter index + 1 and references `frame` — custom-prop-only drivers miss their depsgraph relation and stall during playback without a time dependency |
 | | | | | |
 | | | **Geometry Nodes** | | |
 | 2.92 | current | `bpy.data.node_groups.new(name, 'GeometryNodeTree')` | `particles.py` (importer build_blender) | One tree per emitter |

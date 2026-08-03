@@ -294,10 +294,17 @@ def _build_emit_driver(modifier, tree, spec, armature):
     """Drive the group's Emit input from the firing bone's spawn keys.
 
     The emitter runs while any of that bone's ``particle_emit`` lanes holds
-    its index. Those keys hold their value between spawns (they are events,
-    not a sampled signal), so the emitter stays alive from the frame it fires
+    its index **plus one** — zero is the property's resting default, so the
+    keyed encoding is offset to keep "idle" distinct from "fire emitter 0".
+    Those keys hold their value between spawns (they are events, not a
+    sampled signal), so the emitter stays alive from the frame it fires
     until the bone fires something else — close to the game, where the
     generator instance outlives the event that created it.
+
+    The expression references ``frame`` to make the driver time-dependent:
+    a driver whose only inputs are animated custom properties is not
+    reliably re-evaluated during playback (the dependency graph misses the
+    relation and only a scrub or pause refreshes it).
 
     In: modifier (bpy.types.NodesModifier); tree (bpy.types.GeometryNodeTree);
         spec (BRParticleEmitDriver); armature (bpy.types.Object).
@@ -317,8 +324,8 @@ def _build_emit_driver(modifier, tree, spec, armature):
         variable.targets[0].id = armature
         variable.targets[0].data_path = (
             'pose.bones["%s"]["particle_emit"][%d]' % (spec.bone_name, lane))
-    driver.expression = '1.0 if (%s) else 0.0' % ' or '.join(
-        'lane%d == %d' % (lane, spec.emitter_index)
+    driver.expression = '1.0 if frame >= 0 and (%s) else 0.0' % ' or '.join(
+        'lane%d == %d' % (lane, spec.emitter_index + 1)
         for lane in range(spec.lane_count))
 
 

@@ -84,8 +84,10 @@ def build_bone_animations(br_actions, armature, options, bake_skeleton,
 
 # Pose-bone custom property carrying particle spawn events. It is an array:
 # each element is one lane, and a lane's keyframe means "fire the emitter with
-# this index on this frame". Lanes exist because a bone can fire several
-# emitters on the same frame, and one fcurve holds one key per frame.
+# this index **plus one** on this frame" — zero is the resting default, so the
+# offset keeps "idle" distinct from "fire emitter 0". Lanes exist because a
+# bone can fire several emitters on the same frame, and one fcurve holds one
+# key per frame.
 _EMIT_PROP = 'particle_emit'
 # Widest emitter index the property accepts — the UI range would otherwise
 # clamp keyframed values to 0-1.
@@ -125,7 +127,8 @@ def _build_particle_emits(bone_tracks, action, armature):
                     'pose.bones["%s"]["%s"]' % (track.bone_name, _EMIT_PROP),
                     index=lane)
                 created += 1
-            point = curves[lane].keyframe_points.insert(frame, float(emitter_index))
+            point = curves[lane].keyframe_points.insert(frame,
+                                                        float(emitter_index + 1))
             point.interpolation = 'CONSTANT'
         for curve in curves.values():
             curve.update()
