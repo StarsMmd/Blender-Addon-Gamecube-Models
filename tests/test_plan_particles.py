@@ -673,3 +673,23 @@ class TestValueHelpers:
         keys = [IRScalarKey(age=0.75), IRScalarKey(age=0.25)]
         positions = [p for p, _ in _lay_out(keys)]
         assert positions[1] > positions[0]
+
+
+class TestViewportColor:
+    """Solid shading ignores shader graphs, so the material carries a
+    display colour — the emitter's signature particle colour."""
+
+    def test_brightest_visible_stop_wins(self):
+        stops = [IRColorStop(age=0.0, rgba=(1.0, 1.0, 0.0, 0.1)),
+                 IRColorStop(age=0.5, rgba=(1.0, 0.4, 0.0, 1.0)),
+                 IRColorStop(age=1.0, rgba=(1.0, 0.0, 0.0, 0.0))]
+        material = _plan(_system([_emitter(color_over_life=stops)])).emitters[0].material
+        r, g, b, a = material.viewport_color
+        # The orange mid-life stop carries the most visible energy.
+        assert (r, g, b) == pytest.approx(
+            (srgb_to_linear(1.0), srgb_to_linear(0.4), srgb_to_linear(0.0)))
+        assert a == 0.5
+
+    def test_constant_colour_defaults_to_white(self):
+        material = _plan().emitters[0].material
+        assert material.viewport_color == (1.0, 1.0, 1.0, 0.5)

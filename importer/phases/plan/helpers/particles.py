@@ -1213,7 +1213,30 @@ def _plan_emitter_material(em, name, images):
         node_graph=g.finalize(),
         blend_method='BLEND',
         dedup_key=('particle', name),
+        viewport_color=_viewport_color(em),
     )
+
+
+def _viewport_color(em):
+    """Solid-mode display colour: the emitter's signature particle colour.
+
+    Solid shading ignores shader graphs, so without this the billboards draw
+    as anonymous opaque grey. The brightest visible ramp stop, half-alpha,
+    reads as "particles live here" instead. Additive sprites themselves stay
+    a shaded-mode (dark-background) phenomenon — solid can only approximate.
+
+    In: em (IRParticleEmitter).
+    Out: tuple[float, float, float, float] — linear RGBA.
+    """
+    best = (1.0, 1.0, 1.0, 1.0)
+    best_weight = -1.0
+    for stop in em.color_over_life:
+        weight = (stop.rgba[0] + stop.rgba[1] + stop.rgba[2]) * stop.rgba[3]
+        if weight > best_weight:
+            best_weight = weight
+            best = stop.rgba
+    linear = _linearize_rgba(best)
+    return (linear[0], linear[1], linear[2], 0.5)
 
 
 def _plan_alpha_shader(g, color_ref, alpha_ref, output):

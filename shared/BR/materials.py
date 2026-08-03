@@ -79,3 +79,6 @@ class BRMaterial:
     # Dedup key used by build to share one bpy material between meshes.
     # A plan-time constructed tuple like (id(ir_material), cull_f, cull_b).
     dedup_key: object = None
+    # Solid-mode display colour (linear RGBA) for surfaces whose shaded look
+    # solid shading cannot approximate (additive particles); None = default.
+    viewport_color: tuple | None = None

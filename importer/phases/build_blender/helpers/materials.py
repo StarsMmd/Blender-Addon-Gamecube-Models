@@ -25,6 +25,8 @@ def build_material(br_material, image_cache=None):
         mat.use_backface_culling = True
     if br_material.blend_method is not None:
         mat.blend_method = br_material.blend_method
+    if br_material.viewport_color is not None:
+        mat.diffuse_color = br_material.viewport_color
 
     nodes = mat.node_tree.nodes
     links = mat.node_tree.links
