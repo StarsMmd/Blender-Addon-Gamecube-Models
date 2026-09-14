@@ -75,7 +75,7 @@ def _build_camera(br_cam, logger=StubLogger(), collection=None):
 
     target_obj = None
     if br_cam.target_location is not None:
-        target_obj = bpy.data.objects.new(br_cam.name + '_target', None)
+        target_obj = bpy.data.objects.new(br_cam.target_name or br_cam.name + '_target', None)
         target_obj.empty_display_type = 'PLAIN_AXES'
         target_obj.empty_display_size = max(0.1, min(3.0, _scene_model_size() * 0.03))
         target_obj.location = br_cam.target_location

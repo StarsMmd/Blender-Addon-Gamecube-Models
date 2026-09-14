@@ -78,12 +78,6 @@ def compose_scene(ir_scene, options=None, logger=StubLogger()):
         compose_meshes(model.meshes, joints, model.bones, logger,
                        image_cache=image_cache)
 
-        # Strip node names if requested (for round-trip testing against
-        # original models that have empty name fields)
-        if options.get('strip_names', False):
-            for joint in joints:
-                joint.name = None
-
         # Compose constraints (must happen before animations — sets joint type flags)
         compose_constraints(model, joints, model.bones, logger)
 
@@ -135,9 +129,54 @@ def compose_scene(ir_scene, options=None, logger=StubLogger()):
         else:
             logger.info("  Bound box: skipped (disabled in export options)")
 
+    # Strip node names if requested (for round-trip testing against
+    # original models that have empty name fields).
+    if options.get('strip_names', False):
+        stripped = strip_node_names(root_nodes)
+        logger.info("  Stripped %d node name(s)", stripped)
+
     logger.info("=== Export Phase 2 complete: %d scene(s) ===", len(root_nodes))
 
     return root_nodes, section_names
+
+
+# Node string fields that hold an authored name. Every HSD object descriptor
+# opens with a class-name string pointer; the node classes spell it `name`
+# except MaterialObject, which keeps the source's `class_type` spelling.
+_NAME_FIELDS = ('name', 'class_type')
+
+
+def strip_node_names(root_nodes):
+    """Null every authored name string reachable from `root_nodes`.
+
+    In: root_nodes (list[Node]) — composed section roots.
+    Out: int — number of names cleared. Walks node-typed fields and lists
+         of nodes recursively; shared nodes are visited once.
+    """
+    try:
+        from ....shared.Nodes.Node import Node
+    except (ImportError, SystemError):
+        from shared.Nodes.Node import Node
+
+    seen = set()
+    cleared = 0
+    stack = [n for n in root_nodes if n is not None]
+    while stack:
+        node = stack.pop()
+        if id(node) in seen:
+            continue
+        seen.add(id(node))
+        for field_name, field_type in getattr(node, 'fields', ()):
+            value = getattr(node, field_name, None)
+            if field_type == 'string' and field_name in _NAME_FIELDS:
+                if value:
+                    setattr(node, field_name, None)
+                    cleared += 1
+            elif isinstance(value, Node):
+                stack.append(value)
+            elif isinstance(value, list):
+                stack.extend(v for v in value if isinstance(v, Node))
+    return cleared
 
 
 def _compose_bound_box(model, logger):

@@ -49,6 +49,7 @@ def plan_cameras(br_cameras, logger=StubLogger()):
             field_of_view=field_of_view,
             aspect=br.aspect,
             animations=[_plan_camera_animation(a, br.sensor_height) for a in br.animations],
+            target_name=br.target_name,
         ))
     return out
 

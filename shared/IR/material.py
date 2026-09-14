@@ -24,6 +24,9 @@ class IRMaterial:
     is_translucent: bool
     texture_layers: list[IRTextureLayer] = field(default_factory=list)
     fragment_blending: FragmentBlending | None = None
+    # Authored name (the source's MObj class-name string / the Blender
+    # material name). None when the source carries no name.
+    name: str | None = None
 
 
 @dataclass

@@ -188,13 +188,22 @@ class TestPlanMeshes:
         assert len(br_meshes) == 1
         assert isinstance(br_meshes[0], BRMesh)
         m = br_meshes[0]
-        assert m.name == 'rig_mesh_body'
+        assert m.name == 'body'  # authored mesh name is kept verbatim
         assert m.id == 'mesh_0_Root'
         assert m.parent_bone_name == 'Root'
         assert m.is_hidden is False
         assert m.material_index is None  # no IR material was supplied
         assert br_instances == []
         assert br_materials == []
+
+    def test_unnamed_mesh_ordinal_is_prefixed_with_model(self):
+        ir = IRModel(
+            name="rig",
+            bones=[_make_bone("Root")],
+            meshes=[_make_mesh("03", parent_bone_index=0)],
+        )
+        br_meshes, _, _ = plan_meshes(ir)
+        assert br_meshes[0].name == 'rig_mesh_03'
 
     def test_id_uses_zero_padded_index(self):
         """Mesh keys must sort stably — width driven by total count."""

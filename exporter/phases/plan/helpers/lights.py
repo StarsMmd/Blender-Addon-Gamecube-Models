@@ -65,6 +65,7 @@ def plan_lights(br_lights, logger=StubLogger()):
             target_position=target_position,
             brightness=br.energy,
             animations=_plan_light_animations(br),
+            target_name=br.target_name,
         ))
     return out
 

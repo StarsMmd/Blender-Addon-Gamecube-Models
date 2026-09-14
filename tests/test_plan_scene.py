@@ -28,6 +28,7 @@ def _stub_ir_light(name='L', type_value='POINT', color=(1.0, 1.0, 1.0),
         brightness=brightness,
         position=position,
         target_position=target_position,
+        target_name=None,
     )
 
 
@@ -44,6 +45,7 @@ def _stub_ir_camera(name='C', projection=CameraProjection.PERSPECTIVE, field_of_
         position=position,
         target_position=target_position,
         animations=animations or [],
+        target_name=None,
     )
 
 

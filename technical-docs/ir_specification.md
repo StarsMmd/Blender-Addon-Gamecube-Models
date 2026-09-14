@@ -191,6 +191,7 @@ class IRMaterial:
     is_translucent: bool
     texture_layers: list[IRTextureLayer]
     fragment_blending: FragmentBlending | None
+    name: str | None = None       # authored name (MObj class-name string / Blender material name)
 
 @dataclass
 class IRTextureLayer:
@@ -380,6 +381,7 @@ class IRLight:
     color: tuple[float, float, float]
     position: tuple[float, float, float] | None
     target_position: tuple[float, float, float] | None
+    target_name: str | None = None   # authored name of the interest WObject / TRACK_TO empty
 ```
 
 ---
@@ -420,11 +422,13 @@ class IRCamera:
     field_of_view: float = 60.0   # vertical FOV in degrees
     aspect: float = 1.333
     animations: list[IRCameraKeyframes] = field(default_factory=list)
+    target_name: str | None = None   # authored name of the interest WObject / TRACK_TO empty
 ```
 
 - `projection`: PERSPECTIVE (from COBJ_PROJECTION_PERSPECTIVE/FRUSTUM) or ORTHO
 - `position`: camera eye position in GC world coordinates (from WObject)
 - `target_position`: camera interest/look-at point (from WObject)
+- `name` / `target_name`: authored names. Every HSD object descriptor (JObj, DObj, PObj, MObj, TObj, CObj, LObj, WObj) opens with a class-name string pointer; the importer reads it when present (game-native Colo/XD files never set one) and the exporter fills it from the matching Blender entity. `None` means unnamed. See implementation notes § Node names.
 - `field_of_view`: vertical FOV in degrees for perspective; ortho_scale for orthographic
 - `viewport`/`scissor`/`up_vector` from the Camera node are not stored (GC screen-space artifacts)
 

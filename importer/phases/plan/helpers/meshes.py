@@ -61,7 +61,7 @@ def plan_meshes(ir_model):
         has_color_anim = color_anim_by_material_key.get(material_key, False)
         br_materials.append(plan_material(
             ir_mesh.material,
-            name='%s_mat_%d' % (model_name, i),
+            name=ir_mesh.material.name or '%s_mat_%d' % (model_name, i),
             has_color_animation=has_color_anim,
             cull_front=ir_mesh.cull_front,
             cull_back=ir_mesh.cull_back,
@@ -74,7 +74,7 @@ def plan_meshes(ir_model):
     for i, ir_mesh, parent_bone_name, mesh_id, material_key in mesh_rows:
         material_index = material_index_by_key.get(material_key) if material_key else None
         br_meshes.append(BRMesh(
-            name='%s_mesh_%s' % (model_name, ir_mesh.name),
+            name=_plan_mesh_name(model_name, ir_mesh.name),
             id=mesh_id,
             vertices=list(ir_mesh.vertices),
             faces=[list(face) for face in ir_mesh.faces],
@@ -223,6 +223,19 @@ def _collect_color_animated_mesh_ids(ir_model):
             if mat_track.diffuse_r or mat_track.diffuse_g or mat_track.diffuse_b:
                 keys.add(mat_track.material_mesh_name)
     return keys
+
+
+def _plan_mesh_name(model_name, ir_mesh_name):
+    """Choose the Blender object name for an IRMesh.
+
+    In: model_name (str); ir_mesh_name (str — an authored name, or the
+        describe phase's all-digit ordinal when the source mesh is unnamed).
+    Out: str — an authored name verbatim; an ordinal is prefixed with the
+         model name so unnamed meshes read as ``<model>_mesh_<NN>``.
+    """
+    if ir_mesh_name and not ir_mesh_name.isdigit():
+        return ir_mesh_name
+    return '%s_mesh_%s' % (model_name, ir_mesh_name)
 
 
 def _lookup_parent_bone_name(parent_bone_index, bones):

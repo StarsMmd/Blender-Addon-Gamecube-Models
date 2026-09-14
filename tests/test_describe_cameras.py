@@ -176,8 +176,13 @@ class TestDescribeCamera:
         result = describe_camera(cam)
         assert result.roll == 0.5
 
-    def test_name_uses_camera_index(self):
+    def test_authored_name_is_kept(self):
         cam = _make_camera(name="battle_cam")
+        result = describe_camera(cam, camera_index=0)
+        assert result.name == "battle_cam"
+
+    def test_unnamed_camera_uses_index(self):
+        cam = _make_camera(name=None)
         result = describe_camera(cam, camera_index=0)
         assert result.name == "Camera_0"
 

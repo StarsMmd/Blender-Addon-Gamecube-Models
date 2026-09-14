@@ -46,3 +46,5 @@ class BRLight:
     target_location: tuple[float, float, float] | None = None
     is_ambient: bool = False
     animations: list[BRLightAnimation] = field(default_factory=list)
+    # Name for the TRACK_TO target empty; None = derive from `name`.
+    target_name: str | None = None

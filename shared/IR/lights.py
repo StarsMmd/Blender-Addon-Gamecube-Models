@@ -41,3 +41,6 @@ class IRLight:
     target_position: tuple[float, float, float] | None = None
     brightness: float = 1.0
     animations: list[IRLightKeyframes] = field(default_factory=list)
+    # Authored name of the look-at target (the interest WObject / the
+    # Blender TRACK_TO empty). None when the source carries no name.
+    target_name: str | None = None

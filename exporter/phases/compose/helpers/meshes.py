@@ -204,7 +204,7 @@ def compose_meshes(meshes, joints, bones, logger=StubLogger(), image_cache=None)
                 mobj_cache[mat_key] = mobj
 
             mesh_node = Mesh(address=None, blender_obj=None)
-            mesh_node.name = None
+            mesh_node.name = ir_mesh.name or None
             mesh_node.next = None
             mesh_node.mobject = mobj
             mesh_node.pobject = pobjs[0]

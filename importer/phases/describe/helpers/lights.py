@@ -45,7 +45,8 @@ def describe_light(light_node, light_index=0):
     if ir_type is None:
         return None
 
-    name = 'Light_%s' % (light_node.name or str(light_index))
+    name = light_node.name or 'Light_%d' % light_index
+    target_name = getattr(light_node.interest, 'name', None) or None
 
     color = (1.0, 1.0, 1.0)
     if light_node.color:
@@ -69,6 +70,7 @@ def describe_light(light_node, light_index=0):
 
     return IRLight(
         name=name,
+        target_name=target_name,
         type=ir_type,
         color=color,
         position=position,

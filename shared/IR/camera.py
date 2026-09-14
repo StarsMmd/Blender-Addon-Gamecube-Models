@@ -36,3 +36,6 @@ class IRCamera:
     field_of_view: float = 60.0
     aspect: float = 1.333
     animations: list[IRCameraKeyframes] = field(default_factory=list)
+    # Authored name of the look-at target (the interest WObject / the
+    # Blender TRACK_TO empty). None when the source carries no name.
+    target_name: str | None = None

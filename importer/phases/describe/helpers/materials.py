@@ -109,6 +109,7 @@ def describe_material(mobj, image_cache=None, logger=None, options=None):
         is_translucent=is_translucent,
         texture_layers=texture_layers,
         fragment_blending=fragment_blending,
+        name=mobj.class_type or None,
     )
 
 
@@ -283,7 +284,7 @@ def _build_ir_image(texture):
                       if texture.palette else GXPaletteFormat.AUTO)
 
     return IRImage(
-        name=f"tex_{image_node.address:X}",
+        name=texture.name or f"tex_{image_node.address:X}",
         width=width,
         height=height,
         pixels=bytes(pixel_data),

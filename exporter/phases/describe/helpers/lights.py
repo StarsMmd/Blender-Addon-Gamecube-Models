@@ -81,6 +81,7 @@ def describe_lights(context, logger=StubLogger()):
             target_location=target_location,
             is_ambient=False,
             animations=_describe_light_animations(obj, target_obj),
+            target_name=target_obj.name if target_obj is not None else None,
         ))
 
     if out:

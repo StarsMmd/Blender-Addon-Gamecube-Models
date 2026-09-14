@@ -71,6 +71,7 @@ def describe_cameras(context, logger=StubLogger()):
             location=(loc.x, loc.y, loc.z),
             target_location=target_location,
             animations=animations,
+            target_name=target_obj.name if target_obj is not None else None,
         ))
 
     if out:

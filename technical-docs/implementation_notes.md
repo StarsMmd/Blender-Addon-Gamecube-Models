@@ -505,6 +505,14 @@ Producers and consumers:
 
 `_SOCKET_IDS` is the only Blender-version-sensitive data in this path; if a future Blender renames a socket, update it there.
 
+### Node names
+
+Every HSD object descriptor opens with a `class_name` string pointer: JObj, DObj, PObj, MObj, TObj, CObj, LObj and WObj all have one (the node classes spell it `name`, except `MaterialObject.class_type`). At load time sysdolphin looks the string up in its class registry and falls back to the default class when it is null or unknown, so an arbitrary name is inert — it only costs bytes. Nothing else in the format carries a name: `Animation`, `AnimationJoint`, `Material`, `Image`, `PixelEngine`, `ModelSet`, `SceneData` and `Fog` have no slot, so Blender action and image-datablock names cannot be stored (images ride only through the TObj that samples them). `Palette.table_name` is declared as a string in the node class but is really the `GXTlut` slot enum (0 = `GX_TLUT0`) — it is not a name and is never populated.
+
+A corpus scan of every model in the local collection (9071 joints, 3367 DObjs, 4054 PObjs, 2957 MObjs, 2835 TObjs, 99 CObjs, 396 LObjs, 495 WObjs) found **zero** populated name slots: game-native Colo/XD files ship name-less. That is what the `strip_names` export option reproduces for byte-level round-trip comparisons (the runner always passes it); a normal export keeps names.
+
+Mapping on export (compose): JObj ← bone name, DObj ← mesh object name (the describe phase's `_NNN` material-split suffix included; a merged mesh keeps the first member's name), MObj ← material name, TObj ← image datablock name, CObj/LObj ← camera/light object name, interest WObj ← the TRACK_TO target empty's name. PObjs stay unnamed (no Blender equivalent), as do the eye/position WObjs (they stand for the camera/light itself). On import the same slots are read back when present: an authored joint name replaces `Bone_NN` (duplicates fall back to the generated name because bone names key the vertex weights), a DObj name names its PObject meshes (`name`, `name_1`, …), an MObj class-name becomes the material name, a TObj name becomes the image name, camera/light names replace `Camera_N` / `Light_N`, and interest names name the target empties.
+
 ## Particles (GPT1)
 
 15 battle models in Colosseum / XD ship with embedded GPT1 particle data — the flame-, gas- and mist-themed Pokémon (Moltres, Articuno, Charmander/Charmeleon/Charizard, Gastly, Magmar, Magcargo, Torkoal, Koffing, Weezing, Vaporeon, plus the three shiny variants `rare_fire`, `rare_freezer`, `rare_lizardon`).

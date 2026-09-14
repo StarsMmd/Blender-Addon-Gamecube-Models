@@ -107,6 +107,7 @@ def describe_bones(root_joint, options=None, logger=None):
     bones = []
     joint_to_bone_index = {}
     bone_count = [0]  # mutable counter for closure
+    used_names = set()  # bone names taken so far (authored or generated)
 
     # Pre-count total bones to determine digit padding
     def _count_joints(joint):
@@ -165,10 +166,16 @@ def describe_bones(root_joint, options=None, logger=None):
         joint_to_bone_index[joint.address] = my_index
 
         idx = bone_count[0]
-        name = 'Bone_%s' % str(idx).zfill(bone_digits)
-        suffix = _body_map_suffixes.get(idx)
-        if suffix:
-            name = '%s_%s' % (name, suffix)
+        # An authored joint name wins; generated names fill the gaps. A
+        # duplicate authored name falls back to the generated one because
+        # bone names key the vertex weights and must stay unique.
+        name = joint.name if joint.name and joint.name not in used_names else None
+        if name is None:
+            name = 'Bone_%s' % str(idx).zfill(bone_digits)
+            suffix = _body_map_suffixes.get(idx)
+            if suffix:
+                name = '%s_%s' % (name, suffix)
+        used_names.add(name)
         bone_count[0] += 1
 
         # Warn about special JOBJ flags that we preserve but don't fully handle.

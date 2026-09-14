@@ -187,7 +187,7 @@ class ExportHSD(bpy.types.Operator, ExportHelper):
     verbose: BoolProperty(default=False, name='Verbose',
                          description='Print INFO/DEBUG export progress to the Blender console, including the per-section DAT size breakdown.')
     strip_names: BoolProperty(default=False, name='Strip Node Names',
-                             description='Remove bone/node names from the output. Enable for compatibility with models that have empty name fields.')
+                             description='Remove bone, mesh, material, texture, camera and light names from the output. Enable for compatibility with models that have empty name fields.')
     sparsify_bezier: BoolProperty(default=True, name='Bezier Sparsification',
                                   description='Use bezier curves with slopes for animation export. Produces more accurate keyframes. Disable for simpler linear sparsification.')
 

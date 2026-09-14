@@ -47,7 +47,7 @@ def _build_light(br_light, logger, collection=None):
 
     target = None
     if br_light.target_location is not None:
-        target = bpy.data.objects.new(br_light.name + '_target', None)
+        target = bpy.data.objects.new(br_light.target_name or br_light.name + '_target', None)
         target.empty_display_type = 'PLAIN_AXES'
         target.location = br_light.target_location
         link_into(target, collection)

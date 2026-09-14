@@ -161,7 +161,7 @@ def _compose_single_light_animation(anim, logger):
 def _compose_light(ir_light, logger):
     """Build a Light node from an IRLight."""
     light = Light(address=None, blender_obj=None)
-    light.name = None
+    light.name = ir_light.name or None
     light.link = None
 
     # Color: IR stores sRGB 0-1, Light node stores 0-255 RGBA
@@ -189,7 +189,8 @@ def _compose_light(ir_light, logger):
     light.position = _make_wobject(ir_light.position)
 
     # Interest (target position for spotlights — None if no target)
-    light.interest = _make_wobject(ir_light.target_position) if ir_light.target_position else None
+    light.interest = (_make_wobject(ir_light.target_position, ir_light.target_name)
+                      if ir_light.target_position else None)
 
     # Type-specific property
     if ir_light.type == LightType.SUN:
@@ -211,14 +212,14 @@ def _compose_light(ir_light, logger):
     return light
 
 
-def _make_wobject(position):
-    """Create a WObject with a position vec3.
+def _make_wobject(position, name=None):
+    """Create a WObject with a position vec3 and an optional name.
 
     IRLight positions are already in GC units by the time compose runs
     (see `scale.py:scale_scene_to_gc_units`), so no local scaling is needed.
     """
     wobj = WObject(address=None, blender_obj=None)
-    wobj.name = None
+    wobj.name = name or None
     wobj.position = list(position) if position else [0.0, 0.0, 0.0]
     wobj.render = None
     return wobj

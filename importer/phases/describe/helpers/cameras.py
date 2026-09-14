@@ -79,7 +79,8 @@ def describe_camera(camera_node, camera_index=0, options=None, logger=None):
                         camera_index, camera_node.perspective_flags)
         return None
 
-    name = 'Camera_%d' % camera_index
+    name = camera_node.name or 'Camera_%d' % camera_index
+    target_name = getattr(camera_node.interest, 'name', None) or None
 
     position = None
     if camera_node.position and hasattr(camera_node.position, 'position'):
@@ -106,6 +107,7 @@ def describe_camera(camera_node, camera_index=0, options=None, logger=None):
 
     return IRCamera(
         name=name,
+        target_name=target_name,
         projection=projection,
         position=position,
         target_position=target_position,

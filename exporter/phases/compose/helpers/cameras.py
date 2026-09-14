@@ -64,7 +64,7 @@ def compose_camera(ir_camera, logger=StubLogger()):
         return None
 
     camera = Camera(address=None, blender_obj=None)
-    camera.name = None
+    camera.name = ir_camera.name or None
     camera.flags = 0
     camera.perspective_flags = _PROJECTION_TO_FLAG.get(
         ir_camera.projection, COBJ_PROJECTION_PERSPECTIVE)
@@ -72,7 +72,7 @@ def compose_camera(ir_camera, logger=StubLogger()):
     camera.scissor = [0, 640, 0, 480]
     # IRCamera is already in GC units (see scale.py:scale_scene_to_gc_units).
     camera.position = _make_wobject(ir_camera.position)
-    camera.interest = _make_wobject(ir_camera.target_position)
+    camera.interest = _make_wobject(ir_camera.target_position, ir_camera.target_name)
     camera.roll = ir_camera.roll
     camera.up_vector = None
     camera.near = ir_camera.near
@@ -220,10 +220,10 @@ def _build_frame_chain(channels):
     return frames[0] if frames else None
 
 
-def _make_wobject(position):
-    """Create a WObject with a position vec3 in GC units."""
+def _make_wobject(position, name=None):
+    """Create a WObject with a position vec3 in GC units and an optional name."""
     wobj = WObject(address=None, blender_obj=None)
-    wobj.name = None
+    wobj.name = name or None
     wobj.position = list(position) if position else [0.0, 0.0, 0.0]
     wobj.render = None
     return wobj

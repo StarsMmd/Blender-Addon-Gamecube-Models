@@ -257,6 +257,7 @@ A direct mirror of `bpy.types.ShaderNode`.
 | `location` | `tuple[float, float, float] \| None` | Blender Z-up space — Plan applied the Y-up→Z-up rotation `(x, y, z) → (x, -z, y)`. |
 | `target_location` | `tuple[float, float, float] \| None` | Same space. If set, build creates a target empty and adds a `TRACK_TO` constraint. |
 | `is_ambient` | `bool` | Triggers `lamp["dat_light_type"] = "AMBIENT"` stamp on the build side. |
+| `target_name` | `str \| None` | Name for the TRACK_TO target empty. `None` → build derives `<name>_target`. Describe fills it from the constraint target's object name. |
 
 ---
 
@@ -275,6 +276,7 @@ A direct mirror of `bpy.types.ShaderNode`.
 | `location` | `tuple[float, float, float] \| None` | Blender Z-up. |
 | `target_location` | `tuple[float, float, float] \| None` | Blender Z-up. |
 | `animations` | `list[BRCameraAnimation]` | |
+| `target_name` | `str \| None` | Name for the TRACK_TO target empty. `None` → build derives `<name>_target`. Describe fills it from the constraint target's object name. |
 
 ### BRCameraAnimation
 

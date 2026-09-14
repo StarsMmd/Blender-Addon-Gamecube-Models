@@ -99,12 +99,15 @@ def _walk_mesh_chain(mesh_node, joint, bone_index,
         ir_material = _resolve_material(mesh_node, material_cache, image_cache, options, logger)
 
         pobj = mesh_node.pobject
+        pobj_ordinal = 0
         while pobj:
             ir_mesh = _describe_pobj(
                 pobj, joint, bone_index, len(meshes),
                 bones, joint_to_bone_index, options, image_cache, logger,
                 ir_material=ir_material,
+                name_hint=_pobj_name_hint(getattr(mesh_node, 'name', None), pobj_ordinal),
             )
+            pobj_ordinal += 1
             if ir_mesh is not None:
                 bones[bone_index].mesh_indices.append(len(meshes))
                 meshes.append(ir_mesh)
@@ -136,12 +139,25 @@ def _resolve_material(mesh_node, material_cache, image_cache, options, logger):
     return ir_material
 
 
+def _pobj_name_hint(mesh_name, pobj_ordinal):
+    """Derive a name for the ``pobj_ordinal``-th PObject of a named Mesh (DObject).
+
+    In: mesh_name (str|None, the DObject's authored name); pobj_ordinal (int, ≥0).
+    Out: str|None — the DObject name for the first PObject, ``name_N`` for the
+         rest (each PObject becomes its own IRMesh, so names must stay unique),
+         None when the DObject is unnamed.
+    """
+    if not mesh_name:
+        return None
+    return mesh_name if pobj_ordinal == 0 else '%s_%d' % (mesh_name, pobj_ordinal)
+
+
 def _describe_pobj(pobj, joint, bone_index, count,
                    bones, joint_to_bone_index, options, image_cache, logger,
-                   ir_material=None):
+                   ir_material=None, name_hint=None):
     """Orchestrate geometry extraction for one PObject into an IRMesh.
 
-    In: pobj (PObject, parsed); joint (Joint, owning); bone_index (int, ≥0); count (int, mesh-naming counter); bones (list[IRBone]); joint_to_bone_index (dict[int,int]); options (dict); image_cache (dict); logger (Logger); ir_material (IRMaterial|None).
+    In: pobj (PObject, parsed); joint (Joint, owning); bone_index (int, ≥0); count (int, mesh-naming counter); bones (list[IRBone]); joint_to_bone_index (dict[int,int]); options (dict); image_cache (dict); logger (Logger); ir_material (IRMaterial|None); name_hint (str|None, the owning DObject's name when the PObject itself is unnamed).
     Out: IRMesh|None — None if PObj has no position attribute.
     """
     pos_idx = pobj.find_attribute_index(GX_VA_POS)
@@ -163,7 +179,7 @@ def _describe_pobj(pobj, joint, bone_index, count,
         verts_out = _world_transform_vertices(verts_out, bones[bone_index].world_matrix)
 
     return IRMesh(
-        name=pobj.name if pobj.name else str(count),
+        name=pobj.name or name_hint or str(count),
         vertices=verts_out,
         faces=faces,
         uv_layers=uv_layers,

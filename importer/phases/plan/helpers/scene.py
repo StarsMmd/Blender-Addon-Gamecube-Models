@@ -129,6 +129,7 @@ def plan_light(ir_light):
         location=location,
         target_location=target_location,
         animations=_plan_light_animations(ir_light),
+        target_name=ir_light.target_name,
     )
 
 
@@ -210,6 +211,7 @@ def plan_camera(ir_cam):
         target_location=(_gc_to_blender(ir_cam.target_position)
                          if ir_cam.target_position else None),
         animations=[_plan_camera_animation(anim) for anim in (ir_cam.animations or [])],
+        target_name=ir_cam.target_name,
     )
 
 

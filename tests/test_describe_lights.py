@@ -115,7 +115,7 @@ class TestDescribeLight:
         light = _make_light(flags=LOBJ_POINT, name='my_light',
                             color=_make_color(255, 255, 255))
         ir = describe_light(light, light_index=0)
-        assert ir.name == 'Light_my_light'
+        assert ir.name == 'my_light'
 
     def test_ir_positions_are_yup_scaled(self):
         """IR stores Y-up positions with GC_TO_METERS scaling."""

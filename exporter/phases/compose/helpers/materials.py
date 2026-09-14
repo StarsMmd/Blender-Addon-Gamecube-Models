@@ -163,7 +163,7 @@ def compose_material(ir_material, logger=StubLogger(), image_cache=None):
 
     # Build MaterialObject
     mobj = MaterialObject(address=None, blender_obj=None)
-    mobj.class_type = None
+    mobj.class_type = ir_material.name or None
     mobj.render_mode = render_mode
     mobj.texture = tex_root
     mobj.material = mat_node
@@ -274,7 +274,7 @@ def _build_texture_chain(texture_layers, logger, image_cache):
 def _build_texture_node(ir_layer, tex_index, logger, image_cache):
     """Create a Texture node from an IRTextureLayer."""
     tex = Texture(address=None, blender_obj=None)
-    tex.name = None
+    tex.name = (ir_layer.image.name or None) if ir_layer.image else None
     tex.next = None
     tex.texture_id = tex_index
 
