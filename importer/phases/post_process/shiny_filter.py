@@ -4,9 +4,12 @@ Creates two node groups for the PKX shiny color transformation:
   - ShinyRoute: channel routing (swizzle) applied at the shader input
   - ShinyBright: brightness scaling applied at the shader input
 
-Both stages are applied uniformly to ALL materials on the model, matching
-the game's behavior (GSmodelEnableColorSwap + GSmodelEnableModulation
-iterate all materials globally). There is no per-material selectivity.
+The brightness stage is applied to ALL materials on the model, matching
+the game's behavior (GSmodelEnableModulation appends its TEV stage to every
+material). The route stage is applied only where the game's colour swap can
+reach: materials whose colour chain samples a texture or reads a vertex
+colour. A flat material diffuse colour enters the TEV chain as a constant
+register, which the GX swap tables never touch.
 
 Alpha brightness is forced to maximum by the game (byte 0x13 set to 0xFF
 before GSmodelEnableModulation is called). Our brightness shader only
@@ -284,14 +287,14 @@ def insert_shiny_filter(material, route_group, bright_group, armature, logger=No
             logger.debug("    Skipped '%s': no color input found", material.name)
         return
 
-    if _has_no_texture_in_color_chain(target_input):
-        if logger:
-            logger.debug("    Skipped '%s': color chain has no texture", material.name)
-        return
-
-    # Insert both stages at the shader input
-    _insert_stage_at_input(nodes, links, target_node, target_input,
-                           route_group, 'shiny_route_shader', 'shiny_route_mix', armature)
+    # Routing only reaches texture samples and vertex colours; brightness
+    # modulation applies to every material.
+    if _color_chain_has_swizzle_source(target_input):
+        _insert_stage_at_input(nodes, links, target_node, target_input,
+                               route_group, 'shiny_route_shader', 'shiny_route_mix', armature)
+    elif logger:
+        logger.debug("    Route stage skipped for '%s': no texture or vertex colour in color chain",
+                     material.name)
     _insert_stage_at_input(nodes, links, target_node, target_input,
                            bright_group, 'shiny_bright_shader', 'shiny_bright_mix', armature)
 
@@ -349,25 +352,30 @@ def _insert_stage_at_input(nodes, links, target_node, target_input,
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _has_no_texture_in_color_chain(target_input):
-    """True when no ``ShaderNodeTexImage`` is reachable from ``target_input``.
+def _color_chain_has_swizzle_source(target_input):
+    """True when a texture sample or a vertex colour is reachable from ``target_input``.
 
-    The in-game shiny color swap (``GSmodelEnableColorSwap``) operates on GX
-    texture swap tables; a material whose TEV chain has no texture sample
-    has nothing for the swap to swizzle. The appended brightness modulation
-    TEV stage on a constant-colour chain produces a uniform shift rather
-    than the saturated re-tint that defines the visible shiny effect, so
-    the in-game result on these materials reads as untouched. Skip them so
-    our shader-side simulation matches.
+    The in-game shiny colour swap (``GSmodelEnableColorSwap``) programs the
+    GX swap tables selected by each TEV stage for both its texture input and
+    its rasterised-colour input. Those are the only two inputs the swap can
+    reach: a texture sample, or a colour arriving through the lit colour
+    channel, which is where vertex colours come from. A material diffuse
+    colour enters the chain as a TEV constant register and is never
+    swizzled. So the route stage is only meaningful when an image texture
+    or a vertex-colour attribute feeds the colour chain.
 
-    An unlinked ``target_input`` (default-valued Base Color) is also treated
-    as "no texture" — the chain is a pure constant and behaves the same way.
+    An unlinked ``target_input`` (default-valued Base Color) is a pure
+    material constant, so it has no swizzle source.
+
+    Brightness modulation is a separate matter: the game appends that TEV
+    stage to every material regardless of its inputs, so callers must not
+    use this predicate to gate the brightness stage.
 
     In: target_input (bpy socket).
-    Out: bool — True if no image texture is reachable upstream.
+    Out: bool — True if a TEX_IMAGE or ATTRIBUTE node is reachable upstream.
     """
     if not target_input.is_linked:
-        return True
+        return False
 
     visited = set()
     stack = [target_input]
@@ -378,13 +386,13 @@ def _has_no_texture_in_color_chain(target_input):
             if id(node) in visited:
                 continue
             visited.add(id(node))
-            if node.type == 'TEX_IMAGE':
-                return False
+            if node.type in ('TEX_IMAGE', 'ATTRIBUTE'):
+                return True
             for inp in node.inputs:
                 if inp.is_linked:
                     stack.append(inp)
 
-    return True
+    return False
 
 
 def _find_color_input(nodes):

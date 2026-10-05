@@ -192,20 +192,31 @@ def _find_color_input(nodes):
     return None, None
 
 
-def _has_no_texture_in_color_chain(target_input):
-    """True when no ShaderNodeTexImage is reachable from the shader color input.
+def _color_chain_has_swizzle_source(target_input):
+    """True when a texture sample or a vertex colour is reachable from ``target_input``.
 
-    The in-game shiny color swap operates on GX texture swap tables; a
-    material whose TEV chain has no texture sample has nothing to swizzle,
-    and the brightness modulation on a constant-colour chain reads as
-    untouched compared to the saturated re-tint textured materials get.
-    Skip these materials so the shader-side simulation matches.
+    The in-game shiny colour swap (``GSmodelEnableColorSwap``) programs the
+    GX swap tables selected by each TEV stage for both its texture input and
+    its rasterised-colour input. Those are the only two inputs the swap can
+    reach: a texture sample, or a colour arriving through the lit colour
+    channel, which is where vertex colours come from. A material diffuse
+    colour enters the chain as a TEV constant register and is never
+    swizzled. So the route stage is only meaningful when an image texture
+    or a vertex-colour attribute feeds the colour chain.
 
-    An unlinked target input (default-valued Base Color) is also treated
-    as "no texture" — still a pure constant-colour chain.
+    An unlinked ``target_input`` (default-valued Base Color) is a pure
+    material constant, so it has no swizzle source.
+
+    Brightness modulation is a separate matter: the game appends that TEV
+    stage to every material regardless of its inputs, so callers must not
+    use this predicate to gate the brightness stage.
+
+    In: target_input (bpy socket).
+    Out: bool — True if a TEX_IMAGE or ATTRIBUTE node is reachable upstream.
     """
     if not target_input.is_linked:
-        return True
+        return False
+
     visited = set()
     stack = [target_input]
     while stack:
@@ -215,12 +226,13 @@ def _has_no_texture_in_color_chain(target_input):
             if id(node) in visited:
                 continue
             visited.add(id(node))
-            if node.type == 'TEX_IMAGE':
-                return False
+            if node.type in ('TEX_IMAGE', 'ATTRIBUTE'):
+                return True
             for inp in node.inputs:
                 if inp.is_linked:
                     stack.append(inp)
-    return True
+
+    return False
 
 
 def _add_driver(factor_input, armature):
@@ -284,11 +296,11 @@ def insert_shiny_filter(material, route_group, bright_group, armature):
     if target_node is None:
         return
 
-    if _has_no_texture_in_color_chain(target_input):
-        return
-
-    _insert_stage(nodes, links, target_node, target_input,
-                  route_group, 'shiny_route_shader', 'shiny_route_mix', armature)
+    # Routing only reaches texture samples and vertex colours; brightness
+    # modulation applies to every material.
+    if _color_chain_has_swizzle_source(target_input):
+        _insert_stage(nodes, links, target_node, target_input,
+                      route_group, 'shiny_route_shader', 'shiny_route_mix', armature)
     _insert_stage(nodes, links, target_node, target_input,
                   bright_group, 'shiny_bright_shader', 'shiny_bright_mix', armature)
 

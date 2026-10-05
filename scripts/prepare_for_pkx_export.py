@@ -1648,7 +1648,7 @@ def _shiny_find_color_input_via_group(group_node):
     if group_node.node_tree is None:
         return None
     textured = [s for s in group_node.inputs
-                if not _shiny_no_texture_in_color_chain(s)
+                if _shiny_color_chain_has_swizzle_source(s)
                 and _shiny_albedo_rank(s.name) < len(_SHINY_ALBEDO_KEYS)]
     if not textured:
         return None
@@ -1683,21 +1683,19 @@ def _shiny_find_color_input(nodes):
     return None, None
 
 
-def _shiny_no_texture_in_color_chain(target_input):
-    """True when no ShaderNodeTexImage is reachable from the shader color input.
+def _shiny_color_chain_has_swizzle_source(target_input):
+    """True when a texture sample or a vertex colour is reachable from the input.
 
-    The in-game shiny color swap operates on GX texture swap tables; without
-    a texture sample in the chain there is nothing to swizzle, and the
-    brightness modulation on a constant-colour chain reads as untouched
-    compared to the saturated re-tint textured materials get. Materials
-    matching this shape are skipped so the shader-side simulation matches
-    the in-game behaviour.
-
-    An unlinked target input (default-valued Base Color) is also treated
-    as "no texture" — still a pure constant-colour chain.
+    The in-game shiny colour swap programs the GX swap tables for a TEV
+    stage's texture input and rasterised-colour input only. A material
+    diffuse colour enters the chain as a constant register and is never
+    swizzled, so the route stage is only meaningful when an image texture
+    or a vertex-colour attribute feeds the colour chain. Brightness
+    modulation is appended to every material regardless, so this must not
+    gate the brightness stage.
     """
     if not target_input.is_linked:
-        return True
+        return False
     visited = set()
     stack = [target_input]
     while stack:
@@ -1707,13 +1705,12 @@ def _shiny_no_texture_in_color_chain(target_input):
             if id(node) in visited:
                 continue
             visited.add(id(node))
-            if node.type == 'TEX_IMAGE':
-                return False
+            if node.type in ('TEX_IMAGE', 'ATTRIBUTE'):
+                return True
             for inp in node.inputs:
                 if inp.is_linked:
                     stack.append(inp)
-    return True
-
+    return False
 
 def _shiny_insert_stage(nodes, links, target_node, target_input,
                         node_group, group_name, mix_name, armature):
@@ -1794,11 +1791,12 @@ def prepare_shiny_filter(armature):
             target_node, target_input = _shiny_find_color_input(nodes)
             if target_node is None:
                 continue
-            if _shiny_no_texture_in_color_chain(target_input):
-                continue
             links = mat.node_tree.links
-            _shiny_insert_stage(nodes, links, target_node, target_input,
-                                route_group, 'shiny_route_shader', 'shiny_route_mix', armature)
+            # Routing only reaches texture samples and vertex colours;
+            # brightness modulation applies to every material.
+            if _shiny_color_chain_has_swizzle_source(target_input):
+                _shiny_insert_stage(nodes, links, target_node, target_input,
+                                    route_group, 'shiny_route_shader', 'shiny_route_mix', armature)
             _shiny_insert_stage(nodes, links, target_node, target_input,
                                 bright_group, 'shiny_bright_shader', 'shiny_bright_mix', armature)
             _shiny_auto_layout(nodes, links)
